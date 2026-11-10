@@ -127,37 +127,59 @@ test('stim share waits for a stimd that holds its claim but does not listen yet'
   await listening;
 });
 
-test.skipIf(process.platform === 'win32')('a command names every unresolved daemon claim in one refusal', async () => {
-  const ownership = new URL('../ownership-claim.ts', import.meta.url).href;
-  const state = new URL('../../../core/state/index.ts', import.meta.url).href;
-  const script = `import { markClaimChildPending, tryAcquireClaim } from ${JSON.stringify(ownership)};
+describe.skipIf(process.platform === 'win32')('unresolved daemon claims', () => {
+  test.each([
+    {
+      daemonClaim: 'a pending claim file',
+      directory: false,
+      command: /rm -f [^;]*run\/stimd[^;]*; rm -f [^;]*daemon\/claim/,
+    },
+    {
+      daemonClaim: 'an unreadable claim root',
+      directory: true,
+      command: /rm -f [^;]*run\/stimd[^;]*, then separately, .*rm -rf .*daemon\/claim/,
+    },
+  ])(
+    'a command names every unresolved daemon claim, $daemonClaim included, in one refusal',
+    async ({ directory, command }) => {
+      const ownership = new URL('../ownership-claim.ts', import.meta.url).href;
+      const state = new URL('../../../core/state/index.ts', import.meta.url).href;
+      const script = `import { markClaimChildPending, tryAcquireClaim } from ${JSON.stringify(ownership)};
 import { daemonClaimRoot, stimdClaimRoot } from ${JSON.stringify(state)};
-for (const [root, mode] of [[stimdClaimRoot(), 'exclusive'], [daemonClaimRoot(), 'shared']])
-  markClaimChildPending(tryAcquireClaim({ root, mode, label: 'stimd' }).acquired);`;
-  const child = spawn(
-    process.execPath,
-    ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '-e', script],
-    { env: process.env, stdio: 'inherit' },
+const roots = [[stimdClaimRoot(), 'exclusive'], ...(${directory} ? [] : [[daemonClaimRoot(), 'shared']])];
+for (const [root, mode] of roots) markClaimChildPending(tryAcquireClaim({ root, mode, label: 'stimd' }).acquired);`;
+      const child = spawn(
+        process.execPath,
+        ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '-e', script],
+        { env: process.env, stdio: 'inherit' },
+      );
+      expect((await once(child, 'exit'))[0]).toBe(0);
+      const daemonRoot = join(home, 'daemon', 'claim');
+      if (directory) {
+        mkdirSync(dirname(daemonRoot), { recursive: true });
+        writeFileSync(daemonRoot, '');
+      }
+      vi.resetModules();
+      const { ensureStimd } = await import('../daemon/client.ts');
+
+      let refusal: unknown;
+      try {
+        await ensureStimd({ ...process.env, STIM_DAEMON: 'on' }, process.platform, true);
+      } catch (error) {
+        refusal = error;
+      }
+
+      assert(refusal instanceof Error);
+      expect(refusal).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      const { message } = refusal;
+      const remedy = 'remedy' in refusal ? String(refusal.remedy) : '';
+      for (const part of ['run/stimd', 'daemon/claim']) {
+        expect(message).toContain(join(home, part));
+        expect(remedy).toContain(join(home, part));
+      }
+      expect(remedy).toMatch(command);
+    },
   );
-  expect((await once(child, 'exit'))[0]).toBe(0);
-  vi.resetModules();
-  const { ensureStimd } = await import('../daemon/client.ts');
-
-  let refusal: unknown;
-  try {
-    await ensureStimd({ ...process.env, STIM_DAEMON: 'on' }, process.platform, true);
-  } catch (error) {
-    refusal = error;
-  }
-
-  assert(refusal instanceof Error);
-  expect(refusal).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-  const { message } = refusal;
-  const remedy = 'remedy' in refusal ? String(refusal.remedy) : '';
-  for (const part of ['run/stimd', 'daemon/claim']) {
-    expect(message).toContain(join(home, part));
-    expect(remedy).toContain(join(home, part));
-  }
 });
 
 /**

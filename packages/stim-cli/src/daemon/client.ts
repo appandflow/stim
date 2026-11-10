@@ -68,18 +68,24 @@ export function stimdLive(home?: string): boolean {
   }
 }
 
-/**
- * The unresolved claims of this home's stimd and daemon claim sets, named together so one round removes them; a
- * directory-level problem (an unreadable claim directory or root) alone, since its remedy removes the whole directory.
- */
 function unresolvedDaemonClaims(): ClaimProblem[] {
-  const claims = [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
-  const directory = claims.find((claim) => !claim.path.endsWith('.claim'));
-  return directory ? [directory] : claims;
+  return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
 }
 
 const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
-const removeCommands = (claims: ClaimProblem[]) => claims.map((claim) => claimRemoveCommand(claim.path)).join('; ');
+
+/**
+ * How to remove `claims` in one round: one command for the claim files, and each directory-level problem (an
+ * unreadable claim directory or root, whose command removes the whole directory) on its own.
+ */
+function removeCommands(claims: ClaimProblem[]): string {
+  const files = claims.filter((claim) => claim.path.endsWith('.claim'));
+  const directories = claims.filter((claim) => !claim.path.endsWith('.claim'));
+  return [
+    ...(files.length > 0 ? [files.map((claim) => claimRemoveCommand(claim.path)).join('; ')] : []),
+    ...directories.map((claim) => `separately, once you checked ${claim.path}, ${claimRemoveCommand(claim.path)}`),
+  ].join(', then ');
+}
 
 function requireResolvedStimdHome(): void {
   if (readClaimSet(stimdClaimRoot()).unresolved.length === 0) return;
@@ -550,7 +556,7 @@ export async function ensureStimd(
     const claims = unresolvedDaemonClaims();
     if (claims.length > 0) {
       console.error(
-        `Stim: the ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved, so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove ${claims.length === 1 ? 'it' : 'them'} with \`${removeCommands(claims)}\`.`,
+        `Stim: the ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved, so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, run ${removeCommands(claims)}.`,
       );
       return true;
     }
