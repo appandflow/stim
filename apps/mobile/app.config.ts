@@ -1,23 +1,25 @@
 import type { ExpoConfig } from 'expo/config';
 
 const variant = process.env.APP_VARIANT ?? 'production';
-if (variant !== 'production' && variant !== 'development') {
-  throw new Error(`APP_VARIANT must be production or development, not ${variant}.`);
+if (variant !== 'production' && variant !== 'development' && variant !== 'next') {
+  throw new Error(`APP_VARIANT must be production, development or next, not ${variant}.`);
 }
 const dev = variant === 'development';
-const id = dev ? 'com.appandflow.stim.dev' : 'com.appandflow.stim';
+const next = variant === 'next';
+const id = dev ? 'com.appandflow.stim.dev' : next ? 'com.appandflow.stim.next' : 'com.appandflow.stim';
+const icon = (name: string) => `./assets/images/${name}${dev ? '-dev' : next ? '-next' : ''}.png`;
 
 const config: ExpoConfig = {
-  name: dev ? 'Stim Dev' : 'Stim',
+  name: dev ? 'Stim Dev' : next ? 'Stim Next' : 'Stim',
   slug: 'stim-mobile',
   version: '1.0.0',
   orientation: 'default',
-  icon: dev ? './assets/images/icon-dev.png' : './assets/images/icon.png',
-  scheme: dev ? ['stim', 'stim-dev'] : 'stim',
+  icon: icon('icon'),
+  scheme: dev ? ['stim', 'stim-dev'] : next ? ['stim', 'stim-next'] : 'stim',
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: id,
-    icon: dev ? './assets/images/icon-ios-dev.png' : './assets/images/icon-ios.png',
+    icon: icon('icon-ios'),
     supportsTablet: true,
     config: {
       usesNonExemptEncryption: false,
@@ -32,7 +34,7 @@ const config: ExpoConfig = {
     package: id,
     adaptiveIcon: {
       backgroundColor: '#FFFFFF',
-      foregroundImage: dev ? './assets/images/icon-dev.png' : './assets/images/icon.png',
+      foregroundImage: icon('icon'),
     },
     predictiveBackGestureEnabled: false,
     permissions: ['android.permission.CAMERA'],
@@ -90,7 +92,7 @@ const config: ExpoConfig = {
       : { policy: 'fingerprint' },
   updates: {
     url: 'https://u.expo.dev/1e92e2da-38f5-415b-b82e-72f4edd2b2bc',
-    requestHeaders: { 'expo-channel-name': dev ? 'development' : 'production' },
+    requestHeaders: { 'expo-channel-name': dev ? 'development' : next ? 'next' : 'production' },
   },
 };
 

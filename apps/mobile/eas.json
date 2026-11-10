@@ -32,6 +32,17 @@
         "EAS_USE_CACHE": "1",
         "EAS_GRADLE_CACHE": "1"
       }
+    },
+    "next": {
+      "pnpm": "12.0.0",
+      "distribution": "store",
+      "autoIncrement": true,
+      "channel": "next",
+      "env": {
+        "APP_VARIANT": "next",
+        "EAS_USE_CACHE": "1",
+        "EAS_GRADLE_CACHE": "1"
+      }
     }
   },
   "submit": {
