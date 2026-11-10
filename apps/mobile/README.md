@@ -658,6 +658,12 @@ A phone tile streams only when the connected machine lists that platform,
 `physical-ios` or `physical-android`, in its hello `host.capabilities`; only a Mac
 lists `physical-ios`.
 
+The **Full Screen** button in the viewer's title bar hides the title bar and the
+agent actions, and the screen grows into the freed space. The bottom toolbar
+stays, with **Exit Full Screen** at its end, so the Control buttons stay
+reachable; with Control off it holds only that button. The mode lasts until the
+viewer closes. The button is absent in the book and tabletop fold layouts.
+
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
 top, and the Control toolbar stays below the screen. Turning the phone does not restart the stream, and

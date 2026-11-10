@@ -477,6 +477,25 @@ it('shows no toolbar for an iPhone viewer with frame artwork and Control off', a
   expect(housing(screen)).toHaveLength(0);
 });
 
+it.each([true, false])(
+  'swaps the title bar for a toolbar exit in full screen (controlling: %s)',
+  async (controlling) => {
+    mockControlling = controlling;
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <DeviceView workspace="/fixture" platform="ios" slot="default" />
+      </I18nProvider>,
+    );
+    expect(screen.queryByLabelText('Exit Full Screen')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('Full Screen'));
+    expect(screen.queryByLabelText('Close')).toBeNull();
+    expect(screen.queryByLabelText('Keyboard') !== null).toBe(controlling);
+    await fireEvent.press(screen.getByLabelText('Exit Full Screen'));
+    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.queryByLabelText('Exit Full Screen')).toBeNull();
+  },
+);
+
 it.each([false, true])('keeps native mouse and window selection in the main bar (pinned: %s)', async (pinned) => {
   mockHostCapabilities = ['macos-window', 'macos-window-control', 'macos-window-select'];
   mockWindows = { current: mockWindow, windows: [mockWindow, { ...mockWindow, id: 13, title: '' }], pinned };
