@@ -944,7 +944,15 @@ async function runStimdInner(
     void checkEngine();
   };
   const checkEngine = async (): Promise<void> => {
-    if (!follower && updatedInPlace && !switchedTo && !closing && !enginePinned() && !net.running()?.shareOnly) {
+    if (
+      !follower &&
+      updatedInPlace &&
+      !switchedTo &&
+      !closing &&
+      !hasActiveCommands() &&
+      !enginePinned() &&
+      !net.running()?.shareOnly
+    ) {
       relaunchDone = relaunch(updatedInPlace, spawnEntry('cli'));
       void relaunchDone.catch(() => {});
     }

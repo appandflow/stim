@@ -13,7 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { connect, createServer, type Server } from 'node:net';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -219,6 +219,20 @@ test.skipIf(process.platform === 'win32')(
         socket.once('error', reject);
         socket.once('connect', () => socket.write(`${JSON.stringify({ kind: 'cli', build })}\n`));
       });
+    const admitted = (build: string) =>
+      new Promise<Socket>((resolve, reject) => {
+        const socket = connect(stimdSocket());
+        socket.setEncoding('utf8');
+        let buffer = '';
+        socket.on('data', (chunk: string) => {
+          buffer += chunk;
+          if (buffer.includes('"op.begun"')) resolve(socket);
+        });
+        socket.once('error', reject);
+        socket.once('connect', () =>
+          socket.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin' })}\n`),
+        );
+      });
     const stimds: ChildProcess[] = [];
     try {
       stimds.push(
@@ -242,8 +256,16 @@ test.skipIf(process.platform === 'win32')(
       expect(early).not.toHaveProperty('handover');
       expect(await first(before)).toMatchObject({ op: 'hello', pid });
 
+      const pinnedOp = await admitted(before);
+      const waitingOp = await admitted(before);
+      waitingOp.write(`${JSON.stringify({ op: 'op.wait' })}\n`);
       replaceDist(dist, next);
       expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
+      pinnedOp.destroy();
+      expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
+      expect(await first(before)).toMatchObject({ op: 'hello', pid });
+      expect(waitingOp.closed).toBe(false);
+      waitingOp.destroy();
       await until('the stimd of the updated build', () => record()?.build === after && record()?.pid !== pid);
     } finally {
       const pids = [record()?.pid, ...stimds.map((stimd) => stimd.pid)].filter((pid) => pid !== undefined);
