@@ -471,7 +471,7 @@ export function DeviceView({
   const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
     setOpened(true);
-    if (controlling || control.state.kind === 'starting') control.end();
+    control.end();
     setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
     stream.seek(at, rate);
   };
