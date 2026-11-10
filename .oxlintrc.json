@@ -577,7 +577,12 @@
         "packages/stim-cli/src/commands/guide.ts",
         "packages/stim-cli/src/commands/ports.ts",
         "packages/stim-cli/src/commands/remote.ts",
-        "packages/stim-cli/src/commands/logs.ts"
+        "packages/stim-cli/src/commands/logs.ts",
+        "packages/stim-cli/src/commands/doctor.ts",
+        "packages/stim-cli/src/commands/gc.ts",
+        "packages/stim-cli/src/commands/device.ts",
+        "packages/stim-cli/src/commands/device-tools.ts",
+        "packages/stim-cli/src/commands/share.ts"
       ],
       "rules": {
         "no-restricted-imports": [
