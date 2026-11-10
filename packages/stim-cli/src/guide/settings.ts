@@ -1241,8 +1241,11 @@ and stim android check the machine's toolchain first. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
 A React Native offload sends the tracked and untracked files, and the gitignored
 files the native fingerprint hashes or the Expo config reads, such as .env.local
-and other Expo .env files, secrets included. Nothing under node_modules and no
-build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
+and other Expo .env files, secrets included. It also sends the values of the
+environment variables the build reads from this shell, and every variable when
+project code enumerates process.env, secrets included; only Stim's own secrets,
+toolchain and home paths, and shell-session names stay here. Nothing under
+node_modules and no build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
 names the sources that differ and the files pod install or prebuild rewrote there.
 Run stim remote add <machine> to ask for build access if not approved. A person
 on the worker approves it by running the stim setup command it printed, with

@@ -773,8 +773,13 @@ which only the ticket holder can derive, can read it until expiry.
 
 An offloaded React Native build sends the checkout's tracked and untracked
 files, and the gitignored files its native fingerprint hashes or its Expo config
-reads, such as `.env.local` and the other Expo `.env` files. Those files can hold
-secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
+reads, such as `.env.local` and the other Expo `.env` files. It also sends the
+values of the environment variables the build reads from your shell, and every
+variable in your shell when project code enumerates `process.env`, so the worker
+builds with the same values. Stim's own secrets, toolchain and home paths such as
+`PATH`, `JAVA_HOME` and `ANDROID_HOME`, and shell-session variables stay on your
+machine. Those files and variables can hold secrets: Stim assumes every paired
+Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or
 `android/build`.
