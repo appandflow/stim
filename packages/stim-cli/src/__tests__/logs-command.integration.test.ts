@@ -13,10 +13,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Command } from 'commander';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import logsCommand, {
+import logsOp, {
   ERRORS_PRINT_CAP,
   formatRecord,
   formatTime,
@@ -30,45 +29,12 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
-type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
-
-interface CommandStub {
-  command(nameAndArgs?: string): CommandStub;
-  description(str?: string): CommandStub;
-  option(flags?: string, description?: string): CommandStub;
-  action(fn: ActionFn): CommandStub;
-}
-
 function parsedMsgs(lines: string[]): unknown[] {
   return lines.map((l) => {
     const record = parseNdjsonLine(l);
     assert(record);
     return record.msg;
   });
-}
-
-function captureAction(register: (program: Command) => void) {
-  let captured: ActionFn | undefined;
-  const stub: CommandStub = {
-    command() {
-      return stub;
-    },
-    description() {
-      return stub;
-    },
-    option() {
-      return stub;
-    },
-    action(fn: ActionFn) {
-      captured = fn;
-      return stub;
-    },
-  };
-  register(stub as Command);
-  return (opts: Record<string, unknown> = {}) => {
-    if (!captured) throw new Error('register did not register an action');
-    return captured(opts);
-  };
 }
 
 describe('formatting', () => {
@@ -254,7 +220,7 @@ describe('logs command', () => {
 
   async function run(opts: Record<string, unknown>) {
     try {
-      await captureAction(logsCommand)(opts);
+      await logsOp.run?.({ args: [], options: opts, parent: {}, version: '9.9.9' });
     } catch (err) {
       if ((err as Error).message !== 'exit') throw err;
     }

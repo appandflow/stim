@@ -2,10 +2,10 @@ import { PEER } from '@stim-cli/core/protocol';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
-import remoteCommand from '../commands/remote.ts';
+import { remoteOp } from '../commands/remote.ts';
+import { runCli } from '../cli/define-op.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
 import type { Endpoint, HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
@@ -84,9 +84,7 @@ async function remote(io: TailnetMachineIo, ...args: string[]): Promise<string> 
   const out: string[] = [];
   vi.spyOn(console, 'log').mockImplementation((line: string) => void out.push(line));
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  const program = new Command().exitOverride();
-  remoteCommand(program, '9.9.9', io);
-  await program.parseAsync(['remote', ...args], { from: 'user' });
+  await runCli(remoteOp(io), args, { version: '9.9.9' });
   return out.join('\n');
 }
 
