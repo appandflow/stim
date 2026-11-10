@@ -154,7 +154,8 @@ Install the client CLI globally or run it with npx:
 
 <StimInstallTabs />
 
-A remote machine can compile iOS simulator Debug and Release apps, Android
+A remote machine can compile iOS simulator Debug and Release apps, including
+[Exact](./commands.md#exact-apps) apps, Android
 emulator debug and release apps, and macOS SwiftPM Debug apps. An iOS Release app built there
 carries the JavaScript of the checkout this machine synced, including gitignored
 `.env.production` files, so a machine without Xcode, such as Linux, can run
@@ -227,6 +228,26 @@ Without one, the steps run on the worker's own `node`, and a failed install or
 prebuild names the pin and that Node's version. Install a matching Node on the
 worker, for example `brew install node@22`. When the pinned Node's major
 changes, the worker reinstalls dependencies so native modules match it.
+
+### Exact apps on the worker
+
+An Exact build runs the app's own `./exact.mjs ios --no-install` on the worker,
+so the worker needs Exact's toolchain for the app's pins, installed under the
+user that runs its Stim service:
+
+- Bun at `~/.bun-<version>`, the version `exact.mjs` pins.
+- rustup with the Rust version the exact2 checkout pins and its
+  `aarch64-apple-ios-sim` target, which Exact's setup does not add.
+- The exact2 commit the app uses, at `~/.exact/exact2/<commit>`, set up with
+  `bun scripts/exact.mjs setup` there. A setup line about Chrome or Android does
+  not matter for iOS builds.
+
+A worker that lacks one is skipped: the placement line, and the refusal of a
+named `--remote-build`, name the missing piece and the command that installs it
+there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
+client sent them, and keep `target/` warm in the checkout's own repository area.
+The worker never gives an Exact build a simulator, so apps whose `app.json`
+declares native modules build on the client.
 
 ### Worker disk
 

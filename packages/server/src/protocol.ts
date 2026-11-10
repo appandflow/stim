@@ -169,6 +169,11 @@ const protocolError: JsonSchema = {
 
 const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
+const exactPinProperties = {
+  exact2: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+  bun: { type: 'string', pattern: '^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$' },
+  rust: { type: 'string', pattern: '^[0-9A-Za-z][0-9A-Za-z.-]{0,39}$' },
+};
 const buildArtifactIdentity: JsonSchema = {
   type: 'object',
   required: ['fingerprint', 'cacheKey'],
@@ -2138,6 +2143,13 @@ export function protocolJsonSchema(): JsonSchema {
               gradleArtifact: gradleArtifactQuery,
               reactNativeArtifact: reactNativeArtifactQuery,
               swiftpmArtifact: swiftpmArtifactQuery,
+              exact: {
+                type: 'object',
+                required: ['exact2', 'bun', 'rust'],
+                additionalProperties: false,
+                description: "An Exact app's pins; the offer then reports what of Exact's toolchain the machine lacks.",
+                properties: exactPinProperties,
+              },
             },
           }),
           request('build.sync', {
@@ -2303,6 +2315,23 @@ export function protocolJsonSchema(): JsonSchema {
               compat: {
                 ...buildCompat,
                 description: 'Compared instead of stimBuild by a machine whose build.offer toolchain reports compat.',
+              },
+              exact: {
+                type: 'object',
+                required: ['name', 'exact2', 'bun', 'rust', 'env'],
+                additionalProperties: false,
+                description:
+                  "An Exact app's iOS build: its directory name, pins and declared settings' values; fingerprint is the synced manifest digest.",
+                properties: {
+                  name: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' },
+                  ...exactPinProperties,
+                  env: {
+                    type: 'object',
+                    maxProperties: 64,
+                    propertyNames: { pattern: '^[A-Z][A-Z0-9_]*$' },
+                    additionalProperties: { type: 'string' },
+                  },
+                },
               },
               jdk: {
                 type: 'string',

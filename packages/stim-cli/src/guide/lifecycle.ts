@@ -429,7 +429,8 @@ Copyable agent request:
   inspect stim logs --errors, then stop only this workspace with stim stop.`,
     },
     'exact-ios': {
-      summary: 'Exact apps: building with exact.mjs, driving with Exact on the owned simulator, worktree limits',
+      summary:
+        'Exact apps: building with exact.mjs, driving with Exact on the owned simulator, remote builds, worktree limits',
       body: () => `EXACT APPS
 An Exact app (https://github.com/expo/exact) has exact.mjs next to app.json.
 Run from that directory:
@@ -457,6 +458,21 @@ created in (otherwise the build fails with "Cargo has no <name>-apple
 target"), and EXACT2 set to the Exact checkout when it sits at another folder
 depth (otherwise "no exact2 at ..."). Stim reports these Exact failures as
 they come.
+
+Remote builds: with paired build Macs (guide remote), remote.build and
+--remote-build place an Exact build like any iOS simulator build. The worker
+runs the same ./exact.mjs ios --no-install [--release] in a checkout folder
+named like this app's, with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
+and this Mac installs the .app on its owned simulator; nothing is cached. The
+worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
+Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
+commit this app uses, set up with Exact's setup. A machine that lacks one is
+skipped and the placement line names the missing piece and the command that
+installs it. The values of the settings app.json env declares travel with the
+build: this shell's, else .env.local's, else .env's, as Exact reads them. These
+build here: apps whose app.json declares native modules (Exact may read them on
+a simulator), an exact2 checkout with local changes, and an app folder name
+that is not a plain ASCII file name.
 
 Only iOS simulators are supported. macOS, web, Android and physical devices
 use Exact's own commands.`,

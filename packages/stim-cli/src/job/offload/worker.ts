@@ -77,6 +77,14 @@ import {
 import type { SwiftpmArtifactReceipt } from '../../offload/swiftpm-artifact.ts';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../../integrations/projects.ts';
+import {
+  exactCheckoutDir,
+  exactDeclaredSettings,
+  exactDeclaresModules,
+  exactToolProblems,
+  type ExactOffload,
+} from '../../integrations/exact-offload.ts';
+import { runExactIosBuild } from '../../integrations/exact-ios.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
 import { buildIosOperation } from '../../commands/ios/build.ts';
 import { buildAndroidOperation } from '../../commands/android/build.ts';
@@ -152,6 +160,7 @@ interface WorkerJob {
   /** The JDK major the client builds on; the build runs on an installed JDK of it when the default differs. */
   jdk?: string;
   native?: BuildStartParams['native'];
+  exact?: ExactOffload;
   optimizations: Optimizations['ios'] | null;
 }
 
@@ -292,7 +301,8 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
  * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
-function ensureCheckout(area: string, src: string): void {
+function ensureCheckout(area: string, src: string, job: Pick<WorkerJob, 'exact' | 'project'>): void {
+  if (job.exact && job.project === '') exactCheckout(area, job.exact.name);
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform === 'win32') {
     const linked = !stat || stat.isSymbolicLink();
@@ -689,7 +699,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
   };
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
-  ensureCheckout(job.area, join(job.area, 'src'));
+  ensureCheckout(job.area, join(job.area, 'src'), job);
   const src = realpathSync(join(job.area, 'src'));
   const root = join(src, job.project);
 
@@ -755,15 +765,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       return failed('source-moved', (error as Error).message);
     }
     fingerprint = job.expectedFingerprint;
-  } else if (job.platform === 'macos') {
-    fingerprint = await time('fingerprintMs', () => manifestDigest(job.manifest));
-    if (fingerprint !== job.expectedFingerprint)
-      return failed(
-        'fingerprint-mismatch',
-        `the manifest there fingerprints ${fingerprint.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
-      );
-    compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
-    if (!compiled.ok) return failed(compiled.code, compiled.message);
+  } else if (job.platform === 'macos' || job.exact) {
+    fingerprint = job.expectedFingerprint;
+    compiled = await compileSyncedManifest(job, root, realRoot, log, time);
   } else {
     useProjectNode(realRoot, realSrc, job.platform);
     const nodeFailed = (code: string, message: string) =>
@@ -888,6 +892,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         : null;
     if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }
+  if (!compiled.ok) return failed(compiled.code, compiled.message);
   try {
     const out = join(job.area, 'out', job.job);
     if (job.platform !== 'macos') rmSync(out, { recursive: true, force: true });
@@ -1009,6 +1014,108 @@ async function nativeIdentityRefusal(
   } catch (error) {
     return `This Mac cannot key the native build: ${(error as Error).message}`;
   }
+}
+
+/**
+ * Makes `<area>/src` a link to `<area>/checkout/<name>`: Exact names the crates it generates after the real name of the
+ * app directory, so the app must build in a directory named like the client's. An existing `src` directory moves there.
+ */
+function exactCheckout(area: string, name: string): void {
+  const src = join(area, 'src');
+  const target = join('checkout', name);
+  const stat = lstatSync(src, { throwIfNoEntry: false });
+  if (stat?.isSymbolicLink() && readlinkSync(src) === target) return;
+  mkdirSync(join(area, 'checkout'), { recursive: true });
+  if (stat?.isDirectory() && !existsSync(join(area, target))) renameSync(src, join(area, target));
+  else mkdirSync(join(area, target), { recursive: true });
+  rmSync(src, { recursive: !stat?.isSymbolicLink(), force: true });
+  symlinkSync(target, src);
+}
+
+async function compileSyncedManifest(
+  job: WorkerJob,
+  root: string,
+  realRoot: string,
+  log: NdjsonWriter,
+  time: Timer,
+): Promise<Compiled> {
+  const digest = await time('fingerprintMs', () => manifestDigest(job.manifest));
+  if (digest !== job.expectedFingerprint)
+    return {
+      ok: false,
+      code: 'fingerprint-mismatch',
+      message: `the manifest there fingerprints ${digest.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
+    };
+  return job.exact
+    ? compileExact(job, job.exact, realRoot, log, time)
+    : workerOperation(root, (context) => compileMacos(context, job, root, log, time));
+}
+
+/** Runs the Exact build with this machine's exact2 for the pins and the client's settings, never on a simulator. */
+async function compileExact(
+  job: WorkerJob,
+  exact: ExactOffload,
+  root: string,
+  log: NdjsonWriter,
+  time: Timer,
+): Promise<Compiled> {
+  if (job.platform !== 'ios')
+    return { ok: false, code: 'unsupported-provider', message: 'An Exact build is an iOS build.' };
+  const selected = projectRegistry.selectIos(root);
+  if ('problem' in selected || selected.id !== 'exact')
+    return {
+      ok: false,
+      code: 'provider-mismatch',
+      message: 'The transferred project did not select the Exact integration.',
+    };
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(join(root, 'app.json'), 'utf8'));
+  } catch {
+    return { ok: false, code: 'bad-project', message: 'The Exact app has no readable app.json.' };
+  }
+  if (!isJsonObject(manifest) || exactDeclaresModules(manifest))
+    return {
+      ok: false,
+      code: 'exact-modules',
+      message: 'This machine does not build Exact apps that declare native modules.',
+    };
+  const declared = exactDeclaredSettings(manifest);
+  const undeclared = Object.keys(exact.env).filter((name) => !declared.includes(name));
+  if (undeclared.length)
+    return { ok: false, code: 'bad-request', message: `app.json does not declare ${undeclared.join(', ')}.` };
+  const missing = exactToolProblems(exact, process.env);
+  if (missing.length)
+    return {
+      ok: false,
+      code: 'exact-tools',
+      message: `Exact's toolchain is incomplete here: ${missing.map((problem) => problem.reason).join('; ')}.`,
+    };
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env))
+    if (
+      !declared.includes(key) &&
+      key !== 'BUN' &&
+      key !== 'CARGO_TARGET_DIR' &&
+      key !== 'EXACT2' &&
+      !key.startsWith('EXACT_')
+    )
+      env[key] = value;
+  Object.assign(env, exact.env, { EXACT2: exactCheckoutDir(exact) });
+  note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
+  const built = await time('buildMs', () =>
+    runExactIosBuild({
+      root,
+      release: job.configuration === 'Release',
+      env,
+      logWriter: log,
+      onHeartbeat: (line) => note('build', line),
+      estimateMs: null,
+    }),
+  );
+  if (built.ok) return { ok: true, path: built.appPath, cache: {} };
+  const lines = built.diagnostics.map((each) => each.message);
+  return { ok: false, code: 'exact-build-failed', message: lines.join(' | ') || 'The Exact build failed.' };
 }
 
 function workerOperation<T>(root: string, fn: (context: StimContext) => Promise<T>): Promise<T> {

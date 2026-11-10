@@ -71,7 +71,8 @@ export interface OffloadProblem {
     | 'compile-sdk'
     | 'disk'
     | 'busy'
-    | 'platform';
+    | 'platform'
+    | 'exact';
   reason: string;
   /** Shell commands that clear it, to run on the remote machine, and what they do, as the end of "On <machine>, ...". */
   commands?: string[];
@@ -188,7 +189,7 @@ export function cocoapodsDifference(
   target: Extract<BuildTarget, { platform: 'ios' }>,
   worker: WorkerToolchain,
 ): OffloadProblem | null {
-  if (target.native || target.cocoapodsPinned) return null;
+  if (target.native || target.exact || target.cocoapodsPinned) return null;
   if (worker.os !== undefined && worker.os !== 'darwin') return null;
   const here = target.local.cocoapods;
   if (!worker.cocoapods) {
