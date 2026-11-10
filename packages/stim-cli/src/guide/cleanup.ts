@@ -1326,8 +1326,10 @@ WORKSPACE BUILD OUTPUTS
   cache-provider/, js-swap-tmp/, macos/build, the staged macos/<Product>.app and macos/staging-*
   leftovers. The project's own android/app/build, android/build,
   android/.gradle, .build, the CMake directories android/.cxx and
-  android/<module>/.cxx, and a .dd directory laid out as Xcode DerivedData
-  (a Build/ directory beside ModuleCache.noindex or Logs/) count with them
+  android/<module>/.cxx, a .dd directory laid out as Xcode DerivedData
+  (a Build/ directory beside ModuleCache.noindex or Logs/), and an Exact
+  app's Cargo target/ (beside its exact.mjs and Cargo.toml, kept while a
+  process runs from or works in the app) count with them
   when git ignores every file in the directory and tracks none; one that
   fails that check, or is not in a
   git checkout, stays, and \`gc --delete\` prints why when the check fails

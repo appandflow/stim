@@ -32,11 +32,12 @@ DISPOSABLE STATE
 
 In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
 directories (android/app/build, android/build, android/.gradle, .build,
-android/.cxx, android/<module>/.cxx and a .dd directory laid out as DerivedData) are
-disposable. The stim-daemon deletes a workspace's build outputs when it goes
-idle, and node_modules and Pods of idle linked worktrees under critical disk
-pressure; the next start, ios or android restores them from the build cache
-or with worktree warm. Never fix a dependency by editing files inside them:
+android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
+and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
+workspace's build outputs when it goes idle, and node_modules and Pods of idle
+linked worktrees under critical disk pressure; the next start, ios or android
+restores them from the build cache or with worktree warm, except an Exact
+app's target/, which its next build recompiles in full. Never fix a dependency by editing files inside them:
 the change is lost. Put dependency changes in the project's own patch
 mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
 post_install hook, and commit them.

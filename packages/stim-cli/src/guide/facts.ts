@@ -978,7 +978,8 @@ RULES
                               clears (android/app/build, android/build,
                               android/.gradle, .build, android/.cxx,
                               android/<module>/.cxx, a .dd laid out as
-                              DerivedData, node_modules,
+                              DerivedData, an Exact app's target/,
+                              node_modules,
                               ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
@@ -1122,7 +1123,8 @@ RULES
                               lists the project's android/app/build,
                               android/build,
                               android/.gradle, .build, android/.cxx,
-                              android/<module>/.cxx and .dd that --delete
+                              android/<module>/.cxx, .dd and an Exact
+                              app's target/ that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
