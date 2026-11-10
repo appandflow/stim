@@ -135,7 +135,7 @@ jobs:
           update_sha="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\1/p' <<<"$last")"
           update_hash="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\2/p' <<<"$last")"
           base="${update_sha:-$build_sha}"
-          paths=(apps/mobile packages/core pnpm-lock.yaml)
+          paths=(apps/mobile packages/core pnpm-lock.yaml ':(glob,exclude)**/*.md' ':(glob,exclude)**/*.test.*' ':(glob,exclude)**/__tests__/**')
           if git cat-file -e "$base^{commit}" 2>/dev/null && git -C "$GITHUB_WORKSPACE" diff --quiet "$base" "$SHA" -- "${paths[@]}"; then
             echo "::notice::Nothing the app ships changed since $base; publishing nothing."
             echo "mode=none" >> "$GITHUB_OUTPUT"
