@@ -38,7 +38,7 @@ function reason(error: unknown): string {
 }
 
 // compat C15 permanent
-async function kindError(
+export async function kindError(
   source: PluginSource,
   reference: string,
   kind: string,
