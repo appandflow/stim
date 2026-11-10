@@ -141,10 +141,10 @@ for (const [root, mode] of [[stimdClaimRoot(), 'exclusive'], [daemonClaimRoot(),
 });
 
 /**
- * Replaces `dist` the way a package update does: a new tree whose hashed chunks all have other names, renamed into
- * place, so the old chunks are gone from disk.
+ * The next tree of `dist` as a package update writes it: every hashed chunk has another name, so once it replaces
+ * `dist` the old chunks are gone from disk.
  */
-function updateInPlace(dist: string): void {
+function nextDist(dist: string): string {
   const next = `${dist}.next`;
   cpSync(dist, next, { recursive: true });
   const chunks = readdirSync(next).filter((name) => /-[\w-]{8}\.mjs$/.test(name));
@@ -154,6 +154,10 @@ function updateInPlace(dist: string): void {
     writeFileSync(join(next, renamed(name)), renamed(readFileSync(join(next, name), 'utf8')));
     if (chunks.includes(name)) rmSync(join(next, name));
   }
+  return next;
+}
+
+function replaceDist(dist: string, next: string): void {
   renameSync(dist, `${dist}.old`);
   renameSync(next, dist);
   rmSync(`${dist}.old`, { recursive: true, force: true });
@@ -221,14 +225,15 @@ test.skipIf(process.platform === 'win32')(
       await until('the stimd of the installed build', () => record()?.build === before);
       const pid = record()?.pid;
 
-      const other = await first('ffffffffffff');
-      expect(other).toMatchObject({ op: 'engine-changed', pid });
-      expect(other).not.toHaveProperty('handover');
+      const next = nextDist(dist);
+      const after = stimBuildId(next);
+      assert(after);
+      const early = await first(after);
+      expect(early).toMatchObject({ op: 'engine-changed', pid });
+      expect(early).not.toHaveProperty('handover');
       expect(await first(before)).toMatchObject({ op: 'hello', pid });
 
-      updateInPlace(dist);
-      const after = stimBuildId(dist);
-      assert(after);
+      replaceDist(dist, next);
       expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
       await until('the stimd of the updated build', () => record()?.build === after && record()?.pid !== pid);
     } finally {

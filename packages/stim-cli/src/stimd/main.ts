@@ -2,7 +2,17 @@ import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
 import type { StimContext } from '@stim-cli/core';
-import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -292,8 +302,20 @@ function attachedReply(attached: boolean, instance?: string): { attached?: true;
 }
 
 /** The build and version this stimd's own installation holds now, which an update in place changes under it. */
+const ownDist = () => dirname(fileURLToPath(import.meta.url));
+
+/** The identity and modification time of this stimd's `dist` directory, which a package update changes. */
+function distStamp(): string {
+  try {
+    const { ino, mtimeMs } = statSync(ownDist());
+    return `${ino}:${mtimeMs}`;
+  } catch {
+    return '';
+  }
+}
+
 function installedNow(): { build: string; version: string } | null {
-  const dir = dirname(fileURLToPath(import.meta.url));
+  const dir = ownDist();
   const installed = stimBuildId(dir);
   if (!installed) return null;
   const version = readJsonObject(join(dir, '..', 'package.json'))?.version;
@@ -872,10 +894,12 @@ async function runStimdInner(
   let netServes: ServeOptions | null = serve ?? null;
   let switchedTo: { build: string; version: string } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
-  const checkedClients = new Set<string>();
+  const checkedClients = new Map<string, string>();
   const noteClientBuild = (client: unknown) => {
-    if (follower || attached || updatedInPlace || typeof client !== 'string' || checkedClients.has(client)) return;
-    checkedClients.add(client);
+    if (follower || attached || updatedInPlace || typeof client !== 'string') return;
+    const stamp = distStamp();
+    if (checkedClients.get(client) === stamp) return;
+    checkedClients.set(client, stamp);
     const now = installedNow();
     if (now?.build !== client) return;
     updatedInPlace = now;
