@@ -1183,7 +1183,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Web shares live inside this Stim home's stim-server, the net thread of its
   stimd. stim share ios|android asks stimd, started when none runs, to start
   the net thread when none answers. This code means that failed; the message
-  says why, such as an older stim-server holding the port. Fix what it names,
+  says why, such as an older stim-server holding the port. A stimd of
+  another Stim build answers STIM_DAEMON_UNAVAILABLE instead. Fix what it names,
   or read $STIM_HOME/daemon/daemon.ndjson, then run stim share again. From
   share list or share stop it only means that no net thread runs, so nothing
   is shared.`,
@@ -1969,13 +1970,18 @@ not on any remote"  (worktree remove)
   npx stim@<this version> engine use <this version>.`,
     },
     STIM_DAEMON_UNAVAILABLE: {
-      summary: 'an attached Stim daemon could not start or admit the command',
+      summary: 'an attached Stim daemon, or a stimd of another build, could not admit or serve the command',
       body: () => `STIM_DAEMON_UNAVAILABLE
   An attached daemon may still be starting, ending, or serving a different
   build. Wait for its owning command to finish and retry, or use a separate
   STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
   seconds for cleanup before forcing the daemon to exit. If startup still
-  fails, run stim doctor or run outside the sandbox.`,
+  fails, run stim doctor or run outside the sandbox.
+  stim share also answers it when this home's stimd runs another Stim build
+  and no stimd of this build replaced it. The message names that build and
+  pid: wait for the commands it serves when it restarts on this build, run
+  the command with that build, or stop that stimd with kill <pid> so the
+  next command starts one of this build.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',

@@ -28,7 +28,7 @@ import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { getExecutor } from '../exec.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -112,6 +112,7 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
+let refusal: { version: string; pid: unknown; handover: boolean } | null = null;
 let opSocket: Socket | null = null;
 const opTokens = new WeakMap<Socket, string>();
 let following: Promise<never> | null = null;
@@ -140,6 +141,41 @@ function sandboxBlocked(path = stimdSocket()): Error {
 /** Whether a stimd of another build refused this process's connection. */
 export function stimdRefused(): boolean {
   return refusedBuild !== null;
+}
+
+function noteRefusal(message: Record<string, unknown>): void {
+  refusedByAttached = message.attached === true;
+  refusedBuild ??= String(message.build);
+  refusal = {
+    version: String(message.version ?? message.build),
+    pid: message.pid,
+    handover: message.handover === true,
+  };
+}
+
+/**
+ * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
+ * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
+ */
+export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+  if (!refusal) return null;
+  const { version, pid, handover } = refusal;
+  const runs = `This Stim home's stimd (pid ${String(pid)}) runs Stim ${version}, not this stim's ${stimBuild().version}`;
+  const [why, remedy] = refusedByAttached
+    ? [
+        `${runs}, as the child of another command.`,
+        'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
+      ]
+    : handover
+      ? [
+          `${runs}; it restarts on this build once the commands it serves end.`,
+          'Run the command again once those commands end.',
+        ]
+      : [
+          `${runs}, and does not restart on this build.`,
+          `Run the command with Stim ${version}, or stop that stimd with \`kill ${String(pid)}\`; the next stim command starts one of this build.`,
+        ];
+  return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 
 /**
@@ -192,10 +228,9 @@ function openStimd(
       }
       buffer = buffer.slice(end + 1);
       if (!isJsonObject(message)) continue;
-      if (message.op === 'engine-changed') refusedByAttached = message.attached === true;
+      if (message.op === 'engine-changed') noteRefusal(message);
       // compat C26 permanent
       if (message.op === 'engine-changed') {
-        refusedBuild ??= String(message.build);
         const next = switchedEngine();
         if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
       }
@@ -847,11 +882,21 @@ export async function holdExistingStimd(ownedInstance: string | null, signal?: A
   return () => held.forEach((socket) => socket.destroy());
 }
 
+/**
+ * Whether the stimd of another build that refused this process may be replaced by one of this build: one that said
+ * it hands over, or any but an attached one when this build runs from the engine store, whose stimds follow the
+ * engine pointer.
+ */
+function successorExpected(): boolean {
+  return !refusedByAttached && (refusal?.handover === true || ownStoreEngine() !== null);
+}
+
 /** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
 async function successorBound(): Promise<boolean> {
   for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
+      refusal = null;
       return true;
     }
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
@@ -951,7 +996,7 @@ async function askHeldStimd(
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
     reply = await ask();
   }
-  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  if (!reply && stimdRefused() && successorExpected() && (await successorBound())) reply = await ask();
   return reply;
 }
 
@@ -1035,9 +1080,16 @@ export function serveThroughStimd(
 
 /**
  * A connection to this home's net thread through stimd's CLI socket, past its `net.connected` answer, on which the
- * caller speaks stim-server's WebSocket protocol as a local client. Null when no stimd or no net thread answers.
+ * caller speaks stim-server's WebSocket protocol as a local client, asked once more when a stimd of another build
+ * refused it and handed the home over to one of this build. Null when no stimd or no net thread answers.
  */
-export function connectNet(timeoutMs: number): Promise<Socket | null> {
+export async function connectNet(timeoutMs: number): Promise<Socket | null> {
+  const socket = await openNet(timeoutMs);
+  if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
+  return openNet(timeoutMs);
+}
+
+function openNet(timeoutMs: number): Promise<Socket | null> {
   if (!stimdLive()) return Promise.resolve(null);
   return new Promise((resolve) => {
     const socket = connect(stimdSocket());
@@ -1058,6 +1110,10 @@ export function connectNet(timeoutMs: number): Promise<Socket | null> {
           message = JSON.parse(buffer.subarray(0, end).toString('utf8'));
         } catch {}
         buffer = buffer.subarray(end + 1);
+        if (isJsonObject(message) && message.op === 'engine-changed') {
+          noteRefusal(message);
+          return finish(false);
+        }
         if (++lines === 2) return finish(isJsonObject(message) && message.op === 'net.connected');
       }
     };

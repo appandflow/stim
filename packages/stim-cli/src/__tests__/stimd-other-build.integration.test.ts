@@ -1,13 +1,25 @@
 import assert from 'node:assert';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { createServer, type Server } from 'node:net';
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { connect, createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
-import { stimdClaimRoot, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
+import { stimBuildId, stimdClaimRoot, stimdRecordFile, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
+import { machineCopy } from './fixtures/machine-copy.ts';
 
+const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
 let home: string;
 let server: Server | null = null;
 let claim: ClaimHandle | null = null;
@@ -25,6 +37,47 @@ afterEach(async () => {
   vi.resetModules();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
+});
+
+test('share list names a stimd of another build and how to replace it, not that no stimd runs', async () => {
+  const socket = stimdSocket();
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
+  claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
+  server = createServer((connection) => {
+    connection.resume();
+    connection.end(
+      `${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', version: '1.0.0-other', pid: 4242 })}\n`,
+    );
+  });
+  await new Promise<void>((done) => server?.listen(socket, done));
+  vi.resetModules();
+  const { runShare } = await import('../commands/share.ts');
+  const { otherBuildRefusal } = await import('../daemon/client.ts');
+  const { requestLocalServer } = await import('../local-server.ts');
+
+  const result = await runShare(
+    'list',
+    {},
+    {
+      findWorkspace: async () => null,
+      request: (method, params) => requestLocalServer(method, params, { version: '9.9.9' }),
+      startServer: async () => null,
+      otherBuild: otherBuildRefusal,
+      note: () => {},
+      platform: 'darwin',
+    },
+    '9.9.9',
+  );
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      message: expect.stringContaining('1.0.0-other'),
+      remedy: expect.stringContaining('kill 4242'),
+    },
+  });
 });
 
 test('stim share waits for a stimd that holds its claim but does not listen yet', async () => {
@@ -84,3 +137,85 @@ for (const [root, mode] of [[stimdClaimRoot(), 'exclusive'], [daemonClaimRoot(),
     expect(remedy).toContain(join(home, part));
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a stimd whose own installation was updated in place hands the home to a stimd of the new build',
+  async () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-in-place-')));
+    const bin = join(tmp, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['launchctl', 'systemd-run']) {
+      writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n');
+      chmodSync(join(bin, tool), 0o755);
+    }
+    const env = {
+      ...process.env,
+      HOME: tmp,
+      STIM_HOME: home,
+      STIM_ENGINE_ROOT: join(tmp, 'engine'),
+      STIM_DAEMON: 'on',
+      PATH: `${bin}:${process.env.PATH}`,
+    };
+    const dist = join(machineCopy(PACKAGE, join(tmp, 'prefix')), 'dist');
+    const record = (): { pid: number; build: string } | null => {
+      try {
+        return JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+      } catch {
+        return null;
+      }
+    };
+    const until = async (what: string, check: () => boolean) => {
+      for (const deadline = Date.now() + 20_000; !check();) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((done) => setTimeout(done, 20));
+      }
+    };
+    const first = (build: string) =>
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        const socket = connect(stimdSocket());
+        socket.setEncoding('utf8');
+        let buffer = '';
+        socket.on('data', (chunk: string) => {
+          buffer += chunk;
+          const end = buffer.indexOf('\n');
+          if (end < 0) return;
+          socket.destroy();
+          resolve(JSON.parse(buffer.slice(0, end)));
+        });
+        socket.once('error', reject);
+        socket.once('connect', () => socket.write(`${JSON.stringify({ kind: 'cli', build })}\n`));
+      });
+    const stimds: ChildProcess[] = [];
+    try {
+      stimds.push(
+        spawn(process.execPath, [join(dist, 'cli.mjs'), '__stimd', '--mode', 'on'], {
+          env,
+          cwd: tmp,
+          stdio: 'ignore',
+          detached: true,
+        }),
+      );
+      const before = stimBuildId(dist);
+      await until('the stimd of the installed build', () => record()?.build === before);
+      const pid = record()?.pid;
+
+      expect(await first('ffffffffffff')).toMatchObject({ op: 'engine-changed', pid });
+      expect(record()?.pid).toBe(pid);
+
+      appendFileSync(join(dist, 'cli.mjs'), '\n// updated\n');
+      const after = stimBuildId(dist);
+      assert(after);
+      expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
+      await until('the stimd of the updated build', () => record()?.build === after && record()?.pid !== pid);
+    } finally {
+      const last = record()?.pid;
+      for (const pid of [last, ...stimds.map((stimd) => stimd.pid)])
+        try {
+          if (pid) process.kill(pid, 'SIGTERM');
+        } catch {}
+      await new Promise((done) => setTimeout(done, 500));
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+  120_000,
+);

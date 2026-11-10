@@ -5,6 +5,7 @@ import type { StimContext } from '@stim-cli/core';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -19,6 +20,7 @@ import {
   stimdRecordFile,
   stimdRunDir,
   stimdSocket,
+  stimBuildId,
   macosAppState,
   readMacosRecord,
   readDaemonSnapshot,
@@ -48,7 +50,7 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { stimBuild } from '../spawn-entry.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import { getConfigDir, loadConfig, type Config } from '../workspace/config.ts';
@@ -287,6 +289,15 @@ function keepsServingWhenOff(attached: boolean, active: boolean, network: boolea
 
 function attachedReply(attached: boolean, instance?: string): { attached?: true; instance?: string } {
   return attached ? { attached: true, ...(instance ? { instance } : {}) } : {};
+}
+
+/** The build and version this stimd's own installation holds now, which an update in place changes under it. */
+function installedNow(): { build: string; version: string } | null {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  const installed = stimBuildId(dir);
+  if (!installed) return null;
+  const version = readJsonObject(join(dir, '..', 'package.json'))?.version;
+  return { build: installed, version: typeof version === 'string' ? version : installed };
 }
 
 function markDaemonFailure(level: Level, attached: boolean, mark: (() => void) | null): void {
@@ -860,6 +871,20 @@ async function runStimdInner(
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   let switchedTo: { build: string; version: string } | null = null;
+  let updatedInPlace: { build: string; version: string } | null = null;
+  const checkedClients = new Set<string>();
+  const noteClientBuild = (client: unknown) => {
+    if (follower || attached || updatedInPlace || typeof client !== 'string' || checkedClients.has(client)) return;
+    checkedClients.add(client);
+    const now = installedNow();
+    if (now?.build !== client) return;
+    updatedInPlace = now;
+    log(
+      'info',
+      'stimd_install_updated',
+      `this stimd's installation now holds ${now.version} (${now.build}); restarting on it once the commands it serves end`,
+    );
+  };
   let foreignLeft = afterSwitch;
   let heldSwitch = false;
   const hasActiveCommands = () => ops.size > 0;
@@ -883,7 +908,19 @@ async function runStimdInner(
     if (attached) requestEnd(why, 'error');
     else shutdown(why, 'error');
   };
+  const refuseClient = (socket: Socket, message: Record<string, unknown>) => {
+    if (message.kind !== 'desktop') noteClientBuild(message.build);
+    const handover = updatedInPlace?.build === message.build ? { handover: true } : {};
+    socket.end(
+      `${JSON.stringify({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...handover, ...switchedTo })}\n`,
+    );
+    void checkEngine();
+  };
   const checkEngine = async (): Promise<void> => {
+    if (!follower && updatedInPlace && !switchedTo && !closing && !enginePinned() && !net.running()?.shareOnly) {
+      relaunchDone = relaunch(updatedInPlace, spawnEntry('cli'));
+      void relaunchDone.catch(() => {});
+    }
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
@@ -895,7 +932,7 @@ async function runStimdInner(
     }
     if (!next || switchedTo || closing) return;
     if (!enginePinned()) {
-      relaunchDone = relaunch(next, follower.engine.root);
+      relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs'));
       void relaunchDone.catch(() => {});
     } else if (!heldSwitch) {
       heldSwitch = true;
@@ -906,7 +943,7 @@ async function runStimdInner(
       );
     }
   };
-  const relaunch = async (next: { build: string; version: string }, root: string) => {
+  const relaunch = async (next: { build: string; version: string }, entry: string) => {
     switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, tickReplies]) list.length = 0;
@@ -917,10 +954,7 @@ async function runStimdInner(
     shutdown(why);
     await shutdownDone;
     if (keepOwn) return;
-    launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
-      '--after-switch',
-      ...serveArgs(carried, service),
-    ]);
+    launchStimd(process.env, startMode, process.platform, entry, ['--after-switch', ...serveArgs(carried, service)]);
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
       if (record?.build === next.build && record.pid !== process.pid) return;
@@ -973,8 +1007,7 @@ async function runStimdInner(
             return;
           }
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
-            reply({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...switchedTo });
-            socket.end();
+            refuseClient(socket, message);
             return;
           }
           // compat end
