@@ -7,15 +7,8 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { isJsonObject } from '@stim-cli/core/state';
-import {
-  addFunnelRoute,
-  freeFunnelPort,
-  funnelPorts,
-  holdsFunnelRoute,
-  readServeConfig,
-  removeFunnelRoute,
-  type FunnelRoute,
-} from '@stim-cli/transport-tailscale';
+import type { FunnelRoute } from '@stim-cli/transport-tailscale';
+import { tailscalePackage } from './tailnet-helper.ts';
 
 /** The Tailscale calls a share route makes; tests replace them. */
 export interface FunnelTool {
@@ -26,20 +19,20 @@ export interface FunnelTool {
 }
 
 export function tailscaleFunnel(
-  binary: () => string | null,
+  binary: () => Promise<string | null>,
   env: NodeJS.ProcessEnv,
   status: () => Promise<unknown>,
 ): FunnelTool {
-  const need = (): string => {
-    const found = binary();
+  const need = async (): Promise<string> => {
+    const found = await binary();
     if (!found) throw new Error('the tailscale command was not found');
     return found;
   };
   return {
     status,
-    serveConfig: () => readServeConfig(need(), env),
-    add: (route) => addFunnelRoute(need(), env, route),
-    remove: (route) => removeFunnelRoute(need(), env, route),
+    serveConfig: async () => (await tailscalePackage()).readServeConfig(await need(), env),
+    add: async (route) => (await tailscalePackage()).addFunnelRoute(await need(), env, route),
+    remove: async (route) => (await tailscalePackage()).removeFunnelRoute(await need(), env, route),
   };
 }
 
@@ -51,6 +44,7 @@ function routeOf(details: unknown): FunnelRoute | null {
 
 /** Removes `route` only while the serve config still holds exactly it. */
 async function removeIfHeld(tool: FunnelTool, route: FunnelRoute): Promise<void> {
+  const { holdsFunnelRoute } = await tailscalePackage();
   if (!holdsFunnelRoute(await tool.serveConfig(), route)) return;
   await tool.remove(route);
   if (holdsFunnelRoute(await tool.serveConfig(), route)) {
@@ -127,6 +121,7 @@ export class ShareRoute {
     const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : null;
     const dnsName = self && typeof self.DNSName === 'string' ? self.DNSName.replace(/\.$/, '') : '';
     if (!dnsName) throw new Error('Tailscale is not running on this Mac. Start Tailscale, then share again.');
+    const { freeFunnelPort, funnelPorts, holdsFunnelRoute } = await tailscalePackage();
     const allowed = funnelPorts(status);
     if (!allowed) {
       throw new Error(

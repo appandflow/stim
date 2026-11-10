@@ -104,6 +104,11 @@
       "loc": 10,
       "end": "removal minor",
       "mechanism": "stimd's owned-browser observer leaves a Chrome to the web-run supervisor an older Stim started"
+    },
+    "C28": {
+      "loc": 3,
+      "end": "removal minor",
+      "mechanism": "a home with paired devices and no tailnet marker loads the Tailscale transport at start"
     }
   },
   "words": {

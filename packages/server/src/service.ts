@@ -23,7 +23,6 @@ import {
   DEFAULT_LABEL,
   DEFAULT_PORT,
   validateLabel,
-  planServe,
   normalizeEnv,
   ServiceError,
   type InstalledService,
@@ -39,7 +38,7 @@ import {
   type ServiceManager,
 } from './service-manager.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
+import { tailscalePackage } from './tailnet-helper.ts';
 import type { StartupState } from './startup.ts';
 import type { KeepAwakeReason, KeepAwakeStatus } from './keep-awake.ts';
 import { stimDist } from './release-install.ts';
@@ -214,6 +213,7 @@ export async function prepareRoute(
   port: number,
   previous: InstalledService | null,
 ): Promise<{ record: ServeRecord; create: string[] | null }> {
+  const { findTailscale, planServe, readTailscaleStatus, serveCommand, serveRoute } = await tailscalePackage();
   const binary = findTailscale(process.env);
   const status = await readTailscaleStatus(binary, process.env);
   if (!binary || status.state !== 'running') {
@@ -354,6 +354,7 @@ export async function installJob(
     serve,
   };
   const path = plistPath(options.label);
+  const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
   if (
     setup &&
@@ -756,6 +757,7 @@ async function uninstallJob(label: string): Promise<string[]> {
   if (!installed) return [`${label} is not installed.`];
   const notes: string[] = [];
   let routeOff: number | null = null;
+  const { findTailscale, readTailscaleStatus, serveRoute } = await tailscalePackage();
   const tailscale = findTailscale(process.env);
   if (installed.serve?.created && installed.port !== null) {
     const status = await readTailscaleStatus(tailscale, process.env);
