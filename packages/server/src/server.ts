@@ -449,9 +449,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const givenName = options.name;
   let resolvedName = typeof givenName === 'string' ? givenName : null;
   const serverName = async () => (resolvedName ??= typeof givenName === 'string' ? givenName : await givenName());
-  /** A peer that `tailscale serve` forwarded to loopback comes over the tailnet, so it needs the Tailscale transport. */
+  /**
+   * A peer that `tailscale serve` forwarded to loopback comes over the tailnet, so it needs the Tailscale transport for
+   * this run. A loopback-only server serves no tailnet peer and never loads it.
+   */
   const forwardedPeer = async (request: IncomingMessage) => {
-    if (isLoopback(request.socket.remoteAddress)) await tailnet.load('forwarded peer');
+    if (!options.loopbackOnly && isLoopback(request.socket.remoteAddress)) await tailnet.load('forwarded peer');
   };
   /** The addresses each transport that binds some reports now: read when watching starts, then replaced by its `watch` events. */
   const bindings = new Map<Transport, string[]>();
@@ -884,7 +887,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ...funnelTool,
     add: async (route: Parameters<typeof funnelTool.add>[0]) => {
       await funnelTool.add(route);
-      void tailnet.load('funnel share');
+      if (!options.loopbackOnly) void tailnet.load('funnel share');
     },
   };
   const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);

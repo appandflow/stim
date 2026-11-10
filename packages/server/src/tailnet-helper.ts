@@ -4,7 +4,6 @@ import { parseMachine, type Endpoint } from '@stim-cli/core/state';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport } from '@stim-cli/transport-local';
 import type { TailscaleState, TailscaleTransport } from '@stim-cli/transport-tailscale';
-import { markTailnet } from './tailnet-marker.ts';
 
 /** The Tailscale transport package, loaded only when something on this machine needs the tailnet. */
 export const tailscalePackage = (): Promise<typeof import('@stim-cli/transport-tailscale')> =>
@@ -43,13 +42,17 @@ interface TailnetHealth {
 /**
  * The tailnet as stim-server reaches it: the Tailscale transport, loaded only when something asks for the tailnet, and
  * the reads `/health`, the server name and paired machines need meanwhile. Reads made before the transport loads come
- * from one `tailscale status` and one `tailscale serve status` kept for 30 seconds.
+ * from one `tailscale status` and one `tailscale serve status` kept for 30 seconds, the longest the transport's
+ * monitor waits between reads, so `/health` is no staler before the load than after it.
  */
 export interface Tailnet {
   current(): TailscaleTransport | null;
   /** Calls `listener` with the transport when it loads, at once when it already has. */
   onLoad(listener: (transport: TailscaleTransport) => void): void;
-  /** Loads the transport and its monitor once and records `reason` in the tailnet marker; null when it cannot load. */
+  /**
+   * Loads the transport and its monitor for this run, once; null when it cannot load. It never writes the tailnet
+   * marker: a deliberate act that should load the transport at every later start calls `markTailnet` itself.
+   */
   load(reason: string): Promise<TailscaleTransport | null>;
   health(port: number, timeoutMs: number): Promise<TailnetHealth>;
   rawStatus(): Promise<unknown>;
@@ -112,11 +115,7 @@ export function createTailnet(env: NodeJS.ProcessEnv, given: TailscaleTransport 
       if (transport) return Promise.resolve(transport);
       if (closed) return Promise.resolve(null);
       return (loading ??= (async () => {
-        try {
-          markTailnet(reason);
-        } catch (error) {
-          console.error(`stim-server: could not record that this machine uses the tailnet: ${String(error)}`);
-        }
+        console.log(`stim-server: loading the Tailscale transport (${reason}).`);
         const loaded = await loadTailscale(env);
         if (typeof loaded === 'string') {
           console.error(`stim-server: ${loaded}`);

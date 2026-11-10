@@ -28,6 +28,7 @@ import {
   subscribeStart,
   subscribeStop,
 } from './lifecycle.ts';
+import { markTailnet } from '../tailnet-marker.ts';
 import { queuePlan } from './build.ts';
 import { subscribeLogs } from './logs.ts';
 
@@ -583,6 +584,7 @@ async function setupRoute(ctx: ConnectionContext, id: RequestId, params: unknown
 }
 
 async function exposeServer(ctx: ConnectionContext): Promise<ServeRoute> {
+  markTailnet('route.setup');
   const transport = await ctx.tailnet.load('route.setup');
   if (!transport) throw new Error('The Tailscale transport could not load; see the stim-server log.');
   return transport.expose({ port: ctx.addresses[0]!.port });
