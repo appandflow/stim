@@ -68,16 +68,30 @@ export interface MetroWatchRoots {
   afterClose(): Promise<void>;
 }
 
+/** What a tracker knows: the watch roots before Metro started (null when unknown) and the roots Metro added. */
+export interface MetroWatchState {
+  before: string[] | null;
+  owned: string[];
+}
+
+/**
+ * Tracks the watchman roots a Metro adds, to remove them once it stops. `known` resumes the state an earlier tracker
+ * reported through `onChange`, for a Metro a new stimd adopts.
+ */
 export function trackMetroWatchRoots({
   workspaceRoot,
   writer,
   watchman = runWatchman,
   probeDelaysMs = PROBE_DELAYS_MS,
+  known,
+  onChange,
 }: {
   workspaceRoot: string;
   writer: NdjsonWriter;
   watchman?: WatchmanCommand;
   probeDelaysMs?: number[];
+  known?: MetroWatchState;
+  onChange?: (state: MetroWatchState) => void;
 }): MetroWatchRoots {
   let deadline = Infinity;
   const call: BoundWatchman = async (args) => {
@@ -85,8 +99,10 @@ export function trackMetroWatchRoots({
     if (left <= 0) throw new Error('the watchman cleanup ran out of time');
     return watchman(args, Math.min(WATCHMAN_TIMEOUT_MS, left));
   };
-  const before = watchRoots(call);
-  const owned = new Set<string>();
+  const before = known ? Promise.resolve(known.before) : watchRoots(call);
+  const owned = new Set<string>(known?.owned ?? []);
+  const changed = async () => onChange?.({ before: await before, owned: [...owned] });
+  if (!known) void changed();
   const timers: ReturnType<typeof setTimeout>[] = [];
   let prefix: string | null = null;
 
@@ -98,7 +114,10 @@ export function trackMetroWatchRoots({
     for (const root of newRootsContaining(earlier, current, workspaceRoot)) {
       if (owned.has(root)) continue;
       const names = await subscriberNames(call, root);
-      if (names?.some((name) => name.startsWith(prefix as string))) owned.add(root);
+      if (names?.some((name) => name.startsWith(prefix as string))) {
+        owned.add(root);
+        await changed();
+      }
     }
   };
 

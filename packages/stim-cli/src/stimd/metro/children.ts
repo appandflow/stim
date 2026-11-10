@@ -65,7 +65,7 @@ import {
 import { workspaceIdleProbe } from './idle-stop.ts';
 import { watchHostedMetro } from './hosted-metro.ts';
 import { devServerStopLevel, devServerStopRecord, describeDevServerStop } from './stop-cause.ts';
-import { trackMetroWatchRoots, type MetroWatchRoots } from './watchman-roots.ts';
+import { trackMetroWatchRoots, type MetroWatchRoots, type MetroWatchState } from './watchman-roots.ts';
 import { injectedDigest, injectedDir } from './injected.ts';
 import { metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
@@ -257,6 +257,7 @@ function forget(
   msg: string,
   level: 'info' | 'warn' | 'error' = 'info',
   stop: DevServerStopRecord | null = null,
+  roots: MetroWatchRoots | null = null,
 ): void {
   if (child.gone) return;
   child.gone = true;
@@ -277,7 +278,31 @@ function forget(
   rmSync(heartbeatFile(child.root), { force: true });
   releaseClaim(child.claim);
   child.writer.write({ src: 'metro', level, event: 'supervisor_stopped', msg, ...(stop ? { stop } : {}) });
-  child.writer.close();
+  if (!roots) {
+    child.writer.close();
+    return;
+  }
+  void roots
+    .beforeClose()
+    .then(() => roots.afterClose())
+    .finally(() => child.writer.close());
+}
+
+/** Keeps what the child's watch root tracker knows in its claim, where a stimd that adopts the child reads it. */
+function saveWatch(child: MetroChild, watch: MetroWatchState): void {
+  if (child.gone) return;
+  try {
+    child.claim = updateClaimDetails(child.claim, { ...child.claim.details, watch }) ?? child.claim;
+  } catch {}
+}
+
+const strings = (list: unknown) =>
+  Array.isArray(list) ? list.filter((entry): entry is string => typeof entry === 'string') : null;
+
+function watchOf(value: unknown): MetroWatchState {
+  return isJsonObject(value)
+    ? { before: strings(value.before), owned: strings(value.owned) ?? [] }
+    : { before: null, owned: [] };
 }
 
 /** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
@@ -290,6 +315,7 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
       : `${stop ? describeDevServerStop(stop) : `the ${child.mode} dev server exited`} (pid ${child.pid})`,
     stop ? devServerStopLevel(stop) : 'warn',
     stop,
+    child.roots,
   );
 }
 
@@ -517,7 +543,13 @@ async function start(
     }
     writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
   };
-  const roots = trackMetroWatchRoots({ workspaceRoot: root, writer });
+  let created: MetroChild | undefined;
+  let watched: MetroWatchState | undefined;
+  const roots = trackMetroWatchRoots({
+    workspaceRoot: root,
+    writer,
+    onChange: (watch) => (created ? saveWatch(created, watch) : (watched = watch)),
+  });
   const output = openChildOutput(logsDir);
   let handle: ChildServerHandle;
   let spawned: ReturnType<ReturnType<typeof getExecutor>['spawn']> | undefined;
@@ -613,6 +645,8 @@ async function start(
     observesRequests,
   };
   children.set(root, child);
+  created = child;
+  if (watched) saveWatch(child, watched);
   token = processToken;
   record(child, observesRequests);
   recordForeignMetro(root, port, {});
@@ -886,6 +920,13 @@ function adoptAt(path: string, log: Log): void {
       observesRequests: holder.details.observesRequests === true,
     };
     children.set(path, child);
+    child.roots = trackMetroWatchRoots({
+      workspaceRoot: path,
+      writer,
+      known: watchOf(holder.details.watch),
+      onChange: (watch) => saveWatch(child, watch),
+    });
+    child.roots.started(child.pid);
     serveLinks(child, log);
     const supervisor = readWorkspaceState(path)?.supervisor;
     if (isJsonObject(supervisor) && typeof claim.details.engineDir === 'string')
@@ -1194,7 +1235,8 @@ export function closeMetroChildren(): Promise<void> {
       if (!GROUPS) await stopChild(child, 'stimd exits');
       else if (child.tail) {
         child.tail.stop();
-        updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() });
+        child.claim =
+          updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() }) ?? child.claim;
       }
     }
     if (!GROUPS) for (const [root, tunnel] of tunnels) await stopTunnel(root, tunnel);

@@ -8,6 +8,7 @@ import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from 
 import * as identity from '../process-identity.ts';
 import * as metro from '../metro.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   adoptMetroChildren,
@@ -189,4 +190,56 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
     },
     20_000,
   );
+
+  test('an adopted Metro that exits has the watchman roots it registered removed', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-roots-')));
+    vi.stubEnv('STIM_HOME', home);
+    const root = join(home, 'project');
+    mkdirSync(root);
+    upsertProject(root, { metroPort: 8184 });
+    const calls: string[][] = [];
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'watchman') return real.runFileAsync(file, args, options);
+        calls.push(args);
+        if (args.includes('debug-get-subscriptions')) return '{"subscribers":[]}';
+        if (args.includes('trigger-list')) return '{"triggers":[]}';
+        return args.includes('watch-list') ? '{"roots":[]}' : '{}';
+      },
+    });
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+    await once(child, 'spawn');
+    child.unref();
+    const pid = child.pid;
+    if (!pid) throw new Error('fixture child did not start');
+    const token = captureProcessToken(pid);
+    if (!token) {
+      child.kill('SIGKILL');
+      throw new Error('fixture child identity unavailable');
+    }
+    plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', goneClaimOwner(), {
+      details: {
+        port: 8184,
+        mode: 'command',
+        digest: injectedDigest(),
+        watch: { before: [], owned: [root] },
+      },
+      child: { record: { pid, processToken: token } },
+    });
+    openMetroChildren();
+    try {
+      adoptMetroChildren(() => {});
+      await stopFixture(pid, token);
+      await metroTick('on', () => {});
+      await vi.waitFor(() => expect(calls).toContainEqual(['--no-spawn', 'watch-del', root]));
+      await closeMetroChildren();
+    } finally {
+      await stopFixture(pid, token);
+      resetExecutor();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
