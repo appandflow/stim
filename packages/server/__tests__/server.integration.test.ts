@@ -4404,6 +4404,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
     async () => {
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
       const port = await start({
         env: { FAKE_WORKER_HANG: '1' },
         buildLimits: { killGraceMs: 100, detachGraceMs: 1500 },
