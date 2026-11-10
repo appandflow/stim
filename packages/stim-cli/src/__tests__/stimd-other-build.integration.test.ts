@@ -2,12 +2,14 @@ import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
-  appendFileSync,
   chmodSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -138,6 +140,25 @@ for (const [root, mode] of [[stimdClaimRoot(), 'exclusive'], [daemonClaimRoot(),
   }
 });
 
+/**
+ * Replaces `dist` the way a package update does: a new tree whose hashed chunks all have other names, renamed into
+ * place, so the old chunks are gone from disk.
+ */
+function updateInPlace(dist: string): void {
+  const next = `${dist}.next`;
+  cpSync(dist, next, { recursive: true });
+  const chunks = readdirSync(next).filter((name) => /-[\w-]{8}\.mjs$/.test(name));
+  const renamed = (text: string) =>
+    chunks.reduce((out, name) => out.replaceAll(name, name.replace(/\.mjs$/, 'u.mjs')), text);
+  for (const name of readdirSync(next).filter((entry) => entry.endsWith('.mjs'))) {
+    writeFileSync(join(next, renamed(name)), renamed(readFileSync(join(next, name), 'utf8')));
+    if (chunks.includes(name)) rmSync(join(next, name));
+  }
+  renameSync(dist, `${dist}.old`);
+  renameSync(next, dist);
+  rmSync(`${dist}.old`, { recursive: true, force: true });
+}
+
 test.skipIf(process.platform === 'win32')(
   'a stimd whose own installation was updated in place hands the home to a stimd of the new build',
   async () => {
@@ -202,18 +223,23 @@ test.skipIf(process.platform === 'win32')(
       expect(await first('ffffffffffff')).toMatchObject({ op: 'engine-changed', pid });
       expect(record()?.pid).toBe(pid);
 
-      appendFileSync(join(dist, 'cli.mjs'), '\n// updated\n');
+      updateInPlace(dist);
       const after = stimBuildId(dist);
       assert(after);
       expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
       await until('the stimd of the updated build', () => record()?.build === after && record()?.pid !== pid);
     } finally {
-      const last = record()?.pid;
-      for (const pid of [last, ...stimds.map((stimd) => stimd.pid)])
+      const pids = [record()?.pid, ...stimds.map((stimd) => stimd.pid)].filter((pid) => pid !== undefined);
+      const alive = (pid: number) => {
         try {
-          if (pid) process.kill(pid, 'SIGTERM');
-        } catch {}
-      await new Promise((done) => setTimeout(done, 500));
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      for (const pid of pids.filter(alive)) process.kill(pid, 'SIGTERM');
+      await until('the stimds to exit', () => !pids.some(alive));
       rmSync(tmp, { recursive: true, force: true });
     }
   },
