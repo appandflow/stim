@@ -40,6 +40,7 @@ function fake(answers: (() => unknown)[], start: Awaited<ReturnType<ShareDeps['s
       deps.starts++;
       return start;
     },
+    otherBuild: () => null,
     note: (line) => deps.notes.push(line),
     platform: 'darwin',
   };

@@ -1215,7 +1215,9 @@ token and needs a password. Viewers see each other's touches live. Every share e
 `stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
 you rebuild or relaunch the app, only stops it for now: it shows as stopped and comes back by itself. It refuses with
-`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
+`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server,
+`STIM_DAEMON_UNAVAILABLE` naming the build when a `stimd` of another Stim build
+holds the home, and
 `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
 that target again, until it expires, or a new share with a warning when nothing
 is saved, and `stop --forget` also deletes the saved links. See
