@@ -8,6 +8,7 @@ import {
   captureWorkspaceCrashes,
   parseAndroidCrashes,
   parseIosCrash,
+  simulatorConsolePaths,
 } from '../diagnostics/native-crash.ts';
 import { verifyLaunch } from '../engine/launch-verify.ts';
 import { type NdjsonRecord } from '../ndjson.ts';
@@ -790,6 +791,48 @@ test.skipIf(process.platform !== 'darwin')('iOS crash reports come from the oper
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  "a Rust panic in the app's stderr reaches the crash record, also once the OS crash report exists",
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-rust-panic-'));
+    const container = join(home, 'container');
+    const reports = join(home, 'Library/Logs/DiagnosticReports');
+    const target = { platform: 'ios' as const, deviceId: 'owned', appId: 'app.test', since: Date.now() - 1000 };
+    setExecutor({ runFileQuiet: (_file, args) => (args.includes('get_app_container') ? container : null) });
+    try {
+      const paths = await simulatorConsolePaths(target, true);
+      if (!paths) throw new Error('the simulator console paths were not prepared');
+      writeFileSync(
+        paths.stderr,
+        readFileSync(new URL('./fixtures/ios-device/rust-panic-nounwind.txt', import.meta.url), 'utf8'),
+      );
+      const panic = "thread 'main' (95688686) panicked at q.rs:1:22:\nfrom ffi";
+      const [stderrOnly, ...noMore] = await captureNativeCrashes(target, join(home, 'logs'), undefined, { HOME: home });
+      expect(noMore).toEqual([]);
+      expect(stderrOnly?.msg).toContain(panic);
+      expect(stderrOnly?.msg).not.toContain('note: run with');
+
+      mkdirSync(reports, { recursive: true });
+      const report = {
+        captureTime: new Date().toISOString(),
+        coalitionName: 'com.apple.CoreSimulator.SimDevice.owned',
+        bundleInfo: { CFBundleIdentifier: 'app.test' },
+        incident: 'abort-report',
+        exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+      };
+      writeFileSync(join(reports, 'app.ips'), '{}\n' + JSON.stringify(report));
+      const [reported, ...others] = await captureNativeCrashes(target, join(home, 'logs'), undefined, { HOME: home });
+      expect(others).toEqual([]);
+      expect(reported?.incident).toBe('abort-report');
+      expect(reported?.msg).toMatch(/^Native crash: EXC_CRASH \/ SIGABRT\n/);
+      expect(reported?.msg).toContain(panic);
+    } finally {
+      resetExecutor();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a stalled symbolication server cannot hide or indefinitely delay the original error', async () => {
   server = createServer(() => {});

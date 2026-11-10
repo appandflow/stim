@@ -1,0 +1,12 @@
+
+thread 'main' (95688686) panicked at q.rs:1:22:
+from ffi
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (95688686) panicked at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x10290b954 - std[b23ccf54642dae0e]::backtrace_rs::backtrace::libunwind::trace
+  33:        0x1028ec8c4 - std[b23ccf54642dae0e]::rt::lang_start::<()>
+  34:        0x1028ec9fc - _main
+thread caused non-unwinding panic. aborting.

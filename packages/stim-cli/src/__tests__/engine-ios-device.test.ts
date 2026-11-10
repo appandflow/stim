@@ -24,7 +24,7 @@ import {
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
-import { deviceConsoleLevel, parseDeviceConsoleLine } from '../stimd/logs/ios-device.ts';
+import { consoleFatalBlocks, deviceConsoleLevel, parseDeviceConsoleLine } from '../stimd/logs/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
 
 const PHONE = '00008030-001A2B3C4D5E802E';
@@ -943,5 +943,31 @@ describe('localNetworkPending', () => {
     const before = JSON.stringify(pending);
     localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN });
     expect(JSON.stringify(pending)).toBe(before);
+  });
+});
+
+describe('Rust panics in captured app stderr (rustc 1.97.0 output)', () => {
+  const fixture = (name: string) => readFileSync(new URL(`./fixtures/ios-device/${name}`, import.meta.url), 'utf-8');
+
+  test('each panic keeps its header and message lines, without the backtrace hint', () => {
+    expect(consoleFatalBlocks(fixture('rust-panic-threads.txt'))).toEqual([
+      "thread '<unnamed>' (95688746) panicked at p.rs:2:63:\nindex out of bounds: the len is 0 but the index is 3",
+      "thread 'worker' (95688748) panicked at p.rs:4:72:\nfirst line\nsecond line",
+      'thread \'main\' (95688741) panicked at p.rs:7:7:\ncalled `Result::unwrap()` on an `Err` value: "boom"',
+    ]);
+  });
+
+  test('a panic across the C ABI keeps both panics and drops the forced backtrace', () => {
+    expect(consoleFatalBlocks(fixture('rust-panic-nounwind.txt'))).toEqual([
+      "thread 'main' (95688686) panicked at q.rs:1:22:\nfrom ffi",
+      "thread 'main' (95688686) panicked at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:225:5:\npanic in a function that cannot unwind",
+    ]);
+  });
+
+  test('a header without a thread id is fatal; an indented or quoted one is not', () => {
+    expect(deviceConsoleLevel("thread 'main' panicked at src/main.rs:2:5:")).toBe('fatal');
+    expect(parseDeviceConsoleLine("thread 'main' (7) panicked at src/main.rs:2:5:")?.level).toBe('fatal');
+    expect(deviceConsoleLevel("  thread 'main' (7) panicked at build.rs:14:19:")).toBe('info');
+    expect(deviceConsoleLevel("retrying after thread 'main' panicked at src/main.rs:2:5:")).toBe('info');
   });
 });

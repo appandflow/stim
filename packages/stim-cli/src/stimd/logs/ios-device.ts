@@ -23,12 +23,15 @@ export const DEV_MENU_LAUNCH_ARGS: readonly string[] = [
 
 // Anchored, because a message that merely quotes one of these is an app
 // logging about a crash, not a crash. Swift prints its own file:line first.
+const RUST_PANIC = /^thread '.*' (?:\(\d+\) )?panicked at \S/;
 const FATAL_MARKERS: RegExp[] = [
   /^\*\*\* Terminating app due to uncaught exception/,
   /^libc\+\+abi: terminating/,
   /^\*\*\* Assertion failure in/,
   /^(?:\S+:\d+: )?Fatal error: /,
+  RUST_PANIC,
 ];
+const RUST_PANIC_END = /^(?:$|note: |stack backtrace:$|thread caused non-unwinding panic)/;
 
 export const TOOL_ERROR_PREFIX = 'ERROR: ';
 
@@ -38,6 +41,26 @@ const MIRROR_LINE =
 export function deviceConsoleLevel(message: unknown): string {
   const text = typeof message === 'string' ? message : '';
   return FATAL_MARKERS.some((marker) => marker.test(text)) ? 'fatal' : 'info';
+}
+
+/** The fatal lines of an app's captured stderr, each Rust panic with the message lines that follow its header. */
+export function consoleFatalBlocks(text: string): string[] {
+  const blocks: string[][] = [];
+  let panic: string[] | null = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (deviceConsoleLevel(line) === 'fatal') {
+      const block = [line];
+      blocks.push(block);
+      panic = RUST_PANIC.test(line) ? block : null;
+    } else if (panic && !RUST_PANIC_END.test(line)) panic.push(line);
+    else panic = null;
+  }
+  return blocks.map((block) => block.join('\n'));
+}
+
+export function isRustPanic(block: string): boolean {
+  return RUST_PANIC.test(block);
 }
 
 export function parseDeviceConsoleLine(
