@@ -6,13 +6,9 @@ import { parseDeviceSlotKey, projectDeviceSlots } from '../../devices/device-slo
 import { workspaceBuildInProgress } from '../../commands/gc/idle.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../../engine/device-lease.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
-import { decideIdleStop, IDLE_SETTING, type IdleStopEvidence } from '../../policy/idle.ts';
 import { getProject } from '../../workspace/config.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { describeError } from './errors.ts';
-
-const IDLE_CHECK_MS = 60_000;
-const MINUTE_MS = 60_000;
 
 /** The Metro log events that are a client's request: a bundle, a manifest or an HMR update. */
 export const METRO_REQUEST_EVENTS: ReadonlySet<string> = new Set([
@@ -28,28 +24,6 @@ export const METRO_REQUEST_EVENTS: ReadonlySet<string> = new Set([
   'manifest_request_failed',
   'hmr_update',
 ]);
-
-export interface DevServerActivity {
-  record(entry: unknown): void;
-  lastActivityAt(): number;
-}
-
-export function trackDevServerActivity(now: () => number): DevServerActivity {
-  let last = now();
-  const open = new Set<string>();
-  return {
-    record(entry) {
-      const { event, requestId } = (entry ?? {}) as { event?: unknown; requestId?: unknown };
-      if (typeof event !== 'string' || !METRO_REQUEST_EVENTS.has(event)) return;
-      if (typeof requestId === 'string') {
-        if (event === 'bundle_response_started') open.add(requestId);
-        else if (event === 'bundle_response_finished' || event === 'bundle_response_failed') open.delete(requestId);
-      }
-      last = now();
-    },
-    lastActivityAt: () => (open.size > 0 ? now() : last),
-  };
-}
 
 export interface IdleProbe {
   lastActivityAt(): number;
@@ -124,97 +98,4 @@ export function workspaceIdleProbe(
       return liveShareKeepReason(root);
     },
   };
-}
-
-export function watchIdleDevServer({
-  idleStopMs,
-  now,
-  serverActivityAt,
-  probe,
-  onIdle,
-  checkMs = IDLE_CHECK_MS,
-}: {
-  idleStopMs: number;
-  now: () => number;
-  serverActivityAt: () => number;
-  probe: IdleProbe;
-  onIdle: (idleMinutes: () => Promise<number | null>) => Promise<void>;
-  checkMs?: number;
-}): () => void {
-  const idleMinutes = async (): Promise<number | null> => {
-    const activity: IdleStopEvidence['activity'] = [
-      { basis: 'Metro request', at: serverActivityAt() },
-      { basis: 'stim command', at: probe.lastActivityAt() },
-    ];
-    const decide = (keep: string[]) =>
-      decideIdleStop({ activity, keep }, { idleMs: idleStopMs, now: now(), setting: IDLE_SETTING });
-    if (!decide([]).stop) return null;
-    let blocker: string | null;
-    try {
-      blocker = await probe.blocker();
-    } catch (error) {
-      blocker = describeError(error);
-    }
-    const decision = decide(blocker ? [blocker] : []);
-    return decision.stop ? Math.floor(decision.idleMs / MINUTE_MS) : null;
-  };
-  let deciding = false;
-  const timer = setInterval(
-    () => {
-      if (deciding) return;
-      deciding = true;
-      void idleMinutes()
-        .then((minutes) => (minutes === null ? undefined : onIdle(idleMinutes)))
-        .finally(() => {
-          deciding = false;
-        });
-    },
-    Math.min(checkMs, idleStopMs),
-  );
-  timer.unref?.();
-  return () => clearInterval(timer);
-}
-
-/**
- * Checks each minute, once the workspace has gone `idleMs` without a Stim command, whether an owned device is due
- * for idle shutdown, and runs `onDue` for it.
- */
-export function watchIdleDevices({
-  idleMs,
-  now,
-  lastUseAt,
-  hasDue,
-  onDue,
-  checkMs = IDLE_CHECK_MS,
-}: {
-  idleMs: number;
-  now: () => number;
-  lastUseAt: () => number;
-  hasDue: () => boolean;
-  onDue: () => Promise<void>;
-  checkMs?: number;
-}): () => void {
-  let deciding = false;
-  const timer = setInterval(
-    () => {
-      if (deciding) return;
-      const activity: IdleStopEvidence['activity'] = [{ basis: 'stim command', at: lastUseAt() }];
-      const decision = decideIdleStop({ activity, keep: [] }, { idleMs, now: now(), setting: IDLE_SETTING });
-      if (!decision.stop && decision.active) return;
-      let due: boolean;
-      try {
-        due = hasDue();
-      } catch {
-        return;
-      }
-      if (!due) return;
-      deciding = true;
-      void onDue().finally(() => {
-        deciding = false;
-      });
-    },
-    Math.min(checkMs, idleMs),
-  );
-  timer.unref?.();
-  return () => clearInterval(timer);
 }

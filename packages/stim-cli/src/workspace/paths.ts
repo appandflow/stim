@@ -11,7 +11,6 @@ export {
   emulatorLogFile,
   sharedCcache,
   sharedCompilationCache,
-  supervisorLogFile,
   supervisorPidFile,
   workspaceDerivedData,
   workspaceLogErrorIndex,

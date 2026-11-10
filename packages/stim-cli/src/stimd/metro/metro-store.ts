@@ -1,15 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  metroCacheRoot,
-  METRO_NAMED_CACHE_LAYOUT,
-  registerCache,
-  sharedStoreRoot,
-  tagSharedStore,
-} from '@stim-cli/core';
-
-type FileStoreCtor = new (options: { root: string }) => object;
+import { metroCacheRoot, METRO_NAMED_CACHE_LAYOUT, registerCache } from '@stim-cli/core';
 
 function metroStoreName(root: string): string {
   try {
@@ -47,41 +39,6 @@ export function registerMetroStore(storeRoot: string): void {
             },
           ],
   });
-}
-
-function hasStoreAt(stores: unknown, storeRoot: string): boolean {
-  if (!Array.isArray(stores)) return false;
-  return stores.some((s) => sharedStoreRoot(s) === storeRoot);
-}
-
-export interface StoreAppendResult {
-  added: boolean;
-  storeRoot: string;
-  reason?: string;
-}
-
-export function appendCacheStore(
-  config: { cacheStores?: unknown } | null | undefined,
-  { storeRoot, FileStore }: { storeRoot: string; FileStore: FileStoreCtor },
-): StoreAppendResult {
-  if (!config || typeof config !== 'object') return { added: false, storeRoot, reason: 'no config to add it to' };
-  const stores = config.cacheStores;
-  if (typeof stores === 'function') {
-    const original = stores as (cache: unknown) => unknown;
-    config.cacheStores = (cache: unknown) => {
-      const resolved = original(cache);
-      return (Array.isArray(resolved) ? resolved : []).concat([
-        tagSharedStore(new FileStore({ root: storeRoot }), storeRoot),
-      ]);
-    };
-    return { added: true, storeRoot };
-  }
-  if (hasStoreAt(stores, storeRoot)) {
-    return { added: false, storeRoot, reason: 'a store already points at it' };
-  }
-  const existing = Array.isArray(stores) ? stores : [];
-  config.cacheStores = [...existing, tagSharedStore(new FileStore({ root: storeRoot }), storeRoot)];
-  return { added: true, storeRoot };
 }
 
 const EXPO_ADAPTER_FILE = 'expo-metro-config.cjs';

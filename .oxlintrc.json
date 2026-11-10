@@ -317,7 +317,6 @@
         "packages/stim-cli/src/cli/status-entry.ts",
         "packages/stim-cli/src/cli/define-op.ts",
         "packages/stim-cli/src/detached-entry.ts",
-        "packages/stim-cli/src/supervisor/**",
         "packages/stim-cli/src/stimd/metro/**",
         "packages/stim-cli/src/stimd/logs/**",
         "packages/stim-cli/src/macos/run.ts",

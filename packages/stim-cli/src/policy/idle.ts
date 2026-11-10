@@ -57,8 +57,6 @@ export interface IdleScopeFacts {
   protected: boolean;
   /** Its dev server runs: under Stim's supervisor, one Stim cannot verify, or one that outlived its supervisor. */
   serving: boolean;
-  /** The pass leaves out every workspace whose dev server runs. */
-  unsupervised: boolean;
   /** Why its simulators cannot be listed, when it owns one; null otherwise. */
   simsError: string | null;
   /** Its booted devices this Stim home owns, each with whether a deferred shutdown holds it. */
@@ -72,7 +70,7 @@ export interface IdleScopeFacts {
  * its settings and dev server decide. The protected workspace and one with nothing running are left out.
  */
 export function idleScope(facts: IdleScopeFacts): { runs: false } | { runs: true; kept: string } | null {
-  if (facts.protected || (facts.unsupervised && facts.serving)) return { runs: false };
+  if (facts.protected) return { runs: false };
   if (facts.simsError !== null) return { runs: true, kept: `its simulators cannot be listed (${facts.simsError})` };
   if (facts.serving) return null;
   if (facts.booted.length > 0) return facts.booted.every(({ deferred }) => deferred) ? { runs: false } : null;

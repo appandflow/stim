@@ -94,7 +94,7 @@ export function devServerStopLevel(record: DevServerStopRecord): 'info' | 'warn'
 }
 
 /** The log line for a recorded supervisor whose process is proven gone, or null while it may still run. */
-export function vanishedSupervisorMessage(
+function vanishedSupervisorMessage(
   record: { pid?: unknown; processToken?: unknown; startedAt?: unknown } | null | undefined,
 ): string | null {
   if (!record || typeof record.pid !== 'number') return null;

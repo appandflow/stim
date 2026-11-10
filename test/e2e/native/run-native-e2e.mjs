@@ -47,7 +47,6 @@ const ENV = {
   ...process.env,
   STIM_HOME: HOME_DIR,
   STIM_DAEMON: 'off',
-  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   CI: '1',
   STIM_POOL_IOS_PARKED_MAX: '0',
   STIM_POOL_ANDROID_PARKED_MAX: '0',

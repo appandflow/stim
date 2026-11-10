@@ -3,7 +3,6 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
-import { HOME_PASSES_TEST_GUARD_ENV } from './packages/stim-cli/src/daemon/passes-guard-env.ts';
 
 // The machine running the suite may legitimately export STIM_* overrides
 // (this machine relocates the shared caches to an external SSD via
@@ -14,7 +13,6 @@ for (const key of Object.keys(process.env)) {
 }
 
 process.env.STIM_DAEMON = 'off';
-process.env[HOME_PASSES_TEST_GUARD_ENV] = '1';
 // A test never reads or writes this machine's engine store or its bin/stimd shim.
 process.env.STIM_ENGINE_ROOT = join(tmpdir(), 'stim-test-engine-absent');
 

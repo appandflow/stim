@@ -12,15 +12,13 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { daemonClaimHeld, requestDaemonTick, stimdRefused } from './client.ts';
-import { commandWorkspace } from './command-workspace.ts';
+import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
-import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
 import { runDormantPass } from './stages.ts';
@@ -311,42 +309,6 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
   }
 }
 
-/**
- * The activity pass in this process, for a command with no daemon holding the home, over the workspaces whose dev
- * server does not run: an owned device left booted after its dev server stopped, or after a Release run, goes into
- * the idle stage after `idle.minutes` of the one activity clock. Dev servers keep their own supervisor's timer.
- * Logs to `daemon.ndjson` under `trigger`.
- */
-async function runCommandIdle(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
-  const mode = daemonMode(env);
-  const config = loadConfig();
-  if (!config || mode === 'off') return;
-  const now = Date.now();
-  const measured = await measureTick(config, now);
-  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-  try {
-    await runBootedParkedPass({
-      sims: measured.sims,
-      memory: measured.measurement.memory.level,
-      act: mode === 'on',
-      log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
-    });
-    await runIdlePass({
-      config,
-      now,
-      sims: measured.sims,
-      simsError: measured.simsError,
-      devices: measured.devices,
-      act: mode === 'on',
-      unsupervised: true,
-      ...(protectedRoot ? { protectedRoot } : {}),
-      log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
-    });
-  } finally {
-    writer.close();
-  }
-}
-
 export interface ForcedLadder {
   /** The level the machine measures now; the forced run ignores it. */
   pressure: DaemonPressure;
@@ -453,25 +415,5 @@ export async function runLadderNow(
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);
-  } catch {}
-}
-
-/**
- * Automatic maintenance, the activity pass over workspaces with no running dev server, and the pressure ladder at
- * command time, for a command that found no daemon holding the home: a stimd that could
- * not start. Nothing runs while `daemon.mode` is off, and report acts on nothing. Each dev server supervisor times
- * its own idle stop. No pass takes `protectedRoot`, the command's own workspace.
- */
-export async function runPassesInProcess(
-  trigger: string,
-  env: NodeJS.ProcessEnv = process.env,
-  protectedRoot: string | null = commandWorkspace(false, env),
-): Promise<void> {
-  try {
-    const mode = daemonMode(env);
-    if (env[HOME_PASSES_TEST_GUARD_ENV] || mode === 'off' || daemonClaimHeld()) return;
-    await runCommandIdle(trigger, env, protectedRoot ?? undefined);
-    await runMaintenance(trigger, { report: mode === 'report' });
-    await runCommandLadder(trigger, env, protectedRoot ?? undefined);
   } catch {}
 }

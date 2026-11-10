@@ -40,7 +40,6 @@ let env = {
   STIM_NO_UPDATE_CHECK: '1',
 };
 delete env.CI;
-delete env.STIM_TEST_GUARD_NO_HOME_PASSES;
 
 const agents = [];
 

@@ -921,14 +921,10 @@ export function opWaiting(waiting: boolean): void {
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
-const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
 
 /**
  * Before a top-level command runs: commands that create running state record the use of their workspace (unless
- * `recordUse` is false, for an operation that records it itself) and make sure the home's stimd runs; unless `passes`
- * is false, `doctor`, `start`, `ios` and `android` run the in-process passes (maintenance, the activity pass over
- * workspaces with no dev server, the pressure ladder) when no stimd holds the home, never taking the command's own
- * workspace, the registered workspace containing `cwd`.
+ * `recordUse` is false, for an operation that records it itself) and make sure the home's stimd runs.
  */
 export async function beforeCommand(
   name: string,
@@ -936,7 +932,6 @@ export async function beforeCommand(
   {
     cwd,
     recordUse,
-    passes,
     pin = false,
     held,
     invocation,
@@ -944,7 +939,6 @@ export async function beforeCommand(
   }: {
     cwd: string;
     recordUse: boolean;
-    passes: boolean;
     pin?: boolean;
     held?: Socket[];
     invocation?: Invocation & { workspace?: string | null };
@@ -952,30 +946,22 @@ export async function beforeCommand(
   } = {
     cwd: process.cwd(),
     recordUse: true,
-    passes: true,
   },
 ): Promise<void> {
-  const creates = DAEMON_COMMANDS.includes(name);
-  const inline = passes && INLINE_COMMANDS.includes(name);
-  if (!creates && !inline) return;
-  if (creates && pin) requireResolvedStimdHome();
+  if (!DAEMON_COMMANDS.includes(name)) return;
+  if (pin) requireResolvedStimdHome();
   const { commandWorkspace } = await import('./command-workspace.ts');
-  const root = commandWorkspace(creates && recordUse, env, cwd);
-  const taken =
-    creates &&
-    (await ensureStimd(
-      env,
-      process.platform,
-      pin,
-      held,
-      `stim ${name}`,
-      true,
-      invocation && { ...invocation, workspace: root },
-      deviceLogs && (name === 'ios' || name === 'android'),
-    ));
-  if ((taken && daemonMode(env) !== 'off') || !inline) return;
-  const { runPassesInProcess } = await import('./passes.ts');
-  await runPassesInProcess(name, env, root);
+  const root = commandWorkspace(recordUse, env, cwd);
+  await ensureStimd(
+    env,
+    process.platform,
+    pin,
+    held,
+    `stim ${name}`,
+    true,
+    invocation && { ...invocation, workspace: root },
+    deviceLogs && (name === 'ios' || name === 'android'),
+  );
 }
 
 function send(message: Record<string, unknown>): void {

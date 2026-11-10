@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import {
-  daemonNdjsonFile,
   DEVICE_METRO_IDLE_STOP_REASON,
   INTERACTIONS_KEY,
   readDeferredShutdowns,
@@ -17,12 +16,8 @@ import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
-import * as measure from '../daemon/measure.ts';
-import { runPassesInProcess } from '../daemon/passes.ts';
-import * as maintenanceRun from '../stimd/passes/run.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -255,14 +250,9 @@ test('report mode decides and acts on nothing', async () => {
   expect(existsSync(derivedData)).toBe(true);
 });
 
-test('a pass for workspaces with no dev server leaves a serving workspace to its supervisor and the command workspace alone', async () => {
+test('a pass leaves the command workspace alone', async () => {
   const left = bootedWorkspace('left', 20 * MINUTE_MS);
-  const serving = bootedWorkspace('serving', 20 * MINUTE_MS);
   const own = bootedWorkspace('own', 20 * MINUTE_MS);
-  writeWorkspaceState(serving.root, {
-    ...readWorkspaceState(serving.root),
-    supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true },
-  });
   const config = loadConfig();
   const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
 
@@ -273,67 +263,13 @@ test('a pass for workspaces with no dev server leaves a serving workspace to its
     simsError: null,
     devices,
     act: true,
-    unsupervised: true,
     protectedRoot: own.root,
     log: () => {},
   });
 
   expect(decisions).toEqual([expect.objectContaining({ path: left.root, outcome: 'idle' })]);
   expect(tornDown).toEqual([left.udid]);
-  expect(existsSync(serving.derivedData)).toBe(true);
   expect(existsSync(own.derivedData)).toBe(true);
-});
-
-describe('the in-process passes of a command with no daemon holding the home', () => {
-  const run = (act: 'on' | 'report', root: string) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: act };
-    delete env[HOME_PASSES_TEST_GUARD_ENV];
-    return runPassesInProcess('logs', env, root);
-  };
-
-  beforeEach(() => {
-    vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-    vi.spyOn(measure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 10_000_000 }]);
-    vi.spyOn(measure, 'measureMemory').mockResolvedValue({ level: 'normal', availableBytes: 1e12, totalBytes: 1e12 });
-    vi.spyOn(measure, 'measureTick').mockImplementation(async (config, now) => ({
-      sims,
-      simsError: null,
-      devices: await collectOwnedDeviceActivityAsync(config, sims, now),
-      measurement: {
-        disk: [],
-        memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
-        load1: 0,
-        cores: 1,
-        bootedSimulators: sims.length,
-        runningEmulators: null,
-        interaction: null,
-      },
-    }));
-  });
-
-  test('shut down an owned device with no dev server once it is idle, and never the command workspace', async () => {
-    const left = bootedWorkspace('left', 20 * MINUTE_MS);
-    const own = bootedWorkspace('own', 20 * MINUTE_MS);
-
-    await run('on', own.root);
-
-    expect(tornDown).toEqual([left.udid]);
-    expect(existsSync(left.derivedData)).toBe(false);
-    expect(existsSync(own.derivedData)).toBe(true);
-    expect(readFileSync(join(workspaceLogsDir(left.root), 'metro.ndjson'), 'utf8')).toContain(
-      '"event":"workspace_idle"',
-    );
-  });
-
-  test('only log what they would do in report mode', async () => {
-    const left = bootedWorkspace('left', 20 * MINUTE_MS);
-
-    await run('report', join(projects, 'elsewhere'));
-
-    expect(tornDown).toEqual([]);
-    expect(existsSync(left.derivedData)).toBe(true);
-    expect(readFileSync(daemonNdjsonFile(), 'utf8')).toContain('"event":"workspace_would_idle"');
-  });
 });
 
 test('maintenance.keep keeps an idle workspace out of the idle stage', async () => {

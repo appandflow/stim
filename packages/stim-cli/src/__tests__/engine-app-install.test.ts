@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import type { ExecOptions, Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { isBundleActivityLine } from '../stimd/metro/server-expo.ts';
 import {
   LAUNCH_ERROR,
   devClientUrl,
@@ -482,7 +481,6 @@ describe('isBundleProof', () => {
         100,
       ),
     ).toBe(true);
-    expect(isBundleActivityLine('Android Bundling failed 91ms')).toBe(true);
     expect(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundling failed 91ms' }, 100)).toBe(true);
     expect(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundled 91ms' }, 100, 'ios')).toBe(false);
     expect(isBundleProof({ ts: 150, src: 'metro', msg: 'iOS Bundled 91ms' }, 100, 'ios')).toBe(true);

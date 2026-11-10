@@ -6,8 +6,7 @@ import {
   clearWorkspaceStateKey,
 } from '../../workspace/workspace-state.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from '../../devices/device-slots.ts';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { supervisorPidFile, workspaceStateFile } from '../../workspace/paths.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { sameProcessRecord } from '../../process-identity.ts';
@@ -226,13 +225,6 @@ export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunn
       (record.logFile ?? null) === (expected.logFile ?? null)
     );
   });
-}
-
-export function writePidFile(root: string, pid: number): string {
-  const file = supervisorPidFile(root);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${pid}\n`);
-  return file;
 }
 
 export function readPidFile(root: string): number | null {

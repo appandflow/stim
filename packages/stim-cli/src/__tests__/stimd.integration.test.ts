@@ -30,20 +30,17 @@ import { allDrained, buildClaimRoot, keptEntries, readBuildClaims } from '../eng
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
 import {
-  beforeCommand,
   ensurePersistentStimd,
   ensureStimd,
   observeOwnedWeb,
   requestDaemonTick,
   stimdBuildId,
 } from '../daemon/client.ts';
-import { runOperation } from '../run-operation.ts';
 import { holdCIStimd } from '../api.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
-import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
 import * as daemonPasses from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
@@ -56,7 +53,6 @@ import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -1374,63 +1370,3 @@ test('on win32 a command starts stimd through the hidden launcher, which passes 
     /"__stimd" "--mode" "on" "--log-file" ".*stimd\.log"$/,
   );
 }, 20_000);
-
-test.skipIf(process.platform === 'win32')(
-  'doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process unless daemon.mode is off',
-  async () => {
-    const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-    setExecutor({
-      ...getExecutor(),
-      findExecutable: () => null,
-      runFile() {
-        throw new Error('no stimd starts in this test');
-      },
-      spawn() {
-        throw new Error('no stimd starts in this test');
-      },
-    });
-    onTestFinished(() => resetExecutor());
-    const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
-    delete env[HOME_PASSES_TEST_GUARD_ENV];
-
-    for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
-      await beforeCommand(name, env);
-    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
-
-    ran.mockClear();
-    await runOperation({ caller: 'api', operation: 'start', admission: 'command', cwd: process.cwd(), env });
-    expect(ran).not.toHaveBeenCalled();
-    for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
-    expect(ran).not.toHaveBeenCalled();
-    await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
-    const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
-    assert(claim);
-    try {
-      await beforeCommand('doctor', env);
-      await beforeCommand('start', env);
-    } finally {
-      releaseClaim(claim);
-    }
-    expect(ran).not.toHaveBeenCalled();
-  },
-);
-
-test('doctor skips in-process passes while an unverified home claim remains', async () => {
-  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-  onTestFinished(() => ran.mockRestore());
-  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
-  delete env[HOME_PASSES_TEST_GUARD_ENV];
-  const live = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'stimd' }).acquired;
-  assert(live);
-  markClaimChildPending(live);
-  try {
-    await daemonPasses.runPassesInProcess('doctor', env);
-    expect(ran).not.toHaveBeenCalled();
-  } finally {
-    releaseClaim(live);
-  }
-  plantClaim(stimdClaimRoot(), 'exclusive', goneClaimOwner(), { child: { record: null } });
-  expect(readClaimSet(stimdClaimRoot()).unresolved).not.toEqual([]);
-  await daemonPasses.runPassesInProcess('doctor', env);
-  expect(ran).not.toHaveBeenCalled();
-});

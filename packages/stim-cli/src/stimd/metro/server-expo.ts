@@ -117,7 +117,7 @@ const UNHANDLED_NAVIGATE =
   /The action '(?:NAVIGATE|NAVIGATE_DEPRECATED)' with payload .*was not handled by any navigator/;
 const DEV_CLIENT_ROUTE = 'expo-development-client';
 
-export function isDevClientNavigationNotice(line: unknown): boolean {
+function isDevClientNavigationNotice(line: unknown): boolean {
   const text = String(line);
   return text.includes(DEV_CLIENT_ROUTE) && UNHANDLED_NAVIGATE.test(text);
 }
@@ -140,13 +140,9 @@ export function inferLevel(line: unknown): string {
   return 'info';
 }
 
-export function isBundleMarker(line: unknown): boolean {
+function isBundleMarker(line: unknown): boolean {
   const text = String(line);
   return /\bBundled\b/.test(text) || /\bBundling failed\b/.test(text);
-}
-
-export function isBundleActivityLine(line: unknown): boolean {
-  return /\bBundl(?:ing|ed)\b/.test(String(line));
 }
 
 export function cleanLine(line: unknown): string {
@@ -193,7 +189,7 @@ export function recordFromLine(
   return record;
 }
 
-export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   if (env.EXPO_PACKAGER_PROXY_URL) return {};
   const publicUrl = env.STIM_METRO_PUBLIC_URL?.trim();
   // Expo otherwise combines a tunnel host with the local Metro port in its manifest.
@@ -208,7 +204,7 @@ const WAITING_ON_RE = /^Waiting on (\S+)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME_RE = /^https?:\/\//i;
 
-export function parseExpoWaitingOnUrl(line: unknown): string | null {
+function parseExpoWaitingOnUrl(line: unknown): string | null {
   const match = WAITING_ON_RE.exec(String(line ?? ''));
   if (!match) return null;
   const url = match[1] as string;
