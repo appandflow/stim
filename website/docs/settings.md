@@ -1049,10 +1049,12 @@ lockfile or install stamp changed. It also wakes the oldest
 run waiting for a build slot as soon as one is released. A command from another
 Stim build than the running `stimd` does not use it. When that build is what
 `stimd`'s own installation now holds, as after `npm install --global stim`
-updated it in place, `stimd` restarts on it once the commands it serves end and
-no share-only server runs, and the command waits up to 15 seconds for it.
-Otherwise the command names the running build (`STIM_DAEMON_UNAVAILABLE` where
-it needs `stimd`); `stimd` keeps serving until nothing runs in the home, and the
+updated it in place, and a command started that `stimd` (not `stim serve`, Stim
+Desktop or a service unit), `stimd` restarts on it once the commands it serves
+end and no share-only server runs, and the command waits up to 15 seconds for it.
+Otherwise `stim share`, `share list` and `share stop` refuse with
+`STIM_DAEMON_UNAVAILABLE`, naming the running build, and other commands run
+without `stimd`; `stimd` keeps serving until nothing runs in the home, and the
 next command starts its own build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it
 starts. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
