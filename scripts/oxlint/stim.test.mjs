@@ -84,3 +84,23 @@ tester.run('refusal-remedy', plugin.rules['refusal-remedy'], {
     { code: "fail({ code: 'STIM_NO_DEVICE' as const });", filename: 'refusal.ts', errors: 1 },
   ],
 });
+
+const lazy = [{ modules: ['@stim-cli/transport-tailscale'] }];
+const net = fileURLToPath(new URL('../../packages/server/src/example.ts', import.meta.url));
+
+tester.run('static-imports', plugin.rules['static-imports'], {
+  valid: [
+    { code: "import type { T } from '@stim-cli/transport-tailscale';", options: lazy, filename: net },
+    { code: "import { type T } from '@stim-cli/transport-tailscale';", options: lazy, filename: net },
+    { code: "export type { T } from '@stim-cli/transport-tailscale';", options: lazy, filename: net },
+    { code: "const load = () => import('@stim-cli/transport-tailscale');", options: lazy, filename: net },
+    { code: "import { value } from '@stim-cli/transport-local';", options: lazy, filename: net },
+  ],
+  invalid: [
+    "import { value } from '@stim-cli/transport-tailscale';",
+    "import manifest from '@stim-cli/transport-tailscale';",
+    "import { value, type T } from '@stim-cli/transport-tailscale';",
+    "export { value } from '@stim-cli/transport-tailscale';",
+    "export * from '@stim-cli/transport-tailscale';",
+  ].map((code) => ({ code, options: lazy, filename: net, errors: 1 })),
+});
