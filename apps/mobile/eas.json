@@ -52,6 +52,13 @@
         "ascAppId": "6816250896",
         "metadataPath": "./store.config.js"
       }
+    },
+    "next": {
+      "ios": {
+        "appleTeamId": "R7E8P23K3N",
+        "ascAppId": "6833057037",
+        "bundleIdentifier": "com.appandflow.stim.next"
+      }
     }
   }
 }
