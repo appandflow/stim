@@ -1,0 +1,12 @@
+{
+  "name": "transport-fixture-imports-stim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "stimPlugin": {
+    "kinds": {
+      "transport": 1
+    }
+  }
+}

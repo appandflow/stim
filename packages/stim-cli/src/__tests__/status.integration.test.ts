@@ -8,7 +8,6 @@ import { execFileSync } from 'child_process';
 import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
-import { Command } from 'commander';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { admissionLimits, saveConfig, loadConfig, type ProjectRecord } from '../workspace/config.ts';
@@ -16,7 +15,8 @@ import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
-import statusCommand, { readVolumes } from '../commands/status.ts';
+import statusOp, { readVolumes } from '../commands/status.ts';
+import { runCli } from '../cli/define-op.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
   ensureWorkspaceStorage,
@@ -96,13 +96,11 @@ afterEach(() => {
 
 async function runStatus(platform: NodeJS.Platform = 'darwin') {
   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
-  const program = new Command();
-  statusCommand(program);
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
-    await program.parseAsync(['node', 'stim', 'status']);
+    await runCli(statusOp, [], { version: '9.9.9' });
   } finally {
     console.log = originalLog;
   }
@@ -390,13 +388,11 @@ test.each(['ios', 'android'] as const)(
 
 async function runStatusJson(platform: NodeJS.Platform = 'darwin') {
   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
-  const program = new Command();
-  statusCommand(program);
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
-    await program.parseAsync(['node', 'stim', 'status', '--json']);
+    await runCli(statusOp, ['--json'], { version: '9.9.9' });
   } finally {
     console.log = originalLog;
   }
@@ -1404,14 +1400,12 @@ test.each([
     });
     const logs = await runStatus();
     expect(logs.join('\n')).toContain(`build placement ${buildMachine}, built on ${actual}`);
-    const program = new Command();
-    statusCommand(program);
     const lines: string[] = [];
     const log = vi.spyOn(console, 'log').mockImplementation((line) => {
       lines.push(String(line));
     });
     try {
-      await program.parseAsync(['node', 'stim', 'status', '--json']);
+      await runCli(statusOp, ['--json'], { version: '9.9.9' });
     } finally {
       log.mockRestore();
     }

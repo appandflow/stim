@@ -1,8 +1,7 @@
 import { isIPv4 } from 'node:net';
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
-import { TRANSPORT_API_VERSION, type Transport, type TransportInput } from '@stim-cli/transport';
+import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
 
-export const apiVersion: typeof TRANSPORT_API_VERSION = TRANSPORT_API_VERSION;
 export const id = 'local';
 
 const POLL_MS = 5000;
@@ -63,7 +62,7 @@ export interface LocalTransport extends Transport {
   id: typeof id;
   lan(): LanAddresses;
   bindAddresses(): string[];
-  watch(listener: () => void): () => void;
+  watch(listener: (event: TransportWatchEvent) => void): () => void;
 }
 
 /**
@@ -91,16 +90,16 @@ export function localTransport({
   const timers = new Set<NodeJS.Timeout>();
   return {
     id,
-    traits: { privateNetwork: false, tls: 'none', peerIdentity: false },
     lan: read,
     bindAddresses: () => read().addresses,
     watch(listener) {
       let last = JSON.stringify(read());
       const timer = setInterval(() => {
-        const next = JSON.stringify(read());
-        if (next === last) return;
-        last = next;
-        listener();
+        const next = read();
+        const serialized = JSON.stringify(next);
+        if (serialized === last) return;
+        last = serialized;
+        listener({ addresses: next.addresses });
       }, pollMs);
       timer.unref();
       timers.add(timer);

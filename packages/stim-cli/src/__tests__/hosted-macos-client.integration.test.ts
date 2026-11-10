@@ -22,7 +22,8 @@ import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord } from '@stim-cli/core/state';
 import * as coreState from '@stim-cli/core/state';
-import logsCommand from '../commands/logs.ts';
+import logsOp from '../commands/logs.ts';
+import { runCli } from '../cli/define-op.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
 import { agentRemoteConfig, connectHost, placeHostedMacos, probeHostedMacos } from '../device-host/hosted-macos.ts';
@@ -995,9 +996,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       process.chdir(root);
       try {
-        const program = new Command();
-        logsCommand(program);
-        await program.parseAsync(['node', 'stim', 'logs', ...args]);
+        await runCli(logsOp, args, { version: '9.9.9' });
         return { out, err: stderr.mock.calls.map(([line]) => String(line)).join('') };
       } finally {
         process.chdir(originalCwd);

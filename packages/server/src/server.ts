@@ -122,7 +122,7 @@ import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
-import type { TransportIdentity } from '@stim-cli/transport';
+import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import type { TailscaleState } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DeviceViewers } from './viewers.ts';
@@ -446,10 +446,12 @@ function pruneSetup(): void {
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
+  /** The addresses each transport that binds some reports now: read when watching starts, then replaced by its `watch` events. */
+  const bindings = new Map<Transport, string[]>();
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
   const peerNode = cachedPeerNode(async (request: IncomingMessage, address: string): Promise<string | null> => {
     for (const transport of transports) {
-      const identity = await transport.identify?.({ address, request }).catch(() => null);
+      const identity = await transport.identify?.({ address, headers: request.headers }).catch(() => null);
       if (identity) return identity.id;
     }
     console.error(`stim-server: no transport identified the peer ${address}.`);
@@ -464,7 +466,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   /** Names a peer for people to read; never decides who a client is. */
   async function describePeer(request: IncomingMessage, address: string): Promise<string> {
     for (const transport of transports) {
-      const label = peerLabel((await transport.identify?.({ address, request }).catch(() => null)) ?? null);
+      const label = peerLabel(
+        (await transport.identify?.({ address, headers: request.headers }).catch(() => null)) ?? null,
+      );
       if (label) return label;
     }
     return address;
@@ -1910,9 +1914,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   } as const;
   const lanHealth = (): Pick<ServerHealth, 'lan'> => {
     const wanted = new Set(
-      transports
-        .filter((transport) => transport.id === 'local')
-        .flatMap((transport) => transport.bindAddresses?.() ?? []),
+      transports.filter((transport) => transport.id === 'local').flatMap((transport) => bindings.get(transport) ?? []),
     );
     const bound = addresses.filter(({ host }) => wanted.has(host));
     const [first] = bound;
@@ -2106,10 +2108,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     throw error;
   }
-  const binding = transports.filter((transport) => transport.bindAddresses);
   const listenFailures = new Set<string>();
   const reconcile = async () => {
-    const extra = options.loopbackOnly ? [] : binding.flatMap((transport) => transport.bindAddresses?.() ?? []);
+    const extra = options.loopbackOnly ? [] : [...bindings.values()].flat();
     const wanted = new Set([...options.hosts, ...extra]);
     for (const [host, listener] of servers) {
       if (wanted.has(host)) continue;
@@ -2144,12 +2145,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queueReconcile = () => {
     if (retry) clearTimeout(retry);
     retry = null;
-    if (binding.length) reconciling = reconciling.then(reconcile);
+    if (bindings.size) reconciling = reconciling.then(reconcile);
   };
+  const stopWatching: (() => void)[] = [];
+  try {
+    for (const transport of transports) {
+      if (!transport.bindAddresses) continue;
+      if (transport.watch)
+        stopWatching.push(
+          transport.watch((event) => {
+            bindings.set(transport, event.addresses);
+            queueReconcile();
+          }),
+        );
+      bindings.set(transport, transport.bindAddresses());
+    }
+  } catch (error) {
+    for (const stop of stopWatching) stop();
+    throw error;
+  }
   queueReconcile();
   await reconciling;
   keepAwake.sync();
-  const stopWatching = binding.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
   let settle!: (state: StartupState) => void;
   const ready = new Promise<StartupState>((resolve) => {
     settle = resolve;

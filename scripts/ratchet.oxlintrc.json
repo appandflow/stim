@@ -9,6 +9,7 @@
   "rules": {
     "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
     "typescript/no-non-null-assertion": "error",
-    "stim/refusal-remedy": "error"
+    "stim/refusal-remedy": "error",
+    "no-restricted-imports": ["error", { "paths": [{ "name": "commander" }] }]
   }
 }

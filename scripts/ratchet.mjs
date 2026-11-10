@@ -27,12 +27,14 @@ const kinds = {
   'typescript(consistent-type-assertions)': 'as',
   'typescript(no-non-null-assertion)': 'nonNull',
   'stim(refusal-remedy)': 'refusalRemedy',
+  'eslint(no-restricted-imports)': 'commander',
 };
-const counted = { src: ['as', 'nonNull', 'refusalRemedy'], test: ['as', 'nonNull'] };
+const counted = { src: ['as', 'nonNull', 'refusalRemedy', 'commander'], test: ['as', 'nonNull'] };
 const advice = {
   as: 'Narrow the type instead of asserting it.',
   nonNull: 'Narrow the type instead of asserting it.',
   refusalRemedy: 'Give each STIM_* refusal a remedy that says how to recover.',
+  commander: 'Declare the command with defineOp (src/cli/define-op.ts) instead of commander.',
 };
 
 const lint = spawnSync(

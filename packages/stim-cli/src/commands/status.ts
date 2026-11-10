@@ -20,7 +20,7 @@ import { statSync } from 'fs';
 import { totalmem, userInfo } from 'os';
 import { join } from 'path';
 import { quotedPath } from '@stim-cli/core';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
@@ -67,11 +67,6 @@ import { isBootedParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked } fro
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
 import { hostedAgentLine } from '../hosted-names.ts';
-
-interface StatusOptions {
-  json?: boolean;
-  watch?: boolean;
-}
 
 function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): string[] {
   const out: string[] = [];
@@ -145,22 +140,26 @@ function phaseMarker({ phase, warmStep, pathMissing }: EnvironmentState): string
 
 const WATCH_GIT_MAX_AGE_MS = 60_000;
 
-export default function statusCommand(program: Command): void {
-  program
-    .command('status')
-    .description(
-      'Show every environment on this machine: devices, ports, what is actually running, and anything stuck.',
-    )
-    .option('--json', 'print the state as JSON')
-    .option('--watch', 'keep running and print the state again each time it changes')
-    .option('--fresh', "with --json, read the state now instead of answering from stimd's last snapshot")
-    .action(async (opts: StatusOptions) => {
-      if (opts.watch) return watchStatus(Boolean(opts.json));
-      const json = Boolean(opts.json);
-      for (const line of renderStatus(await readStatus({ probes: liveProbes({ sharedListing: true }) }), json))
-        console.log(line);
-    });
-}
+const statusOp: Op = defineOp({
+  name: 'status',
+  description: 'Show every environment on this machine: devices, ports, what is actually running, and anything stuck.',
+  options: {
+    json: { flags: '--json', description: 'print the state as JSON' },
+    watch: { flags: '--watch', description: 'keep running and print the state again each time it changes' },
+    fresh: {
+      flags: '--fresh',
+      description: "with --json, read the state now instead of answering from stimd's last snapshot",
+    },
+  },
+  async run({ options }) {
+    if (options.watch) return watchStatus(Boolean(options.json));
+    const json = Boolean(options.json);
+    for (const line of renderStatus(await readStatus({ probes: liveProbes({ sharedListing: true }) }), json))
+      console.log(line);
+  },
+});
+
+export default statusOp;
 
 function timeIn(at: string, now: number): string {
   const since = Date.parse(at);
