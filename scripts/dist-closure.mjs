@@ -37,6 +37,7 @@ const deny = {
   api: shared,
   tiers: pluginRules,
   daemon: [ownFingerprint, ...pluginRules],
+  net: [['transport-tailscale', /^@stim-cli\/transport-tailscale\//]],
 };
 
 /** The most dist files and bytes an entry's static closure may load. */
@@ -159,6 +160,7 @@ export function entryFiles(dist) {
   const stimd = /"__stimd"\)[^]{0,80}?import\("(\.\/[^"]+\.mjs)"\)/.exec(commands);
   if (!stimd) throw new Error(`${base[1]} loads no chunk for __stimd`);
   entries.daemon = [...base, join(dist, stimd[1]), join(dist, 'stimd-thread.mjs')];
+  entries.net = [join(dist, 'net-thread.mjs')];
   return entries;
 }
 

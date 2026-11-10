@@ -53,9 +53,9 @@ const staticImports = {
     schema: [{ type: 'object', properties: { modules: { type: 'array', items: { type: 'string' } } } }],
   },
   create(context) {
-    const modules = new Set(context.options[0]?.modules ?? []);
+    const modules = context.options[0]?.modules ?? [];
     const check = (node, spec, types) => {
-      if (!types && modules.has(spec))
+      if (!types && modules.some((name) => spec === name || spec.startsWith(`${name}/`)))
         context.report({ node, message: `Load ${spec} with await import(); a static import puts it in this closure.` });
     };
     return {

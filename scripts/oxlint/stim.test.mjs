@@ -95,10 +95,12 @@ tester.run('static-imports', plugin.rules['static-imports'], {
     { code: "export type { T } from '@stim-cli/transport-tailscale';", options: lazy, filename: net },
     { code: "const load = () => import('@stim-cli/transport-tailscale');", options: lazy, filename: net },
     { code: "import { value } from '@stim-cli/transport-local';", options: lazy, filename: net },
+    { code: "import { value } from '@stim-cli/transport-tailscale-extra';", options: lazy, filename: net },
   ],
   invalid: [
     "import { value } from '@stim-cli/transport-tailscale';",
     "import manifest from '@stim-cli/transport-tailscale';",
+    "import manifest from '@stim-cli/transport-tailscale/package.json' with { type: 'json' };",
     "import { value, type T } from '@stim-cli/transport-tailscale';",
     "export { value } from '@stim-cli/transport-tailscale';",
     "export * from '@stim-cli/transport-tailscale';",
