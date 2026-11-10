@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { CliExit } from '../src/cli-operation.ts';
-import { CliUsageError, runCli, type Op } from '../src/cli/define-op.ts';
+import { CliUsageError, runCli, type CliContext, type Op } from '../src/cli/define-op.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 if (process.argv[2] === '__stimd') {
@@ -51,16 +51,20 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['engine', () => import('../src/commands/engine.ts')],
 ]);
 
-function register(program: Command, command: CommandModule['default']): void {
+const opBacked = new WeakSet<Command>();
+
+function register(program: Command, command: CommandModule['default'], before: CliContext['before']): void {
   if (typeof command === 'function') return command(program, pkg.version);
   const listed = program.command([command.name, command.arguments].filter(Boolean).join(' '));
   listed.description(command.description).allowExcessArguments();
   for (const option of Object.values(command.options)) listed.option(option.flags, option.description);
   listed.action(async (...params: unknown[]) => {
     const self = params.at(-1);
-    const code = self instanceof Command ? await runCli(command, ['--', ...self.args], { version: pkg.version }) : 0;
+    const code =
+      self instanceof Command ? await runCli(command, ['--', ...self.args], { version: pkg.version, before }) : 0;
     if (code !== 0) throw new CliExit(code);
   });
+  opBacked.add(listed);
 }
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
@@ -128,12 +132,13 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       if (code !== 0) exitCode = code;
     } else {
       if (loaded) {
-        register(program, loaded.default);
+        register(program, loaded.default, before);
       } else if (first !== '--version' && first !== '-V') {
         const modules = await Promise.all([...commands.values()].map((load) => load()));
-        for (const module of modules) register(program, module.default);
+        for (const module of modules) register(program, module.default, before);
       }
       program.hook('preAction', (_command, action) => {
+        if (opBacked.has(action)) return;
         const path: string[] = [];
         for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
         return before(path);
