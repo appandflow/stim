@@ -735,8 +735,9 @@ posture is selected and disabled. On an unfolded Duo, touches go
 to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why. A session lost with the connection, as when the app
-goes to the background, starts again once the phone reconnects. It does not take
-over: if someone else drives the device by then, the banner offers **Take Over**.
+goes to the background, starts again once the phone reconnects, joining whoever
+else controls the device. Only a device leased by another workspace by then shows
+the banner with **Take Over** instead.
 
 On an iOS simulator, an Android emulator or an Android phone, **More** also has **Paste from Phone** and **Copy Device
 Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
