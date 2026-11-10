@@ -1,15 +1,31 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { Command, CommanderError } from 'commander';
+import { Command, CommanderError, InvalidArgumentError } from 'commander';
 import { CliUsageError, runCli, type Op } from '../cli/define-op.ts';
+import deviceCommand from '../commands/device.ts';
+import doctorCommand from '../commands/doctor.ts';
+import gcOp from '../commands/gc.ts';
 import guideCommand from '../commands/guide.ts';
 import logsOp from '../commands/logs.ts';
 import portsOp from '../commands/ports.ts';
 import remoteCommand from '../commands/remote.ts';
 import settingsCommand from '../commands/settings.ts';
+import shareCommand from '../commands/share.ts';
 import statsOp from '../commands/stats.ts';
 import statusOp from '../commands/status.ts';
 
-const OPS = [statusOp, statsOp, settingsCommand, guideCommand, portsOp, remoteCommand, logsOp];
+const OPS = [
+  statusOp,
+  statsOp,
+  settingsCommand,
+  guideCommand,
+  portsOp,
+  remoteCommand,
+  logsOp,
+  doctorCommand,
+  gcOp,
+  deviceCommand,
+  shareCommand,
+];
 
 interface Outcome {
   ran?: { path: string[]; args: unknown[]; options: unknown; parent: unknown };
@@ -38,14 +54,28 @@ function spy(op: Op, path: string[], ran: (outcome: Outcome['ran']) => void): Op
 
 function declare(parent: Command, op: Op, path: string[], ran: (outcome: Outcome['ran']) => void): void {
   const here = [...path, op.name];
-  const command = parent.command([op.name, op.arguments].filter(Boolean).join(' ')).description(op.description);
+  const described = Object.keys(op.argumentDescriptions).length > 0;
+  const command = parent
+    .command([op.name, ...(described ? [] : [op.arguments])].filter(Boolean).join(' '))
+    .description(op.description);
+  if (described)
+    for (const arg of op.arguments.split(' ')) command.argument(arg, op.argumentDescriptions[arg.slice(1, -1)]);
   if (op.positionalOptions) {
     parent.enablePositionalOptions();
     command.enablePositionalOptions();
   }
   for (const option of Object.values(op.options)) {
-    if (option.parse) command.option(option.flags, option.description, option.parse);
-    else command.option(option.flags, option.description);
+    const add = option.mandatory ? command.requiredOption.bind(command) : command.option.bind(command);
+    const { parse } = option;
+    if (parse)
+      add(option.flags, option.description, (value: string) => {
+        try {
+          return parse(value);
+        } catch (error) {
+          throw new InvalidArgumentError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    else add(option.flags, option.description);
   }
   for (const sub of op.commands) declare(command, sub, here, ran);
   if (op.run)
@@ -176,6 +206,67 @@ test.each(
     ['logs', '--grep', '--json'],
     ['logs', '--level', 'warn', '--since', '5m', '--tail', '20'],
     ['logs', '--sorce', 'metro'],
+    ['doctor', '--json'],
+    ['doctor', '--fix', '--platform=ios'],
+    ['doctor', '--platform', 'web'],
+    ['doctor', '--platform'],
+    ['doctor', '--jsn'],
+    ['doctor', 'extra'],
+    ['doctor', '--', '--json'],
+    ['gc'],
+    ['gc', '--json', '--delete', '--cache', 'workspaces'],
+    ['gc', '--delete', '--cache', 'archived:x'],
+    ['gc', '--older-than', '30', '--worktrees', '--json'],
+    ['gc', '--older-than', 'lastweek'],
+    ['gc', '--older-than=-5'],
+    ['gc', '--cache', '  '],
+    ['gc', '--cache'],
+    ['gc', '--delet'],
+    ['device'],
+    ['device', 'help'],
+    ['device', 'help', 'push'],
+    ['device', 'lok'],
+    ['device', '-V'],
+    ['device', '--json', 'lock', 'ios'],
+    ['device', 'lock'],
+    ['device', 'lock', 'ios', 'ID', '--for', '30s', '--wait', '0', '--json', '--slot', 'x'],
+    ['device', 'lock', 'ios', '--slot', 'bad/slot'],
+    ['device', 'lock', 'ios', 'a', 'b'],
+    ['device', '--', 'lock', 'ios', '--json'],
+    ['device', 'lock', '--', 'ios', '--json'],
+    ['device', 'unlock'],
+    ['device', 'unlock', 'android', '--json'],
+    ['device', 'provision', 'ios', '--yes', '--scheme', 'App', '--configuration', 'Debug'],
+    ['device', 'location', 'ios', '--set', '45.5,-73.6', '--json'],
+    ['device', 'location', 'ios', '--clear'],
+    ['device', 'permission', 'ios', 'grant'],
+    ['device', 'permission', 'ios', 'grant', 'camera', '--json'],
+    ['device', 'push', 'ios'],
+    ['device', 'push', 'ios', '--bogus'],
+    ['device', 'push', 'ios', 'extra'],
+    ['device', 'push', 'ios', '--help'],
+    ['device', 'push', 'ios', '--payload'],
+    ['device', 'push', 'ios', '--payload', '{"aps":{}}', '--slot', 'phone'],
+    ['device', 'network', 'android', 'off'],
+    ['share'],
+    ['share', 'list', '--json'],
+    ['share', 'stop', '--forget'],
+    ['share', 'ios', 'extra'],
+    ['share', 'ios', '--slug', 'demo', '--expires', '30', '--reuse', '--device', '--slot', 'phone'],
+    ['share', 'ios', '--password', 'secret12', '--no-password'],
+    ['share', 'ios', '--no-password', '--password', 'secret12'],
+    ['share', 'ios', '--no-password=x'],
+    ['share', 'ios', '--control', '--view-password'],
+    ['share', 'ios', '--view-password', 'viewer12', '--control'],
+    ['share', 'ios', '--view-password', '--json'],
+    ['share', 'ios', '--view-password', '-5'],
+    ['share', 'ios', '--view-password', '-'],
+    ['share', 'ios', '--view-password', '--', 'x'],
+    ['share', 'ios', '--view-password='],
+    ['share', 'ios', '--view-password=abc'],
+    ['share', '--view-password', 'ios'],
+    ['share', '--passwrd', 'x', 'ios'],
+    ['share', '--', 'ios', '--json'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {
   const op = OPS.find((each) => each.name === name);

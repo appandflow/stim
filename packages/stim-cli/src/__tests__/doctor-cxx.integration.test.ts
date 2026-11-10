@@ -11,10 +11,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { Command } from 'commander';
 import { getExecutor } from '../exec.ts';
 import { createStim } from '../api.ts';
-import doctorCommand from '../commands/doctor.ts';
+import { doctorOp } from '../commands/doctor.ts';
+import { runCli } from '../cli/define-op.ts';
 import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readCxxLauncherStates, repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
@@ -156,8 +156,7 @@ test.skipIf(process.platform === 'win32')(
     );
     const path = cache('android/app', null);
     writeFileSync(join(home, 'config.json'), '{ "projects": ');
-    const program = new Command();
-    doctorCommand(program, '1.2.3', () => analyzeStimVersions('1.2.3', '/tools/stim-cli', []));
+    const doctor = doctorOp(() => analyzeStimVersions('1.2.3', '/tools/stim-cli', []));
     const cwd = process.cwd();
     const log = console.log;
     const error = console.error;
@@ -166,7 +165,7 @@ test.skipIf(process.platform === 'win32')(
     process.chdir(root);
     try {
       await expect(
-        program.parseAsync(['node', 'stim', 'doctor', '--json', '--fix', '--platform', 'android']),
+        runCli(doctor, ['--json', '--fix', '--platform', 'android'], { version: '1.2.3' }),
       ).rejects.toMatchObject({ code: 'STIM_CONFIG_CORRUPT' });
     } finally {
       process.chdir(cwd);

@@ -14,7 +14,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { Command } from 'commander';
 import { getProject } from '../workspace/config.ts';
 import {
   checkBuildCacheProvider,
@@ -39,7 +38,8 @@ import {
   type Finding,
 } from '../diagnostics/doctor.ts';
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
-import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
+import { runCli } from '../cli/define-op.ts';
+import { doctorOp, doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
@@ -1751,12 +1751,11 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
   const logs: string[] = [];
   const originalLog = console.log;
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions);
+  const doctor = doctorOp(() => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json']);
+    await runCli(doctor, ['--json'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
@@ -1819,12 +1818,11 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'ios'));
   mkdirSync(join(project, 'android'));
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions);
+  const doctor = doctorOp(() => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+    await runCli(doctor, ['--json', '--platform', 'ios'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
@@ -1921,12 +1919,11 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
       throw new Error('unexpected spawn');
     },
   });
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions);
+  const doctor = doctorOp(() => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'android']);
+    await runCli(doctor, ['--json', '--platform', 'android'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
@@ -1971,12 +1968,11 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
       throw new Error('unexpected spawn');
     },
   });
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions, host);
+  const doctor = doctorOp(() => testStimVersions, host);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+    await runCli(doctor, ['--json', '--platform', 'ios'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
@@ -2042,12 +2038,11 @@ test('doctor records its run per platform in the project record', async () => {
   const cwd = process.cwd();
   const originalLog = console.log;
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions);
+  const doctor = doctorOp(() => testStimVersions);
   console.log = () => {};
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+    await runCli(doctor, ['--json', '--platform', 'ios'], { version: '1.2.3' });
     const runs = getProject(realpathSync(project))?.doctorRuns;
     expect(runs?.ios?.version).toBe('1.2.3');
     expect(runs?.android).toBe(undefined);
@@ -2064,12 +2059,11 @@ test('doctor leaves the registry alone in a directory that is not an app', async
   const cwd = process.cwd();
   const originalLog = console.log;
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => testStimVersions);
+  const doctor = doctorOp(() => testStimVersions);
   console.log = () => {};
   process.chdir(project);
   try {
-    await program.parseAsync(['node', 'stim', 'doctor', '--json']);
+    await runCli(doctor, ['--json'], { version: '1.2.3' });
     expect(getProject(realpathSync(project))).toBe(null);
   } finally {
     process.chdir(cwd);
