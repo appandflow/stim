@@ -567,6 +567,44 @@
           }
         ]
       }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/cli/**/*.ts",
+        "packages/stim-cli/src/commands/status.ts",
+        "packages/stim-cli/src/commands/stats.ts",
+        "packages/stim-cli/src/commands/settings.ts",
+        "packages/stim-cli/src/commands/guide.ts",
+        "packages/stim-cli/src/commands/ports.ts",
+        "packages/stim-cli/src/commands/remote.ts",
+        "packages/stim-cli/src/commands/logs.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              { "name": "cross-spawn", "message": "Start child processes through getExecutor() in exec.ts." },
+              {
+                "name": "@stim-cli/core",
+                "importNames": ["ambientContext", "ambientEnv", "withAmbientContext", "ambientWrite"],
+                "message": "Take a StimContext parameter; the ambient context is a temporary bridge for code not migrated yet."
+              },
+              { "name": "commander", "message": "Declare commands with defineOp from src/cli/define-op.ts." }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
