@@ -193,9 +193,14 @@ export function machineEndpoint(machine: string, current: unknown): Endpoint | s
   const parsed = parseMachine(machine);
   if (!parsed) return `${machine} is not a tailnet name or local: address`;
   if (parsed.transport === 'local') return localEndpoint(parsed.name, parsed.port);
+  return peerEndpoint(parsed.name, parsed.port, current);
+}
+
+/** Where the tailnet peer `name` serves `port` now, from `tailscale status --json`, or why that is not known. */
+export function peerEndpoint(name: string, port: number, current: unknown): Endpoint | string {
   if (!isJsonObject(current)) return 'Tailscale is not running';
-  const peer = findPeer(current, parsed.name);
-  if (peer === 'missing') return `no peer on this tailnet is named ${parsed.name}`;
-  if (peer === 'ambiguous') return `several tailnet peers match ${parsed.name}`;
-  return endpoint(peer, parsed.port);
+  const peer = findPeer(current, name);
+  if (peer === 'missing') return `no peer on this tailnet is named ${name}`;
+  if (peer === 'ambiguous') return `several tailnet peers match ${name}`;
+  return endpoint(peer, port);
 }
