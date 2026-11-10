@@ -1891,11 +1891,10 @@ The run estimates twice: when it starts, and once its outcome is known. The
 second estimate uses only runs that created, adopted or cold-booted their
 device the way this run did, so a new worktree is not estimated from reruns
 that reused a booted device. Runs recorded before Stim tagged them also count
-for a run that reuses its device until three tagged ones exist. A build that
-skips the artifact cache, such as an Exact app's, says whether it compiles on
-output an earlier build left in the app's `target/`; its estimate then uses
-only runs of the same kind, so a first build is not estimated from incremental
-ones. Runs that finish while this one is running do not change its estimate.
+for a run that reuses its device until three tagged ones exist. An Exact app's iOS
+build says whether its `target/` already held simulator output for its
+configuration; its estimate then uses only runs of the same kind, so a first
+build is not estimated from incremental ones. Runs that finish while this one is running do not change its estimate.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
 in the shape of `lastBuilds.<platform>.missReason` below. When prebuild or
@@ -2107,9 +2106,10 @@ estimate of the time the cache saved. The aggregates are kept in
 same project bucket. The same file keeps the last 10 successful runs per
 project, platform and cache outcome (and the last 10 that created, adopted or
 cold-booted their device), with their phase durations, for the
-estimates `stim status` shows; `stats` does not print them. A run whose build
-skips the artifact cache, such as an Exact app's, keeps only that sample,
-tagged as a first or incremental build, and counts in none of the aggregates. Outside a project only the
+estimates `stim status` shows; `stats` does not print them. An iOS run whose
+build skips the artifact cache (an Exact app's, or one the cache cannot key)
+keeps only that sample, an Exact app's tagged as a first or incremental build,
+and counts in none of the aggregates; such an Android run is not recorded. Outside a project only the
 machine section prints. There is no reset flag: delete that file to start over.
 
 `--json` prints one line:

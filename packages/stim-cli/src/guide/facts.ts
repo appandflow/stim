@@ -1664,12 +1664,11 @@ RULES
                    runs that created, adopted or cold-booted their device
                    the way this run did count; a run that reuses a booted
                    device also counts runs recorded before Stim tagged them
-                   until 3 tagged ones exist. A build that skips the
-                   artifact cache, such as an Exact app's, says whether it
-                   compiles on output an earlier build left (an Exact app's
-                   target/); its estimate then counts only runs of the same
-                   kind, so a first build is not estimated from incremental
-                   ones. Runs that finish meanwhile do not change the
+                   until 3 tagged ones exist. An Exact app's iOS build
+                   says whether its target/ already held simulator output
+                   for its configuration; its estimate then counts only
+                   runs of the same kind, so a first build is not
+                   estimated from incremental ones. Runs that finish meanwhile do not change the
                    estimate.
   expectedPhaseMs  the median duration of this phase in those runs, or null
                    when none of them entered it
@@ -2217,10 +2216,11 @@ HOW A RUN IS COUNTED (\`stats\`)
   aggregates it keeps the last 10 successful runs per project, platform and
   outcome (hit or cold), plus the last 10 that created, adopted or cold-booted
   their device, that did not wait for another workspace's build: each
-  one's duration and per-phase durations. A run whose build skips the
-  artifact cache, such as an Exact app's iOS build, keeps
-  only that sample, as a cold one tagged first or incremental, and counts
-  in none of the aggregates above. \`stim status\` estimates a running
+  one's duration and per-phase durations. An iOS run whose build skips the
+  artifact cache (an Exact app's, or one the cache cannot key) keeps only
+  that sample, as a cold one (an Exact app's tagged first or incremental),
+  and counts in none of the aggregates above; such an Android run is not
+  recorded. \`stim status\` estimates a running
   build from them (see \`guide facts status\`); \`stats --json\` does not
   print them.
 
