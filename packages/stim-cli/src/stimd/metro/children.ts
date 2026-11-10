@@ -701,10 +701,28 @@ async function awaitReady(child: MetroChild, stderr: string, signal: AbortSignal
       }
       await new Promise((done) => setTimeout(done, 100));
     }
+    if (signal) stopWhenOperationEnds(child, signal);
     return answer(child, 'starting');
   } finally {
     if (child.readiness === readiness) child.readiness = undefined;
   }
+}
+
+/** After `READY_MS`, a child that still does not answer stops when the requesting operation ends, as it does before. */
+function stopWhenOperationEnds(child: MetroChild, signal: AbortSignal): void {
+  const stop = () =>
+    void serialize(child.root, async () => {
+      if (children.get(child.root) !== child || child.ready || !running(child)) return answer(child, 'starting');
+      if (await isMetroRunning(child.port, AbortSignal.timeout(PROBE_MS))) {
+        child.ready = true;
+        return answer(child, 'started');
+      }
+      if ((queued.get(child.root) ?? 0) <= 1)
+        await stopChild(child, 'the command that started it ended before it answered');
+      return answer(child, 'starting');
+    });
+  if (signal.aborted) stop();
+  else signal.addEventListener('abort', stop, { once: true });
 }
 
 async function ensure(

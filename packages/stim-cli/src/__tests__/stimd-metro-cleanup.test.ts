@@ -10,6 +10,7 @@ const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
   failAfterSpawn: false,
   groupAlive: true,
+  answers: true,
   extraEnv: new Array<Record<string, string>>(),
   close: vi.fn<() => Promise<void>>(async () => {
     throw new Error('Could not confirm shutdown of dev-server pid 424242.');
@@ -38,7 +39,7 @@ vi.mock('../metro.ts', async (importOriginal) => ({
 }));
 vi.mock('../ports.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../ports.ts')>()),
-  isMetroRunning: async () => true,
+  isMetroRunning: async () => fixtures.answers,
 }));
 vi.mock('../stimd/metro/server-command.ts', () => ({
   startCommandServer: async ({
@@ -92,6 +93,7 @@ beforeEach(() => {
   fixtures.token.mockReturnValue('test-token');
   fixtures.failAfterSpawn = false;
   fixtures.groupAlive = true;
+  fixtures.answers = true;
   fixtures.close.mockClear();
   fixtures.extraEnv = [];
   openMetroChildren();
@@ -115,6 +117,23 @@ test.skipIf(process.platform === 'win32')(
     await metroTick('on', log);
     await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
     expect(fixtures.close).toHaveBeenCalledOnce();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'an operation that ends after the readiness deadline still stops a Metro that never answered',
+  async () => {
+    fixtures.answers = false;
+    fixtures.close.mockResolvedValueOnce();
+    const operation = new AbortController();
+    const started = ensureMetro({ root, port: 8181 }, log, undefined, operation.signal);
+    await vi.advanceTimersByTimeAsync(121_000);
+    await expect(started).resolves.toMatchObject({ op: 'metro', state: 'starting' });
+    expect(fixtures.close).not.toHaveBeenCalled();
+    fixtures.groupAlive = false;
+    operation.abort();
+    await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
+    await closeMetroChildren();
   },
 );
 
