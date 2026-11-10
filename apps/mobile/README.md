@@ -466,8 +466,9 @@ The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on
 **Back** on Android and web, and both rotation directions on simulators and
 emulators. **More** (the ellipsis button) opens
 a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. Unavailable device commands stay disabled. With Control
-off, the viewer shows no toolbar.
+and simulator options. Unavailable device commands stay disabled. A viewer that
+is only watching shows no toolbar, except on a read-only pairing, which keeps the
+disabled Control buttons, and on an iPhone Duo, which keeps More.
 
 On iOS simulators whose server advertises them, **More** includes
 **Shake** and **Slow Animations**. Slow animations shows its confirmed state;
