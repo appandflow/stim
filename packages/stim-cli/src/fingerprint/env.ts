@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
+import { SETTINGS } from '@stim-cli/core/state';
 import { byCodeUnit, canonicalJson, sha256, type Input, type Platform } from './key.ts';
 
 type Env = NodeJS.ProcessEnv;
@@ -60,7 +61,9 @@ export const isDenied = (name: string): boolean => DENIED.test(name);
 /** Names a shell session sets that no evaluation depends on; an app's own `STIM_*` variable is not one. */
 export const isSessionName = (name: string): boolean => VOLATILE.test(name) && !name.startsWith('STIM_');
 const STIM_MACHINE_LOCAL = /^STIM_(?:HOME|RUN_ID|ACCESS_TICKET)$/;
-const keyable = (name: string) => !isDenied(name) && !MACHINE_LOCAL.has(name) && !STIM_MACHINE_LOCAL.test(name);
+const SETTING_OVERRIDES = new Set(SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])));
+const keyable = (name: string) =>
+  !isDenied(name) && !MACHINE_LOCAL.has(name) && !STIM_MACHINE_LOCAL.test(name) && !SETTING_OVERRIDES.has(name);
 const defined = (env: Env) =>
   Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 

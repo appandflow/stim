@@ -264,12 +264,13 @@ test('an env path naming the install root or the project itself resolves to it o
   });
 });
 
-test("a worker's isolation homes and stores are not keyed and survive the client's env", () => {
+test("a worker's isolation homes, stores and Stim settings overrides are not keyed and survive the client's env", () => {
   const isolation = {
     GRADLE_USER_HOME: '/worker/area/gradle',
     CP_HOME_DIR: '/worker/cache/cocoapods-home',
     CP_CACHE_DIR: '/worker/cache/cocoapods',
     npm_config_store_dir: '/worker/cache/pnpm-store',
+    STIM_DEBUG: '0',
   };
   const names = Object.keys(isolation);
   const client = Object.fromEntries(names.map((name) => [name, `/client/${name}`]));
