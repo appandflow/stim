@@ -38,6 +38,8 @@ export interface RunSample {
   phases: Record<string, number>;
   /** Whether the run created, adopted or cold-booted its device; absent on samples recorded before the tag. */
   deviceSetup?: boolean;
+  /** Whether an uncached build compiled on output an earlier build of the workspace left; absent when the build does not say. */
+  incremental?: boolean;
 }
 
 export type RunHistory = Partial<Record<StatsPlatform, Partial<Record<RunOutcomeKind, RunSample[]>>>>;
@@ -203,12 +205,13 @@ export function offloadSummary(record: StatsRecord | null, now: number): Offload
 }
 
 export function trimSamples(samples: RunSample[]): RunSample[] {
-  const kept = { setup: 0, other: 0 };
+  const kept = new Map<string, number>();
   const out: RunSample[] = [];
   for (const sample of samples.toReversed()) {
-    const kind = sample.deviceSetup === true ? 'setup' : 'other';
-    if (kept[kind] >= HISTORY_LIMIT) continue;
-    kept[kind] += 1;
+    const kind = `${sample.deviceSetup === true ? 'setup' : 'other'}:${sample.incremental ?? ''}`;
+    const taken = kept.get(kind) ?? 0;
+    if (taken >= HISTORY_LIMIT) continue;
+    kept.set(kind, taken + 1);
     out.push(sample);
   }
   return out.toReversed();
@@ -396,6 +399,7 @@ function normalizeHistory(scope: unknown): RunHistory {
             durationMs,
             phases: wholePhases(sample.phases),
             ...(typeof sample.deviceSetup === 'boolean' ? { deviceSetup: sample.deviceSetup } : {}),
+            ...(typeof sample.incremental === 'boolean' ? { incremental: sample.incremental } : {}),
           },
         ];
       });

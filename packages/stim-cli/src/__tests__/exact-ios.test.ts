@@ -162,3 +162,17 @@ test.skipIf(process.platform === 'win32')('waits for the boot before build admis
   expect(await recipe.compile()).toMatchObject({ ok: false, exitCode: 7 });
   expect(calls).toBe(1);
 });
+
+test("an Exact build is incremental when target/ already holds the simulator's Rust output for its configuration", async () => {
+  const incremental = async (configuration: string | null) => {
+    const identity = await exactIosProject(root).artifact(context(configuration)).identity();
+    return 'incremental' in identity ? identity.incremental : undefined;
+  };
+  const triple = process.arch === 'arm64' ? 'aarch64-apple-ios-sim' : 'x86_64-apple-ios';
+  mkdirSync(join(root, 'target', 'wasm32-unknown-unknown', 'host-dev'), { recursive: true });
+  expect(await incremental(null)).toBe(false);
+
+  mkdirSync(join(root, 'target', triple, 'host-dev'), { recursive: true });
+  expect(await incremental('Debug')).toBe(true);
+  expect(await incremental('Release')).toBe(false);
+});

@@ -27,6 +27,8 @@ const EXACT_CLI = 'exact.mjs';
 const CACHE_INELIGIBLE = 'Exact builds incrementally in its own target/ directory';
 const BUILT_APP = /^host\/apple: (\/.+?\.app)(?: on | \(|$)/;
 const ERROR_LINE = /^error(?:\[\w+\])?: /;
+// exact2's host/apple builds the simulator's Rust code under target/<triple>/<profile>: host-dev, or release with --release.
+const SIMULATOR_RUST_TARGET = process.arch === 'arm64' ? 'aarch64-apple-ios-sim' : 'x86_64-apple-ios';
 
 function exactBuiltApp(lines: readonly string[]): string | null {
   for (const line of lines.toReversed()) {
@@ -137,7 +139,11 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
     buildTool: EXACT_CLI,
     identity: async () => {
       await boot();
-      return { cacheIneligible: CACHE_INELIGIBLE };
+      const profile = context.configuration === 'Release' ? 'release' : 'host-dev';
+      return {
+        cacheIneligible: CACHE_INELIGIBLE,
+        incremental: existsSync(join(root, 'target', SIMULATOR_RUST_TARGET, profile)),
+      };
     },
     cache: () =>
       filesystemBuildCapability({
