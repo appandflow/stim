@@ -56,7 +56,6 @@ export interface ProjectRegistry {
   };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
-  detectPlatforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[];
   /** The detected platforms, and whether an integration of the app serves `dev-server` (Metro), from one inspection. */
   detectProject(root: string, resolved: ResolvedProjectSettings): { platforms: ProjectPlatform[]; devServer: boolean };
 }
@@ -272,10 +271,6 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return ordered.filter((platform) => platforms.has(platform));
   }
 
-  function detectPlatforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[] {
-    return platformsOf(inspect(root), resolved);
-  }
-
   function detectProject(
     root: string,
     resolved: ResolvedProjectSettings,
@@ -296,7 +291,6 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     selectDoctor,
     isMobileProject,
     keepsWorkspace,
-    detectPlatforms,
     detectProject,
   };
 }

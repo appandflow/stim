@@ -57,7 +57,8 @@ test('detectIsExpo trusts the ios script: react-native script wins even with exp
   }
 });
 
-const { detectPlatforms } = projectRegistry;
+const detectPlatforms = (...args: Parameters<typeof projectRegistry.detectProject>) =>
+  projectRegistry.detectProject(...args).platforms;
 
 describe('detectPlatforms without running project code', () => {
   let root: string;

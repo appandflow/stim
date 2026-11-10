@@ -64,30 +64,30 @@ afterEach(() => {
 test('RN admission is independent of advertised platforms and composes with SwiftPM and configured web', () => {
   packageAt(dir);
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual([]);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
   write(join(dir, 'Package.swift'));
   const settings = { macos: { product: 'App', infoPlist: 'Info.plist' }, web: { url: 'http://localhost:8000' } };
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: settings,
-    }),
+    }).platforms,
   ).toEqual(['macos', 'web']);
   expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
 
   write(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
   write(join(dir, 'app.json'), JSON.stringify({ expo: { platforms: ['web'] } }));
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual(['web']);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();

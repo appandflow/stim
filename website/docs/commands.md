@@ -1972,6 +1972,12 @@ bare app has no other route to web. macOS needs `Package.swift`,
 `macos.product` and `macos.infoPlist`. Detection never runs project scripts or
 executes app config code.
 
+Each environment also carries `devServer: boolean`: `true` when the app has a
+dev server that `stim start` and `stim reload` act on (React Native and Expo),
+`false` for Exact, native Xcode and Gradle apps, SwiftPM and web-only apps. Stim
+Desktop gives a workspace without one Stop and Show Logs instead of Start Dev
+Server and Reload, and no Metro section.
+
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
 `{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
