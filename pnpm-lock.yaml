@@ -530,6 +530,12 @@ importers:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport
+      '@stim-cli/transport-local':
+        specifier: workspace:*
+        version: link:../transport-local
+      '@stim-cli/transport-tailscale':
+        specifier: workspace:*
+        version: link:../transport-tailscale
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6

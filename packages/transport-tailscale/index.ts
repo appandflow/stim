@@ -1,4 +1,5 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
+import { peerEndpoint } from '@stim-cli/core/state';
 import { isIP } from 'node:net';
 import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
 import {
@@ -46,6 +47,7 @@ export interface TailscaleTransport extends Transport {
   snapshot(): TailscaleSnapshot;
   monitor: TailscaleMonitor | null;
   rawStatus(): Promise<unknown>;
+  resolve: NonNullable<Transport['resolve']>;
   serveRoute(target: number, timeoutMs?: number): Promise<ServeRoute>;
   setupRoute(target: number): Promise<ServeRoute>;
 }
@@ -62,12 +64,16 @@ export function tailscaleTransport({
   env,
   snapshot,
   monitor = null,
+  status,
 }: {
   env: NodeJS.ProcessEnv;
   snapshot: TailscaleSnapshot;
   monitor?: TailscaleMonitor | null;
+  /** Reads the running `tailscale status --json`, or null; defaults to this transport's own `tailscale` call. */
+  status?: () => unknown;
 }): TailscaleTransport {
   const now = () => monitor?.current() ?? snapshot;
+  const rawStatus = async () => (status ? status() : readRawTailscaleStatus(now().binary, env));
   return {
     id,
     monitor,
@@ -82,7 +88,13 @@ export function tailscaleTransport({
       const identity = await whois(now().binary, env, address);
       return identity && { id: identity.nodeId, name: identity.nodeName, user: identity.user };
     },
-    rawStatus: () => readRawTailscaleStatus(now().binary, env),
+    rawStatus,
+    async resolve({ name }) {
+      const [peer = '', port = ''] = name.split(':');
+      if (!peer || !/^\d{1,5}$/.test(port)) return { unresolved: `${name} is not a peer name and port` };
+      const found = peerEndpoint(peer, Number(port), await rawStatus());
+      return typeof found === 'string' ? { unresolved: found } : found;
+    },
     serveRoute(target, timeoutMs) {
       const { binary, state } = now();
       return serveRoute(binary, env, target, state.state === 'running' ? state.ips : [], timeoutMs);

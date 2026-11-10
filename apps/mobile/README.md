@@ -1238,26 +1238,58 @@ Revoke the development pairing when you are done; `stim pairings` lists it.
 
 ## Variants
 
-`app.config.ts` builds one of two variants, chosen by `APP_VARIANT`:
+`app.config.ts` builds one of three variants, chosen by `APP_VARIANT`:
 
 - `production`, the default: **Stim**, bundle id and Android package
   `com.appandflow.stim`, scheme `stim`.
 - `development`: **Stim Dev**, `com.appandflow.stim.dev`, schemes `stim` and
   `stim-dev`, and an orange icon with a **DEV** band. It installs next to the
   TestFlight app instead of replacing it.
+- `next`: **Stim Next**, `com.appandflow.stim.next`, schemes `stim` and
+  `stim-next`, a green icon with a **NEXT** band, and update channel `next`.
+  It follows `main` for people who run `next` Stim on their machines, and
+  installs next to the store app.
 
 `stim ios`, `stim android` and the EAS `production` profile build
-`production`; the EAS `development` profile builds `development`. Set the
-variable for any other command that reads the config, such as
-`APP_VARIANT=development npx expo prebuild`.
+`production`; the EAS `development` profile builds `development` and the EAS
+`next` profile builds `next`. Set the variable for any other command that reads
+the config, such as `APP_VARIANT=development npx expo prebuild`.
 
-The development icons in `assets/images/icon-dev.png` and
-`assets/images/icon-ios-dev.png` are generated from the production icons.
+The development and next icons (`assets/images/icon-dev.png`,
+`assets/images/icon-ios-dev.png`, `assets/images/icon-next.png` and
+`assets/images/icon-ios-next.png`) are generated from the production icons.
 After changing an icon, regenerate them and commit the result:
 
 ```bash
 node scripts/dev-icons.mjs
 ```
+
+### Stim Next
+
+`.github/workflows/mobile-next.yml` ships Stim Next from the head of `main`
+once that commit passed `merge gate` (or, for an admin push that bypassed the
+merge queue, the CI release-gate jobs). It runs on each push that touches
+`apps/mobile`, `packages/core` (the app's only workspace dependency),
+`pnpm-lock.yaml` or the workflow, and hourly to pick up a head that had not
+passed yet:
+
+- When the latest finished EAS `next` build is not on the commit's iOS
+  fingerprint, it builds the `next` profile and uploads it to TestFlight, where
+  the Stim Next app's internal testers get it without Beta App Review.
+- When that build is not on TestFlight yet, as after a failed upload, a push or
+  a manual run uploads it again; the hourly run only warns, so an upload Apple
+  rejects is not retried every hour. Nothing runs while a `next` build is still
+  building, and a commit whose build failed is not built twice.
+- Otherwise it publishes an update to channel `next`, unless nothing the app
+  ships changed. Either check is enough to publish nothing: no change under
+  those paths, Markdown and tests left out, since the commit of the last
+  `next` update (or build) on that runtime; or an exported bundle equal to that
+  update's. Each update's message starts with `next <commit> bundle:<hash>` for
+  that comparison.
+
+It has no release-order gate: only people who installed Stim Next get it, and
+the production app keeps the gate in `scripts/release-order.mjs`. Set the
+repository variable `MOBILE_NEXT_PAUSED` to `true` to stop it.
 
 ## Building the dev app for your own phone
 
