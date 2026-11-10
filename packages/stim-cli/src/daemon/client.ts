@@ -22,7 +22,7 @@ import {
   userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
-import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
@@ -67,13 +67,25 @@ export function stimdLive(home?: string): boolean {
   }
 }
 
+function unresolvedDaemonClaims(): ClaimProblem[] {
+  return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
+}
+
+const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
+const removeCommands = (claims: ClaimProblem[]) => claims.map((claim) => claimRemoveCommand(claim.path)).join('; ');
+
 function requireResolvedStimdHome(): void {
-  const [claim] = readClaimSet(stimdClaimRoot()).unresolved;
-  if (!claim) return;
-  throw Object.assign(new Error(`The Stim daemon claim at ${claim.path} cannot be resolved (${claim.reason}).`), {
-    code: 'STIM_CLAIM_UNAVAILABLE',
-    remedy: `Check that the prior daemon and its children have stopped, then run ${claimRemoveCommand(claim.path)} and retry.`,
-  });
+  const claims = unresolvedDaemonClaims();
+  if (claims.length === 0) return;
+  throw Object.assign(
+    new Error(
+      `The Stim daemon ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved.`,
+    ),
+    {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: `Check that the prior daemon and its children have stopped, then run ${removeCommands(claims)} and retry.`,
+    },
+  );
 }
 
 async function admitExisting(
@@ -471,10 +483,10 @@ export async function ensureStimd(
     return false;
   }
   try {
-    const [claim] = [...readClaimSet(daemonClaimRoot()).unresolved, ...readClaimSet(stimdClaimRoot()).unresolved];
-    if (claim) {
+    const claims = unresolvedDaemonClaims();
+    if (claims.length > 0) {
       console.error(
-        `Stim: the claim at ${claim.path} cannot be resolved (${claim.reason}), so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
+        `Stim: the ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved, so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove ${claims.length === 1 ? 'it' : 'them'} with \`${removeCommands(claims)}\`.`,
       );
       return true;
     }
