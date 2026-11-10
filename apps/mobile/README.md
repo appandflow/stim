@@ -466,9 +466,9 @@ The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on
 **Back** on Android and web, and both rotation directions on simulators and
 emulators. **More** (the ellipsis button) opens
 a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device Frame** appears in More when matching frame artwork
-is available; this display toggle does not require control permission. Unavailable
-device commands stay disabled.
+and simulator options. Unavailable device commands stay disabled. A viewer that
+is only watching shows no toolbar, except on a read-only pairing, which keeps the
+disabled Control buttons, and on an iPhone Duo, which keeps More.
 
 On iOS simulators whose server advertises them, **More** includes
 **Shake** and **Slow Animations**. Slow animations shows its confirmed state;
@@ -688,9 +688,9 @@ comes from the reserved regions. The hinge readings need the same iOS SDK
 support. Without both readings, the viewer keeps its default layout. Every
 control stays available in every posture.
 
-The **Device Frame** button in the bottom toolbar shows installed iPhone or
-Android emulator housing around the live screen. Frames start off and do not
-require Control. The paired machine supplies PNG layers from its installed DeviceKit
+The **Device Frame** switch in Settings, under Device View, shows installed iPhone or
+Android emulator housing around the live screen. It is saved on the phone, starts
+off and does not require Control. The paired machine supplies PNG layers from its installed DeviceKit
 or Android skin; artwork is not bundled in the app or repository. Touches stay
 inside the screen aperture, and taps on the bezel send no device input. Rotation
 metadata must match the current capture; otherwise the viewer shows the screen
@@ -701,8 +701,9 @@ viewer.
 Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
 
 For a live iPhone Duo, a server advertising `duo-frames` composes Xcode's installed
-V68 hardware model and both screen surfaces on the machine. **Device Frame** starts
-off. The composed JPEG follows the observed hinge angle and rotation; without
+V68 hardware model and both screen surfaces on the machine. A Duo viewer has its
+own **Device Frame** entry in More, which starts off each time and does not follow
+the Settings switch, because the composed frame gives up replay. The composed JPEG follows the observed hinge angle and rotation; without
 the model or a current angle reading, the raw screen remains visible. The app
 waits until the image is displayed before accepting a touch, then holds that
 image and pose throughout the drag. Bezel and hinge taps send no input. Leaving

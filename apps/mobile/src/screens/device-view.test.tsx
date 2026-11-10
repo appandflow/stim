@@ -59,7 +59,10 @@ jest.mock('react-native-gesture-handler', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-jest.mock('@/hooks/settings', () => ({ useSettings: () => ({ videoQuality: 'auto' }) }));
+let mockDeviceFrame = false;
+jest.mock('@/hooks/settings', () => ({
+  useSettings: () => ({ videoQuality: 'auto', deviceFrame: mockDeviceFrame }),
+}));
 jest.mock('@/hooks/machines', () => ({
   useArchivesPending: () => false,
   useHasStatus: () => true,
@@ -230,6 +233,7 @@ beforeEach(() => {
   mockStopped = false;
   mockStream.mockClear();
   mockArtwork = false;
+  mockDeviceFrame = false;
   mockHostCapabilities = ['frames', 'device-frames'];
   mockWindows = null;
   jest.clearAllMocks();
@@ -326,6 +330,7 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
 
 it('lets a Duo viewer enable its device frame with Control off', async () => {
   mockControlling = false;
+  mockDeviceFrame = true;
   mockHostCapabilities = ['frames', 'device-frames', 'duo-frames'];
   const screen = await render(
     <I18nProvider i18n={i18n}>
@@ -335,27 +340,28 @@ it('lets a Duo viewer enable its device frame with Control off', async () => {
   await fireEvent.press(screen.getByLabelText('More'));
   const toggle = screen.getByLabelText('Device Frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
+  expect(mockStream.mock.calls.at(-1)?.[1].duoFrame).toBe(false);
   await fireEvent.press(toggle);
   expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
+  expect(mockStream.mock.calls.at(-1)?.[1].duoFrame).toBe(true);
   expect(mockBegin).not.toHaveBeenCalled();
 });
 
-it('starts frameless and maps framed touches using the aperture layout rather than the housing fit', async () => {
+const housing = (screen: Awaited<ReturnType<typeof render>>) =>
+  screen.root!.queryAll((view) => view.props.source?.uri === 'data:image/png;base64,png');
+
+it('maps framed touches using the aperture layout rather than the housing fit when the Device Frame setting is on', async () => {
   mockArtwork = true;
+  mockDeviceFrame = true;
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
-  expect(screen.queryByLabelText('Device Frame')).toBeNull();
-  await fireEvent.press(screen.getByLabelText('More'));
-  const toggle = screen.getByLabelText('Device Frame');
-  expect(toggle.props.accessibilityState.selected).toBe(false);
-  await fireEvent.press(toggle);
-  expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
   const views = screen.root!.queryAll(
     (view) => view.props.onResponderGrant !== undefined && view.props.pointerEvents === 'auto',
   );
+  expect(housing(screen)).not.toHaveLength(0);
   const aperture = views.find((view) => view.props.onResponderGrant)!;
   expect(views.filter((view) => view.props.onResponderGrant)).toHaveLength(1);
   await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 30, y: 60, width: 300, height: 600 } } });
@@ -382,13 +388,12 @@ const touchAt = (identifier: number, x: number, y: number) => ({ identifier, loc
 
 it('sends two fingers on an Android device as one gesture and ignores the survivor of a lifted finger', async () => {
   mockArtwork = true;
+  mockDeviceFrame = true;
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="android" slot="default" />
     </I18nProvider>,
   );
-  await fireEvent.press(screen.getByLabelText('More'));
-  await fireEvent.press(screen.getByLabelText('Device Frame'));
   const aperture = responder(screen);
   await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
   const first = touchAt(1, 100, 400);
@@ -418,13 +423,12 @@ it('sends two fingers on an Android device as one gesture and ignores the surviv
 
 it('sends a single Android finger as a tap without a second finger', async () => {
   mockArtwork = true;
+  mockDeviceFrame = true;
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="android" slot="default" />
     </I18nProvider>,
   );
-  await fireEvent.press(screen.getByLabelText('More'));
-  await fireEvent.press(screen.getByLabelText('Device Frame'));
   const aperture = responder(screen);
   await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
   const finger = touchAt(1, 200, 400);
@@ -445,13 +449,12 @@ afterEach(() => {
 it('sends a held Android finger as a one-finger touch once the second-finger wait passes', async () => {
   jest.useFakeTimers();
   mockArtwork = true;
+  mockDeviceFrame = true;
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="android" slot="default" />
     </I18nProvider>,
   );
-  await fireEvent.press(screen.getByLabelText('More'));
-  await fireEvent.press(screen.getByLabelText('Device Frame'));
   const aperture = responder(screen);
   await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
   const finger = touchAt(1, 200, 400);
@@ -461,26 +464,17 @@ it('sends a held Android finger as a one-finger touch once the second-finger wai
   expect(mockTouch.mock.calls).toEqual([['down', 0.5, 0.5, undefined, undefined]]);
 });
 
-it('keeps the frame presentation toggle available without a control lease or control permission', async () => {
+it('shows no toolbar for an iPhone viewer with frame artwork and Control off', async () => {
   mockArtwork = true;
   mockControlling = false;
-  for (const allowed of [true, false]) {
-    mockAllowed = allowed;
-    const screen = await render(
-      <I18nProvider i18n={i18n}>
-        <DeviceView workspace="/fixture" platform="ios" slot="default" />
-      </I18nProvider>,
-    );
-    await fireEvent.press(screen.getByLabelText('More'));
-    const toggle = screen.getByLabelText('Device Frame');
-    expect(toggle.props.accessibilityState.disabled).not.toBe(true);
-    expect(toggle.props.accessibilityState.selected).toBe(false);
-    await fireEvent.press(toggle);
-    expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
-    expect(mockBegin).not.toHaveBeenCalled();
-    expect(mockTouch).not.toHaveBeenCalled();
-    await screen.unmount();
-  }
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.queryByLabelText('More')).toBeNull();
+  expect(screen.queryByLabelText('Device Frame')).toBeNull();
+  expect(housing(screen)).toHaveLength(0);
 });
 
 it.each([false, true])('keeps native mouse and window selection in the main bar (pinned: %s)', async (pinned) => {

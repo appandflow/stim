@@ -1622,8 +1622,8 @@ msgid "Data saver"
 msgstr "Data saver"
 
 #: src/lib/settings-options.ts
-msgid "Data saver sends still frames instead of video."
-msgstr "Data saver sends still frames instead of video."
+msgid "Data saver sends still frames instead of video. Device Frame shows the housing of a simulator or emulator around its screen when the machine has it."
+msgstr "Data saver sends still frames instead of video. Device Frame shows the housing of a simulator or emulator around its screen when the machine has it."
 
 #: src/lib/workspace-view.ts
 msgid "Dependencies"
@@ -1636,6 +1636,8 @@ msgid "Device"
 msgstr "Device"
 
 #: src/screens/device-view.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
 msgid "Device Frame"
 msgstr "Device Frame"
 

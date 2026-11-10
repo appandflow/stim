@@ -41,7 +41,7 @@ import {
   readOnlyFooter,
   replayFooter,
   stuckMinutesOptions,
-  videoQualityFooter,
+  deviceViewFooter,
   videoQualityOptions,
   type Option,
 } from '@/lib/settings-options';
@@ -52,6 +52,7 @@ const ICONS = {
   home: require('@/assets/icons/home.xml'),
   idle: require('@/assets/icons/bedtime.xml'),
   video: require('@/assets/icons/videocam.xml'),
+  frame: require('@/assets/icons/smartphone.xml'),
   machine: require('@/assets/icons/laptop-mac.xml'),
   notifications: require('@/assets/icons/notifications.xml'),
   about: require('@/assets/icons/info.xml'),
@@ -61,7 +62,7 @@ export function Settings() {
   const { theme, rt } = useUnistyles();
   const colors = theme.colors;
   const scheme = rt.themeName === 'dark' ? 'dark' : 'light';
-  const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
+  const { appearance, setAppearance, videoQuality, setVideoQuality, deviceFrame, setDeviceFrame } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
   const { prefs, enable, update: updateNotifications } = useNotificationPrefs();
@@ -159,7 +160,7 @@ export function Settings() {
             />
           ) : null}
         </Section>
-        <Section colors={colors} title={t`Device View`} footer={videoQualityFooter()}>
+        <Section colors={colors} title={t`Device View`} footer={deviceViewFooter()}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -167,6 +168,13 @@ export function Settings() {
             options={videoQualityOptions()}
             value={videoQuality}
             onChange={setVideoQuality}
+          />
+          <Row
+            colors={colors}
+            title={t`Device Frame`}
+            icon={ICONS.frame}
+            onPress={() => setDeviceFrame(!deviceFrame)}
+            trailing={<Switch value={deviceFrame} onCheckedChange={setDeviceFrame} colors={switchColors} />}
           />
         </Section>
         {connections.length > 0 ? (
