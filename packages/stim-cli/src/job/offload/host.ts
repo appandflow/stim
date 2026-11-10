@@ -1577,7 +1577,7 @@ export class BuildSession {
       | 'fingerprintRuntime'
       | 'fingerprintInputs'
     > = {};
-    if (!native && platform !== 'macos') {
+    if (!native && platform !== 'macos' && params.exact === undefined) {
       const parsed = fingerprintReplay(params, expectedSources);
       if (!parsed) return refusal('bad-request', 'build.start needs a compatible fingerprint replay description.');
       replay = parsed;
