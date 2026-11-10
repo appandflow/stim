@@ -1,4 +1,5 @@
 import { loadKind, type PluginSource } from '@stim-cli/core/plugin-loader';
+import type { ServeRoute } from '@stim-cli/core/protocol';
 
 export const TRANSPORT_API_VERSION = 1 as const;
 
@@ -45,11 +46,7 @@ export interface TransportExposeInput {
 }
 
 /** Whether `port` is reachable from outside this machine through the transport, or why that is not known. */
-export type TransportExposure =
-  | { state: 'routed'; port: number }
-  | { state: 'funneled'; ports: number[]; port: number }
-  | { state: 'missing'; port: number }
-  | { state: 'unknown'; reason: string; port: number };
+export type TransportExposure = ServeRoute;
 
 /**
  * Every argument and result of a member is structured-clone-safe data, so a transport can run in a worker thread

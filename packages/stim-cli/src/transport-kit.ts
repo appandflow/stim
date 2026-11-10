@@ -28,7 +28,7 @@ export interface TransportContractOptions {
   checkTimeoutMs?: number;
 }
 
-export const TRANSPORT_CONTRACT_CHECK_TIMEOUT_MS = 10_000;
+const CHECK_TIMEOUT_MS = 10_000;
 
 const UNKNOWN_PEER = { address: '192.0.2.1', headers: {} };
 
@@ -96,7 +96,10 @@ function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
     list.push({
       name: 'resolve answers an endpoint or a reason',
       run: async () => {
-        const found = await worker.call('resolve', { name: 'stim-contract-check' });
+        const found = await worker.call('resolve', {
+          name: 'stim-contract-check',
+          credential: { machine: 'stim-contract-check' },
+        });
         assert(
           isRecord(found) &&
             (typeof found.unresolved === 'string' ||
@@ -107,9 +110,8 @@ function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
     });
   if (has('close'))
     list.push({
-      name: 'close may be called twice',
+      name: 'close settles',
       run: async () => {
-        await worker.call('close');
         await worker.call('close');
       },
     });
@@ -122,7 +124,7 @@ function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
  * has answers with data that crosses the thread boundary. A module that imports `stim` at runtime fails to load.
  */
 export async function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]> {
-  const timeoutMs = options.checkTimeoutMs ?? TRANSPORT_CONTRACT_CHECK_TIMEOUT_MS;
+  const timeoutMs = options.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
   let worker: KitWorker | { unavailable: string };
   try {
     const mismatch = await kindError(

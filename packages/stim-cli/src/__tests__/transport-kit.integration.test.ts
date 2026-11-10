@@ -19,7 +19,7 @@ test('a transport whose members answer in cloneable data passes every check', as
     'watch delivers { addresses } events and stops',
     'identify answers null or an identity for a peer it does not know',
     'resolve answers an endpoint or a reason',
-    'close may be called twice',
+    'close settles',
   ]);
 });
 

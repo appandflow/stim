@@ -2148,16 +2148,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (bindings.size) reconciling = reconciling.then(reconcile);
   };
   const stopWatching: (() => void)[] = [];
-  for (const transport of transports) {
-    if (!transport.bindAddresses) continue;
-    if (transport.watch)
-      stopWatching.push(
-        transport.watch((event) => {
-          bindings.set(transport, event.addresses);
-          queueReconcile();
-        }),
-      );
-    bindings.set(transport, transport.bindAddresses());
+  try {
+    for (const transport of transports) {
+      if (!transport.bindAddresses) continue;
+      if (transport.watch)
+        stopWatching.push(
+          transport.watch((event) => {
+            bindings.set(transport, event.addresses);
+            queueReconcile();
+          }),
+        );
+      bindings.set(transport, transport.bindAddresses());
+    }
+  } catch (error) {
+    for (const stop of stopWatching) stop();
+    throw error;
   }
   queueReconcile();
   await reconciling;

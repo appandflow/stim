@@ -15,8 +15,8 @@ export function createTransport({ options }) {
       const node = headers['x-fixture-node'];
       return typeof node === 'string' ? { id: node, name: node, user: 'fixture' } : null;
     },
-    async resolve({ name }) {
-      return { unresolved: `no machine named ${name}` };
+    async resolve({ name, credential }) {
+      return { unresolved: `no machine named ${name} for ${credential.machine}` };
     },
     close() {},
   };
