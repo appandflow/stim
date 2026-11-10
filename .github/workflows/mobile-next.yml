@@ -113,8 +113,21 @@ jobs:
         run: |
           runtime="$(npx expo-updates fingerprint:generate --platform ios | jq -r .hash)"
           echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
+          newest="$(eas build:list --platform ios --build-profile next --limit 1 --json --non-interactive | jq -c '.[0] // empty')"
+          case "$(jq -r '.status // empty' <<<"$newest")" in
+            NEW | IN_QUEUE | IN_PROGRESS | PENDING_CANCEL)
+              echo "::notice::Next build $(jq -r .id <<<"$newest") is still running; nothing to do until it finishes."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           latest="$(eas build:list --platform ios --build-profile next --status finished --limit 1 --json --non-interactive | jq -c '.[0] // empty')"
           if [ -z "$latest" ] || [ "$(jq -r '.runtime.version // empty' <<<"$latest")" != "$runtime" ]; then
+            if [ "$(jq -r '.gitCommitHash // empty' <<<"$newest")" = "$SHA" ]; then
+              echo "::warning::Next build $(jq -r .id <<<"$newest") of $SHA ended $(jq -r .status <<<"$newest"); not building the same commit again. The next commit on main, or eas build --profile next by hand, tries again."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::notice::The latest finished next build is not on runtime $runtime; building one."
             echo "mode=build" >> "$GITHUB_OUTPUT"
             exit 0
@@ -122,16 +135,30 @@ jobs:
           build_id="$(jq -r .id <<<"$latest")"
           build_number="$(jq -r .appBuildVersion <<<"$latest")"
           build_sha="$(jq -r '.gitCommitHash // empty' <<<"$latest")"
-          if ! eas submit:status --platform ios --profile next --json --non-interactive |
-            jq -e --arg number "$build_number" '.ios.testFlightBuilds[] | select(.buildNumber == $number)' >/dev/null; then
+          if ! testflight="$(eas submit:status --platform ios --profile next --json --non-interactive)"; then
+            echo "::error::Could not read Stim Next's TestFlight builds from App Store Connect."
+            exit 1
+          fi
+          if ! jq -e --arg id "$build_id" '.ios.testFlightBuilds[] | select(.easBuildId == $id)' <<<"$testflight" >/dev/null; then
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+              echo "::warning::Next build $build_number ($build_id) is not on TestFlight. A push or a manual run uploads it again; the hourly run does not, so a rejected upload is not retried every hour."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::notice::Next build $build_number ($build_id) is not on TestFlight; uploading it."
             echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
             echo "mode=upload" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          last="$(eas update:list --branch next --platform ios --limit 50 --json --non-interactive |
-            jq -r --arg runtime "$runtime" '[(.currentPage // [])[] | select(.runtimeVersion == $runtime) | .message][0] // empty')"
+          if ! updates="$(eas update:list --branch next --platform ios --limit 50 --json --non-interactive 2>"$RUNNER_TEMP/update-list.err")"; then
+            if ! grep -q 'Could not find branch' "$RUNNER_TEMP/update-list.err"; then
+              cat "$RUNNER_TEMP/update-list.err" >&2
+              exit 1
+            fi
+            updates='{}'
+          fi
+          last="$(jq -r --arg runtime "$runtime" '[(.currentPage // [])[] | select(.runtimeVersion == $runtime) | .message][0] // empty' <<<"$updates")"
           update_sha="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\1/p' <<<"$last")"
           update_hash="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\2/p' <<<"$last")"
           base="${update_sha:-$build_sha}"

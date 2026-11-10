@@ -1275,12 +1275,16 @@ merge queue, the CI release-gate jobs). It runs on each push that touches
 - When the latest finished EAS `next` build is not on the commit's iOS
   fingerprint, it builds the `next` profile and uploads it to TestFlight, where
   the Stim Next app's internal testers get it without Beta App Review.
-- When that build is not on TestFlight yet, as after a failed upload, it
-  uploads it again.
+- When that build is not on TestFlight yet, as after a failed upload, a push or
+  a manual run uploads it again; the hourly run only warns, so an upload Apple
+  rejects is not retried every hour. Nothing runs while a `next` build is still
+  building, and a commit whose build failed is not built twice.
 - Otherwise it publishes an update to channel `next`, unless nothing the app
-  ships changed: neither those paths since the commit of the last `next`
-  update (or build) on that runtime, nor the exported bundle. Each update's
-  message starts with `next <commit> bundle:<hash>` for that comparison.
+  ships changed. Either check is enough to publish nothing: no change under
+  those paths, Markdown and tests left out, since the commit of the last
+  `next` update (or build) on that runtime; or an exported bundle equal to that
+  update's. Each update's message starts with `next <commit> bundle:<hash>` for
+  that comparison.
 
 It has no release-order gate: only people who installed Stim Next get it, and
 the production app keeps the gate in `scripts/release-order.mjs`. Set the
