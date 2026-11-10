@@ -431,8 +431,9 @@ setting does not apply.
 A phone granted control can use the compact bottom toolbar for Keyboard,
 Home on iOS or Back on Android and web, and both rotation directions. **More** (the ellipsis button)
 opens a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device Frame** appears in More when matching artwork is
-available and remains usable without a control lease. The bar stays below the screen in portrait and landscape
+and simulator options. **Device Frame** in the app's Settings shows a simulator's or
+emulator's housing when matching artwork is available; an iPhone Duo has its own
+**Device Frame** entry in More, usable without a control lease. The bar stays below the screen in portrait and landscape
 and fits its common controls within the available width. An iOS simulator turns with
 the device, so a portrait-only app shows sideways in a turned frame; on an emulator the
 app in front still needs to support the requested orientation. Physical devices rotate

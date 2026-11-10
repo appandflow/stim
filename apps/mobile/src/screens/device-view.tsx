@@ -148,7 +148,7 @@ export function DeviceView({
   const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
   const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
   const sideBySide = book !== null;
-  const { videoQuality } = useSettings();
+  const { videoQuality, deviceFrame } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
@@ -183,7 +183,7 @@ export function DeviceView({
   const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
-  const [showsFrame, setShowsFrame] = useState(false);
+  const [showsDuoFrame, setShowsDuoFrame] = useState(false);
   const frameSupported =
     !physical &&
     !(platform === 'android' && device?.host) &&
@@ -196,6 +196,7 @@ export function DeviceView({
     /\bDuo\b/.test(device?.model ?? '') &&
     link.kind === 'open' &&
     link.hostCapabilities.includes('duo-frames');
+  const showsFrame = duoSupported ? showsDuoFrame : deviceFrame;
   const streamOptions = {
     enabled: streams,
     fps: preset.fps,
@@ -203,7 +204,7 @@ export function DeviceView({
     video: preset.video,
     startAt: replayStart,
     deviceFrame: frameSupported,
-    duoFrame: duoSupported && showsFrame,
+    duoFrame: duoSupported && showsDuoFrame,
   };
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
@@ -749,13 +750,13 @@ export function DeviceView({
       })),
     );
   }
-  if (artwork || (duoSupported && !replaying))
+  if (duoSupported && !replaying)
     secondary.push({
       id: 'device-frame',
       icon: 'rectangle.portrait',
       label: t`Device Frame`,
-      selected: showsFrame,
-      onPress: () => setShowsFrame(!showsFrame),
+      selected: showsDuoFrame,
+      onPress: () => setShowsDuoFrame(!showsDuoFrame),
     });
   const toolbars =
     primary.length || secondary.length ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;

@@ -30,7 +30,8 @@ export const videoQualityOptions = (): Option<VideoQuality>[] => [
 export const labelOf = <T extends string>(options: Option<T>[], value: T): string =>
   options.find((option) => option.value === value)?.label ?? options[0].label;
 
-export const videoQualityFooter = (): string => t`Data saver sends still frames instead of video.`;
+export const deviceViewFooter = (): string =>
+  t`Data saver sends still frames instead of video. Device Frame shows the housing of a simulator or emulator around its screen when the machine has it.`;
 
 export const readOnlyFooter = (): string =>
   t`A read-only machine can't be controlled from this phone. Tap it to see how to allow control.`;
