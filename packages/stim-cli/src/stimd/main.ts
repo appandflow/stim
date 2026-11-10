@@ -934,7 +934,10 @@ async function runStimdInner(
   };
   const refuseClient = (socket: Socket, message: Record<string, unknown>) => {
     if (message.kind !== 'desktop') noteClientBuild(message.build);
-    const handover = updatedInPlace?.build === message.build ? { handover: true } : {};
+    const handover =
+      updatedInPlace?.build === message.build
+        ? { handover: true, ...(net.running()?.shareOnly ? { heldBy: 'shares' } : {}) }
+        : {};
     socket.end(
       `${JSON.stringify({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...handover, ...switchedTo })}\n`,
     );

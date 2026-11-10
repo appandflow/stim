@@ -41,16 +41,25 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('share list names a stimd of another build and how to replace it, not that no stimd runs', async () => {
+test.each([
+  {
+    stimd: 'of another installation',
+    reply: { version: '1.0.0-other' },
+    message: '1.0.0-other',
+  },
+  {
+    stimd: 'that hands over once its live shares end',
+    reply: { version: '1.0.0-other', handover: true, heldBy: 'shares' },
+    message: 'serves live web shares',
+  },
+])('share list names a stimd $stimd and how to replace it, not that no stimd runs', async ({ reply, message }) => {
   const socket = stimdSocket();
   mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
   server = createServer((connection) => {
     connection.resume();
-    connection.end(
-      `${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', version: '1.0.0-other', pid: 4242 })}\n`,
-    );
+    connection.end(`${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', pid: 4242, ...reply })}\n`);
   });
   await new Promise<void>((done) => server?.listen(socket, done));
   vi.resetModules();
@@ -76,7 +85,7 @@ test('share list names a stimd of another build and how to replace it, not that 
     ok: false,
     error: {
       code: 'STIM_DAEMON_UNAVAILABLE',
-      message: expect.stringContaining('1.0.0-other'),
+      message: expect.stringContaining(message),
       remedy: expect.stringContaining('kill 4242'),
     },
   });
