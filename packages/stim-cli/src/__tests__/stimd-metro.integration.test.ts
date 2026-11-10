@@ -20,6 +20,7 @@ import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim'
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { upsertProject } from '../workspace/config.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -686,6 +687,66 @@ socket.on('data', chunk => {
     }
     expect(processGroupAlive(metro.pid)).toBe(false);
   }, 90_000);
+
+  test('stop starts a stimd that adopts and stops a Metro whose stimd was killed', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 1\n', 0o755);
+    const port = await freePort();
+    upsertProject(root, { metroPort: port });
+    const killed = await startStimd();
+    const metro = await ask('metro.ensure', { root, port });
+    expect(metro).toMatchObject({ op: 'metro', state: 'started' });
+    stimd?.kill('SIGKILL');
+    stimd = null;
+    await vi.waitFor(() => expect(alive(killed)).toBe(false));
+    expect(processGroupAlive(Number(metro.pid))).toBe(true);
+    const stop = spawn(process.execPath, [cli, 'stop'], { cwd: root, env, stdio: 'pipe' });
+    let output = '';
+    stop.stdout?.on('data', (chunk) => (output += String(chunk)));
+    stop.stderr?.on('data', (chunk) => (output += String(chunk)));
+    const [code] = await once(stop, 'exit');
+    const adopter = record();
+    try {
+      expect({ code, output }).toMatchObject({ code: 0 });
+      expect(adopter?.pid).not.toBe(killed);
+      expect(processGroupAlive(Number(metro.pid))).toBe(false);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect([...claims.live, ...claims.unresolved]).toEqual([]);
+    } finally {
+      if (adopter && adopter.pid !== killed && alive(adopter.pid)) process.kill(adopter.pid, 'SIGTERM');
+    }
+  }, 60_000);
+
+  test("an Expo tunnel's URL is recorded for the workspace's Metro", async () => {
+    const root = join(dir, 'expo-tunnel');
+    write(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^50.0.0' } }));
+    write(join(root, 'app.json'), JSON.stringify({ name: 'app', platforms: ['ios', 'android'] }));
+    write(
+      join(root, 'node_modules', 'expo', 'package.json'),
+      JSON.stringify({ name: 'expo', version: '50.0.0', bin: { expo: 'bin/cli' } }),
+    );
+    write(
+      join(root, 'node_modules', 'expo', 'bin', 'cli'),
+      `#!/usr/bin/env node
+const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
+require('node:http')
+  .createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''))
+  .listen(port, () => console.log('Waiting on exp://fixture-tunnel.exp.direct'));
+`,
+      0o755,
+    );
+    const port = await freePort();
+    await startStimd();
+    const workspace = realpathSync(root);
+    const started = await ask('metro.ensure', { root: workspace, port, tunnel: true });
+    expect(started).toMatchObject({ op: 'metro', mode: 'expo-child' });
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')).metroTunnel).toEqual({
+        kind: 'expo',
+        url: 'https://fixture-tunnel.exp.direct',
+      }),
+    );
+  }, 30_000);
 
   test('a stale heartbeat whose /status probe fails restarts Metro', async () => {
     const root = bareProject();
