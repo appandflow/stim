@@ -536,12 +536,12 @@ WHAT WRITES WHAT
                        device error.
 
                        iOS simulator cold launch attaches app stdout/stderr and
-                       passes Expo's initial URL directly. Fatal output, including
-                       a Rust panic's header and message (an Exact app), is available
-                       before delayed OS reports, and a panic stays on the OS report
-                       that replaces it. OS reports can take about a minute
+                       passes Expo's initial URL directly. Fatal output is available
+                       before delayed OS reports, which can take about a minute
                        or longer to appear; rerun logs --errors for those
-                       before stopping or releasing the device. Collection requires
+                       before stopping or releasing the device. An OS report of an
+                       abort carries the Rust panic messages (an Exact app) the app
+                       wrote to stderr. Collection requires
                        this workspace's current launch and device ownership or lease;
                        afterward only already-captured reports remain available.
                        The app cache holds console files, so external STIM_HOME

@@ -260,13 +260,13 @@ error; unrelated device errors are never added as context.
 
 On iOS simulators, Stim attaches stdout/stderr on a cold launch and passes Expo's
 initial project URL directly, so
-an early Swift fatal error, uncaught exception or Rust panic can appear in the launch result.
-A Rust panic, such as one from an Exact app, keeps its location and message on
-the OS crash report that later replaces the captured stderr.
+an early Swift fatal error or uncaught exception can appear in the launch result.
 Console redirection uses the app's writable cache, including when `STIM_HOME` is
 on an external volume; captured crash evidence is retained in the workspace logs.
 OS crash reports can take about a minute or longer to arrive: rerunning
 `stim logs --errors` collects them before you stop or release the simulator.
+An OS report of an abort carries the Rust panic messages, such as an Exact
+app's, that the app wrote to stderr.
 Reports are matched to the app, simulator, and launch time. Existing source locations
 and symbol names are retained, and app addresses are resolved with
 `atos` only when the local binary's UUID matches the report. Android reads the

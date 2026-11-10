@@ -9,7 +9,7 @@ import { androidLogGroups, isAndroidCrashText, parseLogcatLine } from '../stimd/
 import type { NdjsonRecord } from '../ndjson.ts';
 import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
-import { consoleFatalBlocks, isRustPanic } from '../stimd/logs/ios-device.ts';
+import { deviceConsoleLevel, rustPanics } from '../stimd/logs/ios-device.ts';
 import { writeDiagnosticOnceAsync } from './diagnostic-store.ts';
 import { NATIVE_CRASH_LOG_PREFIX, readLogRecords, readLogTimeline } from '@stim-cli/core/state';
 import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
@@ -373,9 +373,13 @@ export async function simulatorConsolePaths(
   return paths;
 }
 
-async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal): Promise<NdjsonRecord[]> {
+async function simulatorFatalConsole(
+  target: CrashTarget,
+  signal?: AbortSignal,
+): Promise<{ records: NdjsonRecord[]; panics: string[] }> {
   const paths = await simulatorConsolePaths(target, false, false, signal);
   const records: NdjsonRecord[] = [];
+  const panics: string[] = [];
   for (const path of Object.values(paths ?? {})) {
     signal?.throwIfAborted();
     try {
@@ -383,7 +387,8 @@ async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal):
       if (info.size > 8 * 1024 * 1024) continue;
       if (target.until !== undefined && info.mtimeMs > target.until) continue;
       const text = await readFile(path, { encoding: 'utf8', signal });
-      const fatal = consoleFatalBlocks(text);
+      panics.push(...rustPanics(text));
+      const fatal = text.split('\n').filter((line) => deviceConsoleLevel(line) === 'fatal');
       if (!fatal.length) continue;
       records.push({
         ts: Math.max(target.since + 1, info.mtimeMs),
@@ -402,7 +407,13 @@ async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal):
     } catch {}
   }
   signal?.throwIfAborted();
-  return records;
+  return { records, panics };
+}
+
+function withRustPanics(reports: NdjsonRecord[], panics: readonly string[]): NdjsonRecord[] {
+  const [newest, ...older] = reports;
+  if (!newest || !panics.length || !/^Native crash: [^\n]*\bSIGABRT\b/.test(String(newest.msg))) return reports;
+  return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
 }
 
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
@@ -448,13 +459,6 @@ export async function readIosCrashReports(
   return nativeReports;
 }
 
-function withRustPanics(reports: NdjsonRecord[], console: readonly NdjsonRecord[]): NdjsonRecord[] {
-  const panics = console.flatMap((record) => consoleFatalBlocks(String(record.msg)).filter(isRustPanic));
-  const [newest, ...older] = reports;
-  if (!newest || !panics.length) return reports;
-  return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
-}
-
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
 export async function captureNativeCrashes(
   target: CrashTarget,
@@ -467,9 +471,10 @@ export async function captureNativeCrashes(
   try {
     if (target.platform === 'ios' && !target.physical && process.platform === 'darwin') {
       const deadline = Date.now() + 4000;
-      records = await simulatorFatalConsole(target, signal);
+      const console = await simulatorFatalConsole(target, signal);
+      records = console.records;
       const nativeReports = await readIosCrashReports(target, deadline, signal, env);
-      if (nativeReports.length) records = withRustPanics(nativeReports, records);
+      if (nativeReports.length) records = withRustPanics(nativeReports, console.panics);
     } else if (target.platform === 'android') {
       const offset =
         target.clockOffsetMs === undefined
