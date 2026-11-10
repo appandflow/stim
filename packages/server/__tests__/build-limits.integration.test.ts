@@ -101,7 +101,7 @@ setInterval(() => {}, 1000);`.replaceAll('\n', ' '),
         env: process.env,
         limits: { minFreeBytes: 0, minFreeMemoryBytes: 0, killGraceMs: 100 },
       });
-      const launched = running.launch({
+      const launched = await running.launch({
         client,
         repo,
         job: { platform: 'android' },

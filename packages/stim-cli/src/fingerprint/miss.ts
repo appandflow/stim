@@ -228,3 +228,28 @@ export function explainBuildMiss({
     previousHash: baseline?.fingerprint ?? null,
   };
 }
+
+export function predictBuildMiss({
+  root,
+  platform,
+  current,
+  prebuild,
+  deps,
+}: {
+  root: string;
+  platform: StatsPlatform;
+  current: { inputs: readonly Input[] };
+  prebuild: 'generate' | 'regenerate' | null;
+  deps: MissDeps;
+}): BuildMissReason {
+  const { reason } = explainBuildMiss({ root, platform, current, deps });
+  const baseline = reason.baseline && { fingerprint: reason.baseline.fingerprint, from: reason.baseline.from };
+  if (!prebuild || !baseline) return { ...reason, baseline };
+  const dir = platform === 'ios' ? 'ios/' : 'android/';
+  return {
+    ...reason,
+    kind: 'prebuild-pending',
+    summary: `${reason.summary} (before prebuild ${prebuild}s ${dir})`,
+    baseline,
+  };
+}

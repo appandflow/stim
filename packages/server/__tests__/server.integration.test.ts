@@ -362,7 +362,7 @@ if (process.argv[2].startsWith('offer')) {
     }
     if (job.platform === 'android') writeFileSync(join(job.area, 'out', job.job, 'App.apk'), 'APK bytes');
     const sha256 = createHash('sha256').update(archive).digest('hex');
-    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, ...(job.reuseArtifact ? { reused: true } : {}), sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+    print({ type: 'result', ok: true, fingerprintSettled: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, ...(job.reuseArtifact ? { reused: true } : {}), sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
 }
 `;
@@ -1538,12 +1538,12 @@ describe('pairing', () => {
     const worker = setupClient(['build']);
     const cli = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(
-      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 1 }, access: 'build' }),
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 2 }, access: 'build' }),
     ).toEqual({
       id: expect.any(Number),
       error: {
         code: 'protocol-unsupported',
-        message: 'peer-too-old: Test Mac runs stim 9.9.9 (peer 2); update this Mac: npm i -g stim@9.9.9',
+        message: `peer-too-old: Test Mac runs stim 9.9.9 (peer ${PEER}); update this Mac: npm i -g stim@9.9.9`,
       },
     });
     expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
@@ -3318,7 +3318,9 @@ describe('hosted device sessions', () => {
 
 test('build.start rejects escaping or oversized macOS resources before starting the worker', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
+  const toolchain = vi
+    .spyOn(host, 'launch')
+    .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
   const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1', compat: 3 };
   const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
@@ -3385,7 +3387,7 @@ test('build.start needs the build compatibility version and passes it and the JD
     androidSdk: null,
   };
   const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(worker);
-  const launch = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
+  const launch = vi.spyOn(host, 'launch').mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const socket = { readyState: 1, OPEN: 1, bufferedAmount: 0, send: () => {} };
   const session = host.session('client', socket, () => {});
   const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest' };
@@ -3411,7 +3413,9 @@ test('build.start needs the build compatibility version and passes it and the JD
 
 test('native Gradle requires declared source scope and a null artifact identity before worker admission', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
+  const toolchain = vi
+    .spyOn(host, 'launch')
+    .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
   const android = { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' };
   const inputs = { complete: true, ignored: [], outputs: ['app/build'] };
@@ -3579,7 +3583,9 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(toolchain).toHaveBeenLastCalledWith(null, 'xcode');
     toolchain.mockClear();
     expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
-    const launch = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
+    const launch = vi
+      .spyOn(host, 'launch')
+      .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
     expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
     expect(toolchain).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledOnce();
@@ -3601,6 +3607,12 @@ describe('offloaded builds', () => {
     scheme: null,
     runtime: 'iOS-27-0',
     fingerprint: 'f00d',
+    fingerprintSchema: 2,
+    fingerprintSources: [],
+    fingerprintEnv: { set: {}, absent: [] },
+    fingerprintNative: 'tracked',
+    fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },
+    fingerprintRuntime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
     packageName: 'mobile',
     isExpo: true,
     optimizations: null,
@@ -3691,27 +3703,28 @@ describe('offloaded builds', () => {
       client.socket.send(blob('{}'));
       client.socket.send(blob('{"a":1}'));
       const fingerprintSources = [
-        { id: 'ios', hash: 'ab12' },
-        { id: 'expoConfig', hash: null },
+        { id: 'ios/Podfile', kind: 'file', hash: 'a'.repeat(64) },
+        { id: 'config', kind: 'config', hash: 'b'.repeat(64) },
       ];
       expect(
         await client.request('build.start', { ...START, fingerprintSources: [{ id: 'ios', hash: '../x' }] }),
       ).toMatchObject({ error: { code: 'bad-request' } });
-      expect(await client.request('build.start', { ...START, fingerprintIgnored: [3] })).toMatchObject({
+      expect(await client.request('build.start', { ...START, fingerprintSchema: 1 })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      for (const bad of [[3], ['ios/main.jsbundle'], ['..'], ['.'], [''], ['a\0b'], ['*'.repeat(256)]]) {
-        expect(await client.request('build.start', { ...START, fingerprintTracked: bad })).toMatchObject({
+      for (const bad of [3, '/absolute', '../outside', '', 'a\0b', 'a//b']) {
+        expect(
+          await client.request('build.start', {
+            ...START,
+            fingerprintEnv: { set: { APP_PATH: { path: bad } }, absent: [] },
+          }),
+        ).toMatchObject({
           error: { code: 'bad-request' },
         });
       }
-      const fingerprintIgnored = ['.env.local', 'ios/main.jsbundle'];
-      const fingerprintTracked = ['GoogleService-Info.plist'];
       const started = await client.request('build.start', {
         ...START,
         fingerprintSources,
-        fingerprintIgnored,
-        fingerprintTracked,
         podsOnWorker: true,
         reuseArtifact: true,
       });
@@ -3740,8 +3753,11 @@ describe('offloaded builds', () => {
         project: 'apps/mobile',
         expectedFingerprint: 'f00d',
         expectedSources: fingerprintSources,
-        expectedIgnored: fingerprintIgnored,
-        expectedTracked: fingerprintTracked,
+        fingerprintSchema: 2,
+        fingerprintEnv: START.fingerprintEnv,
+        fingerprintNative: 'tracked',
+        fingerprintLayout: START.fingerprintLayout,
+        fingerprintRuntime: START.fingerprintRuntime,
         podsOnWorker: true,
         reuseArtifact: true,
         artifactCache: join(area, 'artifact-cache'),
@@ -4010,6 +4026,7 @@ describe('offloaded builds', () => {
     const synced = await client.request('build.sync', { repo, files: [file('Package.swift', 'x')], done: true });
     if (JSON.stringify(synced).includes(sha('x'))) client.socket.send(blob('x'));
     const started = await client.request('build.start', {
+      ...START,
       repo,
       project: '',
       platform,
@@ -4300,7 +4317,7 @@ describe('offloaded builds', () => {
       expect(await client.next()).toMatchObject({ phase: 'build' });
       expect(await client.next()).toMatchObject({ record: { msg: 'CompileC' } });
       expect(readClaimSet(buildSlotPath(0)).live).toMatchObject([
-        { details: { offloaded: true, client: id, repo: 'app-1', job, index: 0 }, child: { pid } },
+        { details: { offloaded: true, client: id, repo: 'app-1', job, index: 0 }, childDeclared: true, child: null },
       ]);
       expect(tryAcquireBuildSlotClaim({ max: 1, details: {} })).toBeNull();
       expect(machineCapacity().builds).toBe(1);
@@ -4310,8 +4327,8 @@ describe('offloaded builds', () => {
 
       expect(await client.request('build.cancel', { job })).toEqual({ id: expect.anything(), result: {} });
       await eventually(() => !alive(pid));
-      await eventually(() => readClaimSet(buildSlotPath(0)).live.length === 0);
-      expect(machineCapacity().builds).toBe(0);
+      const held = readClaimSet(buildSlotPath(0));
+      expect(held.live.length + held.unresolved.length).toBeGreaterThan(0);
     },
   );
 
@@ -4388,6 +4405,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
     async () => {
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
       const port = await start({
         env: { FAKE_WORKER_HANG: '1' },
         buildLimits: { killGraceMs: 100, detachGraceMs: 1500 },
@@ -4463,7 +4481,7 @@ describe('offloaded builds', () => {
   });
 
   test.each([false, true])(
-    'stops a revoked build, frees its claim and deletes its area with watch events dropped: %s',
+    'stops a revoked build and retains its unresolved claim with watch events dropped: %s',
     { skip: !fakeTailscale },
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
@@ -4486,8 +4504,9 @@ describe('offloaded builds', () => {
       expect(revokeDevice(id)).toBe(true);
       expect(await client.closed).toBe(4401);
       await eventually(() => !alive(pid));
-      await eventually(() => readClaimSet(`${area}.claims`).live.length === 0);
-      await eventually(() => !existsSync(join(area, '..', '..')));
+      const held = readClaimSet(`${area}.claims`);
+      expect(held.live.length + held.unresolved.length).toBeGreaterThan(0);
+      expect(existsSync(area)).toBe(true);
     },
   );
 
@@ -4620,29 +4639,52 @@ describe('offloaded builds', () => {
           assert('result' in response);
           assert.deepStrictEqual(response.result, {});
         } else writeFileSync(gate, '');
-        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cleanup-unresolved' } });
         await eventually(() => !running(daemon));
         expect(running(priorNode)).toBe(false);
         assert(!settling || (settling.exitCode === 0 && settling.signalCode === null));
         expect(running(sibling)).toBe(true);
         if (reason === 'worker-crashed') {
-          const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-          daemons.push(unclassified);
-          await once(unclassified, 'spawn');
-          assert(unclassified.pid);
-          const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
-          mkdirSync(logs, { recursive: true });
-          writeFileSync(join(logs, `daemon-${unclassified.pid}.out.log`), '');
           await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
-          assert('result' in (await client.request('build.start', ANDROID_START)));
-          const outcome = (await progress(client)).at(-1)?.outcome;
-          assert(isJsonObject(outcome));
-          assert.equal(outcome.code, 'cleanup-unresolved');
-          const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
-          assert.equal(readClaimSet(`${area}.claims`).live.length, 1);
-          assert.equal(readClaimSet(buildSlotPath(0)).live.length, 1);
-          assert(running(unclassified) && running(sibling));
+          const refused = await client.request('build.start', ANDROID_START);
+          assert('error' in refused && refused.error.code === 'build-busy');
+          const stimHome = process.env.STIM_HOME;
+          assert(stimHome);
+          const area = join(stimHome, 'build-worker', id, 'repos', 'app-1');
+          const areaClaim = readClaimSet(`${area}.claims`);
+          const slotClaim = readClaimSet(buildSlotPath(0));
+          assert(areaClaim.live.length + areaClaim.unresolved.length > 0);
+          assert(slotClaim.live.length + slotClaim.unresolved.length > 0);
         }
+      },
+    );
+
+    test.skipIf(!fakeTailscale)(
+      'retains the failed build claims when a Gradle daemon cannot be classified',
+      async () => {
+        configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
+        const port = await start({
+          env: { FAKE_WORKER_CRASH: '1' },
+          buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+        });
+        const { client, id } = await buildClient(port);
+        const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        daemons.push(unclassified);
+        await once(unclassified, 'spawn');
+        assert(unclassified.pid);
+        const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
+        mkdirSync(logs, { recursive: true });
+        writeFileSync(join(logs, `daemon-${unclassified.pid}.out.log`), '');
+        await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+        client.socket.send(blob('x'));
+        assert('result' in (await client.request('build.start', ANDROID_START)));
+        const outcome = (await progress(client)).at(-1)?.outcome;
+        assert(isJsonObject(outcome));
+        assert.equal(outcome.code, 'cleanup-unresolved');
+        const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
+        expect(readClaimSet(`${area}.claims`).live.length).toBe(1);
+        expect(readClaimSet(buildSlotPath(0)).live.length).toBe(1);
+        expect(running(unclassified)).toBe(true);
       },
     );
   });

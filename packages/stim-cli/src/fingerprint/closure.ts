@@ -37,6 +37,12 @@ export function installedPackage(path: string): string | null {
   return root && typeof manifest(root).name === 'string' ? root : null;
 }
 
+export function projectPackagePath(project: string, path: string): boolean {
+  const actual = installedPackage(path);
+  const name = actual && packageIdentity(actual)?.name;
+  return Boolean(actual && name && findPackage(project, name) === actual);
+}
+
 /**
  * The packages that run when `expo prebuild` applies mods or React Native codegen runs, and their direct
  * dependencies. Their code runs after config evaluation, so no trace sees it. Transitive dependencies are left out:

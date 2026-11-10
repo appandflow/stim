@@ -88,7 +88,7 @@ export async function hashes(
   if (isUncertain(result)) throw new Error(`Uncertain (${ms} ms): ${JSON.stringify(result)}`);
   let expo: string | undefined;
   if (oracle) {
-    const module = new URL('../cache/build-cache.ts', import.meta.url).href;
+    const module = new URL('./fingerprint-parity-legacy.ts', import.meta.url).href;
     const code = `const { fingerprintProject } = await import(${JSON.stringify(module)}); const result = await fingerprintProject(process.argv[1], { platform: process.argv[2] }); console.log('PARITY_RESULT=' + JSON.stringify(result?.hash ?? null));`;
     const { stdout } = await exec(process.execPath, ['--input-type=module', '-e', code, root, platform], {
       env,

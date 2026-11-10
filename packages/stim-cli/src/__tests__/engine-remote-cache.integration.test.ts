@@ -12,7 +12,6 @@ import {
 } from '../engine/remote-cache.ts';
 import { makeError } from './_factories.ts';
 import assert from 'node:assert';
-import type { FingerprintSource } from '@expo/fingerprint';
 
 let root: string;
 
@@ -95,10 +94,6 @@ function writeDynamicConfigProject() {
   writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
 }
 
-function expoConfigSource(config: Record<string, unknown>): FingerprintSource[] {
-  return [{ type: 'contents', id: 'expoConfig', contents: JSON.stringify(config), reasons: ['expoConfig'], hash: 'h' }];
-}
-
 describe('loadProjectProvider', () => {
   test('custom Expo cache modules are refused without evaluating project code', async () => {
     const evaluated = join(root, 'evaluated');
@@ -126,12 +121,11 @@ describe('loadProjectProvider with the fingerprint config', () => {
     };
   };
 
-  test('without an expoConfig source the config is evaluated once', async () => {
+  test('without the fingerprint config the config is evaluated', async () => {
     writeDynamicConfigProject();
     const { calls, run } = countingRun();
-    const unrelated: FingerprintSource[] = [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'h' }];
-    expect(await loadProjectProvider(root, { run, sources: unrelated })).toEqual({ none: true });
-    expect(await loadProjectProvider(root, { run, sources: [] })).toEqual({ none: true });
+    expect(await loadProjectProvider(root, { run })).toEqual({ none: true });
+    expect(await loadProjectProvider(root, { run, config: null })).toEqual({ none: true });
     expect(calls).toEqual([
       ['config', '--json', root],
       ['config', '--json', root],
@@ -143,10 +137,10 @@ describe('loadProjectProvider with the fingerprint config', () => {
     const { calls, run } = countingRun();
     await loadProjectProvider(root, {
       run,
-      sources: expoConfigSource({ buildCacheProvider: 'eas', owner: 'th3rd-wave' }),
+      config: { buildCacheProvider: 'eas', owner: 'th3rd-wave' },
     });
     expect(calls).toEqual([]);
-    await loadProjectProvider(root, { run, sources: expoConfigSource({ buildCacheProvider: 'eas' }) });
+    await loadProjectProvider(root, { run, config: { buildCacheProvider: 'eas' } });
     expect(calls).toEqual([['config', '--json', root]]);
   });
 });

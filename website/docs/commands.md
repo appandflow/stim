@@ -80,22 +80,15 @@ stim doctor [--platform <ios|android>] [--json] [--fix]
 
 Inspects the current app and, in a repository with linked worktrees, the source
 checkout's fitness as a seed. It reports missing or stale dependencies,
-CocoaPods state, cache conflicts, device capacity, remote session problems, and
-a linked native library whose Git metadata enters the fingerprint. On a
-checkout without installed dependencies, it also reports fingerprint
-differences against a fresh worktree. The checkout is left untouched unless
+CocoaPods state, cache conflicts, device capacity, remote session problems and
+fingerprint evaluation problems. The checkout is left untouched unless
 `--fix` is passed.
 
-Doctor never loads `fingerprint.config.js` or `fingerprint.config.cjs`: when
-either exists, it skips the fingerprint checks and reports that it did. It reads
-a project eas-cli's version from its `package.json`, and runs `eas whoami` only
-with an `eas` on `PATH` outside the repository and outside any `node_modules/.bin`
-above the project. On a checkout without its own dependencies, it skips the
-fingerprint parity check and says why when Expo packages resolve from outside
-the app or when the check would need `npx react-native config`, which it does for
-Android or a project without an `ios` directory. Its linked-library check can still run installed Expo packages on the
-main checkout, which evaluate a dynamic app config, as a build does.
-`worktree warm`, `start`, `ios`, and `android` run project code.
+Fingerprint checks evaluate project configuration, including
+`fingerprint.config.js`, in a child process. Doctor reads a project eas-cli's
+version from its `package.json` and runs `eas whoami` only with an `eas` on
+`PATH` outside the repository and its `node_modules/.bin` directories.
+`worktree warm`, `start`, `ios`, and `android` also run project code.
 
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration

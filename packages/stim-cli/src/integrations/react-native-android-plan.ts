@@ -1,11 +1,12 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
-import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
-import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { isUncertain } from '../fingerprint/key.ts';
+import { fingerprint } from '../fingerprint/evaluate.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import type { loadCacheProvider } from '@stim-cli/cache';
-import { buildCacheKey, fingerprintProject } from '../cache/build-cache.ts';
+import { buildCacheKey } from '../cache/build-cache.ts';
 import { phaseLine } from '../command-output.ts';
 import {
   androidSystemImageAbi,
@@ -26,6 +27,7 @@ import { checkEasAuth, loadProjectProvider, resolveRemote } from '../engine/remo
 import { statsProjectKey } from '../engine/stats.ts';
 import { getProject } from '../workspace/config.ts';
 import {
+  fingerprintInputsSetting,
   publicUrlSetting,
   remoteEasFallbackSetting,
   type AndroidLayout,
@@ -46,10 +48,10 @@ import {
 
 import type { AndroidProject } from './android-project.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
-import type { PlanRefusal, ProjectPlanResult } from './project-plan.ts';
+import { fingerprintPlanRefusal, type PlanRefusal, type ProjectPlanResult } from './project-plan.ts';
 
 export interface AndroidPlanDeps {
-  fingerprint: typeof fingerprintProject;
+  fingerprint: typeof fingerprint;
   listSystemImages: typeof listInstalledSystemImages;
   avdSystemImage: typeof ownedAvdSystemImage;
   avdDirectory: typeof ownedAvdDirectory;
@@ -62,7 +64,7 @@ export interface AndroidPlanDeps {
 }
 
 const DEFAULT_PLAN_DEPS: AndroidPlanDeps = {
-  fingerprint: fingerprintProject,
+  fingerprint,
   listSystemImages: listInstalledSystemImages,
   avdSystemImage: ownedAvdSystemImage,
   avdDirectory: ownedAvdDirectory,
@@ -326,46 +328,44 @@ export async function planReactNativeAndroid(
     hostedAbi,
   });
 
-  let fingerprint;
+  const fingerprintInputs = fingerprintInputsSetting(settings);
+  const fpTarget = {
+    platform: 'android' as const,
+    androidLayout: layout,
+    ...(fingerprintInputs === undefined ? {} : { fingerprintInputs }),
+  };
+  let key;
   try {
-    fingerprint = (
-      await memoizedFingerprint(
-        root,
-        { platform: PLATFORM, androidLayout: layout },
-        {
-          consult: build.cache.read,
-          operation: operation && reportSignal(operation) ? undefined : operation,
-          record: false,
-          fingerprint: (projectRoot, fingerprintTarget) =>
-            operation && reportSignal(operation)
-              ? readDoctorFingerprint(operation, { root: projectRoot, platform: PLATFORM, androidLayout: layout })
-              : deps.fingerprint(projectRoot, fingerprintTarget),
-        },
-      )
-    ).fingerprint;
+    const embedMode = build.release ? 'production' : 'development';
+    const computed = reportSignal(operation)
+      ? await readFingerprint(operation, { root, ...fpTarget, embedMode })
+      : await deps.fingerprint(root, fpTarget, {
+          env: operation.env,
+          signal: operation.signal,
+          operation,
+          embedMode,
+          index: 'skip',
+        });
+    operation.signal.throwIfAborted();
+    if (computed && isUncertain(computed)) return fingerprintPlanRefusal(root, computed);
+    if (computed) key = computed;
   } catch (error) {
-    operation?.signal.throwIfAborted();
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    operation.signal.throwIfAborted();
     return refuse({
       code: NO_FINGERPRINT,
-      message: `@expo/fingerprint could not fingerprint ${root}: ${(error as Error)?.message || error}`,
-      remedy: 'Fix the @expo/fingerprint error above, then retry.',
+      message: `Could not fingerprint ${root}: ${String(error)}`,
+      remedy: 'Check the project native inputs and retry.',
     });
   }
-  if (!fingerprint?.hash) {
-    operation?.signal.throwIfAborted();
-    return refuse({
-      code: NO_FINGERPRINT,
-      message: `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
-      remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-    });
-  }
+  if (!key) return fingerprintPlanRefusal(root, null);
   const plan = await planCachedBuild(
     {
       ...planTarget,
       isExpo,
-      fingerprint: fingerprint.hash,
-      sources: fingerprint.sources ?? [],
-      cacheKey: buildCacheKey(PLATFORM, fingerprint.hash, runOptions),
+      fingerprint: key.hash,
+      fingerprintData: key,
+      cacheKey: buildCacheKey(PLATFORM, key.hash, runOptions),
       cachePolicy: build.cache,
       providerConfig: cacheProviderConfig,
       expoRemote: abi || build.profile || !build.cache.remote ? null : { runOptions: remoteRunOptions },

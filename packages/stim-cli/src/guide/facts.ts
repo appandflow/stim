@@ -216,7 +216,7 @@ leased until <time>" for each one.`,
                   simulator Stim does not own
   runtime         that simulator's iOS runtime version ("26.5"), from the same
                   record. Null on the same paths as deviceType
-  fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
+  fingerprint     Stim's native-input fingerprint, AS STORED.
                   A run that had to \`expo prebuild\` or \`pod install\`
                   rewrote fingerprinted files while it worked (the generated
                   native directory, package.json's scripts, the app config,

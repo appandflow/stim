@@ -10,6 +10,7 @@ import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
+import { artifactErrorCode, settleArtifactCleanup, unresolvedCleanup } from '../../engine/acquire-artifact.ts';
 import type { CompilationCacheActivity } from '../../engine/build-facts.ts';
 import { readBundleId } from '../../engine/xcode.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../../engine/native-run.ts';
@@ -164,6 +165,7 @@ export async function buildIosOperation(
         if (isEasBuildFailure(easBuild))
           throw Object.assign(new Error(easBuild.message ?? easBuild.code), easBuild, { details: easBuild });
         let artifact: PreparedIosArtifact | undefined;
+        let artifactFailure: unknown;
         let directory: string | undefined;
         let built: IosBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
@@ -313,18 +315,24 @@ export async function buildIosOperation(
             links,
           };
         } catch (error) {
-          const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
-          finish(
-            'failed',
-            undefined,
-            (failure as { code?: string }).code,
-            failure instanceof Error ? failure.message : String(failure),
-          );
-          stats.record({ failed: true, durationMs: Date.now() - started });
+          artifactFailure = error;
+          const cleanup = unresolvedCleanup(error);
+          const failure =
+            !cleanup && runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
+          try {
+            finish(
+              'failed',
+              undefined,
+              artifactErrorCode(failure),
+              failure instanceof Error ? failure.message : String(failure),
+            );
+            stats.record({ failed: true, durationMs: Date.now() - started });
+          } catch (diagnosticError) {
+            if (!cleanup) throw diagnosticError;
+          }
           throw failure;
         } finally {
-          artifact?.cancelFingerprintCheck();
-          await artifact?.release();
+          await settleArtifactCleanup(artifactFailure, artifact?.release());
           failureAfterCleanup = built && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
           if (failureAfterCleanup) {
             finish('failed', undefined, failureAfterCleanup.code, failureAfterCleanup.message);

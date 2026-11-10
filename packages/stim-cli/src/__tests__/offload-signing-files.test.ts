@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fingerprintProject } from '../cache/build-cache.ts';
+import { staticInputs } from '../fingerprint/inputs.ts';
+import { isUncertain, preimage, preimageHash } from '../fingerprint/key.ts';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { androidSyncPlan, iosSyncPlan, isSigningKeystore } from '../offload/signing-files.ts';
 
@@ -244,10 +245,14 @@ test.each([
     write('android/build.gradle', 'x');
     write('ios/Podfile', 'x');
     write(path, 'one');
-    const before = await fingerprintProject(root, { platform });
+    const key = () => {
+      const result = staticInputs({ root, tracked: null, expoResolves: false }, { platform });
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      return preimageHash(preimage(platform, result.native, result.layout, result.inputs));
+    };
+    const before = key();
     write(path, 'two');
-    const after = await fingerprintProject(root, { platform });
-    expect(after?.hash !== before?.hash).toBe(moves);
+    expect(key() !== before).toBe(moves);
   },
   60_000,
 );

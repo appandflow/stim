@@ -1,11 +1,12 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
 import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
+import { testContext } from './_context.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
@@ -16,6 +17,25 @@ test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();
   const out = getExecutor().run('echo hello', { timeoutMs: 60_000 });
   expect(out).toBe('hello');
+});
+
+test('an explicit async execution context wins over a different ambient operation', async () => {
+  resetExecutor();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-exec-context-')));
+  const ambient = testContext({ env: { ...process.env, STIM_EXEC_CONTEXT: 'ambient' } });
+  const selected = testContext({ cwd: root, env: { ...process.env, STIM_EXEC_CONTEXT: 'selected' } });
+  try {
+    const output = await withAmbientContext(ambient, () =>
+      getExecutor().runFileAsync(
+        process.execPath,
+        ['-e', 'process.stdout.write(JSON.stringify({ cwd: process.cwd(), value: process.env.STIM_EXEC_CONTEXT }))'],
+        { timeoutMs: 60_000, context: selected },
+      ),
+    );
+    expect(JSON.parse(output)).toEqual({ cwd: root, value: 'selected' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('executable selection resolves a relative PATH against the supplied project directory', () => {

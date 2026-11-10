@@ -1,8 +1,9 @@
 {
-  "compat": 5,
+  "compat": 6,
   "files": [
     "packages/core/dependency-install.ts",
     "packages/core/react-native-artifact.ts",
+    "packages/core/state/settings-registry.ts",
     "packages/core/swiftpm-artifact.ts",
     "packages/server/src/build.ts",
     "packages/stim-cli/shim/android-cas-pch.cmake",
@@ -42,5 +43,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/stimd/metro/project-node.ts"
   ],
-  "digest": "25690e5a3c09806a225b7dff2cde15cfd20d1ede14bfc3cd55ad2c9dcd2142c6"
+  "digest": "a0fc38615549c37db7c27c34a0e994046b84e08bb104bd2c72020e94ddaf9475"
 }

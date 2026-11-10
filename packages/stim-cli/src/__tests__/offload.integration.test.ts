@@ -38,6 +38,15 @@ import {
 import { toolchainMismatches, toolchainNotes } from '../offload/toolchain.ts';
 
 const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
+const replayInputs = (ignored: string[]) => ({
+  sources: [],
+  ignored,
+  schema: 2,
+  env: { set: {}, absent: [] },
+  native: 'tracked' as const,
+  layout: { projectPath: null, gradleRoot: null, module: null },
+  runtime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
+});
 
 const LOCAL: IosToolchain = {
   stimBuild: 'b1',
@@ -546,6 +555,7 @@ describe('strict client routing', () => {
       const outcome = await offloadBuild({
         choice,
         expectedFingerprint: 'fingerprint',
+        fingerprintInputs: async () => replayInputs([]),
         request: {
           platform: 'ios',
           runtime: RUNTIME,
@@ -603,7 +613,7 @@ describe('strict client routing', () => {
         isExpo: false,
         android: { variant: null, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
       },
-      fingerprintInputs: async () => ({ sources: [], ignored: [join(root, 'android', 'app', 'ignored.jks')] }),
+      fingerprintInputs: async () => replayInputs([join(root, 'android', 'app', 'ignored.jks')]),
       syncPlan: (repoRoot, paths) =>
         androidSyncPlan(repoRoot, paths, { release: true, configured: [], projectScripts: [] }),
       stagingDir: join(root, 'staging'),
@@ -662,7 +672,7 @@ describe('strict client routing', () => {
         isExpo: false,
         optimizations: {},
       },
-      fingerprintInputs: async () => ({ sources: [], ignored: ignored.map((name) => join(root, name)) }),
+      fingerprintInputs: async () => replayInputs(ignored.map((name) => join(root, name))),
       syncPlan: iosSyncPlan,
       stagingDir: join(root, 'staging'),
       onPhase: () => {},
@@ -749,6 +759,7 @@ describe('strict client routing', () => {
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: 'fingerprint',
+      fingerprintInputs: async () => replayInputs([]),
       request: {
         platform: 'ios',
         runtime: RUNTIME,

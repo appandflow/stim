@@ -1,12 +1,11 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { FingerprintSource } from '@expo/fingerprint';
 import { getExecutor } from '../exec.ts';
 import { git, gitAsync } from '../workspace/git.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
-import { spawnDeclared } from './spawn-claims.ts';
+import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { expoBinPath, expoBinRefusal, expoSdkMajor, expoTelemetryEnv } from '../stimd/metro/server-expo.ts';
@@ -16,13 +15,20 @@ import {
   type WorkspaceState,
   withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
-import { ambientContext } from '@stim-cli/core';
-import { fingerprintProject } from '../cache/build-cache.ts';
+import { ambientContext, workspaceName, type StimContext } from '@stim-cli/core';
+import { operationState } from './operation-state.ts';
+import { WorkspaceProcessCleanupError, workspaceProcessLockPath } from './workspace-process-lock.ts';
+import { isClaimUnavailable, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { processContext } from '../cli-operation.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { FINGERPRINT_SCHEMA } from '@stim-cli/core/state';
+import type { NativeMode } from '../fingerprint/key.ts';
 import { shortHash } from '../command-output.ts';
 import {
+  fingerprintInputsSetting,
   resolveAndroidLayout,
   resolveIosProjectDir,
-  resolveProjectSettings,
+  resolveProjectSettingsAsync,
   type SettingsObject,
 } from '../workspace/settings.ts';
 
@@ -42,15 +48,6 @@ function nativeDir(root: string, platform: string) {
 
 export type PrebuildAction = 'none' | 'generate' | 'regenerate' | 'refuse';
 
-function nativeDirInFingerprint(sources: readonly FingerprintSource[], platform: string): boolean {
-  const dir = nativeDirName(platform);
-  return sources.some((source) => source.type === 'dir' && source.filePath === dir && source.hash != null);
-}
-
-/**
- * @expo/fingerprint leaves a native directory out of the hash when git ignores it (CNG), so the cache
- * key only covers that directory when this workspace's recorded prebuild ran on the same fingerprint.
- */
 function prebuildAction({
   isExpo,
   nativeDirExists,
@@ -58,6 +55,7 @@ function prebuildAction({
   nativeDirTracked,
   generatedFrom,
   fingerprint,
+  foreign,
 }: {
   isExpo: boolean;
   nativeDirExists: boolean;
@@ -65,10 +63,12 @@ function prebuildAction({
   nativeDirTracked: boolean;
   generatedFrom: string | null;
   fingerprint: string;
+  foreign: boolean;
 }): PrebuildAction {
   if (!isExpo) return 'none';
-  if (!nativeDirExists) return 'generate';
+  if (!nativeDirExists) return nativeDirFingerprinted ? 'refuse' : 'generate';
   if (nativeDirFingerprinted || generatedFrom === fingerprint) return 'none';
+  if (foreign) return 'refuse';
   return nativeDirTracked ? 'refuse' : 'regenerate';
 }
 
@@ -97,18 +97,48 @@ function gitTracksNativeDir(root: string, platform: string): boolean {
 function prebuildInputs(
   root: string,
   platform: string,
-  { isExpo, fingerprint, sources }: { isExpo: boolean; fingerprint: string; sources: readonly FingerprintSource[] },
+  {
+    isExpo,
+    fingerprint,
+    native,
+  }: {
+    isExpo: boolean;
+    fingerprint: string;
+    native?: NativeMode;
+  },
 ): Omit<Parameters<typeof prebuildAction>[0], 'nativeDirTracked'> {
   const nativeDirExists = existsSync(nativeDir(root, platform));
-  const fingerprinted = nativeDirInFingerprint(sources, platform);
-  const generatedFrom = prebuildRecord(readWorkspaceState(root))[platform];
+  const fingerprinted = native === 'tracked';
+  const recorded = prebuildRecord(readWorkspaceState(root))[platform];
+  const status = prebuildRecordStatus(recorded, fingerprint);
+  const generatedFrom = status.kind === 'current' ? status.generatedFrom : null;
   return {
     isExpo,
     nativeDirExists,
     nativeDirFingerprinted: fingerprinted,
-    generatedFrom: typeof generatedFrom === 'string' ? generatedFrom : null,
+    generatedFrom,
+    foreign: status.kind === 'foreign',
     fingerprint,
   };
+}
+
+export async function planUnfingerprintedPrebuild(
+  root: string,
+  platform: 'ios' | 'android',
+  isExpo: boolean,
+  signal?: AbortSignal,
+): Promise<PrebuildAction> {
+  if (!isExpo) return 'none';
+  const dir = nativeDir(root, platform);
+  try {
+    const tracked = await gitAsync(root, ['ls-files', '--', nativeDirName(platform)], { signal });
+    signal?.throwIfAborted();
+    if (tracked.trim()) return 'none';
+  } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
+    signal?.throwIfAborted();
+  }
+  return existsSync(dir) ? 'refuse' : 'generate';
 }
 
 export function planPrebuild(
@@ -152,7 +182,10 @@ export async function planPrebuildAsync(
 export function recordPrebuild(root: string, platform: string, fingerprint: string | null): void {
   updateWorkspaceState(root, (state) => ({
     ...state,
-    prebuild: { ...prebuildRecord(state), [platform]: fingerprint },
+    prebuild: {
+      ...prebuildRecord(state),
+      [platform]: fingerprint === null ? null : { schema: FINGERPRINT_SCHEMA, hash: fingerprint },
+    },
   }));
 }
 
@@ -167,38 +200,67 @@ export type PrebuildRecordStatus =
   | { kind: 'current'; generatedFrom: string }
   | { kind: 'unfinished' }
   | { kind: 'unrecorded' }
+  | { kind: 'foreign' }
   | { kind: 'moved'; recorded: string; current: string }
   | { kind: 'unfingerprintable'; recorded: string };
 
 export function prebuildRecordStatus(recorded: unknown, current: string | null): PrebuildRecordStatus {
-  if (typeof recorded !== 'string') return recorded === null ? { kind: 'unfinished' } : { kind: 'unrecorded' };
-  if (current === recorded) return { kind: 'current', generatedFrom: recorded };
-  return current ? { kind: 'moved', recorded, current } : { kind: 'unfingerprintable', recorded };
+  if (recorded === null) return { kind: 'unfinished' };
+  if (recorded === undefined) return { kind: 'unrecorded' };
+  if (
+    typeof recorded !== 'object' ||
+    !('schema' in recorded) ||
+    recorded.schema !== FINGERPRINT_SCHEMA ||
+    !('hash' in recorded) ||
+    typeof recorded.hash !== 'string'
+  )
+    return { kind: 'foreign' };
+  if (current === recorded.hash) return { kind: 'current', generatedFrom: recorded.hash };
+  return current
+    ? { kind: 'moved', recorded: recorded.hash, current }
+    : { kind: 'unfingerprintable', recorded: recorded.hash };
 }
 
 export async function readPrebuildRecord(
   appRoot: string,
   platform: string,
+  operation: StimContext = processContext(appRoot),
 ): Promise<{ recorded: unknown; current: string | null }> {
   const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
-  if (typeof recorded !== 'string') return { recorded, current: null };
+  if (prebuildRecordStatus(recorded, null).kind !== 'unfingerprintable') return { recorded, current: null };
   let settings: SettingsObject | null = null;
   let repoRoot = appRoot;
   try {
-    const resolved = resolveProjectSettings(appRoot);
+    const resolved = await resolveProjectSettingsAsync(appRoot, {
+      env: operation.env,
+      signal: operation.signal,
+      declareFor: operation,
+    });
     settings = resolved.settings;
     repoRoot = resolved.context.repoRoot ?? appRoot;
-  } catch {}
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    operation.signal.throwIfAborted();
+    return { recorded, current: null };
+  }
   let current: string | null = null;
   try {
-    const computed = await fingerprintProject(
-      appRoot,
-      platform === 'ios'
-        ? { platform, iosProjectPath: resolveIosProjectDir(settings, appRoot).relative }
-        : { platform, androidLayout: resolveAndroidLayout(settings, appRoot, repoRoot) },
-    );
-    current = computed?.hash ?? null;
-  } catch {}
+    if (platform !== 'ios' && platform !== 'android') return { recorded, current };
+    const inputs = fingerprintInputsSetting(settings);
+    const computed = await readFingerprint(operation, {
+      root: appRoot,
+      platform,
+      embedMode: 'development',
+      ...(inputs === undefined ? {} : { fingerprintInputs: inputs }),
+      ...(platform === 'ios'
+        ? { iosProjectPath: resolveIosProjectDir(settings, appRoot).relative }
+        : { androidLayout: resolveAndroidLayout(settings, appRoot, repoRoot) }),
+    });
+    if (computed && !('uncertain' in computed)) current = computed.hash;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    operation.signal.throwIfAborted();
+  }
   return { recorded, current };
 }
 
@@ -207,19 +269,82 @@ export async function readPrebuildRecord(
  * the app's current native fingerprint. A directory Stim did not generate, or generated from other inputs, may come
  * from an older Expo or React Native template that a prebuild without --clean keeps.
  */
-export async function nativeDirCarry(appRoot: string, platform: string): Promise<NativeDirCarry> {
+export async function nativeDirCarry(
+  appRoot: string,
+  platform: string,
+  operation?: StimContext,
+  hold?: (release: (failures: readonly unknown[]) => void) => void,
+): Promise<NativeDirCarry> {
+  const context = operation ?? processContext(appRoot);
+  const nativeRoot = workspaceProcessLockPath(
+    join(context.home, 'workspaces', workspaceName(appRoot)),
+    'native-run',
+    true,
+  );
+  const owned = [...operationState(context).declaring].some((claim) => claim.root === nativeRoot);
+  if (owned) return nativeDirCarryOwned(appRoot, platform, context);
+  let attempt;
+  try {
+    attempt = tryAcquireClaim({ root: nativeRoot, mode: 'exclusive', label: 'native-run lock' });
+  } catch (error) {
+    if (!isClaimUnavailable(error)) throw error;
+    return {
+      reason: 'the source native-run claim is busy or unresolved; generate this native directory in the target',
+    };
+  }
+  if (attempt.pending) releaseClaim(attempt.pending);
+  if (!attempt.acquired)
+    return {
+      reason: 'the source native-run claim is busy or unresolved; generate this native directory in the target',
+    };
+  const claim = attempt.acquired;
+  declareSpawnsOn(context, claim);
+  let retained = false;
+  const transferred = Boolean(hold);
+  hold?.((failures) => {
+    stopDeclaringSpawnsOn(context, claim);
+    const keepClaim = failures.some(
+      (failure) =>
+        typeof failure === 'object' &&
+        failure !== null &&
+        'reportCleanup' in failure &&
+        (!(failure instanceof WorkspaceProcessCleanupError) ||
+          failure.claims.some((held) => held.path === claim.path && held.claimId === claim.claimId)),
+    );
+    if (!keepClaim) releaseClaim(claim);
+  });
+  try {
+    return await nativeDirCarryOwned(appRoot, platform, context);
+  } catch (error) {
+    retained =
+      typeof error === 'object' &&
+      error !== null &&
+      'reportCleanup' in error &&
+      (!(error instanceof WorkspaceProcessCleanupError) || error.claims.includes(claim));
+    throw error;
+  } finally {
+    if (!transferred) {
+      stopDeclaringSpawnsOn(context, claim);
+      if (!retained) releaseClaim(claim);
+    }
+  }
+}
+
+async function nativeDirCarryOwned(appRoot: string, platform: string, operation: StimContext): Promise<NativeDirCarry> {
   const dir = nativeDirName(platform);
   const regenerates =
     platform === 'ios'
       ? `stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone`
       : `stim ${platform} generates ${dir}/ fresh here`;
-  const { recorded, current } = await readPrebuildRecord(appRoot, platform);
+  const { recorded, current } = await readPrebuildRecord(appRoot, platform, operation);
   const status = prebuildRecordStatus(recorded, current);
   switch (status.kind) {
     case 'current':
       return { generatedFrom: status.generatedFrom };
     case 'unfinished':
       return { reason: `the source's last Stim prebuild of ${dir}/ did not finish; ${regenerates}` };
+    case 'foreign':
+      return { reason: `the source's ${dir}/ was generated by a different Stim fingerprint schema; ${regenerates}` };
     case 'unrecorded':
       return {
         reason: `Stim has no record of generating the source's ${dir}/, so it cannot show the directory is current; ${regenerates}`,
@@ -250,7 +375,19 @@ function staleNativeDirRemedy(platform: string): string {
   );
 }
 
-export function staleNativeDirRefusal(platform: string): { code: string; message: string; remedy: string } {
+export function prebuildPlanRefusal(root: string, platform: string): { code: string; message: string; remedy: string } {
+  const recorded = prebuildRecord(readWorkspaceState(root))[platform];
+  if (!existsSync(nativeDir(root, platform)) || prebuildRecordStatus(recorded, null).kind !== 'foreign')
+    return staleNativeDirRefusal(platform);
+  const dir = nativeDirName(platform);
+  return {
+    code: PREBUILD_ERROR,
+    message: `${dir}/ has a prebuild record from a different Stim fingerprint schema.`,
+    remedy: `Use the same Stim version for this project and global installation; move or remove ${dir}/ after preserving any changes, then retry to generate it with the current version.`,
+  };
+}
+
+function staleNativeDirRefusal(platform: string): { code: string; message: string; remedy: string } {
   const dir = nativeDirName(platform);
   return {
     code: PREBUILD_ERROR,

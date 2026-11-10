@@ -288,7 +288,7 @@ only while its `server.acceptClientBuilds` is `true`; otherwise it refuses
 with `This machine takes only published Stim builds.` and the setting to
 change. Completed artifacts on a worker are reused when both Stim builds carry
 the same build compatibility version. Every connection between two machines
-also compares one wire integer, `peer`: a worker whose Stim is older than this
+also compares one wire integer, `peer` (3 for the owned-fingerprint protocol): a worker whose Stim is older than this
 one's is refused with `peer-too-old`, `stim remote update <mac>`, and the
 `npm i -g stim@<version> && stim service install` to run there.
 
@@ -794,8 +794,17 @@ which only the ticket holder can derive, can read it until expiry.
 
 An offloaded React Native build sends the checkout's tracked and untracked
 files, and the gitignored files its native fingerprint hashes or its Expo config
-reads, such as `.env.local` and the other Expo `.env` files. Those files can hold
-secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
+reads, such as `.env.local` and the other Expo `.env` files. It also sends the
+values of the environment variables the build reads from your shell, and every
+variable in your shell when project code enumerates `process.env`, so the worker
+builds with the same values. Stim's own secrets and settings overrides, toolchain
+and home paths such as `PATH`, `JAVA_HOME` and `ANDROID_HOME`, and shell-session
+variables stay on your machine. Both machines evaluate the fingerprint with the
+same Node major.minor: the project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or
+Volta), or else the Node running Stim. A worker with a different one refuses the
+build with `fingerprint-runtime`; pin the project's Node, or install the same
+version on both. Those files and variables can hold secrets: Stim assumes every paired
+Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or
 `android/build`.
@@ -837,6 +846,9 @@ temporarily; it cannot authenticate.
   fingerprint sources that differ and the files `pod install` or prebuild rewrote
   on the worker; make that input agree on both Macs. Rerun with
   `--remote-build auto` or `local` only when you want to change placement.
+  If cleanup cannot be confirmed, Stim retains the worker's repository claim
+  and any build-slot and selected-engine claims. Verify the worker and evaluator groups
+  stopped, then recover only the claim paths in the refusal.
 - [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
   is unreachable, has no compatible simulator or cannot confirm the session.
   Retry the same host, or reconcile with `stim stop` when it is reachable.
