@@ -68,8 +68,14 @@ export function stimdLive(home?: string): boolean {
   }
 }
 
+/**
+ * The unresolved claims of this home's stimd and daemon claim sets, named together so one round removes them; a
+ * directory-level problem (an unreadable claim directory or root) alone, since its remedy removes the whole directory.
+ */
 function unresolvedDaemonClaims(): ClaimProblem[] {
-  return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
+  const claims = [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
+  const directory = claims.find((claim) => !claim.path.endsWith('.claim'));
+  return directory ? [directory] : claims;
 }
 
 const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
