@@ -137,6 +137,7 @@ interface Setup {
   replay?: JsonObject;
   freeGb?: number;
   pullRequests?: PushNotifierOptions['pullRequests'];
+  name?: PushNotifierOptions['name'];
 }
 
 async function setup(options: Setup = {}) {
@@ -149,7 +150,7 @@ async function setup(options: Setup = {}) {
   const log = new NotificationLog(join(logDir, 'notifications.json'), () => now);
   const logged: LoggedNotification[] = [];
   const notifier = new PushNotifier({
-    name: async () => 'MacBook Pro',
+    name: options.name ?? (async () => 'MacBook Pro'),
     endpoint,
     subscribeStatus: (next) => {
       listener = next;
@@ -266,6 +267,25 @@ describe('PushNotifier', () => {
         },
       ],
     ]);
+  });
+
+  it("starts watching once a failed read of this machine's name succeeds on retry", async () => {
+    const warned = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let reads = 0;
+      const t = (current = await setup({
+        limits: { resubscribeMs: 20 },
+        name: async () => {
+          if (++reads === 1) throw new Error('no name yet');
+          return 'MacBook Pro';
+        },
+      }));
+      expect(t.subscriptions.opened).toBe(0);
+      await vi.waitFor(() => expect(t.subscriptions.opened).toBe(1));
+      expect(reads).toBe(2);
+    } finally {
+      warned.mockRestore();
+    }
   });
 
   it('sums up more than three notifications in one push', async () => {

@@ -279,8 +279,11 @@ export class PushNotifier {
     try {
       this.name = await this.options.name();
     } catch (cause) {
-      this.naming = null;
-      return warn(`could not read this machine's name: ${String(cause)}`);
+      warn(`could not read this machine's name: ${String(cause)}`);
+      return this.later(() => {
+        this.naming = null;
+        if (this.watching()) this.watch();
+      }, this.limits.resubscribeMs);
     }
     if (!this.closed && this.watching()) this.watch();
   }
