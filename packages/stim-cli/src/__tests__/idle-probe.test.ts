@@ -17,11 +17,9 @@ beforeEach(() => {
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
-  vi.useFakeTimers({ toFake: ['Date'] });
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.STIM_HOME;

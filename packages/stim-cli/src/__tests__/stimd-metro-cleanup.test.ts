@@ -10,7 +10,7 @@ const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
   failAfterSpawn: false,
   groupAlive: true,
-  extraEnv: [] as Record<string, string>[],
+  extraEnv: new Array<Record<string, string>>(),
   close: vi.fn<() => Promise<void>>(async () => {
     throw new Error('Could not confirm shutdown of dev-server pid 424242.');
   }),

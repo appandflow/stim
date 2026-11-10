@@ -90,7 +90,7 @@ const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeout
       );
       child.on?.('error', (error: Error) => resolve({ op: 'error', code: 'metro-start', message: error.message }));
     } catch (error) {
-      resolve({ op: 'error', code: 'metro-start', message: (error as Error).message });
+      resolve({ op: 'error', code: 'metro-start', message: String(error) });
     }
   });
 
