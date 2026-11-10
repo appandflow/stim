@@ -601,7 +601,7 @@ of footage (see `packages/server/README.md`, Recording).
 - **Stopped devices.** A device that is not running can still be replayed:
   the first scrub opens the stream on its recording, with no live screen to go
   back to.
-- **Indicators.** A red **Recording** chip next to the model shows while the
+- **Indicators.** A red **Recording** chip under the title bar shows while the
   machine records the device. A **Replay off** pill replaces the bar when
   `recording.enabled` is off for the workspace. If the timeline goes away
   while you replay, the bar keeps only **Live**.
@@ -767,7 +767,7 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. On a server with `shared-control`,
+cursor icon under the title bar names it, beside the Recording chip. On a server with `shared-control`,
 **Control** starts at once while others drive the device: the phone, Stim
 Desktop, web share viewers and agents all send input to it together. The chip
 stays while you have control, because that driver still sends input too. The

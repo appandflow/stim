@@ -942,68 +942,84 @@ export function DeviceView({
               ]}
             >
               {underBar ? <ViewerBackdrop /> : null}
-              <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
-                <View
-                  style={styles.barStart}
-                  onLayout={(event) => {
-                    const { width } = event.nativeEvent.layout;
-                    setBarSides(([, right]) => [width, right]);
-                  }}
-                >
-                  <Touch
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      zoom.close();
+              <View onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
+                <View style={styles.bar}>
+                  <View
+                    style={styles.barStart}
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([, right]) => [width, right]);
                     }}
-                    accessibilityLabel={t`Close`}
-                    style={styles.barButton}
                   >
-                    <Icon name="xmark" size={22} color={theme.media.text} />
-                  </Touch>
-                  {streams && canFullScreen ? (
                     <Touch
-                      onPress={() => setFullScreen(true)}
-                      accessibilityLabel={t`Full Screen`}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        zoom.close();
+                      }}
+                      accessibilityLabel={t`Close`}
                       style={styles.barButton}
                     >
-                      <Icon name="arrow.up.left.and.arrow.down.right" size={18} color={theme.media.text} />
+                      <Icon name="xmark" size={22} color={theme.media.text} />
                     </Touch>
-                  ) : null}
-                </View>
-                <View
-                  style={[
-                    styles.titles,
-                    {
-                      paddingLeft: Math.max(0, barSides[1] - barSides[0]),
-                      paddingRight: Math.max(0, barSides[0] - barSides[1]),
-                    },
-                  ]}
-                >
-                  <Text
-                    variant="body"
-                    weight="semibold"
-                    style={styles.mediaText}
-                    numberOfLines={1}
-                    maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                    {streams && canFullScreen ? (
+                      <Touch
+                        onPress={() => setFullScreen(true)}
+                        accessibilityLabel={t`Full Screen`}
+                        style={styles.barButton}
+                      >
+                        <Icon name="arrow.up.left.and.arrow.down.right" size={18} color={theme.media.text} />
+                      </Touch>
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      styles.titles,
+                      {
+                        paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                        paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                      },
+                    ]}
                   >
-                    {title}
-                  </Text>
-                  <View style={styles.subtitleRow}>
                     <Text
-                      variant="caption"
-                      style={styles.subtitle}
+                      variant="body"
+                      weight="semibold"
+                      style={styles.mediaText}
                       numberOfLines={1}
                       maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
                     >
-                      {subtitle}
+                      {title}
                     </Text>
-                    {device?.host ? (
-                      <HostLabel
-                        host={device.host}
-                        color={theme.media.textTertiary}
-                        mode={device.running ? 'running' : 'placed'}
-                      />
+                    <View style={styles.subtitleRow}>
+                      <Text
+                        variant="caption"
+                        style={styles.subtitle}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                      >
+                        {subtitle}
+                      </Text>
+                      {device?.host ? (
+                        <HostLabel
+                          host={device.host}
+                          color={theme.media.textTertiary}
+                          mode={device.running ? 'running' : 'placed'}
+                        />
+                      ) : null}
+                    </View>
+                  </View>
+                  <View
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([left]) => [left, width]);
+                    }}
+                  >
+                    {!viewOnly && control.allowed !== null && (running || replaying) ? (
+                      <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
                     ) : null}
+                  </View>
+                </View>
+                {(range?.recording && !replayOff) || driver ? (
+                  <View style={styles.badges}>
                     {range?.recording && !replayOff ? (
                       <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
                         <View style={styles.recordingDot} />
@@ -1037,17 +1053,7 @@ export function DeviceView({
                       </View>
                     ) : null}
                   </View>
-                </View>
-                <View
-                  onLayout={(event) => {
-                    const { width } = event.nativeEvent.layout;
-                    setBarSides(([left]) => [left, width]);
-                  }}
-                >
-                  {!viewOnly && control.allowed !== null && (running || replaying) ? (
-                    <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
-                  ) : null}
-                </View>
+                ) : null}
               </View>
             </Animated.View>
           )}
@@ -1218,6 +1224,14 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     columnGap: theme.space.md,
     maxWidth: '100%',
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.xl,
+    paddingBottom: theme.space.xs,
   },
   driver: {
     flexDirection: 'row',
