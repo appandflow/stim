@@ -167,7 +167,7 @@ test.skipIf(process.platform === 'win32')(
           return false;
         }
       };
-      while (alive()) await new Promise(setImmediate);
+      for (const deadline = Date.now() + 5_000; alive() && Date.now() < deadline;) await new Promise(setImmediate);
     }
 
     bootedWorkspace('exact', 20 * MINUTE_MS);

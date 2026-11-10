@@ -69,11 +69,38 @@ export function readRunningProcesses(platform: NodeJS.Platform = process.platfor
 }
 
 /**
- * `running` without this process, its ancestors and its descendants, and without processes that have exited since the
- * listing, so a command run from inside a folder (the shell that started it, and the ps and lsof it ran to list
- * processes) does not count as something else using that folder; null stays null, and so does a process table that
- * cannot be read.
+ * `running` without the process `self`, its ancestors and its descendants, and without processes absent from `table`
+ * (`ps -axo pid=,ppid=` output read after `running`, so they exited since), so a command run from inside a folder (the
+ * shell that started it, and the ps and lsof it ran to list processes) does not count as something else using that
+ * folder. Null when `table` does not list `self`, so an unreadable table never frees a folder.
  */
+export function othersAmong(running: RunningProcesses, table: string, self: number): RunningProcesses | null {
+  const parent = new Map<number, number>();
+  for (const row of table.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row);
+    if (match) parent.set(Number(match[1]), Number(match[2]));
+  }
+  if (!parent.has(self)) return null;
+  const own = new Set<number>();
+  for (let pid: number | undefined = self; pid !== undefined && pid > 1 && !own.has(pid); pid = parent.get(pid))
+    own.add(pid);
+  const descends = (pid: number): boolean => {
+    for (
+      let at: number | undefined = pid, hops = 0;
+      at !== undefined && at > 1 && hops < 256;
+      at = parent.get(at), hops++
+    )
+      if (at === self) return true;
+    return false;
+  };
+  const other = (pid: number): boolean => parent.has(pid) && !own.has(pid) && !descends(pid);
+  return {
+    commands: running.commands.filter(({ pid }) => other(pid)),
+    cwds: running.cwds.filter(({ pid }) => other(pid)),
+  };
+}
+
+/** `othersAmong` for this process, with a fresh process table; null when either listing cannot be read. */
 export async function othersRunningAsync(
   running: RunningProcesses | null,
   signal?: AbortSignal,
@@ -83,29 +110,7 @@ export async function othersRunningAsync(
     timeoutMs: LIST_TIMEOUT_MS,
     signal,
   });
-  if (table === null) return null;
-  const parent = new Map<number, number>();
-  for (const row of table.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row);
-    if (match) parent.set(Number(match[1]), Number(match[2]));
-  }
-  const own = new Set<number>();
-  for (let pid: number | undefined = process.pid; pid !== undefined && pid > 1 && !own.has(pid); pid = parent.get(pid))
-    own.add(pid);
-  const isOwn = (pid: number): boolean => {
-    for (
-      let at: number | undefined = pid, hops = 0;
-      at !== undefined && at > 1 && hops < 256;
-      at = parent.get(at), hops++
-    )
-      if (at === process.pid) return true;
-    return own.has(pid);
-  };
-  const other = (pid: number): boolean => parent.has(pid) && !isOwn(pid);
-  return {
-    commands: running.commands.filter(({ pid }) => other(pid)),
-    cwds: running.cwds.filter(({ pid }) => other(pid)),
-  };
+  return table === null ? null : othersAmong(running, table, process.pid);
 }
 
 export async function readRunningProcessesAsync(
