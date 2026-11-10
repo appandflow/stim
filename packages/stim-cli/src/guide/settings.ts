@@ -705,7 +705,7 @@ run waiting to boot, and automatic maintenance.
           When that build is what stimd's own installation now holds (an
           npm update in place), stimd restarts on it once the commands it
           serves end and no share-only server runs, and the command waits
-          up to 5 s for it. Otherwise the command names the running build
+          up to 15 s for it. Otherwise the command names the running build
           (STIM_DAEMON_UNAVAILABLE where it needs stimd); stimd keeps
           serving until nothing runs in the home, and the next command
           starts its own build's stimd. stimd stops a

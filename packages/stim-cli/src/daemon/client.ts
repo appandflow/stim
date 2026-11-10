@@ -35,6 +35,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
+const HANDOVER_WAIT_MS = 15_000;
 const ATTACH_AFTER_MS = 2000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
@@ -620,8 +621,8 @@ export async function ensurePersistentStimd(env: NodeJS.ProcessEnv = process.env
 
 /**
  * Begins this command's op with the live stimd: again while it has its claim but does not listen yet (up to five
- * seconds), and once more after a stimd of this build replaced one of an older build that refused it, which an
- * attached stimd never does. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
+ * seconds), and once more after a stimd of this build replaced one of an older build that refused it, when one can
+ * (`successorExpected`). Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
  */
 async function admit(
   held: Socket[] | undefined,
@@ -633,7 +634,7 @@ async function admit(
     if (await beginOp(held, command, invocation)) return true;
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
     if (stimdRefused()) {
-      if (!refusedByAttached && (await successorBound())) return beginOp(held, command, invocation);
+      if (successorExpected() && (await successorBound())) return beginOp(held, command, invocation);
       return false;
     }
     if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return false;
@@ -897,9 +898,13 @@ function successorExpected(): boolean {
   return !refusedByAttached && !refusal?.heldByShares && (refusal?.handover === true || ownStoreEngine() !== null);
 }
 
-/** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
+/**
+ * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
+ * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise.
+ */
 async function successorBound(): Promise<boolean> {
-  for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
+  const waitMs = refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS;
+  for (const deadline = Date.now() + waitMs; Date.now() < deadline;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
