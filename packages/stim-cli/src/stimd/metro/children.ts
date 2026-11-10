@@ -404,6 +404,11 @@ function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
   return run;
 }
 
+/** Whether this stimd supervises `pid` as the Metro of `root`, one it started or adopted. */
+export function managesMetro(root: string, pid: number): boolean {
+  return children.get(root)?.pid === pid;
+}
+
 /** Records a running child where `status`, `stop`, the idle stage, Desktop and `machine-usage` look for a dev server. */
 function record(child: MetroChild, hmrUpdates: boolean): void {
   const entry = {
