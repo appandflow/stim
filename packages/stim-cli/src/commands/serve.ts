@@ -6,6 +6,7 @@ import { DEFAULT_PORT, validateServeEnvironment } from '@stim-cli/server/service
 import pairCommand from './pair.ts';
 import pairingsCommand from './pairings.ts';
 import serviceCommand from './service.ts';
+import { loadServerCli } from '../server-cli.ts';
 import setupCommand from './setup.ts';
 
 export default function serveCommand(program: Command, version: string, legacy = false): void {
@@ -14,6 +15,7 @@ export default function serveCommand(program: Command, version: string, legacy =
     .option('--port <n>', 'server port', String(DEFAULT_PORT))
     .option('--loopback-only', 'serve this machine only')
     .option('--share', 'serve web shares until the last share ends')
+    .option('--tailnet', 'listen on the tailnet from now on, without waiting for a pairing or approval')
     .addOption(new Option('--service').hideHelp())
     .option(
       '--env <KEY=VALUE>',
@@ -33,6 +35,7 @@ export default function serveCommand(program: Command, version: string, legacy =
         command.error(`--port must be a port number, got ${opts.port}.`);
       const problem = validateServeEnvironment(opts.env, opts.pathPrepend, true);
       if (problem) command.error(problem);
+      if (opts.tailnet === true) (await loadServerCli()).markTailnet('stim serve --tailnet');
       await serveInStimd({
         port,
         extraEnv: opts.env,

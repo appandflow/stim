@@ -433,6 +433,9 @@ pending or denied, unreachable, changed pinned server key, a stim-server
 too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
+A worker listens on its tailnet address only after a pairing, an approval, its
+setup route or a request forwarded by tailscale serve reached it; when an
+unreachable worker had none of these, run stim serve --tailnet on it once.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
 refusal. For stim android, a known toolchain refusal on the named machine stops
 before prebuild; busy, low disk and unreachable are checked again afterward.

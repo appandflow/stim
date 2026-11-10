@@ -851,6 +851,10 @@ temporarily; it cannot authenticate.
 
 Run `stim doctor` or open the machine's details in Desktop. The result shows where the connection failed, from Tailscale or LAN discovery to the HTTPS route, server or approval. Check that the worker is awake and serving on the expected network. Confirm a changed key on the worker before trusting it.
 
+A worker listens on its tailnet address only once something there uses the tailnet: a pairing or Desktop's phone setup, `stim setup`'s tailnet route, a build or device-host approval, a `tailscale serve` route Stim installed or a request it forwards. A worker that none of these reached refuses a direct tailnet connection, or answers `no transport identified the peer`. Run this once on the worker so it listens on the tailnet from then on:
+
+<StimTabs code={`stim serve --tailnet`} />
+
 ### Find out why a remote machine was slow or refused
 
 <StimTabs
