@@ -365,6 +365,11 @@ describe('readWebActivity', () => {
   const target = { port: PORT, ownPids: [CHROME, SUPERVISOR], workspace };
   const chromeSide = `p${CHROME}\nf157\nn127.0.0.1:${PORT}->127.0.0.1:49288\nf158\nn127.0.0.1:${PORT}->127.0.0.1:49300\n`;
 
+  test('stimd observing Chrome is not reported as a browser driver', () => {
+    const activity = readWebActivity(target, tables(chromeSide + client(701, 49300), [row(701, 'stimd')]), NOW);
+    expect(activity.state).not.toBe('driven');
+  });
+
   test('a DevTools client that is not Stim makes the browser driven by its tool', () => {
     const connections =
       chromeSide + client(SUPERVISOR, 49288) + client(700, 49290) + client(800, 49300) + client(900, 49310);

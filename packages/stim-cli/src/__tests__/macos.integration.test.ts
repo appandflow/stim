@@ -1,6 +1,7 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
+import { detachedHelper } from './_detached-helper.ts';
 import { writeConfigSetting, loadConfig, saveConfig, upsertProject, getConfigDir } from '../workspace/config.ts';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -44,12 +45,14 @@ import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
-import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
-import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { WorkspaceProcessCleanupError, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
+import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as ownership from '../ownership-claim.ts';
 import { startedBy } from '../macos/instances.ts';
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as registration from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import * as owning from '../engine/spawn-owned.ts';
 import { withLocalMacosAdmission } from '../macos/admission.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
@@ -66,6 +69,7 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 let dir: string;
 let root: string;
 const children: ChildProcess[] = [];
+const helperPids: number[] = [];
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-macos-')));
@@ -78,6 +82,11 @@ afterEach(async () => {
   vi.spyOn(worktree, 'repoRootAsync').mockRestore();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+  for (const pid of helperPids.splice(0)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
   }
   rmSync(dir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -127,6 +136,11 @@ test('malformed app ownership is a refusal, never treated as no owned app', asyn
   expect(() => requiredMacosRecord(root)).toThrow('owner is malformed');
   await expect(stopMacosApp(root)).rejects.toThrow('owner is malformed');
   expect(workspaceInUse(root)).toContain('its macOS process owner cannot be verified');
+});
+
+test('legacy macOS records ignore an invalid run ID', () => {
+  expect(parseMacosRecord({ ...record(), runId: 'invalid run id' })).not.toHaveProperty('runId');
+  expect(parseMacosRecord(record())).not.toHaveProperty('runId');
 });
 
 test('cancelling an owned app stop retains the record and prevents SIGKILL escalation', async () => {
@@ -183,6 +197,305 @@ test('a dead build owner does not remain a running build in status', async () =>
     error: expect.stringContaining('before reporting a result'),
   });
 });
+
+test('an indeterminate Windows launch keeps its pending declaration', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const original = process;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    runFile: () => {
+      throw new Error('launcher timed out');
+    },
+  });
+  vi.stubGlobal('process', Object.create(original, { platform: { value: 'win32' } }));
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: 'fixture.exe',
+        args: [],
+        cwd: root,
+        env: original.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: join(dir, 'runtime'), label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', claims: [declaration] });
+    expect(JSON.parse(readFileSync(declaration.path.replace(/\.claim$/, '.child'), 'utf8'))).toMatchObject({
+      record: null,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+    resetExecutor();
+    releaseClaim(declaration);
+  }
+});
+
+test.skipIf(process.platform === 'win32')('a failed owned launch retains a pending declaration', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const runtime = join(dir, 'runtime');
+  const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+  assert(held);
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw new Error('cannot signal');
+  });
+  let launchedPid: number | undefined;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    spawn: (file, args, options) => {
+      const child = executor.spawn(file, args, options);
+      launchedPid = child.pid;
+      return child;
+    },
+  });
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: root,
+        env: process.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: runtime, label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceProcessCleanupError);
+    expect(readClaimSet(declaration.root).live.find((entry) => entry.claimId === declaration.claimId)).toMatchObject({
+      childDeclared: true,
+      child: null,
+    });
+  } finally {
+    kill.mockRestore();
+    resetExecutor();
+    if (launchedPid !== undefined) process.kill(-launchedPid, 'SIGKILL');
+    releaseClaim(held);
+    releaseClaim(declaration);
+  }
+});
+
+test.skipIf(process.platform === 'win32')('a failed pending declaration sends no cleanup signal', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const runtime = join(dir, 'runtime');
+  const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+  assert(held);
+  const markPending = markClaimChildPending;
+  const mark = vi.spyOn(ownership, 'markClaimChildPending');
+  mark.mockImplementationOnce(markPending);
+  mark.mockImplementationOnce(() => {
+    throw new Error('pending write failed');
+  });
+  const kill = vi.spyOn(process, 'kill');
+  let launchedPid: number | undefined;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    spawn: (file, args, options) => {
+      const child = executor.spawn(file, args, options);
+      launchedPid = child.pid;
+      return child;
+    },
+  });
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: root,
+        env: process.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: runtime, label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceProcessCleanupError);
+    expect(kill.mock.calls.some(([pid, signal]) => pid === -(launchedPid ?? 0) && signal === 'SIGKILL')).toBe(false);
+  } finally {
+    mark.mockRestore();
+    kill.mockRestore();
+    resetExecutor();
+    if (launchedPid !== undefined) process.kill(-launchedPid, 'SIGKILL');
+    releaseClaim(held);
+    releaseClaim(declaration);
+  }
+});
+
+test.skipIf(process.platform === 'win32')('a refused runtime claim retains an unverified separate helper', async () => {
+  const helperFile = join(dir, 'helper.pid');
+  const gate = await detachedHelper(helperFile);
+  let declaration: ReturnType<typeof tryAcquireClaim>['acquired'];
+  let held: ReturnType<typeof tryAcquireClaim>['acquired'];
+  const runtime = join(dir, 'runtime');
+  const executor = getExecutor();
+  let leader: ChildProcess | undefined;
+  let helper: { pid: number; processToken: string } | undefined;
+  try {
+    declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+    assert(declaration);
+    held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+    assert(held);
+    leader = executor.spawn(
+      process.execPath,
+      [
+        '-e',
+        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(gate.script)}],{detached:true,stdio:'ignore'}); child.unref(); setInterval(() => {}, 1000);`,
+      ],
+      { cwd: root, env: process.env, detached: true, stdio: 'ignore' },
+    );
+    await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
+    const pid = Number(readFileSync(helperFile, 'utf8'));
+    const token = captureProcessToken(pid);
+    assert(token);
+    helper = { pid, processToken: token };
+    const launched = leader;
+    setExecutor({ ...executor, spawn: () => launched });
+    const failure = await owning
+      .spawnOwned({
+        file: process.execPath,
+        args: [],
+        cwd: root,
+        env: process.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: runtime, label: 'app' },
+        declare: [declaration],
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+    assert(failure instanceof WorkspaceProcessCleanupError);
+    expect(failure.cause).toBeInstanceOf(Error);
+    expect(inspectProcessIdentity(helper)).toBe('same');
+    const declarationId = declaration.claimId;
+    expect(readClaimSet(declaration.root).live.find((entry) => entry.claimId === declarationId)).toMatchObject({
+      childDeclared: true,
+      child: null,
+    });
+  } finally {
+    resetExecutor();
+    await gate.close();
+    if (leader && leader.exitCode === null && leader.signalCode === null) {
+      leader.kill('SIGKILL');
+      await once(leader, 'exit');
+    }
+    if (helper) assert(await waitForProcessExit(helper, 5000));
+    if (held) releaseClaim(held);
+    if (declaration) releaseClaim(declaration);
+  }
+});
+
+test('a detached helper exits when its listener closes before it connects', async () => {
+  const gate = await detachedHelper(join(dir, 'helper.pid'));
+  await gate.close();
+  const child = getExecutor().spawn(process.execPath, ['-e', gate.script], { stdio: 'ignore' });
+  try {
+    const [code] = await once(child, 'exit');
+    expect(code).toBe(0);
+    expect(existsSync(join(dir, 'helper.pid'))).toBe(false);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+});
+
+test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves its declaration pending', async () => {
+  const gate = await detachedHelper(join(dir, 'helper.pid'));
+  const helperFile = join(dir, 'helper.pid');
+  let launcher: MacosProcess | undefined;
+  let declaration: ReturnType<typeof tryAcquireClaim>['acquired'];
+  let owned: Awaited<ReturnType<typeof owning.spawnOwned>> | undefined;
+  let helper: { pid: number; processToken: string } | undefined;
+  try {
+    launcher = await ownedProcess();
+    declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', owner: launcher }).acquired;
+    assert(declaration);
+    owned = await owning.spawnOwned({
+      file: process.execPath,
+      args: [
+        '-e',
+        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(gate.script)}],{detached:true,stdio:'ignore'}); child.unref(); setInterval(() => {}, 1000);`,
+      ],
+      cwd: root,
+      env: process.env,
+      stdout: join(dir, 'out'),
+      stderr: join(dir, 'err'),
+      claim: { root: join(dir, 'runtime'), label: 'app' },
+      declare: [declaration],
+    });
+    await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
+    const pid = Number(readFileSync(helperFile, 'utf8'));
+    const token = captureProcessToken(pid);
+    assert(token);
+    helper = { pid, processToken: token };
+    process.kill(launcher.pid, 'SIGKILL');
+    expect(await waitForProcessExit(launcher, 5000)).toBe(true);
+    process.kill(-owned.pid, 'SIGKILL');
+    expect(await waitForProcessExit(owned, 5000)).toBe(true);
+    expect(inspectProcessIdentity(helper)).toBe('same');
+    expect(readClaimSet(declaration.root).unresolved).toMatchObject([{ path: declaration.path }]);
+    const declarationRoot = declaration.root;
+    expect(() => tryAcquireClaim({ root: declarationRoot, mode: 'exclusive' })).toThrow(/ownership/i);
+  } finally {
+    await gate.close();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(-owned.pid, 'SIGKILL');
+    if (launcher && inspectProcessIdentity(launcher) === 'same') process.kill(launcher.pid, 'SIGKILL');
+    if (helper) assert(await waitForProcessExit(helper, 5000));
+    if (owned) assert(await waitForProcessExit(owned, 5000));
+    if (launcher) assert(await waitForProcessExit(launcher, 5000));
+    if (owned) releaseClaim(owned.claim);
+    if (declaration) releaseClaim(declaration);
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a direct-launch record whose app group survives its leader keeps its runtime claim',
+  async () => {
+    const declaration = tryAcquireClaim({
+      root: join(dir, 'launch.lock'),
+      mode: 'exclusive',
+      label: 'launch',
+    }).acquired;
+    assert(declaration);
+    const claimRoot = macosRuntimeClaim(root);
+    const logs = workspaceLogsDir(root);
+    const out = join(logs, 'direct-launch.out');
+    const owned = await owning.spawnOwned({
+      file: process.execPath,
+      args: [
+        '-e',
+        `const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); child.on('spawn', () => setTimeout(() => process.exit(0), 300));`,
+      ],
+      cwd: root,
+      env: process.env,
+      stdout: out,
+      stderr: join(logs, 'direct-launch.err'),
+      claim: { root: claimRoot, label: 'app' },
+      declare: [declaration],
+    });
+    const app = { ...owned, startedAtMicros: 1 };
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    try {
+      expect(await waitForProcessExit(owned, 5000)).toBe(true);
+      expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
+      await expect(stopMacosApp(root)).rejects.toMatchObject({
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        message: expect.stringContaining('no signal was sent to that process group'),
+      });
+      expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
+      expect(readMacosRecord(root)?.app).toMatchObject({ pid: owned.pid });
+      expect(existsSync(out)).toBe(true);
+    } finally {
+      try {
+        process.kill(-owned.pid, 'SIGKILL');
+      } catch {}
+      releaseClaim(owned.claim);
+      releaseClaim(declaration);
+    }
+  },
+);
 
 test('an unresolved app-spawn claim blocks cleanup and refuses a successful stop', async () => {
   writeWorkspaceState(root, { macos: record() });
@@ -424,6 +737,34 @@ test.skipIf(process.platform === 'win32')(
       expect(await startedBy([identity(process.ppid)])).toEqual([]);
     } finally {
       process.kill(started, 'SIGKILL');
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a pending cleanup declaration remains unresolved after both owners exit',
+  async () => {
+    const launcher = await ownedProcess();
+    const app = await ownedProcess();
+    const claimRoot = join(dir, 'failed-launch.claims');
+    const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'failed launch', owner: launcher });
+    assert(attempt.acquired);
+    const claim = attempt.acquired;
+    try {
+      markClaimChildPending(claim);
+      process.kill(app.pid, 'SIGKILL');
+      process.kill(launcher.pid, 'SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await waitForProcessExit(launcher, 5000)).toBe(true);
+      const survey = readClaimSet(claimRoot);
+      expect(survey.live).toEqual([]);
+      expect(survey.unresolved).toHaveLength(1);
+    } finally {
+      for (const processRecord of [app, launcher]) {
+        if (inspectProcessIdentity(processRecord) === 'same') process.kill(processRecord.pid, 'SIGKILL');
+        await waitForProcessExit(processRecord, 5000);
+      }
+      releaseClaim(claim);
     }
   },
 );
@@ -696,6 +1037,121 @@ describe('macOS build placement and promotion', () => {
       }
     });
   });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'cancellation during LaunchServices verification stops the registered supervisor and app',
+    async () => {
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      const supervisor = await ownedProcess();
+      const child = children.at(-1)!;
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(workspaceLogsDir(root), { recursive: true });
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
+        async (project, _launch, _child, _deadline, accept) => {
+          const current = { ...requiredMacosRecord(project)!, app, supervisor };
+          writeWorkspaceState(project, { macos: current });
+          accept?.(current);
+          return current;
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const controller = new AbortController();
+      setExecutor({
+        ...mocked,
+        spawn: () => child,
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
+          controller.abort(new Error('cancelled during LaunchServices'));
+          return 'ASN:0x0-0x1:';
+        },
+      });
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
+      ).rejects.toThrow('cancelled during LaunchServices');
+      expect(inspectProcessIdentity(supervisor)).not.toBe('same');
+      expect(inspectProcessIdentity(app)).not.toBe('same');
+      expect(readMacosRecord(root)?.app).toBeUndefined();
+      expect(readMacosRecord(root)?.supervisor).toBeUndefined();
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'cancellation during LaunchServices verification stops commands the app started',
+    async () => {
+      const mocked = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      const idle = 'setInterval(() => {}, 1000)';
+      const appChild = getExecutor().spawn(
+        process.execPath,
+        [
+          '-e',
+          `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      children.push(appChild);
+      const helperPid = Number(
+        await new Promise<string>((resolve) => appChild.stdout?.once('data', (d) => resolve(String(d)))),
+      );
+      helperPids.push(helperPid);
+      const appPid = appChild.pid;
+      const appToken = appPid === undefined ? null : captureProcessToken(appPid);
+      if (appPid === undefined || !appToken) throw new Error('The fixture app has no identity.');
+      const app: MacosProcess = { pid: appPid, processToken: appToken, startedAtMicros: 1 };
+      const supervisor = await ownedProcess();
+      const child = children.at(-1);
+      if (!child) throw new Error('The supervisor fixture did not start.');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(workspaceLogsDir(root), { recursive: true });
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
+        async (project, _launch, _child, _deadline, accept) => {
+          const current = { ...requiredMacosRecord(project), app, supervisor } as MacosAppRecord;
+          writeWorkspaceState(project, { macos: current });
+          accept?.(current);
+          return current;
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const controller = new AbortController();
+      setExecutor({
+        ...mocked,
+        spawn: () => child,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'ps') return real.runFileAsync(file, args, options);
+          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
+          controller.abort(new Error('cancelled during LaunchServices'));
+          return 'ASN:0x0-0x1:';
+        },
+      });
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
+      ).rejects.toThrow('cancelled during LaunchServices');
+      expect(inspectProcessIdentity(supervisor)).not.toBe('same');
+      expect(inspectProcessIdentity(app)).not.toBe('same');
+      expect(() => process.kill(helperPid, 0)).toThrow(/ESRCH/);
+      expect(readMacosRecord(root)?.app).toBeUndefined();
+      expect(readMacosRecord(root)?.supervisor).toBeUndefined();
+    },
+  );
 
   test.skipIf(process.platform !== 'darwin')(
     'a registered app waiting for LaunchServices leaves spare admission available',

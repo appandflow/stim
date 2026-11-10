@@ -8,6 +8,7 @@ import { processContext, runProcessOperation } from '../cli-operation.ts';
 import {
   placementWord,
   validHostedAppArguments,
+  validRunId,
   type MacosAppRecord,
   type MacosBuild,
   type MacosProcess,
@@ -30,6 +31,7 @@ import { sameProcessRecord } from '../process-identity.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
 import { assertLocalMacosCapacity, peekLocalMacosCapacity, withLocalMacosAdmission } from '../macos/admission.ts';
@@ -39,7 +41,13 @@ import { waitForMacosRegistration } from '../macos/registration.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
+import {
+  stopBundleInstances,
+  stopMacosAppHeld,
+  stopProcesses as stopMacosProcesses,
+  SUPERVISOR_EXIT_MS,
+} from '../macos/stop.ts';
+import { startedBy } from '../macos/instances.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -139,6 +147,7 @@ export async function runMacos(
             bundleId: '',
             executable: join(bundle, 'Contents', 'MacOS', macos.product),
             launchId: randomUUID(),
+            ...(validRunId(context.runId) ? { runId: context.runId } : {}),
             arguments: macos.arguments,
             supervisor: macosProcess(process.pid),
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
@@ -167,12 +176,22 @@ export async function runMacos(
             const { record: here, deadline } = await withLocalMacosAdmission(root, context, () =>
               launchHere(context, root, record),
             );
-            if ((await waitForLaunchServices(here, deadline)) === 'timeout')
-              note(
-                'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
-              );
-            launched();
-            return here;
+            try {
+              const runSignal = runCancellationSignal(context);
+              const signal = runSignal ? AbortSignal.any([context.signal, runSignal]) : context.signal;
+              if ((await waitForLaunchServices(here, deadline, signal)) === 'timeout')
+                note(
+                  'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+                );
+              signal.throwIfAborted();
+              const refusal = operationState(context).refusal;
+              if (refusal !== null) throw new Error(refusal);
+              launched();
+              return here;
+            } catch (error) {
+              await cleanupFailedMacosLaunch(context, root, record, here.supervisor, here.app, error);
+              throw error;
+            }
           }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -359,15 +378,22 @@ const LAUNCH_SERVICES_CALL_MS = 2_000;
 export async function waitForLaunchServices(
   record: MacosAppRecord,
   deadline: number,
+  signal?: AbortSignal,
 ): Promise<'listed' | 'timeout' | 'skipped'> {
   if (record.host || !record.app) return 'skipped';
   const args = ['find', `bundleid=${record.bundleId}`, `pid=${record.app.pid}`];
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const out = await getExecutor()
-      .runFileAsync('lsappinfo', args, { timeoutMs: LAUNCH_SERVICES_CALL_MS })
-      .catch(() => '');
+      .runFileAsync('lsappinfo', args, { timeoutMs: LAUNCH_SERVICES_CALL_MS, signal })
+      .catch((error: unknown) => {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
+        return '';
+      });
+    signal?.throwIfAborted();
     if (out.includes('ASN:')) return 'listed';
-    await new Promise((done) => setTimeout(done, 100));
+    await cancellableSleep(100, { signal, what: 'LaunchServices' });
   }
   return 'timeout';
 }
@@ -406,22 +432,48 @@ async function launchHere(
     if (current) return { record: current, deadline };
     throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
   } catch (error) {
-    try {
-      if (supervisor) await stopMacosProcesses([supervisor]);
-      else if (child?.pid !== undefined && child.exitCode === null && child.signalCode === null)
-        throw new Error('The spawned macOS supervisor identity could not be verified.', { cause: error });
-      await stopBundleInstances(root);
-      await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
-    } catch (cleanupError) {
+    if (!supervisor && child?.pid !== undefined && child.exitCode === null && child.signalCode === null) {
       const failure = new WorkspaceProcessCleanupError(
         [...operationState(context).declaring],
-        `Could not drain the failed macOS launch: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        'Could not drain the failed macOS launch: the spawned macOS supervisor identity could not be verified.',
         'Verify that the workspace supervisor and app have stopped before retrying.',
       );
-      failure.cause = cleanupError;
+      failure.cause = error;
       throw failure;
     }
+    await cleanupFailedMacosLaunch(context, root, record, supervisor, undefined, error);
     throw error;
+  }
+}
+
+async function cleanupFailedMacosLaunch(
+  context: StimContext,
+  root: string,
+  record: MacosAppRecord,
+  supervisor: MacosProcess | undefined,
+  app: MacosProcess | undefined,
+  error: unknown,
+): Promise<void> {
+  try {
+    const collected = await Promise.allSettled([startedBy([supervisor, app].filter((each) => each !== undefined))]);
+    const stops = await Promise.allSettled([
+      supervisor && supervisor.pid !== app?.pid ? stopMacosProcesses([supervisor], SUPERVISOR_EXIT_MS) : undefined,
+      app ? stopMacosProcesses([app]) : undefined,
+    ]);
+    const failed = [collected[0], ...stops].find((each) => each.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    const started = collected[0].status === 'fulfilled' ? collected[0].value : [];
+    await stopMacosProcesses(started);
+    await stopBundleInstances(root);
+    await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
+  } catch (cleanupError) {
+    const failure = new WorkspaceProcessCleanupError(
+      [...operationState(context).declaring],
+      `Could not drain the failed macOS launch: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      'Verify that the workspace supervisor and app have stopped before retrying.',
+    );
+    failure.cause = new AggregateError([error, cleanupError], 'The macOS launch and its cleanup failed.');
+    throw failure;
   }
 }
 

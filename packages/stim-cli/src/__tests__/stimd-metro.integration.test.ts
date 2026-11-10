@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 
@@ -164,20 +165,33 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await stopStimd();
-  for (const kind of ['metro', 'tunnel']) {
-    const root = join(home, 'workspaces');
-    for (const workspace of existsSync(root) ? readdirSync(root) : []) {
-      const claims = join(root, workspace, `${kind}.claim`, 'exclusive');
-      for (const name of existsSync(claims) ? readdirSync(claims) : []) {
-        if (!name.endsWith('.child')) continue;
-        const { record: child } = JSON.parse(readFileSync(join(claims, name), 'utf8'));
-        if (child && processGroupAlive(child.pid)) process.kill(-child.pid, 'SIGKILL');
+  try {
+    await stopStimd();
+    for (const kind of ['metro', 'tunnel']) {
+      const root = join(home, 'workspaces');
+      for (const workspace of existsSync(root) ? readdirSync(root) : []) {
+        const claims = join(root, workspace, `${kind}.claim`, 'exclusive');
+        for (const name of existsSync(claims) ? readdirSync(claims) : []) {
+          if (!name.endsWith('.child')) continue;
+          const { record: child } = JSON.parse(readFileSync(join(claims, name), 'utf8'));
+          if (!child || !processGroupAlive(child.pid)) continue;
+          if (inspectProcessIdentity(child) !== 'same')
+            throw new Error(`Cannot verify fixture process ${child.pid}; retained ${dir}.`);
+          process.kill(-child.pid, 'SIGKILL');
+          if (!(await waitForProcessExit(child, 5000)))
+            throw new Error(`Fixture process ${child.pid} remains; retained ${dir}.`);
+          const deadline = Date.now() + 5000;
+          while (processGroupAlive(child.pid) && Date.now() < deadline)
+            await new Promise((done) => setTimeout(done, 50));
+          if (processGroupAlive(child.pid))
+            throw new Error(`Fixture process group ${child.pid} remains; retained ${dir}.`);
+        }
       }
     }
+    rmSync(dir, { recursive: true, force: true });
+  } finally {
+    vi.unstubAllEnvs();
   }
-  vi.unstubAllEnvs();
-  rmSync(dir, { recursive: true, force: true });
 });
 
 test.skipIf(process.platform !== 'win32')(
@@ -218,6 +232,7 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
     stimd = child;
     await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     await expect(
       ask('tunnel.ensure', { root, provider: 'cloudflared', port: await freePort(), requireReachable: false }),
     ).resolves.toMatchObject({ op: 'tunnel' });
@@ -249,6 +264,7 @@ exec sleep 600
     const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
     stimd = child;
     await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     const pending = ask('tunnel.ensure', {
       root,
       provider: 'cloudflared',
@@ -282,6 +298,7 @@ exec sleep 600
     });
     stimd = child;
     await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     void ask('tunnel.ensure', {
       root,
       provider: 'cloudflared',

@@ -83,6 +83,8 @@ export interface ClaimOptions {
   mode: ClaimMode;
   details?: ClaimDetails;
   label?: string;
+  /** The process whose liveness the claim follows: this process by default, or a process this one started and verified. */
+  owner?: ClaimOwner;
 }
 
 export const CLAIM_REFUSED = 'STIM_CLAIM_REFUSED';
@@ -678,8 +680,13 @@ function yieldToRemoval(): void {
   sleepSync(WIN32_SETTLE_STEP_MS);
 }
 
-export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
-  const owner = selfOwner();
+export function tryAcquireClaim({
+  root,
+  mode,
+  details = {},
+  label = 'ownership',
+  owner = selfOwner(),
+}: ClaimOptions): ClaimAttempt {
   const reaped: ClaimHolder[] = [];
   let denied = true;
   const retry = (why: Contention): void => {

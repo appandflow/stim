@@ -2,9 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
-import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
@@ -18,10 +18,14 @@ import {
   workspaceStateFile,
 } from '../workspace/paths.ts';
 import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
-import { writeWebRecord } from '../web/state.ts';
+import { webLogFile, writeWebRecord } from '../web/state.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { stimdClaimRoot } from '@stim-cli/core/state';
+import * as stimdClient from '../daemon/client.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { testContext } from './_context.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import * as workspaceInUse from '../workspace/in-use.ts';
 
 let tmpHome: string;
 
@@ -147,6 +151,180 @@ test('reclaimProject keeps the workspace when a browser supervisor appears after
   expect(result.keptEntry).toBe(true);
   expect(existsSync(workspaceDir('/proj'))).toBe(true);
 });
+
+test('reclaim drains browser output created during teardown before removing the workspace', async () => {
+  setExecutor(makeExecutor());
+  upsertProject('/proj', {});
+  ensureWorkspaceStorage('/proj');
+  plantClaim(stimdClaimRoot(), 'shared', liveClaimOwner());
+  const output = webLogFile('/proj');
+  let drainEntered!: () => void;
+  const drainStarted = new Promise<void>((resolve) => {
+    drainEntered = resolve;
+  });
+  let finishDrain!: () => void;
+  const drainWait = new Promise<void>((resolve) => {
+    finishDrain = resolve;
+  });
+  const drain = vi.spyOn(stimdClient, 'drainOwned').mockImplementation(async () => {
+    drainEntered();
+    await drainWait;
+    writeFileSync(output, 'final browser output\n', { flag: 'a' });
+    return null;
+  });
+  const removal = reclaimProject('/proj', {
+    deleteOwnedDevices: false,
+    teardownBrowser: async () => {
+      mkdirSync(dirname(output), { recursive: true });
+      writeFileSync(output, 'browser started during reclaim\n');
+      return { status: 'torn-down', label: 'Chrome' };
+    },
+  });
+  try {
+    await drainStarted;
+    expect(existsSync(output)).toBe(true);
+    expect(getProject('/proj')).not.toBeNull();
+    finishDrain();
+    expect((await removal).keptEntry).toBe(false);
+    expect(existsSync(workspaceDir('/proj'))).toBe(false);
+  } finally {
+    finishDrain();
+    await removal;
+    drain.mockRestore();
+  }
+});
+
+test('reclaim holds the browser lock through log drain and agent shutdown', async () => {
+  upsertProject('/proj', {});
+  ensureWorkspaceStorage('/proj');
+  const output = webLogFile('/proj');
+  mkdirSync(join(workspaceDir('/proj'), 'logs'), { recursive: true });
+  writeFileSync(output, 'retained output\n');
+  plantClaim(stimdClaimRoot(), 'shared', liveClaimOwner());
+  const stateDir = workspaceAgentDeviceDir('/proj');
+  mkdirSync(stateDir);
+  writeFileSync(
+    join(stateDir, 'daemon.json'),
+    JSON.stringify({ pid: process.pid, processStartTime: '2026-11-01T05:50:03Z' }),
+  );
+  const start = vi
+    .spyOn(identity, 'inspectProcessStart')
+    .mockReturnValue({ status: 'running', startedAtMs: Date.parse('2026-11-01T06:50:03Z') });
+  let drainEntered!: () => void;
+  const drainStarted = new Promise<void>((resolve) => {
+    drainEntered = resolve;
+  });
+  let finishDrain!: () => void;
+  const drainWait = new Promise<void>((resolve) => {
+    finishDrain = resolve;
+  });
+  let stopEntered!: () => void;
+  const stopStarted = new Promise<void>((resolve) => {
+    stopEntered = resolve;
+  });
+  let finishStop!: () => void;
+  const stopWait = new Promise<void>((resolve) => {
+    finishStop = resolve;
+  });
+  const drain = vi.spyOn(stimdClient, 'drainOwned').mockImplementation(async () => {
+    drainEntered();
+    await drainWait;
+    return null;
+  });
+  const emptyWorkspace = workspaceInUse.emptyWorkspaceDir;
+  const empty = vi.spyOn(workspaceInUse, 'emptyWorkspaceDir').mockImplementation(async (...args) => {
+    await emptyWorkspace(...args);
+    const duringEmpty = tryAcquireClaim({
+      root: join(workspaceDir('/proj'), 'web.lock'),
+      mode: 'exclusive',
+      label: 'browser launch',
+    });
+    if (duringEmpty.pending) releaseClaim(duringEmpty.pending);
+    if (duringEmpty.acquired) releaseClaim(duringEmpty.acquired);
+    expect(duringEmpty.acquired).toBeUndefined();
+  });
+  setExecutor(
+    makeExecutor({
+      findExecutable: () => '/bin/agent-device',
+      runFileAsync: async (file) => {
+        if (file === 'agent-device') {
+          stopEntered();
+          await stopWait;
+        }
+        return '';
+      },
+    }),
+  );
+  const removal = reclaimProject('/proj', { deleteOwnedDevices: false });
+  try {
+    await drainStarted;
+    const duringDrain = tryAcquireClaim({
+      root: join(workspaceDir('/proj'), 'web.lock'),
+      mode: 'exclusive',
+      label: 'browser launch',
+    });
+    if (duringDrain.pending) releaseClaim(duringDrain.pending);
+    if (duringDrain.acquired) releaseClaim(duringDrain.acquired);
+    expect(duringDrain.acquired).toBeUndefined();
+    finishDrain();
+    await stopStarted;
+    const duringStop = tryAcquireClaim({
+      root: join(workspaceDir('/proj'), 'web.lock'),
+      mode: 'exclusive',
+      label: 'browser launch',
+    });
+    if (duringStop.pending) releaseClaim(duringStop.pending);
+    if (duringStop.acquired) releaseClaim(duringStop.acquired);
+    expect(duringStop.acquired).toBeUndefined();
+    finishStop();
+    expect((await removal).keptEntry).toBe(false);
+    expect(existsSync(workspaceDir('/proj'))).toBe(false);
+  } finally {
+    finishDrain();
+    finishStop();
+    await removal;
+    drain.mockRestore();
+    empty.mockRestore();
+    start.mockRestore();
+  }
+});
+
+test('reclaim retains output when the browser lock is acquired after teardown', async () => {
+  setExecutor(makeExecutor());
+  upsertProject('/proj', {});
+  ensureWorkspaceStorage('/proj');
+  const output = webLogFile('/proj');
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, 'retained output\n');
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async () => {
+      plantClaim(join(workspaceDir('/proj'), 'web.lock'), 'exclusive', liveClaimOwner());
+      return { status: 'missing' };
+    },
+  });
+  expect(result.keptEntry).toBe(true);
+  expect(readFileSync(output, 'utf8')).toBe('retained output\n');
+  expect(getProject('/proj')).not.toBeNull();
+});
+
+test.skipIf(process.platform === 'win32')(
+  'reclaim releases its browser claim after unlinking workspace storage',
+  async () => {
+    setExecutor(makeExecutor());
+    upsertProject('/proj', {});
+    const target = join(tmpHome, 'target');
+    mkdirSync(target);
+    writeFileSync(join(target, 'keep'), 'target data');
+    const dir = workspaceDir('/proj');
+    mkdirSync(dirname(dir), { recursive: true });
+    symlinkSync(target, dir);
+    const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(false);
+    expect(existsSync(dir)).toBe(false);
+    expect(readFileSync(join(target, 'keep'), 'utf8')).toBe('target data');
+    expect(existsSync(join(target, 'web.lock'))).toBe(false);
+  },
+);
 
 test('reclaimProject leaves no workspace directory behind for a project that never had one', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
