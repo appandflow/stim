@@ -26,7 +26,14 @@ beforeEach(() => {
     join(home, 'caches.json'),
     JSON.stringify({
       version: 1,
-      caches: [{ dir: lockedDir, name: 'Fixture cache 1', prune: 'entries', entriesDepth: 1 }],
+      caches: [
+        {
+          dir: lockedDir,
+          name: 'Fixture cache 1',
+          prune: 'entries',
+          entriesDepth: 1,
+        },
+      ],
     }),
   );
   chmodSync(lockedDir, 0o500);
@@ -43,23 +50,30 @@ afterEach(() => {
 async function gcJson(opts: Parameters<typeof runGc>[0]) {
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  await runGc({ ...opts, json: true, delete: true }, { findProjectRoot: () => null });
+  await runGc({ ...opts, json: true });
   expect(out).toHaveBeenCalledTimes(1);
   return JSON.parse(String(out.mock.lastCall?.[0]));
 }
 
 describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
-  'gc --delete --json with a shared cache that cannot be changed (POSIX directory permissions)',
+  'gc --json with a shared cache that cannot be changed (POSIX directory permissions)',
   () => {
     test.each([
-      ['trimmed with --older-than', { cache: 'Fixture cache 1', olderThan: 14 }],
-      ['emptied with --cache all', { cache: 'all' }],
-    ] as const)('failures matches the failed cache result and the exit code when it is %s', async (_name, scope) => {
-      const payload = await gcJson({ ...scope });
-      const failed = payload.results.filter((result: { status: string }) => result.status === 'failed');
-      expect(failed).toHaveLength(1);
-      expect(process.exitCode).toBe(1);
-      expect(payload.failures).toBe(failed.length);
-    });
+      ['the age sweep trims it at normal', 'normal', ['trim-cache']],
+      ['critical also empties it', 'critical', ['trim-cache', 'empty-cache']],
+    ] as const)(
+      'failures matches the failed cache actions and the exit code when %s',
+      async (_name, pressure, kinds) => {
+        const payload = await gcJson({ pressure });
+        const failed = payload.actions.filter((action: { outcome: string }) => action.outcome === 'failed');
+        expect(failed.map((action: { kind: string }) => action.kind)).toEqual(kinds);
+        for (const action of failed) expect(action.target).toContain(lockedDir);
+        expect(payload.results.filter((result: { status: string }) => result.status === 'failed')).toHaveLength(
+          kinds.length,
+        );
+        expect(payload.failures).toBe(kinds.length);
+        expect(process.exitCode).toBe(1);
+      },
+    );
   },
 );

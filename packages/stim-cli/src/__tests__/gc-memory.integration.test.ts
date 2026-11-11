@@ -3,11 +3,11 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
-import { withAmbientContext } from '@stim-cli/core';
-import { daemonSnapshotFile } from '@stim-cli/core/state';
+import { runGc } from '../commands/gc.ts';
+import { deleteGcItem } from '../commands/gc/item.ts';
+import { ambientContext, withAmbientContext } from '@stim-cli/core';
+import { daemonSnapshotFile, maintenanceRunClaims } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -325,23 +325,21 @@ test('an iOS build slot does not hold the daemons, an Android lock or an unattri
   expect(runningBuild([makeBuildLock({ platform: 'android', alive: false })], [])).toBeNull();
 });
 
-test('--older-than with a memory kind is refused', async () => {
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ cache: 'watchman', olderThan: 3, json: true });
-  expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_BAD_ARG' });
-  expect(process.exitCode).toBe(1);
-});
+const PS_ROW = (pid: number, command: string, rssKb = 1000) =>
+  `${pid}     1  ${rssKb}   0.0 Mon Sep 28 10:49:33 2026     ${command}`;
+const LARGE_RSS_KB = 1.5 * 1024 ** 2;
 
-const PS_ROW = (pid: number, command: string) => `${pid}     1  1000   0.0 Mon Sep 28 10:49:33 2026     ${command}`;
-
-function fakeWatchman(state: { clients: { pid: number; name: string }[]; subscribers: Record<string, string[]> }) {
+function fakeWatchman(state: {
+  clients: { pid: number; name: string }[];
+  subscribers: Record<string, string[]>;
+  rssKb?: number;
+}) {
   const calls: string[][] = [];
   setExecutor({
     runFileQuiet: (file: string) =>
-      file === 'ps' ? [PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground')].join('\n') : null,
+      file === 'ps' ? PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground', state.rssKb) : null,
     runFileAsync: async (file, args, options) => {
-      if (file === 'ps') return PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground');
+      if (file === 'ps') return PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground', state.rssKb);
       if (file !== 'watchman') throw new Error(`unexpected ${file}`);
       calls.push(args);
       const [, command, path] = args;
@@ -379,7 +377,7 @@ function fakeWatchman(state: { clients: { pid: number; name: string }[]; subscri
 }
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete --cache watchman removes only an unused stale root and keeps a daemon a client uses',
+  'the watchman item removes only an unused stale root and keeps a daemon a client uses',
   async () => {
     delete process.env.STIM_HOME;
     const gone = join(tmpHome, 'gone-worktree');
@@ -387,87 +385,61 @@ test.skipIf(process.platform === 'win32')(
       clients: [{ pid: 4242, name: 'node' }],
       subscribers: { [tmpHome]: ['metro-file-map-4242-x'], [gone]: [] },
     });
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runGc({ cache: 'watchman', delete: true });
+    const result = await deleteGcItem({ kind: 'watchman' });
     const destructive = calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1]!));
     expect(destructive).toEqual([['--no-spawn', 'watch-del', gone]]);
     expect(calls.every((args) => args[0] === '--no-spawn')).toBe(true);
-    expect(log.mock.calls.flat().join('\n')).toContain('node (pid 4242)');
-    expect(process.exitCode).toBeUndefined();
+    expect(result.results).toContainEqual(expect.objectContaining({ kind: 'watchman', status: 'kept' }));
+    expect(result.failures).toBe(0);
   },
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete --cache watchman shuts watchman down once only its own call is connected',
+  'the watchman item shuts watchman down once only its own call is connected',
   async () => {
     delete process.env.STIM_HOME;
     const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runGc({ cache: 'watchman', delete: true });
+    await deleteGcItem({ kind: 'watchman' });
     expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
     expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
   },
 );
 
-test.skipIf(process.platform === 'win32')(
-  'gc --delete --json --cache watchman reports each step on stderr and prints only its payload on stdout',
-  async () => {
-    delete process.env.STIM_HOME;
-    const gone = join(tmpHome, 'gone-worktree');
-    fakeWatchman({ clients: [], subscribers: { [tmpHome]: [], [gone]: [] } });
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runGc({ cache: 'watchman', delete: true, json: true });
-    expect(stdout.mock.calls).toHaveLength(1);
-    expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toMatchObject({ mode: 'delete', failures: 0 });
-    const steps = stderr.mock.calls
-      .map(([line]) => stripVTControlCharacters(String(line)))
-      .filter((line) => line.startsWith('  daemons '));
-    expect(steps.map((line) => line.slice(14))).toEqual([
-      'watchman pid 32725: checking 2 roots',
-      'watchman pid 32725: checking 2 roots',
-      `removing stale watchman root ${gone}`,
-      'watchman pid 32725: checking 1 root',
-      'shutting down watchman pid 32725: no client uses it',
-    ]);
-  },
-);
-
-test.skipIf(process.platform === 'win32')('--cache all does not touch watchman', async () => {
+test.skipIf(process.platform === 'win32')('gc at high shuts down a large watchman no client uses', async () => {
   delete process.env.STIM_HOME;
-  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] }, rssKb: LARGE_RSS_KB });
   vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ cache: 'all', delete: true });
-  expect(calls).toEqual([]);
-});
-
-test.skipIf(process.platform === 'win32')('a plain gc --delete shuts down a watchman no client uses', async () => {
-  delete process.env.STIM_HOME;
-  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ delete: true });
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  await runGc({ pressure: 'high' });
   expect(calls.filter((args) => args[1] === 'shutdown-server')).toEqual([['--no-spawn', 'shutdown-server']]);
 });
 
-test.skipIf(process.platform === 'win32')('a plain gc --delete keeps a watchman a client uses', async () => {
+test.skipIf(process.platform === 'win32')('gc at high keeps a large watchman a client uses', async () => {
   delete process.env.STIM_HOME;
+  saveConfig({ version: 2, projects: {}, repos: {} });
   const calls = fakeWatchman({
     clients: [{ pid: 4242, name: 'node' }],
     subscribers: { [tmpHome]: ['metro-file-map-4242-x'] },
+    rssKb: LARGE_RSS_KB,
   });
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ delete: true });
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  await runGc({ pressure: 'high' });
   expect(calls.some((args) => ['watch-del', 'shutdown-server'].includes(args[1]!))).toBe(false);
-  expect(log.mock.calls.flat().join('\n')).toContain('node (pid 4242)');
 });
 
-test.skipIf(process.platform === 'win32')('a plain gc dry run names gc --delete as the watchman reclaim', async () => {
+test.skipIf(process.platform === 'win32')('a dry run at high plans the watchman stop and runs nothing', async () => {
   delete process.env.STIM_HOME;
-  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] }, rssKb: LARGE_RSS_KB });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  await runGc({ dryRun: true, pressure: 'high', json: true });
   expect(calls.some((args) => ['watch-del', 'shutdown-server'].includes(args[1]!))).toBe(false);
-  expect(stripVTControlCharacters(log.mock.calls.flat().join('\n'))).toMatch(/with stim gc --delete(;|$|\n)/m);
+  expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).actions).toContainEqual(
+    expect.objectContaining({ kind: 'stop-watchman', outcome: 'would' }),
+  );
 });
 
 test('doctor notes watchman only past 2 GiB, with its stale roots and whether gc could shut it down', () => {
@@ -600,11 +572,10 @@ test.skipIf(process.platform === 'win32')(
     });
     const client = createStim({ projectRoot: tmpHome, env: context.env });
     configure();
-    const healthy = await client.gc({ cache: 'gradle-daemons' });
-    expect(healthy.sections.memory).toMatchObject([
+    const healthy = await client.gc();
+    expect(healthy.sections?.memory).toMatchObject([
       { pid: 1001, reclaimable: false, detail: expect.stringContaining('pressure') },
     ]);
-    expect(healthy.actionable).toBe(false);
     expect(stops).toBe(0);
 
     const snapshotFile = withAmbientContext(context, daemonSnapshotFile);
@@ -629,11 +600,11 @@ test.skipIf(process.platform === 'win32')(
     const warningObservations = [];
     if (process.platform === 'darwin') {
       warning = true;
-      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
       writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 60_000).toISOString() });
-      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
       writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 11 * 60_000).toISOString() });
-      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
       rmSync(snapshotFile);
       warning = false;
     }
@@ -642,7 +613,7 @@ test.skipIf(process.platform === 'win32')(
     pressured = true;
     configure();
     writeSnapshot({ memory: 'critical', memoryWarningSince: null });
-    expect((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable).toBe(true);
+    expect((await client.gc()).sections?.memory[0]?.reclaimable).toBe(true);
     pressureReads = 0;
     const lock = withAmbientContext(context, () => buildLockPath('ios', 'owned'));
     const birth = captureProcessIdentity(process.pid);
@@ -650,8 +621,8 @@ test.skipIf(process.platform === 'win32')(
     duringPressure = () => {
       if (pressureReads === 2) plantClaim(lock, 'exclusive', { pid: process.pid, processToken: birth.token });
     };
-    const building = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
-    expect(building.report.results).toContainEqual(
+    const building = await client.deleteGarbageItem({ item: { kind: 'gradle-daemons' } });
+    expect(building.results).toContainEqual(
       expect.objectContaining({ status: 'kept', detail: expect.stringContaining('ios build') }),
     );
     expect(stops).toBe(0);
@@ -668,11 +639,11 @@ test.skipIf(process.platform === 'win32')(
         replacedSecond = true;
       }
     };
-    const replaced = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
-    expect(replaced.report.results).toContainEqual(
+    const replaced = await client.deleteGarbageItem({ item: { kind: 'gradle-daemons' } });
+    expect(replaced.results).toContainEqual(
       expect.objectContaining({ id: '1001', status: 'kept', detail: expect.stringContaining('process changed') }),
     );
-    expect(replaced.report.results).toContainEqual(
+    expect(replaced.results).toContainEqual(
       expect.objectContaining({ id: '1002', status: 'kept', detail: expect.stringContaining('process changed') }),
     );
     expect(stops).toBe(0);
@@ -683,9 +654,9 @@ test.skipIf(process.platform === 'win32')(
     extraBusy = false;
     secondDaemon = false;
     duringPressure = undefined;
-    const eligible = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
+    const eligible = await client.deleteGarbageItem({ item: { kind: 'gradle-daemons' } });
     expect(eligible.exitCode).toBe(0);
-    expect(eligible.report.results).toContainEqual(expect.objectContaining({ status: 'done', id: '1001' }));
+    expect(eligible.results).toContainEqual(expect.objectContaining({ status: 'done', id: '1001' }));
     expect(stops).toBe(1);
   },
 );
@@ -718,12 +689,12 @@ test.skipIf(process.platform === 'win32')(
       },
     });
     await expect(
-      client.collectGarbage({ cache: 'watchman', delete: true, signal: controller.signal }),
+      client.deleteGarbageItem({ item: { kind: 'watchman' }, signal: controller.signal }),
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
     expect(Object.keys(subscribers)).toHaveLength(1);
     expect(calls.filter((args) => args[1] === 'watch-del')).toHaveLength(1);
     expect(calls.some((args) => args[1] === 'shutdown-server')).toBe(false);
-    const result = await client.collectGarbage({ cache: 'watchman', delete: true });
+    const result = await client.deleteGarbageItem({ item: { kind: 'watchman' } });
     expect(result.exitCode).toBe(0);
     expect(Object.keys(subscribers)).toEqual([]);
     expect(calls.some((args) => args[1] === 'shutdown-server')).toBe(true);
@@ -743,7 +714,7 @@ test
     'trigger-list',
     'watch-del',
     'shutdown-server',
-  ])('CLI GC preserves unresolved %s cleanup without continuing mutations', async (command) => {
+  ])('the watchman item preserves unresolved %s cleanup without continuing mutations', async (command) => {
   resetExecutor();
   const real = getExecutor().runFileAsync.bind(getExecutor());
   delete process.env.STIM_HOME;
@@ -754,7 +725,7 @@ test
   };
   const calls = fakeWatchman(state);
   const executor = getExecutor();
-  const operation = testContext({ home: tmpHome, cwd: tmpHome, projectRoot: tmpHome });
+  const client = createStim({ projectRoot: tmpHome, env: { ...process.env, STIM_HOME: undefined } });
   let owned: { pid: number; processToken: string } | undefined;
   let handles: ClaimHandle[] = [];
   let closed: Promise<void> = Promise.resolve();
@@ -762,8 +733,6 @@ test
     .spyOn(identities, 'inspectProcessIdentity')
     .mockImplementation((record) => (owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record)));
   const run = executor.runFileAsync;
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
     if (file !== 'watchman' || args[1] !== command || owned) return run(file, args, options);
     calls.push(args);
@@ -775,14 +744,15 @@ test
         const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
         if (child.pid === undefined || !birth?.ok) throw new Error('The Watchman fixture child has no identity');
         owned = { pid: child.pid, processToken: birth.token };
-        handles = [...operationState(operation).declaring];
+        handles = [...operationState(ambientContext()).declaring];
         closed = new Promise<void>((resolve) => child.once('close', resolve));
       },
     });
   });
   try {
-    await withAmbientContext(operation, () => runGc({ cache: 'watchman', delete: true, json: true }, { operation }));
-    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    await expect(client.deleteGarbageItem({ item: { kind: 'watchman' } })).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+    });
     if (!owned) throw new Error('The Watchman operation did not start');
     expect(inspectProcessIdentity(owned)).toBe('same');
     expect(calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1] ?? ''))).toEqual(
@@ -790,10 +760,11 @@ test
         ? [['--no-spawn', command, ...(command === 'watch-del' ? [join(tmpHome, 'a-gone')] : [])]]
         : [],
     );
+    expect(handles.map((handle) => handle.root)).toContain(maintenanceRunClaims());
     for (const handle of handles) expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
-    await expect(
-      withAmbientContext(operation, () => withGcMaintenanceClaim({ delete: true }, async () => {})),
-    ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED' });
+    await expect(client.deleteGarbageItem({ item: { kind: 'watchman' } })).rejects.toMatchObject({
+      code: 'STIM_CLAIM_REFUSED',
+    });
   } finally {
     inspect.mockRestore();
     if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
@@ -835,14 +806,13 @@ test.skipIf(process.platform === 'win32')(
       });
     });
     try {
-      await withAmbientContext(operation, () => runGc({ cache: 'watchman', json: true }, { operation }));
+      await withAmbientContext(operation, () => runGc({ dryRun: true, pressure: 'normal', json: true }, { operation }));
       if (!owned) throw new Error('The Watchman operation did not start');
       const lines = error.mock.calls.map((call) => String(call[0]));
       expect(lines[0]).toContain('STIM_CLAIM_UNAVAILABLE');
       expect(lines[1]).not.toContain('undefined');
       expect(lines[1]).toContain(`ps -p ${owned.pid}`);
-      expect(lines[1]).toContain('`stim gc --cache watchman --json`');
-      expect(lines[1]).not.toContain('--idle');
+      expect(lines[1]).toContain('`stim gc --dry-run --pressure normal --json`');
       expect(process.exitCode).toBe(1);
     } finally {
       inspect.mockRestore();

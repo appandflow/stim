@@ -14,9 +14,10 @@ import {
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
+  easMachineStateRoot,
   gcLogFile,
   isGcLogRecord,
   readGcLog,
@@ -30,7 +31,15 @@ import {
   type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
-import { takeGcResults } from '../commands/gc/results.ts';
+import { createGcResults, takeGcResults, type GcOutput } from '../commands/gc/results.ts';
+import {
+  collectDeviceRecords,
+  collectProjectEasSessions,
+  collectStaleClaims,
+  findStaleEasLedgerEntries,
+  type RecordDependencies,
+} from '../commands/gc/records.ts';
+import { listMountedVolumes } from '../fs-util.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
 import * as identities from '../process-identity.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -42,9 +51,11 @@ import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
+import { discoverCaches } from '../cache/caches.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import * as deviceLease from '../engine/device-lease.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
+import { collectDeviceLeases } from '../commands/gc/devices.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { collectEasSessionSweep, deleteEasSessions } from '../commands/gc/eas-sessions.ts';
 import * as ownershipClaim from '../ownership-claim.ts';
@@ -52,13 +63,12 @@ import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import gcOp, {
-  collectGcReport,
+  readGcReport,
   deleteParkedSims,
   describeParkedSims,
   findOrphanedDevices,
   findStaleDeviceRecords,
   findStaleProjectDevices,
-  formatGcReport,
   runGc as runGcCommand,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
@@ -67,15 +77,7 @@ import { forgetStaleLedgerEntries } from '../commands/gc/ledger.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import * as reclaim from '../devices/reclaim.ts';
-import {
-  makeConfig,
-  makeIosSim,
-  makeBuildLock,
-  makeBuildSlot,
-  goneClaimOwner,
-  liveClaimOwner,
-  plantClaim,
-} from './_factories.ts';
+import { makeConfig, makeIosSim, goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
 vi.mock('node:fs', async (importOriginal) => {
@@ -103,134 +105,7 @@ vi.mock('../devices/machine-cache-usage.ts', () => ({
   }),
 }));
 
-describe('a cache-scoped report', () => {
-  test('the report says what was not inspected instead of claiming a clean machine', () => {
-    const lines = formatGcReport({ cacheScope: 'compilation cache' });
-    expect(lines.some((l) => l.includes('Cache scope: "compilation cache"'))).toBeTruthy();
-    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeFalsy();
-  });
-
-  test('a name no cache carries says so instead of reporting a clean machine', async () => {
-    const output = await captureLog(() => runGc({ cache: 'nothing-carries-this-name' }));
-    expect(output).toContain('No shared cache carries "nothing-carries-this-name"');
-    expect(output).not.toContain('Nothing to reclaim');
-  });
-
-  test('with --json a name no cache carries is a STIM_BAD_ARG refusal on stdout', async () => {
-    try {
-      const { stdout, stderr } = await captureJson(() => cli(['--cache', 'nothing-carries-this-name', '--json']));
-      expect(stdout).toHaveLength(1);
-      expect(JSON.parse(stdout[0] ?? '')).toMatchObject({
-        code: 'STIM_BAD_ARG',
-        message: 'No shared cache carries "nothing-carries-this-name" in its name or directory.',
-        remedy: expect.any(String),
-      });
-      expect(stderr).toContain('No shared cache carries "nothing-carries-this-name"');
-      expect(process.exitCode).toBe(1);
-    } finally {
-      process.exitCode = undefined;
-    }
-  });
-});
-
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-test('says nothing to reclaim when everything is clean', () => {
-  const lines = formatGcReport({ skipped: [], deadProjects: [] }).join('\n');
-  expect(lines).toMatch(/nothing to reclaim/i);
-});
-
-test('reports parked simulators with model, runtime, age, size, and delete effect', () => {
-  const parked = describeParkedSims(
-    [
-      {
-        udid: 'A1F3-0000',
-        name: 'stim-parked (iPhone 17 26.5) a1f3',
-        deviceTypeIdentifier: 'iphone-17',
-        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-        parkedAt: '2026-09-01T00:00:00.000Z',
-        simslimManaged: false,
-      },
-    ],
-    [
-      makeIosSim({
-        udid: 'A1F3-0000',
-        name: 'stim-parked (iPhone 17 26.5) a1f3',
-        runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-        deviceTypeIdentifier: 'iphone-17',
-        dataPathSize: 2 * 1024 * 1024,
-      }),
-    ],
-    [{ identifier: 'iphone-17', name: 'iPhone 17' }],
-  );
-  const lines = formatGcReport({ parkedSims: parked }, { now: Date.parse('2026-09-03T00:00:00.000Z') }).join('\n');
-  expect(lines).toMatch(/Parked simulators \(1, 2M\)/);
-  expect(lines).toMatch(/A1F3\.\.\).*iPhone 17 26\.5.*parked 48h ago.*2M/);
-  expect(lines).toMatch(/--delete attempts verified deletions and keeps failures/);
-  expect(lines).not.toMatch(/Nothing to reclaim/);
-});
-
-test('gc --cache parked reports parked devices with their app and erases them only with --delete', async () => {
-  recordCreatedDevice('ios', 'P1');
-  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
-  const name = 'stim-parked (iPhone 17 26.5) p1';
-  parkSim({
-    platform: 'ios',
-    projectPath: '/tmp/source',
-    max: 3,
-    record: {
-      udid: 'P1',
-      name,
-      deviceTypeIdentifier: 'iphone-17',
-      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-      parkedAt: '2026-09-01T00:00:00.000Z',
-      simslimManaged: false,
-      bundleId: 'com.example.app',
-      cacheKey: 'abc-debug-sim',
-    },
-  });
-  const calls: string[] = [];
-  const answer = (cmd: string) => {
-    calls.push(cmd);
-    if (cmd.includes('simctl list devices')) {
-      return JSON.stringify({
-        devices: {
-          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-            { udid: 'P1', name, state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
-          ],
-        },
-      });
-    }
-    if (cmd.includes('simctl list devicetypes')) {
-      return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
-    }
-    return '';
-  };
-  setExecutor({
-    run: answer,
-    runFile: (file, args = []) => answer([file, ...args].join(' ')),
-    runQuiet: answer,
-    spawn: () => null,
-  });
-
-  const report = await captureLog(() => runGc({ cache: 'parked' }));
-  expect(report).toMatch(/stim-parked \(iPhone 17 26\.5\) p1 .*com\.example\.app/);
-  expect(report).toMatch(/--delete erases each verified device/);
-  expect(report).toMatch(/Re-run with --delete to erase the parked devices above/);
-  expect(calls).not.toContain('xcrun simctl erase P1');
-
-  await captureLog(() => runGc({ cache: 'all', delete: true }));
-  expect(calls).not.toContain('xcrun simctl erase P1');
-  expect(readParked('ios')).toEqual([expect.objectContaining({ bundleId: 'com.example.app' })]);
-
-  const erased = await captureLog(() => runGc({ cache: 'parked', delete: true }));
-  expect(erased).toMatch(/Erased parked ios sim .* it stays parked/);
-  expect(calls).toContain('xcrun simctl erase P1');
-  expect(calls.some((call) => call.includes('simctl delete'))).toBe(false);
-  const [record] = readParked('ios');
-  expect(record).toMatchObject({ udid: 'P1', name });
-  expect(record).not.toHaveProperty('bundleId');
-});
 
 test('parked deletion skips a simulator adopted after report collection', async () => {
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
@@ -346,36 +221,20 @@ test('parked deletion keeps ownership records when simulator listing was unavail
     simslimManaged: false,
   };
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
-  const report = await collectGcReport(
-    {},
-    {
-      listAllIosSims: () => {
-        throw new Error('simctl unavailable');
-      },
+  const parkedSims = await gcDevices.collectParkedSims({
+    listAllIosSims: () => {
+      throw new Error('simctl unavailable');
     },
-  );
+  });
 
   let failures = 0;
   const output = await captureLog(async () => {
-    failures = await deleteParkedSims(report.parkedSims);
+    failures = await deleteParkedSims(parkedSims);
   });
 
   expect(failures).toBe(1);
   expect(output).toMatch(/Could not verify.*record was kept/);
   expect(readParked('ios')).toEqual([record]);
-  expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(
-    /attempts verified deletions and keeps failures/,
-  );
-});
-
-test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
-  const lines = formatGcReport({
-    skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
-    deadProjects: [],
-  }).join('\n');
-  const headline = lines.split('\n')[0];
-  expect(headline).not.toMatch(/^Nothing to reclaim\.$/);
-  expect(headline).toMatch(/could not be checked/i);
 });
 
 test('findOrphanedDevices proposes only Stim devices absent from config', () => {
@@ -463,11 +322,11 @@ test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forg
     },
   });
   try {
-    expect((await collectGcReport()).staleLedgerEntries).toEqual([{ kind: 'ios', id: 'GONE' }]);
+    expect((await deviceRecords()).staleLedgerEntries).toEqual([{ kind: 'ios', id: 'GONE' }]);
 
     listing = null;
-    expect((await collectGcReport()).staleLedgerEntries).toEqual([]);
-    await captureLog(() => runGc({ delete: true }));
+    expect((await deviceRecords()).staleLedgerEntries).toEqual([]);
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect([...readCreatedDevices().ios].toSorted()).toEqual(['GONE', 'LIVE', 'UNAVAILABLE']);
 
     listing = JSON.stringify({
@@ -475,8 +334,7 @@ test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forg
         'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [device('LIVE', true), device('UNAVAILABLE', false)],
       },
     });
-    const output = await captureLog(() => runGc({ delete: true }));
-    expect(output).toContain('Forgot the ledger entry for ios GONE');
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect([...readCreatedDevices().ios].toSorted()).toEqual(['LIVE', 'UNAVAILABLE']);
   } finally {
     delete process.env.ANDROID_AVD_HOME;
@@ -527,7 +385,7 @@ describe('android ledger names', () => {
   });
 
   const androidEntries = async () =>
-    (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
+    (await deviceRecords()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
 
   test.each(['config', 'device ledger'])(
     'cancelling while waiting for the %s lock keeps the AVD ledger entry and releases admission',
@@ -566,10 +424,9 @@ describe('android ledger names', () => {
     },
   );
 
-  test('only a name with no registration, data, listing or unfinished setup is stale, and --delete forgets it', async () => {
+  test('only a name with no registration, data, listing or unfinished setup is stale, and gc forgets it', async () => {
     expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
-    const output = await captureLog(() => runGc({ delete: true }));
-    expect(output).toContain(`Forgot the ledger entry for android ${GONE}`);
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect([...readCreatedDevices().android].toSorted()).toEqual([
       'stim-t1401-ini',
       'stim-t1401-listed',
@@ -583,11 +440,11 @@ describe('android ledger names', () => {
   ])('nothing is pruned when %s', async (_, breakIt) => {
     breakIt();
     expect(await androidEntries()).toEqual([]);
-    await captureLog(() => runGc({ delete: true }));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(readCreatedDevices().android.has(GONE)).toBe(true);
   });
 
-  test('a name recreated after the report, or claimed by a running setup, is kept at --delete', async () => {
+  test('a name recreated after the report, or claimed by a running setup, is kept', async () => {
     const entries = await androidEntries();
     writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
     const output = await captureLog(() => forgetStaleLedgerEntries(entries));
@@ -638,7 +495,6 @@ test('cancelling device ledger cleanup after one commit preserves remaining entr
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const now = Date.now();
   const project = join(tmpHome, 'stale-project');
   mkdirSync(project, { recursive: true });
   saveConfig({
@@ -667,42 +523,21 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     spawn: () => null,
   });
 
-  const report = await collectGcReport(
-    {
-      olderThan: 30,
-      now,
-      lastTouched: () => now - 90 * DAY_MS,
+  const report = await collectDeviceRecords(loadConfig(), [], {
+    avdDirectory: (name) => `/avds/${name}.avd`,
+    directorySize: (dir, options) => {
+      sized.push(dir);
+      sizeTimeouts.push(options.timeoutMs);
+      if (dir.includes('unreadable')) throw new Error('timed out');
+      return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
     },
-    {
-      avdDirectory: (name) => `/avds/${name}.avd`,
-      directorySize: (dir, options) => {
-        sized.push(dir);
-        sizeTimeouts.push(options.timeoutMs);
-        if (dir.includes('unreadable')) throw new Error('timed out');
-        return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
-      },
-      precollectedEasSessionSweep: {
-        projectScope: null,
-        orphaned: [],
-        notices: [],
-        deletionSafe: true,
-      },
-    },
-  );
+  });
 
   expect(report.orphanedDevices).toContainEqual({
     kind: 'android',
     id: 'stim-orphan',
     name: 'stim-orphan',
     bytes: 5 * 1024 ** 3,
-  });
-  expect(report.staleDevices).toContainEqual({
-    kind: 'android',
-    id: 'stim-stale',
-    name: 'stim-stale',
-    project,
-    idleDays: 90,
-    bytes: 2 * 1024 ** 3,
   });
   expect(report.orphanedDevices).toContainEqual({
     kind: 'android',
@@ -711,12 +546,6 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
   });
   expect(sized).toEqual(['/avds/stim-orphan.avd', '/avds/stim-unreadable.avd', '/avds/stim-stale.avd']);
   expect(sizeTimeouts).toEqual([5000, 5000, 5000]);
-
-  const output = formatGcReport(report).join('\n');
-  expect(output).toMatch(/stim-orphan.*5\.0G on disk/);
-  expect(output).toMatch(/stim-stale.*2\.0G on disk/);
-  expect(output).not.toMatch(/stim-unreadable.*on disk/);
-  expect(output).not.toMatch(/Pixel_7/);
 });
 
 const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'stim-stale' })];
@@ -815,10 +644,23 @@ let originalAvdRoots: Record<string, string | undefined>;
 const HOME_ENV_KEYS = ['HOME', 'USERPROFILE'];
 const TMP_ENV_KEYS = process.platform === 'win32' ? ['TMPDIR', 'TEMP', 'TMP'] : ['TMPDIR'];
 
+function deviceRecords(deps: RecordDependencies = {}) {
+  return collectDeviceRecords(loadConfig(), [], deps);
+}
+
 function currentConfig() {
   const cfg = loadConfig();
   assert(cfg, 'expected a config on disk');
   return cfg;
+}
+
+function stubDu() {
+  const base = getExecutor();
+  setExecutor({
+    ...base,
+    runFileAsync: async (file, args, options) =>
+      file === 'du' ? `8\t${args?.at(-1) ?? ''}` : base.runFileAsync(file, args, options),
+  });
 }
 
 function installExecutor() {
@@ -847,13 +689,32 @@ async function cli(args: string[] = []) {
   await runCli(gcOp, args, { version: '9.9.9' });
 }
 
-async function sweepingGc(opts = {}) {
+async function sweepingGc(opts: Parameters<typeof runGcCommand>[0] = {}) {
   const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   try {
     await runGc(opts);
   } finally {
     scope.mockRestore();
   }
+}
+
+interface GcPayloadAction {
+  rung: number | null;
+  kind: string;
+  target: string;
+  outcome: string;
+  detail: string;
+}
+
+async function gcJson(opts: Parameters<typeof runGcCommand>[0], sweep = false) {
+  const { stdout } = await captureJson(() => (sweep ? sweepingGc : runGc)({ ...opts, json: true }));
+  return JSON.parse(stdout.at(-1) ?? '') as {
+    actions: GcPayloadAction[];
+    actionable: boolean;
+    failures: number | null;
+    results: { kind: string; status: string; label: string; id: string | null }[];
+    sections?: Record<string, never>;
+  };
 }
 
 async function captureJson(fn: () => unknown) {
@@ -880,6 +741,24 @@ function captureLog(fn: () => unknown) {
       console.log = originalLog;
     })
     .then(() => logs.join('\n'));
+}
+
+async function easGc(act: boolean, deps: RecordDependencies) {
+  const results = createGcResults();
+  const lines: string[] = [];
+  const sweep = await collectProjectEasSessions(deps);
+  const output: GcOutput = {
+    log: (line) => void lines.push(line),
+    error: (line) => void lines.push(line),
+    record: results.record,
+    fail: () => {},
+  };
+  const failures = act && sweep ? await deleteEasSessions(sweep, deps, output) : 0;
+  return { sweep, failures, results: results.take(), output: [...(sweep?.notices ?? []), ...lines].join('\n') };
+}
+
+async function easOutput(act: boolean, deps: RecordDependencies): Promise<string> {
+  return (await easGc(act, deps)).output;
 }
 
 interface EasCall {
@@ -1149,15 +1028,15 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_home_b: JSON.stringify({ id: 'drs_home_b', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+    const output = await easOutput(true, { ...harness.deps, easLedgerRoot: ledgerRoot });
 
     expect(output).not.toMatch(/Stopped EAS session drs_home_b/);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
   });
 
-  test('gc lists a fixture-looking ledger entry whose workspace is gone and --delete forgets it', async () => {
+  test('gc lists a fixture-looking ledger entry whose workspace is gone and forgets it', async () => {
     const project = join(fakeHome, 'expo-app');
-    const ledgerRoot = join(fakeHome, 'machine-eas');
+    const ledgerRoot = easMachineStateRoot();
     const gone = join(fakeHome, 'deleted-fixture');
     mkdirSync(project, { recursive: true });
     ensureWorkspaceStorage(project);
@@ -1178,21 +1057,17 @@ describe('EAS orphan session sweep', () => {
       },
     ]);
     installExecutor();
-    const harness = easGcHarness({ project, list: easList([]) });
-    const deps = { ...harness.deps, detectIsExpo: () => false, easLedgerRoot: ledgerRoot };
     const ids = () => {
       const ledger: { claims: object } = JSON.parse(readFileSync(join(ledgerRoot, 'sessions.json'), 'utf-8'));
       return Object.keys(ledger.claims);
     };
 
-    const preview = await captureLog(() => runGc({}, deps));
-    expect(preview).toMatch(/Stale EAS ledger entries \(1\)/);
-    expect(preview).toMatch(/drs_2/);
+    expect(findStaleEasLedgerEntries(listMountedVolumes()).map((entry) => entry.id)).toEqual(['drs_2']);
+    await runGc({ dryRun: true, pressure: 'normal' });
     expect(ids()).toEqual(['drs_2', 'drs_live']);
 
-    await captureLog(() => runGc({ delete: true }, deps));
+    await runGc({ pressure: 'normal' });
     expect(ids()).toEqual(['drs_live']);
-    expect(harness.calls).toEqual([]);
   });
 
   test('a missing config never authorizes an unclaimed session stop', async () => {
@@ -1209,7 +1084,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+    const output = await easOutput(true, { ...harness.deps, easLedgerRoot: ledgerRoot });
 
     expect(output).toMatch(/unclaimed|ownership.*not verified/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
@@ -1232,7 +1107,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_claimed: JSON.stringify({ id: 'drs_claimed', status: 'STOPPED' }) },
     });
 
-    await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+    await easOutput(true, { ...harness.deps, easLedgerRoot: ledgerRoot });
 
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
   });
@@ -1278,7 +1153,7 @@ describe('EAS orphan session sweep', () => {
         stop: { drs_target: JSON.stringify({ id: 'drs_target', status: 'STOPPED' }) },
       });
 
-      await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+      await easOutput(true, { ...harness.deps, easLedgerRoot: ledgerRoot });
 
       expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
     },
@@ -1311,7 +1186,7 @@ describe('EAS orphan session sweep', () => {
 
       try {
         await runGc(
-          { delete: true },
+          { pressure: 'normal' },
           {
             ...harness.deps,
             easLedgerRoot: join(fakeHome, 'machine-eas'),
@@ -1350,13 +1225,10 @@ describe('EAS orphan session sweep', () => {
       list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
-    const output = await captureLog(() => runGc({}, harness.deps));
+    const { sweep } = await easGc(false, harness.deps);
 
-    expect(output).toMatch(/Orphaned EAS sessions \(1\)/);
-    expect(output).toContain('drs_orphan');
-    expect(output).toContain('stim-old');
-    expect(output).toContain(project);
-    expect(output).toMatch(/eas simulator:stop --id drs_orphan/);
+    expect(sweep).toMatchObject({ projectScope: project, deletionSafe: true });
+    expect(sweep?.orphaned).toEqual([expect.objectContaining({ id: 'drs_orphan', name: 'stim-old' })]);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
     expect(harness.calls[0]?.options).toMatchObject({ cwd: project, timeoutMs: expect.any(Number) });
     expect(harness.calls[0]?.options.omitEnv).toEqual(
@@ -1385,10 +1257,9 @@ describe('EAS orphan session sweep', () => {
       ]),
     });
 
-    const output = await captureLog(() => runGc({}, harness.deps));
+    const { sweep } = await easGc(false, harness.deps);
 
-    expect(output).not.toContain('drs_recorded');
-    expect(output).toContain('drs_orphan');
+    expect(sweep?.orphaned.map((session) => session.id)).toEqual(['drs_orphan']);
     expect(JSON.parse(readFileSync(workspaceStateFile(otherWorkspace), 'utf-8'))).toMatchObject({
       remoteDevice: { sessionId: 'drs_recorded' },
     });
@@ -1411,7 +1282,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps)).finally(() => {
+    const output = await easOutput(true, harness.deps).finally(() => {
       if (existsSync(unavailable)) chmodSync(unavailable, 0o700);
     });
 
@@ -1457,7 +1328,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
-    await captureLog(() => runGc({ delete: true }, harness.deps));
+    await easOutput(true, harness.deps);
 
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
   });
@@ -1466,7 +1337,6 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([{ id: 'drs_creating', name: 'stim-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
@@ -1476,11 +1346,10 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_creating: JSON.stringify({ id: 'drs_creating', status: 'STOPPED' }) },
     });
 
-    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)));
+    const output = await withRemoteSessionLock(project, () => easOutput(true, harness.deps));
 
     expect(output).toMatch(/remote-session|remote session.*lock/i);
     expect(harness.calls).toEqual([]);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('an active EAS start lock disables only the remote sweep while local cleanup continues', async () => {
@@ -1491,26 +1360,23 @@ describe('EAS orphan session sweep', () => {
       JSON.stringify({ expo: { extra: { eas: { projectId: 'active-eas-project' } } } }),
     );
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
-    const output = await withEasProjectLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)), {
+    const output = await withEasProjectLock(project, () => easOutput(true, harness.deps), {
       machineRoot: join(fakeHome, 'machine-eas'),
     });
 
     expect(output).toMatch(/EAS project lock/i);
     expect(harness.calls).toEqual([]);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('a false then true Expo classification cannot enable an unlocked EAS sweep', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([{ id: 'drs_race', name: 'stim-race', status: 'IN_PROGRESS', platform: 'IOS' }]),
@@ -1521,19 +1387,10 @@ describe('EAS orphan session sweep', () => {
     });
     let classifications = 0;
 
-    await captureLog(() =>
-      runGc(
-        { delete: true },
-        {
-          ...harness.deps,
-          detectIsExpo: () => classifications++ > 0,
-        },
-      ),
-    );
+    await easGc(true, { ...harness.deps, detectIsExpo: () => classifications++ > 0 });
 
     expect(classifications).toBe(1);
     expect(harness.calls).toEqual([]);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('dry run does not wait behind an active remote session creation lock', async () => {
@@ -1546,7 +1403,7 @@ describe('EAS orphan session sweep', () => {
     });
     const startedAt = Date.now();
 
-    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({}, harness.deps)));
+    const output = await withRemoteSessionLock(project, () => easOutput(false, harness.deps));
 
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(output).toMatch(/remote-session|remote session.*lock/i);
@@ -1565,7 +1422,7 @@ describe('EAS orphan session sweep', () => {
       list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(output).toMatch(/remote-session|remote session.*lock/i);
     expect(harness.calls).toEqual([]);
@@ -1601,9 +1458,9 @@ describe('EAS orphan session sweep', () => {
           depth--;
         }
       },
-    } as unknown as Parameters<typeof runGc>[1];
+    } as unknown as RecordDependencies;
 
-    await captureLog(() => runGc({}, deps));
+    await easOutput(false, deps);
 
     expect(acquisitions).toEqual([realpathSync(project), realpathSync(added), realpathSync(project)]);
     expect(depth).toBe(0);
@@ -1619,7 +1476,7 @@ describe('EAS orphan session sweep', () => {
       throw failure;
     });
 
-    await expect(runGc({}, harness.deps)).rejects.toBe(failure);
+    await expect(runGc({ dryRun: true, pressure: 'normal' }, harness.deps)).rejects.toBe(failure);
 
     expect(log).toHaveBeenCalledTimes(1);
     log.mockRestore();
@@ -1629,7 +1486,6 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({ project, list: easList() });
     const deps = {
       ...harness.deps,
@@ -1637,13 +1493,12 @@ describe('EAS orphan session sweep', () => {
         await fn();
         throw new Error('remote session lock release failed');
       },
-    } as unknown as Parameters<typeof runGc>[1];
+    } as unknown as RecordDependencies;
 
-    const output = await captureLog(() => runGc({ delete: true }, deps));
+    const output = await easOutput(true, deps);
 
     expect(output).toMatch(/EAS collection failed.*remote session lock release failed/i);
     expect(harness.calls.filter((call) => call.args[0] === 'simulator:stop')).toEqual([]);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('a workspace registered during the EAS list cannot hide a pending state write', async () => {
@@ -1652,7 +1507,6 @@ describe('EAS orphan session sweep', () => {
     registerExpoProject(project);
     mkdirSync(added, { recursive: true });
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: () => {
@@ -1673,11 +1527,10 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(output).toMatch(/registered workspace roots.*changed|new.*remote-session lock/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('the final state rescan rejects a workspace registered after classification', async () => {
@@ -1796,7 +1649,9 @@ describe('EAS orphan session sweep', () => {
       harness.deps.operation.signal = AbortSignal.any([testSignal, cancellation.signal]);
       const exitCode = process.exitCode;
       try {
-        await captureLog(() => runGc({ delete: true }, harness.deps));
+        await easGc(true, harness.deps).catch((error: unknown) => {
+          if (!cancelled) throw error;
+        });
         await startPromise;
       } finally {
         process.exitCode = exitCode;
@@ -1828,11 +1683,9 @@ describe('EAS orphan session sweep', () => {
       },
     });
 
-    const output = await captureLog(() => runGc({}, harness.deps));
+    const { sweep } = await easGc(false, harness.deps);
 
-    expect(output).toMatch(/Orphaned EAS sessions \(2\)/);
-    expect(output).toContain('drs_page_1');
-    expect(output).toContain('drs_page_2');
+    expect(sweep?.orphaned.map((session) => session.id)).toEqual(['drs_page_1', 'drs_page_2']);
     const pages = harness.calls.filter((call) => call.args[0] === 'simulator:list');
     expect(pages).toHaveLength(2);
     expect(pages[0]?.args).toEqual(expect.arrayContaining(['--limit', '100']));
@@ -1850,7 +1703,6 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: (_after, page) => {
@@ -1858,23 +1710,20 @@ describe('EAS orphan session sweep', () => {
         return easList([], { hasNextPage: true, endCursor: `cursor-${page + 1}` });
       },
     });
-    const deps = { ...harness.deps, easMaxPages: 3 } as unknown as Parameters<typeof runGc>[1];
+    const deps = { ...harness.deps, easMaxPages: 3 } as unknown as RecordDependencies;
 
-    const output = await captureLog(() => runGc({ delete: true }, deps));
+    const output = await easOutput(true, deps);
 
-    expect(output).toMatch(/EAS session sweep notice/i);
     expect(output).toMatch(/page limit|maximum.*pages/i);
     expect(harness.calls.filter((call) => call.args[0] === 'simulator:list')).toHaveLength(3);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('a slow page sequence stops at the total deadline and shortens the final page timeout', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     let clock = 0;
     const harness = easGcHarness({
       project,
@@ -1894,17 +1743,15 @@ describe('EAS orphan session sweep', () => {
       ...harness.deps,
       easNow: () => clock,
       easCollectionTimeoutMs: 60_000,
-    } as unknown as Parameters<typeof runGc>[1];
+    } as unknown as RecordDependencies;
 
-    const output = await captureLog(() => runGc({ delete: true }, deps));
+    const output = await easOutput(true, deps);
 
-    expect(output).toMatch(/EAS session sweep notice/i);
     expect(output).toMatch(/deadline|time limit/i);
     const listCalls = harness.calls.filter((call) => call.args[0] === 'simulator:list');
     expect(listCalls.map((call) => call.options.timeoutMs)).toEqual([30_000, 20_000]);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test.each([
@@ -1931,16 +1778,13 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({ project, list });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
-    expect(output).toMatch(/EAS session sweep notice/i);
     expect(output).toMatch(/page|cursor/i);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test.each([
@@ -1957,7 +1801,7 @@ describe('EAS orphan session sweep', () => {
       get: { drs_bad: JSON.stringify({ id: 'drs_bad', name: 'stim-bad', status: 'IN_PROGRESS' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(output).toMatch(/platform/i);
     expect(output).not.toMatch(/Orphaned EAS sessions/);
@@ -1976,7 +1820,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
     expect(output).toMatch(/Stopped EAS session drs_orphan/);
@@ -2004,7 +1848,7 @@ describe('EAS orphan session sweep', () => {
       get: { drs_old: get },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
     expect(output).toMatch(expected);
@@ -2014,17 +1858,15 @@ describe('EAS orphan session sweep', () => {
     ['network failure', new Error('getaddrinfo ENOTFOUND api.expo.dev')],
     ['authentication failure', new Error('Authentication failed. Log in to EAS.')],
     ['malformed output', 'not json'],
-  ])('reports a %s as a notice while local deletion continues', async (_label, list) => {
+  ])('reports a %s as a notice and refuses deletion', async (_label, list) => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({ project, list });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
-
-    expect(output).toMatch(/EAS session sweep notice/i);
-    expect(existsSync(staleLock)).toBe(false);
+    const { sweep } = await easGc(true, harness.deps);
+    expect(sweep).toMatchObject({ deletionSafe: false, orphaned: [] });
+    expect(sweep?.notices).toHaveLength(1);
   });
 
   test('a malformed workspace state fails closed for remote deletion', async () => {
@@ -2039,7 +1881,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(output).toMatch(/state\.json.*could not be read|state\.json.*valid JSON/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
@@ -2058,7 +1900,7 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const output = await easOutput(true, harness.deps);
 
     expect(output).toMatch(/state\.json.*could not be read/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
@@ -2075,11 +1917,11 @@ describe('EAS orphan session sweep', () => {
       get: { drs_reused: JSON.stringify({ id: 'drs_reused', name: 'manual-session', status: 'IN_PROGRESS' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const run = await easGc(true, harness.deps);
 
-    expect(output).toMatch(/not owned by Stim/i);
+    expect(run.output).toMatch(/not owned by Stim/i);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-    expect(output).toMatch(/could not be deleted/i);
+    expect(run.failures).toBeGreaterThan(0);
   });
 
   test('candidate failures are independent and do not block local cleanup', async () => {
@@ -2091,7 +1933,6 @@ describe('EAS orphan session sweep', () => {
       { id: 'drs_ok', name: 'stim-three', platform: 'ios' },
     ]);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([
@@ -2110,13 +1951,12 @@ describe('EAS orphan session sweep', () => {
       },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const run = await easGc(true, harness.deps);
 
     expect(harness.calls.filter((call) => call.args[0] === 'simulator:get')).toHaveLength(3);
     expect(harness.calls.filter((call) => call.args[0] === 'simulator:stop')).toHaveLength(2);
-    expect(output).toContain('Stopped EAS session drs_ok');
-    expect(output).toMatch(/could not be deleted/i);
-    expect(existsSync(staleLock)).toBe(false);
+    expect(run.output).toContain('Stopped EAS session drs_ok');
+    expect(run.failures).toBeGreaterThan(0);
   });
 
   test('a throwing claim removal reports resolved sessions and continues other candidates and local cleanup', async () => {
@@ -2127,7 +1967,6 @@ describe('EAS orphan session sweep', () => {
       { id: 'drs_second', name: 'stim-second', platform: 'android' },
     ]);
     installExecutor();
-    const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([
@@ -2144,14 +1983,12 @@ describe('EAS orphan session sweep', () => {
       },
     });
 
-    const output = await captureLog(() =>
-      runGc({ delete: true }, {
-        ...harness.deps,
-        removeEasSessionClaim: () => {
-          throw new Error('claim store unavailable');
-        },
-      } as unknown as Parameters<typeof runGc>[1]),
-    );
+    const output = await easOutput(true, {
+      ...harness.deps,
+      removeEasSessionClaim: () => {
+        throw new Error('claim store unavailable');
+      },
+    } as unknown as RecordDependencies);
 
     expect(output).toMatch(/Stopped EAS session drs_first/);
     expect(output).toMatch(/Stopped EAS session drs_second/);
@@ -2163,7 +2000,6 @@ describe('EAS orphan session sweep', () => {
       'simulator:get',
       'simulator:stop',
     ]);
-    expect(existsSync(staleLock)).toBe(false);
   });
 
   test('a false claim removal reports the stopped session and retained claim', async () => {
@@ -2180,35 +2016,18 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_resolved: JSON.stringify({ id: 'drs_resolved', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() =>
-      runGc({ delete: true }, { ...harness.deps, removeEasSessionClaim: () => false } as unknown as Parameters<
-        typeof runGc
-      >[1]),
-    );
+    const run = await easGc(true, {
+      ...harness.deps,
+      removeEasSessionClaim: () => false,
+    } as unknown as RecordDependencies);
 
-    expect(output).toMatch(/Stopped EAS session drs_resolved/);
-    expect(output).toMatch(/ownership claim.*could not be removed/i);
-    expect(output).toMatch(/could not be deleted/i);
-  });
-
-  test('the report states that the EAS sweep covers only the current project', async () => {
-    const project = join(fakeHome, 'expo-app');
-    registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
-    installExecutor();
-    const harness = easGcHarness({
-      project,
-      list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-    });
-
-    const output = await captureLog(() => runGc({}, harness.deps));
-
-    expect(output).toMatch(/current EAS project only/i);
-    expect(output).not.toMatch(/all EAS projects/i);
+    expect(run.output).toMatch(/Stopped EAS session drs_resolved/);
+    expect(run.output).toMatch(/ownership claim.*could not be removed/i);
+    expect(run.failures).toBeGreaterThan(0);
   });
 });
 
-test('a bare gc leaves every registered entry in place', async () => {
+test('a dry run leaves every registered entry in place', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({
     version: 2,
@@ -2218,7 +2037,7 @@ test('a bare gc leaves every registered entry in place', async () => {
   installExecutor();
 
   const before = loadConfig();
-  await cli();
+  await cli(['--dry-run', '--pressure', 'normal']);
 
   expect(currentConfig().projects[localDeadPath]).toBeTruthy();
   expect(loadConfig()).toEqual(before);
@@ -2238,7 +2057,7 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   });
   installExecutor();
 
-  await cli(['--delete']);
+  await cli(['--pressure', 'normal']);
 
   const cfg = currentConfig();
   expect(cfg.projects[unmountedPath]).toBeTruthy();
@@ -2246,7 +2065,7 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   expect(cfg.projects[localDeadPath]).toBe(undefined);
 });
 
-test('--delete exits 1 when a dead project keeps its entry because a collector could not be stopped', async () => {
+test('gc exits 1 when a dead project keeps its entry because a collector could not be stopped', async () => {
   const deadPath = join(fakeHome, 'no-longer-here');
   saveConfig({ version: 2, projects: { [deadPath]: { metroPort: 8101 } }, repos: {} });
   installExecutor();
@@ -2275,9 +2094,11 @@ test('--delete exits 1 when a dead project keeps its entry because a collector c
     failedWorkspaceDirs: [],
   });
   try {
-    const output = await captureLog(() => runGc({ delete: true }));
-    expect(output).toContain(`Could not fully prune ${deadPath}`);
-    expect(output).toContain('1 entry could not be deleted');
+    const payload = await gcJson({ pressure: 'normal' });
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'prune-project', target: deadPath, outcome: 'failed' }),
+    );
+    expect(payload.failures).toBe(1);
     expect(process.exitCode).toBe(1);
   } finally {
     process.exitCode = undefined;
@@ -2287,7 +2108,7 @@ test('--delete exits 1 when a dead project keeps its entry because a collector c
 describe('a registry key that is not an absolute path', () => {
   const relativeKey = '.claude/stim-worktrees/nestrel';
 
-  test('--delete removes it when it claims no device', async () => {
+  test('gc removes it when it claims no device', async () => {
     saveConfig({
       version: 2,
       projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
@@ -2295,12 +2116,12 @@ describe('a registry key that is not an absolute path', () => {
     });
     installExecutor();
 
-    await cli(['--delete']);
+    await cli(['--pressure', 'normal']);
 
     expect(currentConfig().projects[relativeKey]).toBe(undefined);
   });
 
-  test('--delete keeps it while it claims a device', async () => {
+  test('gc keeps it while it claims a device', async () => {
     saveConfig({
       version: 2,
       projects: {
@@ -2310,7 +2131,7 @@ describe('a registry key that is not an absolute path', () => {
     });
     installExecutor();
 
-    await cli(['--delete']);
+    await cli(['--pressure', 'normal']);
 
     expect(currentConfig().projects[relativeKey]?.platforms?.ios?.deviceUdid).toBe('UDID-1');
   });
@@ -2384,7 +2205,7 @@ function usedDaysAgo(dir: string, days: number) {
   recordWorkspaceUse(dir, new Date(Date.now() - days * DAY_MS));
 }
 
-test('--delete re-verifies ownership before shutdown, shuts down before delete, and contains a per-device teardown throw', async () => {
+test('gc re-verifies ownership before shutdown, shuts down before delete, and contains a per-device teardown throw', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [
@@ -2396,7 +2217,7 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
   });
   saveConfig({ version: 2, projects: {}, repos: {} });
 
-  await sweepingGc({ delete: true });
+  await sweepingGc({ pressure: 'normal' });
 
   const firstListIndex = execCalls.findIndex((c) => c.includes('simctl list devices --json'));
   const shutdown1Index = execCalls.findIndex((c) => c.startsWith('xcrun simctl shutdown UDID-1'));
@@ -2410,7 +2231,7 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-1'))).toBe(false);
 });
 
-test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's orphan and never another home's", async () => {
+test("Stim Desktop's run (gc --json) deletes this home's orphan and never another home's", async () => {
   const otherHome = mkdtempSync(join(tmpdir(), 'stim-other-home-'));
   process.env.STIM_HOME = otherHome;
   recordCreatedDevice('ios', 'FOREIGN-UDID');
@@ -2426,13 +2247,10 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
   saveConfig({ version: 2, projects: {}, repos: {} });
 
   try {
-    const { stdout } = await captureJson(() => sweepingGc({ delete: true, json: true }));
+    const { stdout } = await captureJson(() => sweepingGc({ pressure: 'normal', json: true }));
     const payload = JSON.parse(stdout[0] ?? '');
     expect(payload.results.filter((result: { kind: string }) => result.kind === 'device')).toEqual([
-      expect.objectContaining({ kind: 'device', status: 'done', label: 'stim-orphan-2', id: 'UDID-2' }),
-    ]);
-    expect(payload.sections.unverifiedDevices).toEqual([
-      expect.objectContaining({ id: 'FOREIGN-UDID', command: 'xcrun simctl delete FOREIGN-UDID' }),
+      expect.objectContaining({ kind: 'device', status: 'done', detail: expect.stringContaining('stim-orphan-2') }),
     ]);
   } finally {
     rmSync(otherHome, { recursive: true, force: true });
@@ -2565,7 +2383,7 @@ test('gc --json lists every device with its owner and every runtime and system i
   });
 
   try {
-    const { stdout } = await captureJson(() => runGc({ json: true }));
+    const { stdout } = await captureJson(() => runGc({ dryRun: true, pressure: 'normal', json: true }));
     const { inventory } = JSON.parse(stdout[0] ?? '');
     expect(
       inventory.devices.map((d: { id: string; owner: string; project: string | null; slot: string | null }) => [
@@ -2675,7 +2493,7 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     chmodSync(images, 0o000);
 
     try {
-      const { stdout } = await captureJson(() => runGc({ json: true }));
+      const { stdout } = await captureJson(() => runGc({ dryRun: true, pressure: 'normal', json: true }));
       const { inventory } = JSON.parse(stdout[0] ?? '');
       expect(inventory.devices.map((d: { id: string; runtime: string | null }) => [d.id, d.runtime])).toEqual([
         ['Pixel_9', 'system-images;android-36;google_apis;arm64-v8a'],
@@ -2708,14 +2526,19 @@ test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or d
   });
   saveConfig({ version: 2, projects: {}, repos: {} });
 
-  const output = await captureLog(() => sweepingGc({ delete: false }));
+  const payload = await gcJson({ dryRun: true, pressure: 'normal' }, true);
 
-  expect(output).toMatch(/stim-report-orphan/);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'delete-orphaned-devices', outcome: 'would' }),
+  );
+  expect(payload.sections?.orphanedDevices).toEqual([
+    expect.objectContaining({ id: 'UDID-9', name: 'stim-report-orphan' }),
+  ]);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test("--delete reaps a dead project's owned orphan device in the same run it prunes the entry", async () => {
+test("gc reaps a dead project's owned orphan device in the same run it prunes the entry", async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({
     version: 2,
@@ -2733,7 +2556,7 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
     execCalls,
   });
 
-  await sweepingGc({ delete: true });
+  await sweepingGc({ pressure: 'normal' });
 
   const cfg = currentConfig();
   expect(cfg.projects[localDeadPath]).toBe(undefined);
@@ -2748,46 +2571,41 @@ test('gc with no config names Stim devices it cannot verify, but never touches t
     execCalls,
   });
 
-  const output = await captureLog(() => runGc({ delete: true }));
+  const payload = await gcJson({ pressure: 'normal' });
 
-  expect(output).toMatch(/stim-someones-live-env/);
-  expect(output).toMatch(/no Stim config found/i);
-  expect(output).toMatch(/cannot be verified as orphaned/i);
-  expect(output).not.toMatch(/Orphaned devices/i);
+  expect(payload.actions.some((action) => action.kind === 'delete-orphaned-devices')).toBe(false);
+  expect(payload.actions.filter((action) => action.kind === 'keep').map((action) => action.detail)).toContainEqual(
+    expect.stringContaining('stim-someones-live-env'),
+  );
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test.each(['CLI', 'obsolete internal option'])(
-  'a config scoped by STIM_HOME never sweeps machine-global devices through the %s',
-  async (entry) => {
-    const execCalls: string[] = [];
-    installDeviceExecutor({
-      devices: [
-        { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
-        { udid: 'UDID-REAL-2', name: 'stim-real-env-2' },
-      ],
-      execCalls,
-    });
-    const livePath = join(fakeHome, 'some-project');
-    mkdirSync(livePath, { recursive: true });
-    saveConfig({
-      version: 2,
-      projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-ELSEWHERE', owned: true } } } },
-      repos: {},
-    });
+test('a config scoped by STIM_HOME never sweeps machine-global devices through the CLI', async () => {
+  const execCalls: string[] = [];
+  installDeviceExecutor({
+    devices: [
+      { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
+      { udid: 'UDID-REAL-2', name: 'stim-real-env-2' },
+    ],
+    execCalls,
+  });
+  const livePath = join(fakeHome, 'some-project');
+  mkdirSync(livePath, { recursive: true });
+  saveConfig({
+    version: 2,
+    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-ELSEWHERE', owned: true } } } },
+    repos: {},
+  });
 
-    const configBefore = currentConfig();
-    const obsoleteOptions = { delete: true, unsafeAllowScopedDeviceSweep: true };
-    const output = await captureLog(() => (entry === 'CLI' ? cli(['--delete']) : runGc(obsoleteOptions)));
+  const configBefore = currentConfig();
+  const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+  const payload = JSON.parse(stdout.at(-1) ?? '');
 
-    expect(output).not.toMatch(/Orphaned devices/i);
-    expect(output).toMatch(/STIM_HOME/);
-    expect(output).toMatch(/stim-real-env-1/);
-    expect(execCalls.filter((cmd) => cmd.includes('UDID-REAL-'))).toEqual([]);
-    expect(currentConfig()).toEqual(configBefore);
-  },
-);
+  expect(payload.actions.some((action: GcPayloadAction) => action.kind === 'delete-orphaned-devices')).toBe(false);
+  expect(execCalls.filter((cmd) => cmd.includes('UDID-REAL-'))).toEqual([]);
+  expect(currentConfig()).toEqual(configBefore);
+});
 
 test("under a scoped STIM_HOME, the dry run lists a dead project's owned device as to be deleted and the rest as not touched", async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
@@ -2807,15 +2625,16 @@ test("under a scoped STIM_HOME, the dry run lists a dead project's owned device 
     execCalls,
   });
 
-  const output = await captureLog(() => cli([]));
+  const payload = await gcJson({ dryRun: true, pressure: 'normal' });
 
-  expect(output).toMatch(/stim-dead-owner is owned by the dead project .*--delete tries to delete it/);
-  expect(output).toMatch(/cannot be verified as orphaned: stim-real-env-1\b/);
-  expect(output).not.toMatch(/cannot be verified as orphaned:.*stim-dead-owner/);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'prune-project', target: localDeadPath, outcome: 'would' }),
+  );
+  expect(payload.sections?.unverifiedDevices).toEqual([]);
   expect(execCalls.some((c) => c.includes('simctl delete'))).toBe(false);
 });
 
-test("under a scoped STIM_HOME, --delete tears down a pruned dead project's owned device and leaves other stim devices alone", async () => {
+test("under a scoped STIM_HOME, gc tears down a pruned dead project's owned device and leaves other stim devices alone", async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({
     version: 2,
@@ -2833,7 +2652,7 @@ test("under a scoped STIM_HOME, --delete tears down a pruned dead project's owne
     execCalls,
   });
 
-  await cli(['--delete']);
+  await cli(['--pressure', 'normal']);
 
   expect(currentConfig().projects[localDeadPath]).toBe(undefined);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBe(true);
@@ -2845,35 +2664,12 @@ test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
   installExecutor();
 
-  await cli(['--delete']);
+  await cli(['--pressure', 'normal']);
 
   expect(currentConfig().projects[localDeadPath]).toBe(undefined);
 });
 
-test('--delete --older-than reaps an owned device whose project went untouched, and clears its record', async () => {
-  const stalePath = join(fakeHome, 'abandoned-project');
-  usedDaysAgo(stalePath, 90);
-  saveConfig({
-    version: 2,
-    projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
-    repos: {},
-  });
-  const execCalls: string[] = [];
-  installDeviceExecutor({
-    devices: [{ udid: 'UDID-STALE', name: 'stim-abandoned' }],
-    execCalls,
-  });
-
-  await sweepingGc({ delete: true, olderThan: 30 });
-
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown UDID-STALE'))).toBeTruthy();
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-STALE'))).toBeTruthy();
-  const cfg = currentConfig();
-  expect(cfg.projects[stalePath]).toBeTruthy();
-  expect(cfg.projects[stalePath]?.platforms?.ios).toBe(undefined);
-});
-
-test('gc reports a live project whose recorded sim is gone, and --delete clears the record only', async () => {
+test('gc reports a live project whose recorded sim is gone, and clears the record only', async () => {
   const livePath = join(fakeHome, 'live-project');
   usedDaysAgo(livePath, 1);
   saveConfig({
@@ -2884,13 +2680,13 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
   const execCalls: string[] = [];
   installDeviceExecutor({ devices: [], execCalls });
 
-  const report = await captureLog(() => sweepingGc({ delete: false }));
-  expect(report).toMatch(/Stale device records \(1\)/);
-  expect(report).toMatch(/UDID-VANISHED/);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  expect((await deviceRecords()).staleDeviceRecords).toEqual([
+    expect.objectContaining({ kind: 'ios', id: 'UDID-VANISHED', project: livePath }),
+  ]);
   expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
-  expect(output).toMatch(/Cleared the ios record/);
+  await captureLog(() => sweepingGc({ pressure: 'normal' }));
   const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
   expect(cfg.projects[livePath]?.platforms?.ios).toBe(undefined);
@@ -2908,54 +2704,13 @@ test('a recorded sim that IS on the machine is not a stale record', async () => 
   });
   installDeviceExecutor({ devices: [{ udid: 'UDID-HERE', name: 'stim-live' }], execCalls: [] });
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
-  expect(output).not.toMatch(/Stale device records/);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  expect((await deviceRecords()).staleDeviceRecords).toEqual([]);
+  await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
-test('--older-than without --delete only reports the stale device', async () => {
-  const stalePath = join(fakeHome, 'abandoned-project');
-  usedDaysAgo(stalePath, 90);
-  saveConfig({
-    version: 2,
-    projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
-    repos: {},
-  });
-  const execCalls: string[] = [];
-  installDeviceExecutor({
-    devices: [{ udid: 'UDID-STALE', name: 'stim-abandoned' }],
-    execCalls,
-  });
-
-  const output = await captureLog(() => sweepingGc({ delete: false, olderThan: 30 }));
-
-  expect(output).toMatch(/stim-abandoned/);
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(currentConfig().projects[stalePath]?.platforms?.ios).toBeTruthy();
-});
-
-test('a device whose project is still being worked in is never reaped by --older-than', async () => {
-  const livePath = join(fakeHome, 'live-project');
-  usedDaysAgo(livePath, 0);
-  saveConfig({
-    version: 2,
-    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },
-    repos: {},
-  });
-  const execCalls: string[] = [];
-  installDeviceExecutor({
-    devices: [{ udid: 'UDID-LIVE', name: 'stim-live' }],
-    execCalls,
-  });
-
-  await sweepingGc({ delete: true, olderThan: 30 });
-
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
-});
-
-test('a bare gc reports a registered cache with its size, without being asked for it', async () => {
+test('a dry run reports a registered cache with its size, without being asked for it', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   mkdirSync(join(cacheDir, 'entry-a'), { recursive: true });
   writeFileSync(join(cacheDir, 'entry-a', 'blob'), 'x'.repeat(1000));
@@ -2963,29 +2718,14 @@ test('a bare gc reports a registered cache with its size, without being asked fo
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const output = await captureLog(() => cli());
+  const payload = await gcJson({ dryRun: true, pressure: 'normal' });
 
-  expect(output).toMatch(/My cache/);
-  expect(output).toMatch(/registered/);
+  expect(payload.sections?.caches).toContainEqual(
+    expect.objectContaining({ name: 'My cache', dir: cacheDir, source: 'registered' }),
+  );
 });
 
-test('--delete on its own never touches a shared cache', async () => {
-  const cacheDir = join(fakeHome, 'my-cache');
-  const entry = join(cacheDir, 'entry-a');
-  mkdirSync(entry, { recursive: true });
-  writeFileSync(join(entry, 'blob'), 'x'.repeat(1000));
-  const old = new Date(Date.now() - 400 * DAY_MS);
-  utimesSync(entry, old, old);
-  register({ dir: cacheDir, name: 'My cache' });
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  installExecutor();
-
-  await cli(['--delete']);
-
-  expect(existsSync(entry)).toBeTruthy();
-});
-
-test('gc reports but never deletes the shared Gradle build cache under any deletion mode', async () => {
+test('gc never deletes the shared Gradle build cache at any level', async () => {
   const previous = process.env.GRADLE_USER_HOME;
   const gradleHome = join(fakeHome, 'gradle-home');
   const cachesRoot = join(gradleHome, 'caches');
@@ -3003,9 +2743,8 @@ test('gc reports but never deletes the shared Gradle build cache under any delet
   installExecutor();
 
   try {
-    for (const args of [['--delete'], ['--delete', '--older-than', '30'], ['--delete', '--cache', 'all']]) {
-      const output = await captureLog(() => cli(args));
-      expect(output).toMatch(/Gradle build cache/);
+    for (const pressure of ['normal', 'high', 'critical'] as const) {
+      await captureJson(() => runGc({ pressure }));
       expect(existsSync(entry)).toBeTruthy();
     }
   } finally {
@@ -3030,15 +2769,15 @@ test('a caches path committed in .stim.json is neither reported nor trimmed', as
   const previousCwd = process.cwd();
   process.chdir(project);
   try {
-    const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
-    expect(output).not.toContain(committed);
+    const payload = await gcJson({ pressure: 'normal' });
+    expect(JSON.stringify(payload.actions)).not.toContain(committed);
     expect(existsSync(entry)).toBe(true);
   } finally {
     process.chdir(previousCwd);
   }
 });
 
-test('--delete --older-than trims the cache entries nothing has touched', async () => {
+test('the age sweep trims the cache entries nothing has touched', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   const oldEntry = join(cacheDir, 'entry-old');
   const freshEntry = join(cacheDir, 'entry-fresh');
@@ -3052,13 +2791,13 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--delete', '--older-than', '30']);
+  await cli(['--pressure', 'normal']);
 
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
 });
 
-test('--delete --older-than ignores a legacy Metro parent registered after its named child', async () => {
+test('the age sweep ignores a legacy Metro parent registered after its named child', async () => {
   const parent = join(tmpHome, 'metro-cache');
   const child = join(parent, 'demo');
   const shard = join(child, '0a');
@@ -3083,13 +2822,13 @@ test('--delete --older-than ignores a legacy Metro parent registered after its n
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--delete', '--older-than', '30']);
+  await cli(['--pressure', 'normal']);
 
   expect(existsSync(currentTransform)).toBe(true);
   expect(existsSync(legacyTransform)).toBe(true);
 });
 
-test('--delete --older-than ignores a legacy Metro parent whose named child is a symlink', async () => {
+test('the age sweep ignores a legacy Metro parent whose named child is a symlink', async () => {
   const parent = join(tmpHome, 'metro-cache');
   const target = join(tmpHome, 'metro-target');
   const child = join(parent, 'demo');
@@ -3112,12 +2851,12 @@ test('--delete --older-than ignores a legacy Metro parent whose named child is a
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--delete', '--older-than', '30']);
+  await cli(['--pressure', 'normal']);
 
   expect(existsSync(currentTransform)).toBe(true);
 });
 
-test('--delete --older-than keeps a current Metro store that is also a current override parent', async () => {
+test('the age sweep keeps a current Metro store that is also a current override parent', async () => {
   const parent = join(tmpHome, 'metro-cache', 'first-app');
   const child = join(parent, 'second-app');
   const parentTransform = join(parent, '0a', 'old-parent-transform');
@@ -3146,16 +2885,16 @@ test('--delete --older-than keeps a current Metro store that is also a current o
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const report = await collectGcReport({ olderThan: 30 });
-  expect(report.caches.find((cache) => cache.dir === parent)?.prune).toBe('report-only');
-  expect(report.caches.find((cache) => cache.dir === child)?.prune).toBe('entries');
-  await cli(['--delete', '--older-than', '30']);
+  const caches = discoverCaches();
+  expect(caches.find((cache) => cache.dir === parent)?.prune).toBe('report-only');
+  expect(caches.find((cache) => cache.dir === child)?.prune).toBe('entries');
+  await cli(['--pressure', 'normal']);
 
   expect(existsSync(parentTransform)).toBe(true);
   expect(existsSync(childTransform)).toBe(true);
 });
 
-test('--delete --cache all empties an index-backed cache that --older-than cannot trim', async () => {
+test('critical empties an index-backed cache that the age sweep cannot trim', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
   const index = join(casDir, 'v4.actions');
@@ -3166,26 +2905,31 @@ test('--delete --cache all empties an index-backed cache that --older-than canno
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const report = await collectGcReport({ cache: 'all' });
-  expect(report.caches.some((c) => c.prune === 'atomic' && c.willEmpty)).toBeTruthy();
+  stubDu();
+  const plan = await gcJson({ dryRun: true, pressure: 'critical' });
+  expect(plan.actions).toContainEqual(
+    expect.objectContaining({ kind: 'empty-cache', target: casDir, outcome: 'would' }),
+  );
 
-  await captureLog(() => cli(['--delete', '--older-than', '30']));
+  await captureJson(() => runGc({ pressure: 'normal' }));
   expect(existsSync(leaf)).toBeTruthy();
 
   const build = plantClaim(cacheClaimRoot(casDir), 'shared', liveClaimOwner(), {
     details: { platform: 'ios', projectRoot: '/w/app' },
   });
-  const kept = await captureLog(() => cli(['--delete', '--cache', 'all']));
-  expect(kept).toContain(`the ios build (pid ${process.pid} in /w/app) may be using it`);
+  const kept = await gcJson({ pressure: 'critical' });
+  expect(kept.actions).toContainEqual(
+    expect.objectContaining({ target: casDir, outcome: 'kept', detail: expect.stringContaining('ios build') }),
+  );
   expect(existsSync(leaf)).toBeTruthy();
   rmSync(build);
 
-  await captureLog(() => cli(['--delete', '--cache', 'all']));
+  await captureJson(() => runGc({ pressure: 'critical' }));
   expect(existsSync(leaf)).toBe(false);
   expect(existsSync(index)).toBe(false);
 });
 
-describe('plain --delete and the Swift compilation cache cap', () => {
+describe('gc and the Swift compilation cache cap', () => {
   const casDir = () => join(tmpHome, 'compilation-cache');
   const leaf = () => join(casDir(), 'v9.data.leaf');
   const OVER_CAP_GB = '0.000001';
@@ -3209,20 +2953,15 @@ describe('plain --delete and the Swift compilation cache cap', () => {
 
   test('empties the cache whole when it exceeds the cap and no build holds it', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
-    const dryRun = await captureLog(() => cli([]));
-    expect(dryRun).toContain('would be EMPTIED');
+    const dryRun = await gcJson({ dryRun: true, pressure: 'normal' });
+    expect(dryRun.actions).toContainEqual(
+      expect.objectContaining({ target: expect.stringContaining(casDir()), outcome: 'would' }),
+    );
     expect(existsSync(leaf())).toBe(true);
 
-    await captureLog(() => cli(['--delete']));
+    await captureLog(() => cli(['--pressure', 'normal']));
     expect(existsSync(leaf())).toBe(false);
     expect(existsSync(join(casDir(), 'v4.actions'))).toBe(false);
-  });
-
-  test('with --older-than empties it once, without a contradicting kept line', async () => {
-    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
-    const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
-    expect(existsSync(leaf())).toBe(false);
-    expect(output).not.toContain('index-backed; empty it whole or not at all');
   });
 
   test('keeps it, naming the build, while a build holds the cache', async () => {
@@ -3230,26 +2969,28 @@ describe('plain --delete and the Swift compilation cache cap', () => {
     const build = plantClaim(cacheClaimRoot(casDir()), 'shared', liveClaimOwner(), {
       details: { platform: 'ios', projectRoot: '/w/app' },
     });
-    const output = await captureLog(() => cli(['--delete']));
-    expect(output).toContain(`the ios build (pid ${process.pid} in /w/app) may be using it`);
+    const payload = await gcJson({ pressure: 'normal' });
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining(`pid ${process.pid} in /w/app`) }),
+    );
     expect(existsSync(leaf())).toBe(true);
     rmSync(build);
   });
 
   test('keeps it under the cap', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '1';
-    await captureLog(() => cli(['--delete']));
+    await captureLog(() => cli(['--pressure', 'normal']));
     expect(existsSync(leaf())).toBe(true);
   });
 
   test('keeps it when the cap is 0', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '0';
-    await captureLog(() => cli(['--delete']));
+    await captureLog(() => cli(['--pressure', 'normal']));
     expect(existsSync(leaf())).toBe(true);
   });
 });
 
-test('--delete --cache all empties an entries-style cache including entries used today', async () => {
+test('critical empties an entries-style cache including entries used today', async () => {
   const cacheDir = join(tmpHome, 'my-cache');
   const freshEntry = join(cacheDir, 'entry-fresh');
   mkdirSync(freshEntry, { recursive: true });
@@ -3258,13 +2999,13 @@ test('--delete --cache all empties an entries-style cache including entries used
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await captureLog(() => cli(['--delete', '--cache', 'all']));
+  await captureJson(() => runGc({ pressure: 'critical' }));
 
   expect(existsSync(freshEntry)).toBe(false);
   expect(existsSync(cacheDir)).toBeTruthy();
 });
 
-test('--cache all without --delete reports what would be emptied and writes nothing', async () => {
+test('a dry run at critical reports what would be emptied and writes nothing', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
   mkdirSync(casDir, { recursive: true });
@@ -3274,15 +3015,17 @@ test('--cache all without --delete reports what would be emptied and writes noth
   installExecutor();
   const before = loadConfig();
 
-  const output = await captureLog(() => cli(['--cache', 'all']));
+  stubDu();
+  const payload = await gcJson({ dryRun: true, pressure: 'critical' });
 
-  expect(output).toMatch(/Xcode compilation cache/);
-  expect(output).toMatch(/empt/i);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'empty-cache', target: casDir, outcome: 'would' }),
+  );
   expect(existsSync(leaf)).toBeTruthy();
   expect(loadConfig()).toEqual(before);
 });
 
-test('--delete --cache all under a scoped home refuses machine-global caches', async () => {
+test('critical under a scoped home leaves machine-global caches alone', async () => {
   const globalCas = join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex');
   const leaf = join(globalCas, 'v9.data.leaf');
   mkdirSync(globalCas, { recursive: true });
@@ -3290,13 +3033,12 @@ test('--delete --cache all under a scoped home refuses machine-global caches', a
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const output = await captureLog(() => cli(['--delete', '--cache', 'all']));
+  await captureJson(() => runGc({ pressure: 'critical' }));
 
   expect(existsSync(leaf)).toBeTruthy();
-  expect(output).toMatch(/STIM_HOME/);
 });
 
-test('--delete --older-than under a scoped home refuses machine-global caches', async () => {
+test('the age sweep under a scoped home leaves machine-global caches alone', async () => {
   const map = join(fakeHome, 'metro-file-map-abc123');
   writeFileSync(map, 'x'.repeat(1000));
   const old = new Date(Date.now() - 400 * DAY_MS);
@@ -3304,48 +3046,9 @@ test('--delete --older-than under a scoped home refuses machine-global caches', 
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
+  await captureJson(() => runGc({ pressure: 'normal' }));
 
   expect(existsSync(map)).toBeTruthy();
-  expect(output).toMatch(/machine-global/);
-});
-
-test('--cache all reaches caches only: never a device, never a project entry', async () => {
-  const livePath = join(fakeHome, 'live-project');
-  mkdirSync(livePath, { recursive: true });
-  saveConfig({
-    version: 2,
-    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },
-    repos: {},
-  });
-  const cacheDir = join(tmpHome, 'my-cache');
-  const entry = join(cacheDir, 'entry-a');
-  mkdirSync(entry, { recursive: true });
-  writeFileSync(join(entry, 'blob'), 'x'.repeat(1000));
-  register({ dir: cacheDir, name: 'My cache' });
-  const execCalls: string[] = [];
-  installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'stim-live' }], execCalls });
-
-  await captureLog(() => sweepingGc({ delete: true, cache: 'all' }));
-
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  const cfg = currentConfig();
-  expect(cfg.projects[livePath]).toBeTruthy();
-  expect(cfg.projects[livePath]?.platforms?.ios).toBeTruthy();
-  expect(existsSync(entry)).toBe(false);
-});
-
-test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
-  await expect(() => runCli(gcOp, ['--older-than', 'lastweek'], { version: '9.9.9' })).rejects.toThrow(
-    /must be a whole number of days/,
-  );
-});
-
-test('rejects a blank --cache instead of widening the run', async () => {
-  for (const value of ['', '   ']) {
-    await expect(() => runCli(gcOp, ['--cache', value], { version: '9.9.9' })).rejects.toThrow(/must name a cache/);
-  }
 });
 
 function writeLock({
@@ -3366,37 +3069,15 @@ function writeLock({
   return path;
 }
 
-test('a stale lock counts as something to reclaim', () => {
-  const lines = formatGcReport({
-    buildLocks: {
-      stale: [makeBuildLock({ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' })],
-      live: [],
-    },
-  }).join('\n');
-  expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
-});
-
-test('a live lock alone is not something to reclaim', () => {
-  const lines = formatGcReport({
-    buildLocks: {
-      stale: [],
-      live: [makeBuildLock({ platform: 'ios', key: 'k', pid: process.pid, projectRoot: '/w', path: '/h/l.lock' })],
-    },
-  }).join('\n');
-  expect(lines).toMatch(/Nothing to reclaim/);
-  expect(lines).toMatch(/Builds in progress/);
-});
-
-test('--delete removes the stale lock and leaves the live one alone', async () => {
+test('gc removes the stale lock and leaves the live one alone', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const live = writeLock({ pid: process.pid, projectRoot: '/w/alive' });
   const stale = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
+  await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
-  expect(output).toMatch(/build lock/i);
 });
 
 describe('gc --json', () => {
@@ -3412,21 +3093,15 @@ describe('gc --json', () => {
     const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
     const before = loadConfig();
 
-    const { stdout, stderr } = await captureJson(() => cli(['--json']));
+    const { stdout } = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
 
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0] ?? '');
-    expect(payload).toMatchObject({
-      mode: 'dry-run',
-      cacheScope: null,
-      olderThan: null,
-      actionable: true,
-      failures: null,
-    });
-    expect(payload.maintenance).toMatchObject({ mode: 'off' });
-    expect(payload.ladder.levels.map((level: { level: string }) => level.level)).toEqual(['high', 'critical']);
-    expect(payload.ladder.workspaces).toEqual(expect.any(Array));
-    expect(payload.sections).not.toHaveProperty('maintenance');
+    expect(payload).toMatchObject({ mode: 'dry-run', level: 'normal', actionable: true, failures: null, results: [] });
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'prune-project', target: deadPath(), outcome: 'would' }),
+    );
+    expect(payload.actions).toContainEqual(expect.objectContaining({ kind: 'forget-stale-records', outcome: 'would' }));
     expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
     expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
     expect(payload.sections.staleBuildLocks).toEqual([
@@ -3478,29 +3153,29 @@ describe('gc --json', () => {
       'watchmanRoots',
       'memoryNotices',
     ]);
-    expect(stderr).toContain('Dead project entries (1)');
     expect(loadConfig()).toEqual(before);
     expect(existsSync(lock)).toBe(true);
   });
 
-  test('--delete prints the report it acted on and the failure count', async () => {
+  test('an acting run prints the actions it took and the failure count', async () => {
     const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
 
-    const { stdout, stderr } = await captureJson(() => cli(['--delete', '--json']));
+    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
 
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0] ?? '');
     expect(payload).toMatchObject({ mode: 'delete', actionable: true, failures: 0 });
-    expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
-    expect(payload.sections.staleBuildLocks).toHaveLength(1);
-    expect(stderr).toContain(`Pruned ${deadPath()}`);
+    expect(payload).not.toHaveProperty('sections');
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'prune-project', target: deadPath(), outcome: 'done' }),
+    );
     expect(currentConfig().projects[deadPath()]).toBe(undefined);
     expect(existsSync(lock)).toBe(false);
   });
 });
 
 test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
-  '--delete continues after staging cleanup fails and leaves no cleanup claim (skipped on Windows: mode 0 does not stop a directory from being deleted)',
+  'gc continues after staging cleanup fails and leaves no cleanup claim (skipped on Windows: mode 0 does not stop a directory from being deleted)',
   async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();
@@ -3512,10 +3187,11 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     writeFileSync(join(staging, 'partial.claim'), '{');
     chmodSync(staging, 0);
     try {
-      const output = await captureLog(() => sweepingGc({ delete: true }));
-      expect(output).toContain(`Failed to clear the build lock at ${blocked}: EACCES`);
-      expect(output).toContain('Cleared build slot 0');
-      expect(output).toContain('1 entry could not be deleted');
+      const payload = await gcJson({ pressure: 'normal' }, true);
+      expect(payload.actions).toContainEqual(
+        expect.objectContaining({ kind: 'forget-stale-records', outcome: 'failed' }),
+      );
+      expect(payload.failures).toBe(1);
       expect(existsSync(staging)).toBe(true);
       expect(existsSync(writable)).toBe(false);
       expect(readClaimSet(blocked).live).toEqual([]);
@@ -3525,26 +3201,25 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
   },
 );
 
-test('--delete keeps a lock whose holder cannot be identified, and says why', async () => {
+test('gc keeps a lock whose holder cannot be identified', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const path = join(tmpHome, 'build-locks', 'ios-unresolved-debug-sim.lock');
   plantClaim(path, 'exclusive', { pid: 4242, processToken: 'nonsense' });
 
-  const report = await collectGcReport();
-  expect(report.buildLocks.stale).toEqual([]);
-  expect((report.buildLocks.unresolved ?? []).map((l) => l.path)).toEqual([path]);
+  const claims = collectStaleClaims();
+  expect(claims.buildLocks.stale).toEqual([]);
+  expect((claims.buildLocks.unresolved ?? []).map((l) => l.path)).toEqual([path]);
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
+  await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(existsSync(join(path, 'exclusive'))).toBe(true);
-  expect(output).toMatch(/cannot resolve/i);
 });
 
-test('a bare gc removes no lock at all', async () => {
+test('a dry run removes no lock at all', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const stale = writeLock({ pid: 999999 });
-  await captureLog(() => sweepingGc({}));
+  await captureLog(() => sweepingGc({ dryRun: true, pressure: 'normal' }));
   expect(existsSync(stale)).toBe(true);
 });
 
@@ -3564,26 +3239,18 @@ function writeSlot({
   return path;
 }
 
-test('a stale build slot counts as something to reclaim', () => {
-  const lines = formatGcReport({
-    buildSlots: { stale: [makeBuildSlot({ index: 0, pid: 9, projectRoot: '/w', path: '/h/slot-0' })], live: [] },
-  }).join('\n');
-  expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
-});
-
-test('--delete removes the stale build slot and leaves a live one alone', async () => {
+test('gc removes the stale build slot and leaves a live one alone', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const live = writeSlot({ index: 0, pid: process.pid, projectRoot: '/w/alive' });
   const stale = writeSlot({ index: 1, pid: 999999, projectRoot: '/w/dead' });
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
+  await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
-  expect(output).toMatch(/build slot/i);
 });
 
-describe('--delete against a claim taken while gc is deleting', { timeout: 60_000 }, () => {
+describe('gc against a claim taken while gc is deleting', { timeout: 60_000 }, () => {
   const SRC_URL = new URL('../', import.meta.url).href;
   const CHILD_TIMEOUT_MS = 40_000;
   const BARRIER_MS = 25_000;
@@ -3680,7 +3347,7 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
         "  spawn: () => { throw new Error('unexpected tool spawn'); },",
         '});',
         `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
-        'await runGc({ delete: true });',
+        "await runGc({ pressure: 'normal' });",
       ].join('\n'),
     );
 
@@ -3765,7 +3432,6 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
     expect(existsSync(spawning)).toBe(true);
     expect(readClaimSet(claimSet).unresolved.map((p) => p.path)).toEqual([spawning]);
     expect(gcOutput).not.toMatch(/Cleared/);
-    expect(gcOutput).toMatch(/Left the build lock/);
   });
 });
 
@@ -3803,28 +3469,28 @@ function writeLeaseFile({
 }
 
 describe('expired device leases', () => {
-  test('a bare gc reports an expired lease and removes nothing', async () => {
+  test('a dry run reports an expired lease and removes nothing', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();
     const path = writeLeaseFile({ expiresInMs: -1000 });
 
-    const output = await captureLog(() => sweepingGc({}));
-    expect(output).toMatch(/Expired device leases \(1\)/);
-    expect(output).toMatch(/UDID-LEASE/);
-    expect(output).toMatch(/\/w\/holder/);
+    expect(collectDeviceLeases(Date.now()).expired).toEqual([
+      expect.objectContaining({ path, id: 'UDID-LEASE', lease: expect.objectContaining({ holder: '/w/holder' }) }),
+    ]);
+    const payload = await gcJson({ dryRun: true, pressure: 'normal' }, true);
+    expect(payload.actions).toContainEqual(expect.objectContaining({ kind: 'delete-device-lease', outcome: 'would' }));
     expect(existsSync(path)).toBe(true);
   });
 
-  test('--delete removes the expired lease and leaves a live one alone', async () => {
+  test('gc removes the expired lease and leaves a live one alone', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();
     const expired = writeLeaseFile({ id: 'UDID-OLD', expiresInMs: -1000 });
     const live = writeLeaseFile({ id: 'UDID-LIVE', holder: tmpHome, expiresInMs: 600_000 });
 
-    const output = await captureLog(() => sweepingGc({ delete: true }));
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(existsSync(expired)).toBe(false);
     expect(existsSync(live)).toBe(true);
-    expect(output).toMatch(/Cleared the expired ios device lease on UDID-OLD/);
   });
 
   test('a file that does not parse is reported and kept', async () => {
@@ -3832,9 +3498,8 @@ describe('expired device leases', () => {
     installExecutor();
     const path = writeLeaseFile({ id: 'UDID-BROKEN', body: '{ not a lease' });
 
-    const output = await captureLog(() => sweepingGc({ delete: true }));
-    expect(output).toMatch(/Device lease files kept \(1\)/);
-    expect(output).toMatch(/does not parse as a lease/);
+    expect(collectDeviceLeases(Date.now()).kept).toEqual([expect.objectContaining({ path })]);
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(existsSync(path)).toBe(true);
   });
 
@@ -3843,9 +3508,8 @@ describe('expired device leases', () => {
     installExecutor();
     const path = writeLeaseFile({ id: 'UDID-ABSENT', holder: join(fakeHome, 'unmounted'), expiresInMs: 600_000 });
 
-    const output = await captureLog(() => sweepingGc({ delete: true }));
-    expect(output).toMatch(/Device lease files kept \(1\)/);
-    expect(output).toMatch(/is not on this machine, but the lease runs until/);
+    expect(collectDeviceLeases(Date.now()).kept).toEqual([expect.objectContaining({ path })]);
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(existsSync(path)).toBe(true);
   });
 
@@ -3854,55 +3518,8 @@ describe('expired device leases', () => {
     installExecutor();
     writeLeaseFile({ holder: tmpHome, expiresInMs: 600_000 });
 
-    const output = await captureLog(() => sweepingGc({}));
-    expect(output).not.toMatch(/device lease/i);
+    expect(collectDeviceLeases(Date.now())).toMatchObject({ expired: [], kept: [] });
   });
-});
-
-test('an expired lease counts as something to reclaim', () => {
-  const lines = formatGcReport({
-    deviceLeases: {
-      expired: [
-        {
-          path: '/h/device-locks/ios-U.json',
-          name: 'ios-U.json',
-          platform: 'ios',
-          id: 'U',
-          lease: {
-            version: 1,
-            platform: 'ios',
-            id: 'U',
-            deviceName: 'Old iPhone',
-            holder: '/w/dead',
-            token: 't',
-            grantedAt: null,
-            expiresAt: '2026-09-02T12:00:00.000Z',
-          },
-        },
-      ],
-      kept: [],
-    },
-  }).join('\n');
-  expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
-  expect(lines).toMatch(/Expired device leases \(1\)/);
-  expect(lines).toMatch(/Old iPhone/);
-  expect(lines).toMatch(/\/w\/dead/);
-});
-
-test('with nothing else to reclaim, a --delete run says the pressure ladder still runs after the report', () => {
-  expect(formatGcReport({ ladderRun: 'high' })[0]).toBe('Nothing to reclaim before the pressure ladder runs at high.');
-  expect(formatGcReport({})[0]).toBe('Nothing to reclaim.');
-});
-
-test('a kept lease file alone is not something to reclaim', () => {
-  const lines = formatGcReport({
-    deviceLeases: {
-      expired: [],
-      kept: [{ name: 'ios-U.json', path: '/h/device-locks/ios-U.json', reason: 'it does not parse as a lease' }],
-    },
-  }).join('\n');
-  expect(lines).toMatch(/Nothing to reclaim/);
-  expect(lines).toMatch(/Device lease files kept \(1\)/);
 });
 
 test('GC preserves named-slot references on unavailable volumes and identifies stale records by slot', () => {
@@ -3960,11 +3577,10 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
       return original.runQuiet(cmd, opts);
     },
   });
-  const report = await collectGcReport();
-  expect(report.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
-  expect(formatGcReport(report).join('\n')).toContain('web (8900)');
+  const payload = await gcJson({ dryRun: true, pressure: 'normal' });
+  expect(payload.sections?.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
   expect(inspected).toEqual([]);
-  await cli(['--delete']);
+  await cli(['--pressure', 'normal']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
   expect(inspected).toEqual([]);
@@ -3975,7 +3591,7 @@ test('unscoped gc JSON reports agent-device separately without adding actionable
   const dir = join(fakeHome, '.agent-device');
   mkdirSync(dir);
   writeFileSync(join(dir, 'keep'), 'agent-device-owned');
-  const { stdout, stderr } = await captureJson(() => cli(['--json']));
+  const { stdout } = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
   expect(stdout).toHaveLength(1);
   const report = JSON.parse(stdout[0]!);
   expect(report.sections.agentDevice).toMatchObject({
@@ -3983,65 +3599,37 @@ test('unscoped gc JSON reports agent-device separately without adding actionable
     stateDir: { dir: realpathSync.native(dir), present: true },
   });
   expect(report.sections.caches.some((entry: { dir: string }) => entry.dir === dir)).toBe(false);
-  expect(stderr).toContain('agent-device');
   expect(report.actionable).toBe(false);
-  expect(formatGcReport({ agentDeviceUsage: report.sections.agentDevice }).join('\n')).toContain(
-    "a workspace's own agent-device dir goes only with its workspace",
-  );
   expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('agent-device-owned');
 });
 
-test.each([
-  ['--cache', 'all', '--delete'],
-  ['--older-than', '30', '--delete'],
-])('gc %j leaves agent-device and SwiftPM bytes intact', async (...args: string[]) => {
-  installExecutor();
-  const project = realpathSync.native(fakeHome);
-  writeFileSync(join(project, 'package.json'), '{}');
-  upsertProject(project, { platforms: {} });
-  ensureWorkspaceStorage(project);
-  const dirs = [
-    swiftpmDir(),
-    join(fakeHome, '.gradle', 'caches', '9.3.1'),
-    join(fakeHome, '.gradle', 'caches', 'modules-2'),
-    join(fakeHome, '.agent-device'),
-    join(tmpHome, 'server', 'agent-device'),
-    join(workspaceDir(project), 'agent-device'),
-  ];
-  for (const dir of dirs) {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'keep'), Buffer.from([0, 1, 255]));
-  }
-  const { stdout } = await captureJson(() => cli([...args, '--json']));
-  expect(stdout).toHaveLength(1);
-  const report = JSON.parse(stdout[0]!);
-  expect(report.sections.swiftpmCache === null).toBe(args.includes('--cache'));
-  expect(report.sections.machineCaches === null).toBe(args.includes('--cache'));
-  expect(report.sections.caches.some((entry: { dir: string }) => dirs.includes(entry.dir))).toBe(false);
-  for (const dir of dirs) expect(readFileSync(join(dir, 'keep'))).toEqual(Buffer.from([0, 1, 255]));
-});
-
-test('cache-scoped collection omits agent-device and SwiftPM measurement', async () => {
-  installExecutor();
-  mkdirSync(join(fakeHome, '.agent-device'));
-  mkdirSync(swiftpmDir(), { recursive: true });
-  const du = vi.fn<Executor['runFileAsync']>().mockResolvedValue('0\tcache');
-  setExecutor({ ...getExecutor(), runFileAsync: du });
-  const report = await collectGcReport({ cache: 'no-matching-cache' });
-  expect(report.agentDeviceUsage).toBe(null);
-  expect(report.swiftpmCacheUsage).toBe(null);
-  expect(report.machineCaches).toBe(null);
-  expect(du).not.toHaveBeenCalled();
-  const cacheDir = join(tmpHome, 'unrelated-cache');
-  mkdirSync(cacheDir);
-  register({ dir: cacheDir, name: 'test-only-cache' });
-  const { stdout } = await captureJson(() => cli(['--cache', 'test-only-cache', '--json']));
-  const { sections } = JSON.parse(stdout[0]!);
-  expect(sections.agentDevice).toBe(null);
-  expect(sections.swiftpmCache).toBe(null);
-  expect(sections.machineCaches).toBe(null);
-  expect(new Set(du.mock.calls.map(([, args]) => args.at(-1)))).toEqual(new Set([cacheDir]));
-});
+test.each(['normal', 'critical'] as const)(
+  'gc at %s leaves agent-device and SwiftPM bytes intact',
+  async (pressure) => {
+    installExecutor();
+    const project = realpathSync.native(fakeHome);
+    writeFileSync(join(project, 'package.json'), '{}');
+    upsertProject(project, { platforms: {} });
+    ensureWorkspaceStorage(project);
+    const dirs = [
+      swiftpmDir(),
+      join(fakeHome, '.gradle', 'caches', '9.3.1'),
+      join(fakeHome, '.gradle', 'caches', 'modules-2'),
+      join(fakeHome, '.agent-device'),
+      join(tmpHome, 'server', 'agent-device'),
+      join(workspaceDir(project), 'agent-device'),
+    ];
+    for (const dir of dirs) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'keep'), Buffer.from([0, 1, 255]));
+    }
+    const report = await gcJson({ pressure });
+    expect(JSON.stringify(report.actions.filter((action) => action.outcome === 'done'))).not.toMatch(
+      /agent-device|swiftpm|gradle/i,
+    );
+    for (const dir of dirs) expect(readFileSync(join(dir, 'keep'))).toEqual(Buffer.from([0, 1, 255]));
+  },
+);
 
 function swiftpmDir(): string {
   return process.platform === 'darwin'
@@ -4049,25 +3637,18 @@ function swiftpmDir(): string {
     : join(fakeHome, '.cache', 'org.swift.swiftpm');
 }
 
-test('unscoped gc reports SwiftPM after agent-device without making it actionable or a cache', async () => {
+test('unscoped gc reports SwiftPM without making it actionable or a cache', async () => {
   installExecutor();
   const dir = swiftpmDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'keep'), 'shared');
   mkdirSync(join(fakeHome, '.agent-device'));
-  const { stdout, stderr } = await captureJson(() => cli(['--json']));
+  const { stdout } = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
   expect(stdout).toHaveLength(1);
   const report = JSON.parse(stdout[0]!);
   expect(report.sections.swiftpmCache).toMatchObject({ version: 1, dir: realpathSync.native(dir), present: true });
   expect(report.sections.caches.some((entry: { dir: string }) => entry.dir === dir)).toBe(false);
   expect(report.actionable).toBe(false);
-  expect(stderr.indexOf('SwiftPM cache')).toBeGreaterThan(stderr.indexOf('agent-device'));
-  const text = formatGcReport({
-    agentDeviceUsage: report.sections.agentDevice,
-    swiftpmCacheUsage: report.sections.swiftpmCache,
-  }).join('\n');
-  expect(text.indexOf('SwiftPM cache (')).toBeGreaterThan(text.indexOf('agent-device ('));
-  expect(text).toContain('shared by every SwiftPM build on this machine');
   expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('shared');
 });
 
@@ -4566,12 +4147,10 @@ describe('parked hosted device GC', () => {
       JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
     );
     const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
-    const { stdout, stderr } = await captureJson(() => cli(['--delete', '--json']));
-    const payload = JSON.parse(stdout[0]!);
+    expect(collectParkedHostedDevices().devices[0]).toHaveProperty('listed', false);
+    const payload = await gcJson({ pressure: 'normal' });
     expect(payload.actionable).toBe(false);
-    expect(payload.sections.parkedHostedDevices[0]).toHaveProperty('listed', false);
-    expect(payload.results).toEqual([]);
-    expect(stderr).toContain('already removed; stim-server clears the marker');
+    expect(payload.results.filter((result) => result.kind === 'parkedHostedDevice')).toEqual([]);
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
     expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
     expect(takeGcResults()).toEqual([]);
@@ -4591,12 +4170,14 @@ describe('parked hosted device GC', () => {
     journal([session()]);
     const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
     const requests = worker({ state: 'stopped', device: session().device });
-    const { stdout } = await captureJson(() => cli(['--delete', '--json']));
+    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0]!);
     expect(payload.mode).toBe('delete');
     expect(payload.failures).toBe(0);
-    expect(payload.results).toMatchObject([{ kind: 'parkedHostedDevice', status: 'done', id: udid }]);
+    expect(payload.results.filter((result: { kind: string }) => result.kind === 'parkedHostedDevice')).toMatchObject([
+      { status: 'done', detail: expect.stringContaining(sessionId) },
+    ]);
     expect(requests).toHaveLength(1);
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
   });
@@ -4662,7 +4243,7 @@ describe('parked hosted device GC', () => {
   test('JSON dry run includes the hosted section and leaves the journal and ledger intact', async () => {
     journal([session()]);
     const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
-    const { stdout, stderr } = await captureJson(() => cli(['--json']));
+    const { stdout } = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0]!);
     expect(payload.actionable).toBe(true);
@@ -4678,7 +4259,6 @@ describe('parked hosted device GC', () => {
         listed: true,
       },
     ]);
-    expect(stderr).toContain('Parked hosted devices (1)');
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
     expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
     const active = session({ state: 'ready', parked: undefined });
@@ -4697,7 +4277,7 @@ describe('parked hosted device GC', () => {
           ? Promise.resolve(`4\t${args.at(-1)}`)
           : executor.runFileAsync(file, args, options),
     });
-    const usage = await captureJson(() => cli(['--json']));
+    const usage = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
     const onlyStorage = JSON.parse(usage.stdout[0]!);
     expect(onlyStorage.actionable).toBe(false);
     expect(onlyStorage.sections.hostedAppStorage).toEqual([
@@ -4713,22 +4293,19 @@ describe('parked hosted device GC', () => {
         detail: 'reported only',
       },
     ]);
-    expect(usage.stderr).toContain('Hosted app storage (report only)');
     expect(readFileSync(join(apps, 'current'), 'utf8')).toBe('app');
     expect(readFileSync(join(blobs, 'content'), 'utf8')).toBe('blob');
-    const scoped = await collectGcReport({ cache: 'parked' });
-    expect(scoped.parkedHostedDevices).toEqual([]);
-    expect(scoped.hostedAppStorage ?? []).toEqual([]);
     const outside = join(tmpHome, 'outside-app-storage');
     mkdirSync(outside);
     writeFileSync(join(outside, 'keep'), 'outside');
     rmSync(apps, { recursive: true });
     symlinkSync(outside, apps, process.platform === 'win32' ? 'junction' : 'dir');
-    const linked = await collectGcReport({});
-    expect(linked.hostedAppStorage).toEqual([]);
-    expect(linked.deviceSweepNotices).toContain(
-      `Hosted app storage ${sessionId} unavailable: Hosted app storage is not an owned directory.`,
-    );
+    const linked = await readGcReport({ pressure: 'normal' });
+    assert(!('code' in linked) && linked.sections);
+    expect(linked.sections.hostedAppStorage).toEqual([]);
+    expect(linked.sections.deviceSweepNotices).toContainEqual({
+      message: `Hosted app storage ${sessionId} unavailable: Hosted app storage is not an owned directory.`,
+    });
     expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('outside');
   });
 });
@@ -4740,41 +4317,40 @@ describe('the gc log', () => {
     writeLeaseFile({ id: 'UDID-OLD', expiresInMs: -1000 });
     writeLeaseFile({ id: 'UDID-BAD', expiresInMs: -1000 });
     writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
-    const remove = deviceLease.removeExpiredLease;
-    vi.spyOn(deviceLease, 'removeExpiredLease').mockImplementation((entry) => {
+    const remove = deviceLease.removeExpiredLeaseAsync;
+    vi.spyOn(deviceLease, 'removeExpiredLeaseAsync').mockImplementation(async (entry, signal) => {
       if (entry.id === 'UDID-BAD') throw new Error('permission denied');
-      return remove(entry);
+      return remove(entry, signal);
     });
     vi.spyOn(ownershipClaim, 'clearFreeClaimSet').mockReturnValue({ status: 'refused', reason: 'builder unresolved' });
   }
 
-  test('a deleting run records each cleared, kept and failed item with the run that did it', async () => {
+  test('a deleting run records each cleared, kept and failed action with the run that did it', async () => {
     stageRun();
-    await captureLog(() => sweepingGc({ delete: true, olderThan: 3 }));
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
 
-    const records = readGcLog().filter(isGcLogRecord);
-    expect(records.map((r) => [r.kind, r.status, r.id?.split('/').pop() ?? null]).toSorted()).toEqual([
-      ['buildLock', 'kept', expect.stringContaining('android-def-debug-sim')],
-      ['deviceLease', 'done', expect.stringContaining('UDID-OLD')],
-      ['deviceLease', 'failed', expect.stringContaining('UDID-BAD')],
+    const records = readGcLog()
+      .filter(isGcLogRecord)
+      .filter((r) => r.kind !== 'keep');
+    expect(records.map((r) => [r.kind, r.status]).toSorted()).toEqual([
+      ['delete-device-lease', 'done'],
+      ['delete-device-lease', 'failed'],
+      ['forget-stale-records', 'kept'],
     ]);
-    const failed = records.find((r) => r.status === 'failed');
-    expect(failed).toMatchObject({
+    expect(records.find((r) => r.status === 'failed')).toMatchObject({
       src: 'gc',
       level: 'error',
       trigger: 'manual',
-      options: { delete: true, olderThan: 3 },
+      options: { level: 'normal', pressure: true },
       detail: 'permission denied',
-      path: failed?.id,
     });
-    expect(isAbsolute(failed?.path ?? '')).toBe(true);
-    expect(records.find((r) => r.kind === 'buildLock')).toMatchObject({ level: 'info', detail: 'builder unresolved' });
+    expect(records.find((r) => r.kind === 'forget-stale-records')).toMatchObject({ level: 'info' });
     expect(new Set(records.map((r) => r.runId)).size).toBe(1);
   });
 
   test('a dry run writes no record and creates no log', async () => {
     stageRun();
-    await captureLog(() => sweepingGc({}));
+    await captureLog(() => sweepingGc({ dryRun: true, pressure: 'normal' }));
     expect(existsSync(gcLogFile())).toBe(false);
   });
 
@@ -4783,15 +4359,14 @@ describe('the gc log', () => {
     installExecutor();
     writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
     vi.spyOn(ownershipClaim, 'clearFreeClaimSet').mockReturnValue({ status: 'refused', reason: 'builder unresolved' });
-    const output = await captureLog(() => sweepingGc({ delete: true }));
-    expect(output).toMatch(/Left the build lock/);
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(existsSync(gcLogFile())).toBe(false);
   });
 
   test('a run started by Stim Desktop is recorded as desktop', async () => {
     stageRun();
     vi.stubEnv('STIM_DESKTOP_APP', '/Applications/Stim.app');
-    await captureLog(() => sweepingGc({ delete: true }));
+    await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(
       new Set(
         readGcLog()

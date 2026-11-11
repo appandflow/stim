@@ -242,11 +242,13 @@ test('concurrent GC clients isolate homes, output and results without changing p
             expect(stream).toBe('stderr');
             output.push(message);
           },
-        }).gc({ cache: 'fixture' }),
+        }).gc({ pressure: 'normal' }),
       ),
     );
     for (const [index, report] of reports.entries()) {
-      expect(report.sections.caches.map((entry) => entry.dir)).toEqual([index === 0 ? first.cache : second.cache]);
+      const dirs = report.sections?.caches.map((entry) => entry.dir);
+      expect(dirs).toContain(index === 0 ? first.cache : second.cache);
+      expect(dirs).not.toContain(index === 0 ? second.cache : first.cache);
       expect(report.results).toEqual([]);
       expect(report.mode).toBe('dry-run');
     }
@@ -262,119 +264,6 @@ test('concurrent GC clients isolate homes, output and results without changing p
     error.mockRestore();
   }
 });
-
-test.each([false, true])(
-  'a cancelled parked erase preserves cleanup refusal=%s and the next pool entry',
-  async (unavailable) => {
-    const item = fixture('parked-erase-cancel');
-    const ids = ['FIRST', 'SECOND'];
-    const pool = ids.map((udid) => ({
-      udid,
-      name: `stim-${udid}`,
-      deviceTypeIdentifier: 'iphone',
-      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-      parkedAt: '2026-01-01T00:00:00Z',
-      simslimManaged: false,
-      bundleId: 'fixture.app',
-      cacheKey: `cache-${udid}`,
-    }));
-    writeFileSync(
-      join(item.home, 'config.json'),
-      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, daemon: { mode: 'off' } }),
-    );
-    writeFileSync(
-      join(item.home, 'created-devices.json'),
-      JSON.stringify({ version: 1, ios: ids, android: [], web: [] }),
-    );
-    const controller = new AbortController();
-    const executor = getExecutor();
-    const run = executor.runFileAsync.bind(executor);
-    const mutations: string[] = [];
-    let owned: { pid: number; processToken: string } | undefined;
-    let closed = Promise.resolve();
-    let settled: (() => unknown) | undefined;
-    const inspect = vi
-      .spyOn(identities, 'inspectProcessIdentity')
-      .mockImplementation((record) =>
-        unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
-      );
-    const found = vi.spyOn(executor, 'findExecutable').mockReturnValue(null);
-    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      if (file === 'xcrun' && args.includes('devices'))
-        return Promise.resolve(
-          JSON.stringify({
-            devices: {
-              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ids.map((udid) => ({
-                udid,
-                name: `stim-${udid}`,
-                state: 'Shutdown',
-                isAvailable: true,
-                deviceTypeIdentifier: 'iphone',
-              })),
-            },
-          }),
-        );
-      if (file === 'xcrun' && args.includes('devicetypes'))
-        return Promise.resolve(JSON.stringify({ devicetypes: [{ identifier: 'iphone', name: 'iPhone' }] }));
-      if (file !== 'xcrun' || args[1] !== 'erase') throw new Error(`Unexpected fixture command ${file}`);
-      mutations.push(args[2] ?? '<missing device>');
-      return run(process.execPath, ['-e', 'console.log("erase started"); setInterval(() => {}, 1000)'], {
-        ...options,
-        onSpawn: (child) => {
-          options.onSpawn?.(child);
-          const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-          if (child.pid === undefined || !captured?.ok) throw new Error('The fixture erase child has no identity');
-          owned = { pid: child.pid, processToken: captured.token };
-          closed = new Promise<void>((resolve) => child.once('close', resolve));
-          child.stdout?.once('data', () => controller.abort());
-        },
-      });
-    });
-    try {
-      const failure = await trackRead((signal) =>
-        createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({
-          cache: 'parked',
-          delete: true,
-          signal: AbortSignal.any([signal, controller.signal]),
-        }),
-      ).catch((error: unknown) => error);
-      expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
-      const cause = failure instanceof Error ? failure.cause : undefined;
-      if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
-        const check = cause.cleanupSettled;
-        settled = () => check();
-      }
-      expect(settled?.()).toBe(unavailable ? false : undefined);
-      expect(mutations).toEqual(['FIRST']);
-      expect(owned).toBeDefined();
-      expect(owned && inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
-      const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
-      expect(config.parked.ios[1]).toEqual(pool[1]);
-      expect('deletionClaim' in config.parked.ios[0]).toBe(unavailable);
-      expect('bundleId' in config.parked.ios[0]).toBe(unavailable);
-      for (const root of [
-        join(item.home, 'pool-locks', 'ios', 'first.lock'),
-        join(item.home, 'maintenance', 'run.claims'),
-      ]) {
-        const claims = readClaimSet(root);
-        expect(claims.live).toHaveLength(unavailable ? 1 : 0);
-        for (const claim of claims.live) await rm(claim.path);
-      }
-      expect(settled?.()).toBe(unavailable ? false : undefined);
-    } finally {
-      controller.abort();
-      probe.mockRestore();
-      found.mockRestore();
-      inspect.mockRestore();
-      if (owned && inspectProcessIdentity(owned) === 'same') {
-        killFixtureChild(owned);
-        await waitForProcessExit(owned, 2000);
-      }
-      await closed;
-    }
-    expect(settled?.()).toBe(unavailable ? true : undefined);
-  },
-);
 
 test('concurrent GC mutations empty only their selected cache and keep results and progress in the calling client', async () => {
   const items = [fixture('delete-first'), fixture('delete-second')];
@@ -397,16 +286,14 @@ test('concurrent GC mutations empty only their selected cache and keep results a
               expect(stream).toBe('stderr');
               progress.push(message);
             },
-          }).collectGarbage({ cache: 'fixture', delete: true, signal }),
+          }).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
         );
-        return { item, report: result.report, exitCode: result.exitCode, progress };
+        return { item, results: result.results, exitCode: result.exitCode, progress };
       }),
     );
-    for (const { item, report, progress, exitCode } of reports) {
+    for (const { item, results, progress, exitCode } of reports) {
       expect(exitCode).toBe(0);
-      expect(report.mode).toBe('delete');
-      expect(report.failures).toBe(0);
-      expect(report.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
+      expect(results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
       expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
       expect(progress.length).toBeGreaterThan(0);
     }
@@ -430,57 +317,35 @@ test.each(
     'CLI cache emptying',
     'simulator inventory',
     'emulator inventory',
-    'agent-device size',
-    'SwiftPM size',
-    'machine size',
-    'machine tools',
-    'Gradle size',
-    'Gradle process inventory',
     'Gradle project settings',
     'worktree inventory',
-    'worktree size',
     ...(process.platform !== 'win32' ? ['temporary process inventory', 'Jest cache size'] : []),
-    ...(process.platform === 'darwin' ? ['orphaned workspace', 'workspace exclusions'] : []),
+    ...(process.platform === 'darwin' ? ['orphaned workspace'] : []),
   ].flatMap((kind) => [false, true].map((unavailable) => ({ kind, unavailable }))),
 )('GC $kind declares its native child and preserves cleanup refusal=$unavailable', async ({ kind, unavailable }) => {
   const item = fixture('native-inventory');
   const cli = kind.startsWith('CLI ');
   const emptying = kind.endsWith('cache emptying');
   const cacheProbe = kind === 'cache size' || cli || emptying;
-  const workspaceProbe = kind === 'orphaned workspace' || kind === 'workspace exclusions';
-  const usageProbe = ['agent-device size', 'SwiftPM size', 'machine size', 'machine tools'].includes(kind);
-  const gradleProbe = kind.startsWith('Gradle ');
-  const worktreeProbe = kind === 'worktree inventory' || kind === 'worktree size';
+  const workspaceProbe = kind === 'orphaned workspace';
+  const gradleProbe = kind === 'Gradle project settings';
+  const worktreeProbe = kind === 'worktree inventory';
   const tempProbe = kind === 'temporary process inventory' || kind === 'Jest cache size';
   const temporary = join(item.home, 'tmp');
   if (tempProbe) {
     mkdirSync(temporary);
     Object.assign(item.env, { TMPDIR: temporary, TMP: temporary, TEMP: temporary });
   }
-  const usageDir =
-    kind === 'Jest cache size'
-      ? join(temporary, `jest_${process.getuid?.().toString(36)}`)
-      : kind === 'worktree size'
-        ? join(item.root, 'node_modules')
-        : kind === 'agent-device size'
-          ? join(item.home, 'agent-device')
-          : kind === 'SwiftPM size'
-            ? join(
-                item.env.HOME,
-                ...(process.platform === 'darwin' ? ['Library', 'Caches'] : ['.cache']),
-                'org.swift.swiftpm',
-              )
-            : join(item.home, 'gradle', 'caches', gradleProbe ? '9.4.1' : 'modules-2');
+  const usageDir = join(temporary, `jest_${process.getuid?.().toString(36)}`);
   Object.assign(item.env, {
     AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
     GRADLE_USER_HOME: join(item.home, 'gradle'),
     XDG_CACHE_HOME: join(item.env.HOME, '.cache'),
   });
-  if (usageProbe || gradleProbe || kind === 'worktree size') mkdirSync(usageDir, { recursive: true });
   const platform = kind === 'simulator inventory' ? 'ios' : 'android';
   const config = {
     version: 2,
-    projects: kind === 'Gradle project settings' || worktreeProbe ? { [item.root]: {} } : {},
+    projects: gradleProbe || worktreeProbe ? { [item.root]: {} } : {},
     repos: {},
     daemon: { mode: 'off' },
     parked: {
@@ -498,7 +363,7 @@ test.each(
       ],
     },
   };
-  if (!cacheProbe && !workspaceProbe && !usageProbe && !tempProbe)
+  if (!cacheProbe && !workspaceProbe && !tempProbe)
     writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
   let preserved = join(item.cache, 'artifact');
   if (tempProbe) {
@@ -511,10 +376,6 @@ test.each(
   if (emptying) {
     mkdirSync(join(item.cache, 'entry'));
     preserved = join(item.cache, 'entry', 'original');
-    writeFileSync(preserved, 'native-inventory');
-  }
-  if (kind === 'worktree size') {
-    preserved = join(usageDir, 'original');
     writeFileSync(preserved, 'native-inventory');
   }
   if (workspaceProbe)
@@ -580,33 +441,22 @@ test.each(
       ? kind === 'Jest cache size'
         ? file === 'du' && args.includes(usageDir)
         : file === 'ps' && args.includes('comm=')
-      : kind === 'worktree size'
-        ? file === 'du' && args.includes(usageDir)
-        : kind === 'worktree inventory'
-          ? file === 'git' && args.includes('worktree')
-          : gradleProbe
-            ? kind === 'Gradle process inventory'
-              ? file === 'ps'
-              : kind === 'Gradle project settings'
-                ? file === 'git'
-                : file === 'du' && args.includes(usageDir)
-            : usageProbe
-              ? kind === 'machine tools'
-                ? file === 'agent-device'
-                : file === 'du' && args.includes(usageDir)
-              : workspaceProbe
-                ? file === 'ps'
-                : cacheProbe
-                  ? file === 'du' && (!emptying || args.includes(join(item.cache, 'entry')))
-                  : kind === 'simulator inventory'
-                    ? file === 'xcrun' && args.includes('devices')
-                    : /emulator(?:\.exe)?$/.test(file) && args.includes('-list-avds');
+      : worktreeProbe
+        ? file === 'git' && args.includes('worktree')
+        : gradleProbe
+          ? file === 'git'
+          : workspaceProbe
+            ? file === 'ps'
+            : cacheProbe
+              ? file === 'du' && (!emptying || args.includes(join(item.cache, 'entry')))
+              : kind === 'simulator inventory'
+                ? file === 'xcrun' && args.includes('devices')
+                : /emulator(?:\.exe)?$/.test(file) && args.includes('-list-avds');
     if (!wanted) {
       if (emptying && file === 'du') return Promise.resolve('1');
       if (worktreeProbe && file === 'git' && args.includes('worktree'))
         return Promise.resolve(`worktree ${item.root}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n`);
-      if (usageProbe || gradleProbe || worktreeProbe || tempProbe)
-        return Promise.resolve(file === 'du' ? `1\t${args.at(-1)}\n` : '');
+      if (gradleProbe || worktreeProbe || tempProbe) return Promise.resolve(file === 'du' ? `1\t${args.at(-1)}\n` : '');
       throw new Error(`Unexpected native probe: ${file} ${args.join(' ')}`);
     }
     return original(
@@ -646,32 +496,31 @@ test.each(
   const scope = tempProbe ? vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false) : undefined;
   let settled: (() => unknown) | undefined;
   try {
-    const result = trackRead((signal) =>
-      cli
-        ? withAmbientContext(context, async () => {
-            await runCli(gcOp, ['--cache', 'fixture', '--delete', '--json'], { version: '9.9.9' });
-          })
-        : createStim({
-            projectRoot: item.root,
-            home: item.home,
-            env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
-          })
-            .collectGarbage({
-              cache: gradleProbe
-                ? 'gradle-versions'
-                : cacheProbe
-                  ? 'fixture'
-                  : kind === 'workspace exclusions'
-                    ? 'workspaces'
-                    : workspaceProbe || usageProbe || worktreeProbe || tempProbe
-                      ? undefined
-                      : 'parked',
-              delete: true,
-              worktrees: kind === 'worktree size' ? true : undefined,
-              signal: AbortSignal.any([signal, controller.signal]),
-            })
-            .then(() => undefined),
-    );
+    const client = createStim({
+      projectRoot: item.root,
+      home: item.home,
+      env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
+    });
+    const result = trackRead((signal) => {
+      const cancel = AbortSignal.any([signal, controller.signal]);
+      if (cli)
+        return withAmbientContext(context, async () => {
+          await runCli(gcOp, ['--pressure', emptying ? 'critical' : 'normal', '--json'], { version: '9.9.9' });
+        });
+      if (emptying)
+        return client
+          .deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal: cancel })
+          .then(() => undefined);
+      return client
+        .collectGarbage({
+          pressure:
+            gradleProbe || kind === 'simulator inventory' || kind === 'emulator inventory' || tempProbe
+              ? 'high'
+              : 'normal',
+          signal: cancel,
+        })
+        .then(() => undefined);
+    });
     const failure = await (cli
       ? result.then(() => JSON.parse(stdout[0] ?? ''))
       : result.then(
@@ -734,14 +583,13 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     chmodSync(item.cache, 0o500);
     try {
       const result = await trackRead((signal) =>
-        createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({
-          cache: 'fixture',
-          delete: true,
+        createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+          item: { kind: 'cache', dir: item.cache },
           signal,
         }),
       );
       expect(result.exitCode).toBe(1);
-      expect(result.report.results).toMatchObject([{ kind: 'cache', status: 'failed', id: item.cache }]);
+      expect(result.results).toMatchObject([{ kind: 'cache', status: 'failed', id: item.cache }]);
       expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('failed-delete');
       expect(process.exitCode).toBe(exit);
     } finally {
@@ -759,16 +607,16 @@ test('GC mutations in one home refuse concurrent maintenance and name the held c
       ...options,
       onProgress: () => {
         competing ??= createStim(options)
-          .collectGarbage({ cache: 'fixture', delete: true, signal })
+          .deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal })
           .catch((error: unknown) => error);
       },
-    }).collectGarbage({ cache: 'fixture', delete: true, signal }),
+    }).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
   );
   expect(result.exitCode).toBe(0);
   if (!competing) throw new Error('The competing maintenance request was not started');
   expect(await competing).toMatchObject({ code: 'STIM_CLAIM_REFUSED', remedy: expect.stringContaining(item.home) });
   const next = await trackRead((signal) =>
-    createStim(options).collectGarbage({ cache: 'fixture', delete: true, signal }),
+    createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
   );
   expect(next.exitCode).toBe(0);
 });
@@ -802,11 +650,11 @@ test.each(['before mutation', 'between caches'] as const)(
     });
     await expect(
       trackRead((signal) =>
-        client.collectGarbage({ cache: 'fixture', delete: true, signal: AbortSignal.any([signal, controller.signal]) }),
+        client.collectGarbage({ pressure: 'critical', signal: AbortSignal.any([signal, controller.signal]) }),
       ),
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
     expect(artifacts.filter(existsSync)).toHaveLength(when === 'before mutation' ? 2 : 1);
-    const next = await trackRead((signal) => client.collectGarbage({ cache: 'fixture', delete: true, signal }));
+    const next = await trackRead((signal) => client.collectGarbage({ pressure: 'critical', signal }));
     expect(next.exitCode).toBe(0);
     expect(artifacts.some(existsSync)).toBe(false);
   },
@@ -821,10 +669,11 @@ test.each([undefined, 'importer-home'])(
     vi.stubEnv('STIM_HOME', importer ? join(scratch, importer) : undefined);
     const report = await trackRead((signal) =>
       createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, GRADLE_USER_HOME: gradle } }).gc({
+        pressure: 'normal',
         signal,
       }),
     );
-    expect(report.sections.machineCaches?.gradle.unusedVersions).toMatchObject([{ version: '9.3.1', remedy: null }]);
+    expect(report.sections?.machineCaches?.gradle.unusedVersions).toMatchObject([{ version: '9.3.1', remedy: null }]);
   },
 );
 
@@ -846,27 +695,33 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
   });
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    await withAmbientContext(ctx, () => runGc({ cache: 'fixture', json: true }, { operation: ctx }));
+    await withAmbientContext(ctx, () => runGc({ dryRun: true, pressure: 'normal', json: true }, { operation: ctx }));
   } finally {
     log.mockRestore();
     error.mockRestore();
   }
-  const request = { cache: 'fixture', delete: true };
+  const request = { pressure: 'normal' as const, dryRun: false, delete: true };
   const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc(request);
   expect(result).toEqual(JSON.parse(json));
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
 });
 
-test.each([{ cache: 'fixture', worktrees: true }, { cache: 'archived:missing-id' }])(
-  'a GC refusal for %j leaves the importing process and console unchanged',
-  async (request) => {
+test.each(['gc', 'collectGarbage', 'deleteGarbageItem'] as const)(
+  'a %s refusal leaves the importing process and console unchanged',
+  async (method) => {
     const item = fixture('refusal');
     const exit = process.exitCode;
     const log = vi.spyOn(console, 'log');
     const error = vi.spyOn(console, 'error');
+    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+    const pressure = 'extreme' as unknown as 'normal';
     try {
       await expect(
-        createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc(request),
+        method === 'gc'
+          ? client.gc({ pressure })
+          : method === 'collectGarbage'
+            ? client.collectGarbage({ pressure })
+            : client.deleteGarbageItem({ item: { kind: 'archive', id: 'missing-id' } }),
       ).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
       expect(process.exitCode).toBe(exit);
       expect(log).not.toHaveBeenCalled();
@@ -891,12 +746,15 @@ test('GC resolves cache environment paths relative to each client project', asyn
         projectRoot: item.root,
         home: item.home,
         env: { ...item.env, GRADLE_USER_HOME: 'gradle-home' },
-      }).gc({ cache: 'Gradle build cache' });
+      }).gc({ pressure: 'normal' });
       return { report, directory };
     }),
   );
-  for (const { report, directory } of reports)
-    expect(report.sections.caches.map((entry) => entry.dir)).toEqual([directory]);
+  for (const [index, { report, directory }] of reports.entries()) {
+    const dirs = report.sections?.caches.map((entry) => entry.dir);
+    expect(dirs).toContain(directory);
+    expect(dirs).not.toContain(reports[1 - index]?.directory);
+  }
 });
 
 test('Gradle cache age inspection lets the event loop run while reading directory metadata', async () => {
@@ -1093,7 +951,7 @@ test('throwing from report progress cancels the read and preserves the original 
       onProgress: () => {
         throw failure;
       },
-    }).gc({ cache: 'fixture' }),
+    }).gc({ pressure: 'normal' }),
   ).rejects.toBe(failure);
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('callback');
 });

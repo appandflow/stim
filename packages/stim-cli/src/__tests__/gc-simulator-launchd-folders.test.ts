@@ -5,7 +5,7 @@ import { afterEach, expect, test } from 'vitest';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { listIosLaunchdOverridesFolders, type IosSimRecord } from '../devices/ios.ts';
 import { findSimulatorLaunchdLeftovers, sizeSimulatorLaunchdFolders } from '../commands/gc/devices.ts';
-import { formatGcReport, gcReportSections } from '../commands/gc/report.ts';
+import { gcReportSections } from '../commands/gc/report.ts';
 
 const GONE = 'A48B2B1E-3768-48D8-9816-86B2AC7F2188';
 const LISTED = '9981F3FA-0F95-4720-B4D4-FBC8E90C10A8';
@@ -77,27 +77,17 @@ test('sizes come from one du call, and a folder du did not report has no size', 
   ]);
 });
 
-test('the gc report lists leftover launchd folders as not deleted, with sizes and a manual command', () => {
+test('the gc report section lists leftover launchd folders with sizes and a manual command', () => {
   const gone = {
     udid: GONE,
     path: `/private/var/tmp/com.apple.CoreSimulator.SimDevice.${GONE}`,
     bytes: 2 * 1024 * 1024,
   };
   const listed = { udid: LISTED, path: `/private/var/tmp/com.apple.CoreSimulator.SimDevice.${LISTED}`, bytes: null };
-  const simulatorLaunchdFolders = [gone, listed];
-  const text = formatGcReport({ simulatorLaunchdFolders }).join('\n');
-  expect(text).toMatch(/Simulator launchd folders with no simulator \(2\) - NOT deleted/);
-  expect(formatGcReport({ simulatorLaunchdFolders: [gone, { ...listed, bytes: 1024 * 1024 }] }).join('\n')).toMatch(
-    /Simulator launchd folders with no simulator \(2, 3M\)/,
-  );
-  expect(text).toMatch(/NOT deleted/);
-  expect(text).toContain(`  ${GONE} - `);
-  expect(text).toContain(`  ${LISTED}\n`);
-  expect(gcReportSections({ simulatorLaunchdFolders }).simulatorLaunchdFolders).toEqual([
+  expect(gcReportSections({ simulatorLaunchdFolders: [gone, listed] }).simulatorLaunchdFolders).toEqual([
     { ...gone, command: `rm -rf "${gone.path}"` },
     { ...listed, command: `rm -rf "${listed.path}"` },
   ]);
-  expect(formatGcReport({}).join('\n')).not.toMatch(/launchd folders/);
 });
 
 test('when du exits non-zero because a folder vanished, the sizes it did print are kept', async () => {

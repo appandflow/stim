@@ -369,7 +369,8 @@ test.each(['inventory', 'get', 'stop'] as const)(
       );
     setExecutor({
       ...executor,
-      runFileAsync: (_file, args, options) => {
+      runFileAsync: (file, args, options) => {
+        if (!args[0]?.startsWith('simulator:')) return original(file, args, options);
         if (phase === 'stop' && args[0] === 'simulator:get')
           return Promise.resolve(JSON.stringify({ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS' }));
         return original(
@@ -404,7 +405,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
     try {
       const pending = withAmbientContext(operation, () =>
         phase === 'inventory'
-          ? runGc({ delete: true, json: true }, { ...dependencies(root), operation })
+          ? runGc({ pressure: 'normal', json: true }, { ...dependencies(root), operation })
           : deleteEasSessions(
               {
                 projectScope: root,
@@ -424,7 +425,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
       expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
       const maintenanceRefusal =
         phase === 'inventory'
-          ? await withGcMaintenanceClaim({ delete: true }, async () => {}).then(
+          ? await withGcMaintenanceClaim({}, async () => {}).then(
               () => null,
               (cause) => cause,
             )
