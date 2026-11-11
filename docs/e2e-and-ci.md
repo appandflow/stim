@@ -126,8 +126,8 @@ use different device names and do not recover a previous run's AVD by name.
 
 Generated iOS fixtures use the committed
 [`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
-background services while running several simulators. Install the prerequisite
-with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
+background services while running several simulators; Stim applies it itself,
+with nothing to install. The profile
 keeps only SimSlim's ads, diagnostics and telemetry category enabled. SpringBoard,
 app installation and launch, and networking belong to no SimSlim category, so
 SimSlim never disables them. It disables every other category: widgets, Siri, search, account

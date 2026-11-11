@@ -201,32 +201,34 @@ work to finish. Before removing an unresolved claim, verify that neither Stim
 nor its native child is still using the AVD, and remove only the named claim.
 Keep the AVD data and follow `stim guide errors STIM_CLAIM_REFUSED`.
 
-## Memory pressure and SimSlim
+## Slim simulators and memory pressure
 
-SimSlim is recommended as an optional way to reduce background services and
-memory use when running several iOS workspaces. Review the profile against
-your app's needs: disabled services can affect tests. Current SimSlim 0.8
-requires iOS 18.5 or newer. Run `stim guide lifecycle simslim` for installation
-and profile setup; `doctor` recommends it without applying it automatically.
+Stim slims every iOS simulator it owns by default: it disables background
+system services (push, StoreKit, universal links, Spotlight, Siri, iCloud,
+Contacts, Calendar, Reminders, the Photos library, HealthKit, HomeKit, widgets,
+Wallet and others) through launchd overrides, which cuts the memory of each
+simulator several times over. Nothing is installed; Stim does this itself.
+Run `stim guide lifecycle simslim` for the full list of what each category
+turns off.
 
-To slim every Stim-owned simulator on a Mac without a profile per app, run
-`stim settings set ios.simslim on --scope machine`. A project profile still wins,
-and `ios.simslim` set to `off` in a project opts that app out. A shut-down
-simulator (new, stopped, or parked and adopted) is slimmed as part of its boot:
-SimSlim writes its settings while the simulator is shut down and boots it once,
-already slim, alongside the app build. An already slim simulator is left alone,
-and a rerun on the same boot with an unchanged profile skips SimSlim entirely. A
-manual `simslim off` on a running simulator is not noticed until it reboots or
-the profile changes. A running simulator is slimmed on the next `stim ios`,
-without a boot first, which reboots it, and Stim mutes it again after that
-reboot.
+An app that needs one of those features keeps it with `ios.simslimProfile`, a
+JSON file under the app with an `except` list of categories and a `keep` list of
+individual services that stay enabled. `ios.simslim` set to `off` in a project
+opts that app out and restores stock services.
+
+Stim writes the overrides while the simulator is shut down, then boots it
+once, already slim. A new, stopped, or parked and adopted simulator is slimmed
+as part of its boot. A running simulator whose overrides differ (a changed
+profile, or `ios.simslim off`) is shut down, rewritten and booted once on the
+next `stim ios`; one that already matches is left alone. After the boot Stim
+reads the overrides back. Overrides persist only on iOS 18.5 and newer, so on
+an older runtime, or when the simulator does not honour them, Stim prints one
+line and runs stock services.
 Hosted simulators on a named Mac are muted like local ones but never slimmed.
-If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
-it.
 
 Each boot of an owned iOS simulator writes `ios_boot` records to the workspace's
 device log: boot requested (adopted, created, existing or restart), bootstatus
-done, SpringBoard started with its pid, viewer opened and SimSlim reboots. When
+done, SpringBoard started with its pid, and viewer opened. When
 SpringBoard is missing after boot, Stim also copies the simulator's recent
 `SpringBoard-*.ips` crash reports from `~/Library/Logs/DiagnosticReports` into
 the workspace logs directory before it restarts the simulator once, because macOS
@@ -238,8 +240,8 @@ stalled. Stim checks a bounded process spawn before installation and bounds
 local launch calls. When macOS reports elevated memory pressure, diagnostics
 recommend freeing memory before retrying. A timeout or existing swap usage
 alone does not establish OOM. Stop only workspaces you own and have finished
-using; ask before closing other agents' simulators or heavy apps. SimSlim can
-reduce future resource use but is not a guaranteed fix for a stalled host.
+using; ask before closing other agents' simulators or heavy apps. Slim simulators
+reduce resource use but are not a guaranteed fix for a stalled host.
 
 During a slow local iOS boot, Stim reports the simulator name, elapsed time, last boot
 output, current memory pressure, and highest observed pressure roughly every

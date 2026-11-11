@@ -216,25 +216,24 @@ hosted run the host's machine value decides:
 stim settings set android.installImages never --scope machine
 ```
 
-### SimSlim for every owned simulator
+### Slim owned simulators
 
-`ios.simslim` takes `on` or `off`, default `off`, and can be set at any layer.
-Set it on the machine layer to slim every Stim-owned iOS simulator on that Mac
-with SimSlim's default service categories, without adding a profile to each
-app:
+`ios.simslim` takes `on` or `off`, default `on`, and can be set at any layer.
+With it on, every Stim-owned iOS simulator runs with its default background
+service categories disabled, without a profile per app. Turn it off for every
+app on a Mac with:
 
 ```sh
-stim settings set ios.simslim on --scope machine
+stim settings set ios.simslim off --scope machine
 ```
 
 A project `ios.simslimProfile` still applies in place of the defaults, whatever
 `ios.simslim` says. A workspace, repo, or committed `ios.simslim` of `off` opts
-that app out and restores stock services on its simulator. SimSlim's defaults
+that app out and restores stock services on its simulator. The defaults
 disable push, StoreKit, iCloud, Safari sync, Mail, Calendar and Contacts
 services among others, so move an app that needs them to a profile that keeps
-those categories or to `off`. Install SimSlim once per Mac with
-`brew install mobai-app/tap/simslim`; without it `doctor` reports the gap and
-`stim ios` boots normally with a one-line note.
+those categories or to `off`. Nothing is installed; slimming needs iOS 18.5 or
+newer and otherwise runs stock with a one-line note.
 
 ### Android AVD overrides
 
