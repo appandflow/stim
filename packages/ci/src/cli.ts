@@ -127,7 +127,7 @@ function parse(argv: string[]): Invocation {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  if (argv.length === 1 && argv[0] === '--version') {
+  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-V')) {
     process.stdout.write(`${STIM_CI_VERSION}\n`);
     return;
   }

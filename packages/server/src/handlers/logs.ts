@@ -1,7 +1,7 @@
 import { send, readFailure, type ConnectionContext } from './context.ts';
 import type { RequestId } from '../protocol.ts';
 import { parseLogFilter, LogBatcher, archivedLogs } from '../logs.ts';
-import { createStim } from 'stim';
+import { createStim } from 'stim/api-self';
 
 export function subscribeLogs(
   ctx: ConnectionContext,

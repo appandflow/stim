@@ -15,6 +15,7 @@ export default defineConfig({
     cli: 'bin/node-check.ts',
     status: 'src/cli/status-entry.ts',
     api: 'src/api.ts',
+    'api-self': 'src/api-self.ts',
     plugin: 'src/plugin.ts',
     ci: '../ci/src/index.ts',
     'ci/artifacts': '../ci/src/artifacts.ts',
