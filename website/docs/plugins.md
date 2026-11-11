@@ -85,15 +85,30 @@ A plugin Stim cannot load has `"accepted": false` and a `reason`.
 
 Runs the contract kit of each `transport` and `agent-driver` kind the plugin
 declares. Name a plugin directory or module path, a package installed in the
-current directory, or `builtin:local` or `builtin:agent-device`. The module
-loads in a worker thread, as Stim runs it, never in the CLI process.
+current directory, or `builtin:local` or `builtin:agent-device`.
 
-- A transport gets an empty environment and options. The kit calls its
-  `bindAddresses`, `watch`, `identify`, `resolve` and `close`; it never calls
-  `expose` or `unexpose`, which change what the machine exposes.
-- An agent driver gets a temporary `HOME`, state directory and claim root with
-  no driving tool on `PATH`, so `start` must refuse with
-  `agent-driver-unavailable`. Stim deletes the directory afterwards.
+:::warning[Test only a plugin you trust]
+
+`stim plugin test` runs the plugin's code as your user, with access to your
+files, the network and other processes. It is not a sandbox: only test a plugin
+you would run anyway.
+
+:::
+
+What the command does isolate:
+
+- The module loads in a worker thread, never in the CLI process, as Stim runs it.
+- Its environment holds only `HOME`, `PATH`, `STIM_HOME` and
+  `STIM_AGENT_DEVICE_BIN`, all pointing into a temporary directory that holds no
+  tools; none of your own environment variables reach it. Stim deletes the
+  directory afterwards, also when you interrupt the command.
+- Its own output goes to stderr, so `--json` stdout holds only the payload.
+- A transport gets empty options. The kit calls its `bindAddresses`, `watch`,
+  `identify`, `resolve` and `close`; it never calls `expose` or `unexpose`,
+  which change what the machine exposes.
+- An agent driver gets a state directory and claim root in the temporary
+  directory, with no driving tool on `PATH`, so `start` must refuse with
+  `agent-driver-unavailable`.
 
 `builtin:tailscale` is not tested, because it reads and watches this Mac's
 Tailscale. A cache provider is not tested either, because it runs in the

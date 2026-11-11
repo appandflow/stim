@@ -321,11 +321,15 @@ cache.provider warns on stderr and still writes the value.
 
 plugin test takes a plugin directory or module path, a package installed in
 the current directory, or builtin:local or builtin:agent-device, and runs the kit of
-each transport or agent-driver kind the manifest declares. The module loads in
-a worker thread, as Stim runs it, never in the CLI process. A transport gets an
-empty env and options; expose and unexpose are not called. An agent driver gets
-a temporary HOME, stateDir and claimRoot with no driving tool on PATH, so start
-must refuse with agent-driver-unavailable; the directory is deleted afterwards.
+each transport or agent-driver kind the manifest declares. It runs the
+plugin's code as your user, with access to files, the network and other
+processes; it is not a sandbox, so test only a plugin you trust. What it
+isolates: the module loads in a worker thread, never in the CLI process; its
+environment holds only HOME, PATH, STIM_HOME and STIM_AGENT_DEVICE_BIN, all in
+a temporary directory with no tools, deleted afterwards and on interrupt; its
+output goes to stderr. A transport gets empty options; expose and unexpose are
+not called. An agent driver gets a stateDir and claimRoot in that directory,
+so start must refuse with agent-driver-unavailable.
 builtin:tailscale is not tested, because it reads and watches this Mac's
 Tailscale, and a cache provider is not tested, because it runs in the calling
 process: run runCacheProviderContract from 'stim/plugin' in its own tests. Both
