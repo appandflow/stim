@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { isJsonObject, readDevServerStop } from '@stim-cli/core/state';
+import { isJsonObject, readDevServerStop, type DevServerStopRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
 import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
@@ -83,6 +83,32 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
     ...(typeof value.payloadUrl === 'string' ? { payloadUrl: value.payloadUrl } : {}),
     ...(value.physical === true ? { physical: true } : {}),
   };
+}
+
+/**
+ * Whether a successor stimd restarts a handed-over stream record found under `slotKey` of the workspace at canonical
+ * `root`, or why it drops it. A record without a parseable `handedOverAt` counts as handed over at time 0, so any
+ * recorded `stim stop` or idle stop drops it.
+ */
+export function resumeDecision(
+  record: Record<string, unknown>,
+  root: string,
+  slotKey: string,
+  devServerStop: DevServerStopRecord | null,
+): { spec: StreamSpec } | { reason: string } {
+  const spec = parseStreamSpec(record.spec);
+  if (!spec) return { reason: 'its record holds no stream spec' };
+  const handedOverAt = typeof record.handedOverAt === 'string' ? Date.parse(record.handedOverAt) : Number.NaN;
+  if (
+    (devServerStop?.reason === 'requested' || devServerStop?.reason === 'idle') &&
+    Date.parse(devServerStop.at) >= (Number.isNaN(handedOverAt) ? 0 : handedOverAt)
+  )
+    return { reason: 'the workspace stopped after the handover' };
+  if (spec.physical) return { reason: 'a physical device console is not resumed' };
+  if (spec.root !== root) return { reason: `its spec names another workspace, ${spec.root}` };
+  if (deviceSlotKey(spec.platform, spec.slot ?? 'default') !== slotKey)
+    return { reason: 'its spec names another slot' };
+  return { spec };
 }
 
 export interface StreamTable {
@@ -955,22 +981,17 @@ export function createStreams(
     const devServerStop = readDevServerStop(state);
     for (const [slotKey, record] of Object.entries(state?.collectors ?? {})) {
       if (!handedOverStream(record)) continue;
-      const spec = parseStreamSpec(record.spec);
-      let reason: string | null = null;
-      if (!spec) reason = 'its record holds no stream spec';
-      else if (
-        (devServerStop?.reason === 'requested' || devServerStop?.reason === 'idle') &&
-        Date.parse(devServerStop.at) >= Date.parse(String(record.handedOverAt))
-      )
-        reason = 'the workspace stopped after the handover';
-      else if (spec.physical) reason = 'a physical device console is not resumed';
-      else if (spec.root !== root) reason = `its spec names another workspace, ${spec.root}`;
-      else if (deviceSlotKey(spec.platform, spec.slot ?? 'default') !== slotKey) reason = 'its spec names another slot';
-      if (!spec || reason) {
-        ownedLog('info', 'device_log_stream_dropped', `device log stream ${record.streamId} in ${root}: ${reason}`);
+      const decision = resumeDecision(record, root, slotKey, devServerStop);
+      if ('reason' in decision) {
+        ownedLog(
+          'info',
+          'device_log_stream_dropped',
+          `device log stream ${record.streamId} in ${root}: ${decision.reason}`,
+        );
         unregisterStream(root, slotKey, record.streamId);
         continue;
       }
+      const { spec } = decision;
       const group = groups.get(record.streamId) ?? {
         specs: [],
         ...(typeof record.runId === 'string' ? { runId: record.runId } : {}),
