@@ -1,5 +1,11 @@
 import nodeModule, { register } from 'node:module';
 import { parentPort, workerData } from 'node:worker_threads';
+import { BUILTIN_PREFIX } from './plugin-builtins.ts';
+
+const BUILTIN_MODULES: Readonly<Record<string, () => Promise<unknown>>> = {
+  local: () => import('@stim-cli/transport-local'),
+  'agent-device': () => import('@stim-cli/agent-driver-agent-device'),
+};
 
 const stimImport = (specifier: string) =>
   `a plugin imports '${specifier}' at runtime; import types from 'stim/plugin' only`;
@@ -19,7 +25,7 @@ export type KitRequest =
   | { type: 'host-error'; seq: number; message: string; code?: string };
 
 export type KitReply =
-  | { type: 'ready'; id: string; members: string[]; moduleMembers: string[] }
+  | { type: 'ready'; id: string; moduleId: string | null; members: string[]; moduleMembers: string[] }
   | { type: 'failed'; message: string }
   | { type: 'result'; seq: number; value: unknown }
   | { type: 'error'; seq: number; message: string; code?: string }
@@ -126,7 +132,10 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
         },
       });
     else register(`data:text/javascript,${encodeURIComponent(NO_STIM_IMPORT)}`);
-    const namespace: unknown = await import(href);
+    const name = href.startsWith(BUILTIN_PREFIX) ? href.slice(BUILTIN_PREFIX.length) : null;
+    const builtin = name !== null && Object.hasOwn(BUILTIN_MODULES, name) ? BUILTIN_MODULES[name] : undefined;
+    if (name !== null && !builtin) return post({ type: 'failed', message: `no ${href} runs in the kit` });
+    const namespace: unknown = builtin ? await builtin() : await import(href);
     const found =
       isRecord(namespace) && !(factory in namespace) && 'default' in namespace ? namespace.default : namespace;
     if (!isRecord(found) || typeof found[factory] !== 'function')
@@ -150,6 +159,7 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
   post({
     type: 'ready',
     id: instance[idMember] as string,
+    moduleId: typeof module.id === 'string' ? module.id : null,
     members: capabilities.filter((name) => typeof instance[name] === 'function'),
     moduleMembers: moduleCapabilities.filter((name) => typeof lookup(module, name).value === 'function'),
   });

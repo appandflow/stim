@@ -1,15 +1,11 @@
 import { runCacheProviderContract, type CacheContractModuleOptions, type CacheContractResult } from '@stim-cli/cache';
-import { kindError, projectPlugin } from '@stim-cli/core/plugin-loader';
 import { TRANSPORT_API_VERSION } from '@stim-cli/transport';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import {
   runAgentDriverContract,
   type AgentDriverContractOptions,
   type AgentDriverContractResult,
 } from './agent-driver-kit.ts';
-import { startKitWorker, type KitWorker } from './kit-host.ts';
+import { kitModuleHref, startKitWorker, type KitWorker } from './kit-host.ts';
 
 export interface TransportContractResult {
   name: string;
@@ -18,7 +14,7 @@ export interface TransportContractResult {
 }
 
 export interface TransportContractOptions {
-  /** The module as a project names it: a package name or a path, resolved from `baseDir`. */
+  /** The module as a project names it: a package name or a path, resolved from `baseDir`, or `builtin:<name>`. */
   reference: string;
   baseDir: string;
   /** Passed to `createTransport` as `options`. */
@@ -148,16 +144,10 @@ export async function runTransportContract(options: TransportContractOptions): P
   const timeoutMs = options.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
   let worker: KitWorker | { unavailable: string };
   try {
-    const mismatch = await kindError(
-      projectPlugin(options.reference, options.baseDir),
-      options.reference,
-      'transport',
-      TRANSPORT_API_VERSION,
-    );
-    if (mismatch) return [{ name: 'the module loads', passed: false, error: mismatch }];
-    const path = createRequire(join(options.baseDir, 'package.json')).resolve(options.reference);
+    const module = await kitModuleHref(options.reference, options.baseDir, 'transport', TRANSPORT_API_VERSION);
+    if ('unavailable' in module) return [{ name: 'the module loads', passed: false, error: module.unavailable }];
     worker = await startKitWorker({
-      href: pathToFileURL(path).href,
+      href: module.href,
       factory: 'createTransport',
       input: { env: { ...options.env }, options: options.options ?? {} },
       capabilities: ['bindAddresses', 'watch', 'identify', 'expose', 'unexpose', 'resolve', 'close'],

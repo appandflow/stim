@@ -3,7 +3,6 @@ import { expect, test } from 'vitest';
 import { runContract } from '../transport-kit.ts';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../../../../test/fixtures/plugins/${name}`, import.meta.url));
-const local = fileURLToPath(new URL('../../../transport-local', import.meta.url));
 
 const run = (
   baseDir: string,
@@ -71,6 +70,12 @@ test('a module that imports stim at runtime does not load', async () => {
   ]);
 });
 
-test('the local transport passes through the kit', async () => {
-  expect(failed(await run(local, { addresses: [] }, './index.ts'))).toEqual({});
+test('the bundled local transport passes through the kit', async () => {
+  expect(failed(await run(fixture('transport-fixture'), { addresses: [] }, 'builtin:local'))).toEqual({});
+});
+
+test('a bundled transport the kit does not run fails to load with the reason', async () => {
+  expect(await run(fixture('transport-fixture'), {}, 'builtin:tailscale')).toEqual([
+    { name: 'the module loads', passed: false, error: expect.stringContaining("watches this Mac's Tailscale") },
+  ]);
 });

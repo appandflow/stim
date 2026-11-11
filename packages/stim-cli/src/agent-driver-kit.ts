@@ -9,11 +9,8 @@ import {
   type HostedAgentApp,
   type HostedAgentIssuedGrant,
 } from '@stim-cli/agent-driver';
-import { kindError, projectPlugin } from '@stim-cli/core/plugin-loader';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { startKitWorker, type KitWorker } from './kit-host.ts';
+import { randomBytes } from 'node:crypto';
+import { kitModuleHref, startKitWorker, type KitWorker } from './kit-host.ts';
 
 export interface AgentDriverContractResult {
   name: string;
@@ -22,16 +19,16 @@ export interface AgentDriverContractResult {
 }
 
 export interface AgentDriverContractOptions {
-  /** The module as a project names it: a package name or a path, resolved from `baseDir`. */
+  /** The module as a project names it: a package name or a path, resolved from `baseDir`, or `builtin:<name>`. */
   reference: string;
   baseDir: string;
-  /** The module's `id`. */
-  id: string;
+  /** The module's `id`; without it, the kit checks the driver against the module's own `id` export. */
+  id?: string;
   /** Factory input for a host whose driving tool is not installed; the kit supplies `host`. */
   unavailableInput: Omit<AgentDriverInput, 'host'>;
   /** An app the driver would scope a grant to. */
   app: HostedAgentApp;
-  /** A grant this driver issues, for the client checks. Required when the module has a client capability. */
+  /** A grant this driver issues, for the client checks; without it, the kit makes one for `app`. */
   clientGrant?: HostedAgentIssuedGrant;
   checkTimeoutMs?: number;
 }
@@ -75,11 +72,30 @@ function isAccess(value: unknown): value is { config: string; command: string } 
   return isRecord(value) && typeof value.config === 'string' && typeof value.command === 'string';
 }
 
+function issuedGrant(id: string, app: HostedAgentApp): HostedAgentIssuedGrant {
+  return {
+    driver: id,
+    path: agentRoute(app.session),
+    token: newAgentToken(),
+    scope: randomBytes(16).toString('hex'),
+    lease: {
+      tenant: `stim.${app.session}`,
+      runId: app.session,
+      clientId: 'agent',
+      deviceKey: `${app.bundleId}@${app.pid ?? app.udid ?? app.serial ?? app.avdName}`,
+    },
+  };
+}
+
 function checks(worker: KitWorker, options: AgentDriverContractOptions): { name: string; run(): Promise<void> }[] {
+  const id = options.id ?? worker.moduleId ?? '';
   const list: { name: string; run(): Promise<void> }[] = [
     {
       name: 'the driver carries the module id',
-      run: async () => assert(worker.id === options.id, `the driver is named ${JSON.stringify(worker.id)}`),
+      run: async () => {
+        assert(id !== '', 'the module exports no string id');
+        assert(worker.id === id, `the driver is named ${JSON.stringify(worker.id)}, not ${JSON.stringify(id)}`);
+      },
     },
     {
       name: 'stop before start resolves',
@@ -123,18 +139,17 @@ function checks(worker: KitWorker, options: AgentDriverContractOptions): { name:
     },
   ];
   if (worker.moduleMembers.includes('client.access')) {
-    const grant = options.clientGrant;
+    const grant = options.clientGrant ?? issuedGrant(id, options.app);
     const input = (granted: HostedAgentIssuedGrant) => ({
       grant: granted,
       baseUrl: `https://host.example.ts.net${granted.path}`,
-      file: `/tmp/stim-contract/${agentClientConfigFile(options.id)}`,
+      file: `/tmp/stim-contract/${agentClientConfigFile(id)}`,
       platform: options.app.udid !== undefined ? 'ios' : options.app.serial !== undefined ? 'android' : 'macos',
     });
     list.push(
       {
         name: 'client access names its file and keeps the token out of the command',
         run: async () => {
-          assert(grant, 'clientGrant is required for a module with a client capability');
           const access = await worker.callModule('client.access', input(grant));
           assert(isAccess(access), 'the client refused its own grant');
           assert(access.command.includes(input(grant).file), 'the command does not name the config file');
@@ -144,8 +159,7 @@ function checks(worker: KitWorker, options: AgentDriverContractOptions): { name:
       {
         name: 'client access refuses a grant for another driver',
         run: async () => {
-          assert(grant, 'clientGrant is required for a module with a client capability');
-          const other = { ...grant, driver: `${options.id}-other`, path: agentRoute(UNKNOWN_SESSION) };
+          const other = { ...grant, driver: `${id}-other`, path: agentRoute(UNKNOWN_SESSION) };
           const access = await worker.callModule('client.access', input({ ...other, token: newAgentToken() }));
           assert(access === null, 'accepted');
         },
@@ -167,17 +181,11 @@ export async function runAgentDriverContract(
   const timeoutMs = options.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
   let worker: KitWorker | { unavailable: string };
   try {
-    const mismatch = await kindError(
-      projectPlugin(options.reference, options.baseDir),
-      options.reference,
-      'agent-driver',
-      AGENT_DRIVER_API_VERSION,
-    );
-    if (mismatch) return [{ name: 'the module loads', passed: false, error: mismatch }];
-    const path = createRequire(join(options.baseDir, 'package.json')).resolve(options.reference);
+    const module = await kitModuleHref(options.reference, options.baseDir, 'agent-driver', AGENT_DRIVER_API_VERSION);
+    if ('unavailable' in module) return [{ name: 'the module loads', passed: false, error: module.unavailable }];
     const { dispose, ...members } = createAgentDriverHost(options.unavailableInput);
     worker = await startKitWorker({
-      href: pathToFileURL(path).href,
+      href: module.href,
       factory: 'createAgentDriver',
       input: options.unavailableInput,
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],

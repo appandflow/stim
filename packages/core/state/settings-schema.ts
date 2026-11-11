@@ -1,4 +1,4 @@
-import { SETTINGS, type SettingDefinition, type SettingScope } from './settings-registry.ts';
+import { SETTINGS, shownSettingType, type SettingDefinition, type SettingScope } from './settings-registry.ts';
 
 export const SETTINGS_SCHEMA_FILE = 'settings.schema.json';
 
@@ -7,7 +7,7 @@ export const SETTINGS_SCHEMA_URL: string = `https://unpkg.com/stim/dist/${SETTIN
 type JsonSchema = Record<string, unknown>;
 
 function leafSchema(setting: SettingDefinition, scope: SettingScope): JsonSchema {
-  const { type } = setting;
+  const type = shownSettingType(setting.type);
   const schema: JsonSchema = { description: setting.description };
   switch (type.kind) {
     case 'string':

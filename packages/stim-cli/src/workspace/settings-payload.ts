@@ -8,6 +8,7 @@ import {
   SETTINGS,
   settingDefinition,
   settingValueError,
+  shownSettingType,
   type SettingDefinition,
   type SettingEntry,
   type SettingScope,
@@ -122,17 +123,18 @@ function masked(setting: SettingDefinition, value: unknown): unknown {
 }
 
 export function settingExample(setting: SettingDefinition): string {
-  switch (setting.type.kind) {
+  const type = shownSettingType(setting.type);
+  switch (type.kind) {
     case 'boolean':
       return 'false';
     case 'number':
-      return String(setting.default ?? setting.type.minimum ?? 1);
+      return String(setting.default ?? type.minimum ?? 1);
     case 'strings':
       return `'["node_modules"]'`;
     case 'object':
       return `'{"key": "value"}'`;
     case 'choice':
-      return setting.type.choices[0]!;
+      return type.choices[0]!;
     default:
       return '<value>';
   }

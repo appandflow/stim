@@ -19,7 +19,6 @@ import { startKitWorker, type KitWorker } from '../kit-host.ts';
 import { runContract } from '../transport-kit.ts';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../../../../test/fixtures/plugins/${name}`, import.meta.url));
-const agentDevice = fileURLToPath(new URL('../../../agent-driver-agent-device', import.meta.url));
 const session = '11111111-1111-4111-8111-111111111111';
 
 let root: string;
@@ -32,35 +31,39 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const run = (baseDir: string, id: string, reference = './index.mjs') =>
+const run = (baseDir: string, id?: string, reference = './index.mjs') =>
   runContract('agent-driver', {
     reference,
     baseDir,
-    id,
     unavailableInput: {
       env: { HOME: root, STIM_AGENT_DEVICE_BIN: join(root, 'missing', 'agent-device') },
-      stateDir: join(root, id),
-      claimRoot: join(root, `${id}.claims`),
+      stateDir: join(root, 'driver'),
+      claimRoot: join(root, 'driver.claims'),
     },
     app: { client: 'client', session, bundleId: 'dev.example.app.hosted1', pid: 4242 },
-    clientGrant: {
-      driver: id,
-      path: agentRoute(session),
-      token: newAgentToken(),
-      scope: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
-      lease: {
-        tenant: `stim.${session}`,
-        runId: session,
-        clientId: 'agent',
-        deviceKey: 'dev.example.app.hosted1@4242',
-      },
-    },
+    ...(id
+      ? {
+          id,
+          clientGrant: {
+            driver: id,
+            path: agentRoute(session),
+            token: newAgentToken(),
+            scope: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+            lease: {
+              tenant: `stim.${session}`,
+              runId: session,
+              clientId: 'agent',
+              deviceKey: 'dev.example.app.hosted1@4242',
+            },
+          },
+        }
+      : {}),
   });
 const failed = (results: Awaited<ReturnType<typeof run>>) =>
   Object.fromEntries(results.filter((result) => !result.passed).map(({ name, error }) => [name, error]));
 
 test('a driver whose members answer in cloneable data and refuse with the unavailable code passes', async () => {
-  const results = await run(fixture('driver-fixture'), 'driver-fixture');
+  const results = await run(fixture('driver-fixture'));
   expect(failed(results)).toEqual({});
   expect(results.map(({ name }) => name)).toContain(
     'start refuses with agent-driver-unavailable when the tool is missing, then stops',
@@ -69,7 +72,7 @@ test('a driver whose members answer in cloneable data and refuse with the unavai
 });
 
 test('a driver that imports stim at runtime does not load', async () => {
-  expect(await run(fixture('driver-fixture-imports-stim'), 'imports-stim')).toEqual([
+  expect(await run(fixture('driver-fixture-imports-stim'))).toEqual([
     {
       name: 'the module loads',
       passed: false,
@@ -78,8 +81,15 @@ test('a driver that imports stim at runtime does not load', async () => {
   ]);
 });
 
-test('the agent-device driver passes through the kit', async () => {
-  expect(failed(await run(agentDevice, 'agent-device', './index.ts'))).toEqual({});
+test('the bundled agent-device driver passes through the kit', async () => {
+  expect(failed(await run(root, 'agent-device', 'builtin:agent-device'))).toEqual({});
+});
+
+test('a driver checked against an id it does not carry fails that check', async () => {
+  expect(Object.keys(failed(await run(fixture('driver-fixture'), 'other-driver')))).toEqual([
+    'the driver carries the module id',
+    'client access names its file and keeps the token out of the command',
+  ]);
 });
 
 describe.skipIf(process.platform === 'win32')('host members through the kit worker', () => {

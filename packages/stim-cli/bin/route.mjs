@@ -51,10 +51,11 @@ export function route({ args, copy, current, staged, node, failed = null, now = 
   }
   // compat end
   if (typeof current.dir !== 'string' || !Array.isArray(current.node)) return unreadable;
-  if (copy.kind === 'development' || args[2] === 'serve')
+  const inPlace = args[2] === 'serve' || args[2] === 'plugin';
+  if (copy.kind === 'development' || inPlace)
     return {
       run: 'own',
-      note: args[2] === 'serve' ? null : `this development tree runs in place, not the engine (${current.version})`,
+      note: inPlace ? null : `this development tree runs in place, not the engine (${current.version})`,
     };
   if (args[2] === '--version' || args[2] === '-V')
     return {

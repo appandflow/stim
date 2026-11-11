@@ -100,6 +100,8 @@ function configuredValue(setting: SettingDefinition): unknown {
       return setting.type.absolute ? '/tmp/entry' : 'entry';
     case 'bundle-url':
       return `/index.bundle?platform=${setting.key.split('.').at(-1)}`;
+    case 'plugin-ref':
+      return setting.type.choices?.[1] ?? 'entry';
     case 'string':
       if (setting.key === 'ios.signingIdentitySha1') return 'A'.repeat(40);
       if (setting.key === 'android.module') return ':entry';

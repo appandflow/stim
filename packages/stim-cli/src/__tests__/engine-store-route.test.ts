@@ -86,6 +86,12 @@ describe('route', () => {
     );
   });
 
+  it('runs stim plugin in place, so a plugin is tested by the kit of the stim its author installed', () => {
+    expect(
+      route(input({ version: '1.51.0', kind: 'project' }, {}, { args: ['node', 'stim', 'plugin', 'test', '.'] })),
+    ).toEqual({ run: 'own', note: null });
+  });
+
   it('lets a pin beat a newer copy and names both remedies', () => {
     const decision = route(input({ version: '1.51.0' }, { pinned: true, pinReason: 'rolled back from 1.51.0' }));
     expect(decision.promote).toBeUndefined();

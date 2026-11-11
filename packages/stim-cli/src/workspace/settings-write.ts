@@ -203,6 +203,12 @@ export async function mutateSetting(
   }
   const context = await readSettingsContext(cwd, env, note, signal);
   const file = requireLayer(context, scope, setting);
+  const baseDir = scope === 'repo' ? (context.repoRoot ?? context.projectPath) : context.projectPath;
+  if (setting.type.kind === 'plugin-ref' && !setting.type.choices && typeof value === 'string' && baseDir) {
+    const { pluginRefProblem } = await import('../plugin-refs.ts');
+    const problem = await pluginRefProblem(value.trim(), baseDir, setting.type.plugin);
+    if (problem) note(`Warning: ${problem}. Commands that read ${key} go on without it until it does.`);
+  }
   beforeWrite?.(context.projectPath);
   const apply = async (): Promise<SettingWriteResult> => {
     const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
