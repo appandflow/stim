@@ -77,6 +77,10 @@ public struct ServerGcResult: Sendable {
         guard case .object? = fields["sections"] else {
           throw ServerError(code: "bad-response", message: "Invalid cleanup report from stim-server.")
         }
+      } else {
+        guard case .array? = fields["results"] else {
+          throw ServerError(code: "bad-response", message: "Invalid cleanup report from stim-server.")
+        }
       }
     }
     if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
