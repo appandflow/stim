@@ -1,0 +1,11 @@
+
+thread '<unnamed>' (95688746) panicked at p.rs:2:63:
+index out of bounds: the len is 0 but the index is 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'worker' (95688748) panicked at p.rs:4:72:
+first line
+second line
+
+thread 'main' (95688741) panicked at p.rs:7:7:
+called `Result::unwrap()` on an `Err` value: "boom"

@@ -265,6 +265,8 @@ Console redirection uses the app's writable cache, including when `STIM_HOME` is
 on an external volume; captured crash evidence is retained in the workspace logs.
 OS crash reports can take about a minute or longer to arrive: rerunning
 `stim logs --errors` collects them before you stop or release the simulator.
+An OS report of an abort carries the Rust panic messages, such as an Exact
+app's, that the app wrote to stderr.
 Reports are matched to the app, simulator, and launch time. Existing source locations
 and symbol names are retained, and app addresses are resolved with
 `atos` only when the local binary's UUID matches the report. Android reads the

@@ -545,7 +545,9 @@ WHAT WRITES WHAT
                        passes Expo's initial URL directly. Fatal output is available
                        before delayed OS reports, which can take about a minute
                        or longer to appear; rerun logs --errors for those
-                       before stopping or releasing the device. Collection requires
+                       before stopping or releasing the device. An OS report of an
+                       abort carries the Rust panic messages (an Exact app) the app
+                       wrote to stderr. Collection requires
                        this workspace's current launch and device ownership or lease;
                        afterward only already-captured reports remain available.
                        The app cache holds console files, so external STIM_HOME
