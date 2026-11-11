@@ -423,7 +423,9 @@ function createNetAndLogsClose(
 function resumeLogStreams(
   logs: ReturnType<typeof createStreams>,
   log: (level: Level, event: string, msg: string) => void,
+  attached: boolean,
 ): void {
+  if (attached) return;
   try {
     logs.resume(Object.keys(loadConfig()?.projects ?? {}), stimdEnv(process.env, process.platform));
   } catch (error) {
@@ -1481,7 +1483,7 @@ async function runStimdInner(
     log('error', 'metro_cleanup_unverified', error instanceof Error ? error.message : String(error));
   });
   adoptMetroChildren(log);
-  resumeLogStreams(logs, log);
+  resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   startup.signal.throwIfAborted();
