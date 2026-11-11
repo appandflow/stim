@@ -104,6 +104,12 @@ test('the client credentials and hop-by-hop headers never reach the driver', asy
   ])
     expect(seen).not.toHaveProperty(name);
   expect(JSON.stringify(seen)).not.toContain('client-secret');
+  await send(port, {
+    connection: 'content-length, content-type, transfer-encoding',
+    'content-length': '2',
+    'content-type': 'application/json',
+  });
+  expect(seen).toMatchObject({ 'content-length': '2', 'content-type': 'application/json' });
 });
 
 test('request and response bodies stream through the hop', async () => {

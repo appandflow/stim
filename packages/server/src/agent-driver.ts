@@ -61,6 +61,9 @@ const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'up
 /** The client's credentials stay with stim-server: the driver authenticates to its own daemon. */
 const CREDENTIALS = new Set(['authorization', 'x-agent-device-token', 'cookie']);
 
+/** A `Connection` header never removes the body's framing or type. */
+const FRAMING = new Set(['content-length', 'transfer-encoding', 'content-type']);
+
 const HOP_CONNECT_TIMEOUT_MS = 10_000;
 
 /** A recording or artifact streams for minutes; the hop ends only after this long without a byte either way. */
@@ -74,7 +77,7 @@ function endToEnd(headers: IncomingHttpHeaders, strip: ReadonlySet<string> = new
     String(headers.connection ?? '')
       .split(',')
       .map((name) => name.trim().toLowerCase())
-      .filter(Boolean),
+      .filter((name) => name && !FRAMING.has(name)),
   );
   return Object.fromEntries(
     Object.entries(headers).filter(
