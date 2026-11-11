@@ -526,6 +526,24 @@ test('warm copies project-owned .stim directories unless the main exclusion file
   expect(readFileSync(join(target, 'apps/mobile/.stim/project.json'), 'utf-8')).toBe('nested project data');
 }, 30_000);
 
+test('warm leaves an Exact app target/ behind, since Exact fails every build in a target/ built elsewhere', async () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + 'target/\napps/exact/target/\n.exact/\n');
+  for (const app of ['apps/exact', 'apps/rust']) write(root, `${app}/Cargo.toml`, '[workspace]\n');
+  write(root, 'apps/exact/exact.mjs', '');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  write(root, 'apps/exact/target/host-dev/deps/unit.d', 'built in main');
+  write(root, 'apps/exact/.exact/shells/Cargo.toml', 'generated');
+  write(root, 'apps/rust/target/debug/unit.d', 'plain cargo');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stderr).toMatch(/left out apps\/exact\/target:/);
+  expect(existsSync(join(target, 'apps/exact/target'))).toBe(false);
+  expect(readFileSync(join(target, 'apps/exact/.exact/shells/Cargo.toml'), 'utf-8')).toBe('generated');
+  expect(readFileSync(join(target, 'apps/rust/target/debug/unit.d'), 'utf-8')).toBe('plain cargo');
+}, 30_000);
+
 test('directly copied ignored files stay invisible to Git status and git add', async () => {
   write(root, '.env', 'source secret');
   const observations: { status: string; add: string; staged: string }[] = [];

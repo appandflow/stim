@@ -200,6 +200,15 @@ function checkNativeDir(
   };
 }
 
+// Exact's dep-info check (exact2 scripts/cargo-dep-info.mjs) fails every build in a target/ built at another path.
+// An Exact app inside an enclosing Cargo workspace keeps target/ beside that workspace's Cargo.toml, not beside
+// exact.mjs, and is still carried: Stim does not resolve the Cargo workspace an Exact app belongs to.
+function exactTargetWithheld(root: string, rel: string): string | null {
+  return basename(rel) === 'target' && existsSync(join(root, dirname(rel), 'exact.mjs'))
+    ? "Exact refuses a Cargo target/ built in another checkout, so this worktree's first build compiles its own"
+    : null;
+}
+
 function reportCarriedStateHealth(
   root: string,
   target: string,
@@ -431,6 +440,7 @@ export async function warmWorktreeTarget(opts: {
             const generatedFrom = new Map<string, string>();
             const releases: ((failures: readonly unknown[]) => void)[] = [];
             const failures: unknown[] = [];
+            const nativeDir = checkNativeDir(root, generatedFrom, releases, failures, operation);
             let result: Awaited<ReturnType<typeof cloneIgnoredEntries>>;
             try {
               result = await trace.spanAsync('carry ignored entries', () =>
@@ -439,7 +449,10 @@ export async function warmWorktreeTarget(opts: {
                   target,
                   patterns,
                   operation,
-                  withhold: checkNativeDir(root, generatedFrom, releases, failures, operation),
+                  withhold: (rel) => {
+                    const exact = exactTargetWithheld(root, rel);
+                    return exact ? Promise.resolve(exact) : nativeDir(rel);
+                  },
                 }),
               );
               for (const entry of result.skipped) {
