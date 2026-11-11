@@ -727,7 +727,7 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
 });
 
 test(
-  'a host forced to kill an unresponsive attached daemon leaves home, daemon and engine claims unresolved',
+  'a host forced to kill an unresponsive attached daemon leaves its engine claim unresolved and its home recoverable',
   { timeout: 30_000, skip: process.platform === 'win32' },
   async () => {
     const scratch = mkdtempSync(join(tmp, 'stalled-host-'));
@@ -759,8 +759,8 @@ test(
       process.kill(pid, 'SIGSTOP');
       await assert.rejects(host.end(), /Attached stimd exited/);
       host = null;
-      assert.equal(readClaimSet(join(selectedHome, 'run', 'stimd')).unresolved.length, 1);
-      assert.equal(readClaimSet(join(selectedHome, 'daemon', 'claim')).unresolved.length, 1);
+      assert.equal(readClaimSet(join(selectedHome, 'run', 'stimd')).unresolved.length, 0);
+      assert.equal(readClaimSet(join(selectedHome, 'daemon', 'claim')).unresolved.length, 0);
       assert.equal(readClaimSet(join(engineRoot, 'claims', build)).unresolved.length, 1);
     } finally {
       if (pid && alive(pid)) process.kill(pid, 'SIGKILL');

@@ -474,7 +474,7 @@ async function waitForeground(done: Promise<void> | undefined, failure: () => un
 
 function refuseUnresolvedDaemonClaims(writer: { close: () => unknown }): void {
   const blocking = unresolvedStimdStartClaims();
-  if (blocking.length === 0) return;
+  if (blocking.length === 0 || blocking.some((claim) => !claim.path.endsWith('.claim'))) return;
   writer.close();
   const refusal = unresolvedDaemonClaimsError(blocking);
   throw Object.assign(refusal, { retentionFailure: true, remedy: refusal.remedy.replace(/ and retry\.$/, '') });
