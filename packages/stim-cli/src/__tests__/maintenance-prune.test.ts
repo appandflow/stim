@@ -15,7 +15,7 @@ import {
   archiveDir,
   diskUsageCacheFile,
   gitMergeCacheFile,
-  maintenanceNdjsonFile,
+  gcLogFile,
   maintenanceStateFile,
   pullRequestCacheFile,
   worktreeArchiveRoot,
@@ -346,18 +346,11 @@ test('the daily sweep prunes all four, logs each prune and each keep, and a repo
 
   for (const path of [stale, expired, archive, lockDir]) expect(existsSync(path)).toBe(false);
   expect(existsSync(present)).toBe(true);
-  const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+  const records = readFileSync(gcLogFile(), 'utf8')
     .trim()
     .split('\n')
-    .map((line): { event: string; action?: { kind: string } } => JSON.parse(line));
-  expect(
-    records.filter((record) => record.event === 'maintenance_action').map((record) => record.action?.kind),
-  ).toEqual(
-    expect.arrayContaining([
-      'delete-status-caches',
-      'delete-device-lease',
-      'delete-expired-archives',
-      'delete-process-locks',
-    ]),
+    .map((line): { event: string; kind?: string } => JSON.parse(line));
+  expect(records.filter((record) => record.event === 'gc_item').map((record) => record.kind)).toEqual(
+    expect.arrayContaining(['statusCache', 'deviceLease', 'archive', 'homeEntry']),
   );
 });

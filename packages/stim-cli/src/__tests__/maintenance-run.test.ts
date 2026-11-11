@@ -6,7 +6,7 @@ import {
   maintenanceChildLogFile,
   maintenanceDir,
   maintenanceStateFile,
-  maintenanceNdjsonFile,
+  gcLogFile,
   maintenanceRunClaims,
   readMaintenanceState,
   workspaceLogsDir,
@@ -219,7 +219,7 @@ test.each([
       byCheck: { caps: { skips: [skip, { ...skip, target: 'new-busy' }], blocked: ['busy'] } },
     });
   await runMaintenance('status');
-  const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+  const records = readFileSync(gcLogFile(), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
@@ -265,7 +265,7 @@ test('a kept worktree is logged once per reason code, with the code', async () =
   await pass(keep('dirty', 'dirty: 2 uncommitted or untracked files (a.ts, b.ts)'));
   await pass(keep('unpushed', 'unpushed: 1 commit on no remote or other branch'));
 
-  const logged = readFileSync(maintenanceNdjsonFile(), 'utf8')
+  const logged = readFileSync(gcLogFile(), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
@@ -348,7 +348,7 @@ test.each(['report', 'on'])(
     await runMaintenance('status');
 
     expect(readMaintenanceState()).toMatchObject({ lastAt: { worktree: now }, lastPass: { blocked } });
-    const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    const records = readFileSync(gcLogFile(), 'utf8')
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));

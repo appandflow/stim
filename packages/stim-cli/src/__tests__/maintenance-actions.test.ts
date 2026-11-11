@@ -15,13 +15,13 @@ import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
   gcLogFile,
   maintenanceDir,
-  maintenanceNdjsonFile,
   maintenanceStateFile,
+  isGcLogRecord,
   readGcLog,
   readMaintenanceState,
   sharedCompilationCache,
   type MaintenanceAction,
-  type MaintenanceRecord,
+  type NdjsonRecord,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -130,22 +130,29 @@ function workspace(name: string, { usedDaysAgo = 0, kb = 256 }: { usedDaysAgo?: 
 
 const hasOutputs = (dir: string) => OUTPUTS.some((output) => existsSync(join(dir, output)));
 
-function records(): MaintenanceRecord[] {
+function records(): NdjsonRecord[] {
   try {
-    return readFileSync(maintenanceNdjsonFile(), 'utf8')
+    return readFileSync(gcLogFile(), 'utf8')
       .trim()
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as MaintenanceRecord);
+      .map((line) => JSON.parse(line) as NdjsonRecord);
   } catch {
     return [];
   }
 }
 
-function actionKinds(): string[] {
+function plannedKinds(): string[] {
   return records()
     .filter((record) => record.event === 'maintenance_action')
     .map((record) => String((record.action as { kind: string }).kind));
+}
+
+function clearedKinds(): string[] {
+  return readGcLog()
+    .filter(isGcLogRecord)
+    .filter((record) => record.event === 'gc_item' && record.status === 'done')
+    .map((record) => String(record.kind));
 }
 
 function capFixture() {
@@ -213,7 +220,7 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   expect(hasOutputs(spaces.pinned.dir)).toBe(true);
   expect(hasOutputs(spaces.fresh.dir)).toBe(true);
 
-  expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'trim-cache']);
+  expect(clearedKinds().toSorted()).toEqual(['cache', 'workspaceOutputs']);
   const skipped = records().filter((record) => record.event === 'maintenance_skip');
   expect(skipped.map((record) => String(record.reason ?? ''))).toEqual(
     expect.arrayContaining([expect.stringContaining('pinned by maintenance.keep')]),
@@ -224,15 +231,23 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   const state = readMaintenanceState()!;
   expect(state.lastPass).toMatchObject({ mode: 'on', actions: 2, stopped: 0 });
   expect(state.lastPass!.freedBytes).toBeGreaterThan(MB);
-  expect(records().every((record) => record.mode === 'on')).toBe(true);
+  expect(
+    records()
+      .filter((record) => record.event !== 'gc_item')
+      .every((record) => record.mode === 'on'),
+  ).toBe(true);
   expect(readFileSync(join(workspaceDir(spaces.old.root), 'logs', 'maintenance.ndjson'), 'utf8')).toContain(
     'Cleared build outputs',
   );
 
-  const cleared = readGcLog().filter((record) => record.status === 'done');
+  const cleared = readGcLog()
+    .filter(isGcLogRecord)
+    .filter((record) => record.status === 'done');
   expect(cleared.map((record) => record.kind).toSorted()).toEqual(['cache', 'workspaceOutputs']);
   expect(cleared.every((record) => record.trigger === 'maintenance' && record.via === 'test')).toBe(true);
-  expect(new Set(cleared.map((record) => record.runId))).toEqual(new Set([records()[0]?.pass]));
+  expect(new Set(cleared.map((record) => record.runId))).toEqual(new Set([records()[0]?.runId]));
+  expect(records().filter((record) => record.event === 'maintenance_action')).toEqual([]);
+  expect(records().filter((record) => record.event === 'maintenance_pass')).toHaveLength(1);
   const outputs = cleared.find((record) => record.kind === 'workspaceOutputs');
   expect(outputs).toMatchObject({ label: spaces.old.root, id: spaces.old.root, path: spaces.old.root });
   expect(outputs?.bytes).toBeGreaterThan(0);
@@ -251,9 +266,9 @@ test('report mode plans the same actions and deletes nothing', async () => {
   expect(state.plan.map((action) => action.kind)).toEqual(
     expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']),
   );
-  expect(actionKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
+  expect(plannedKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
   expect(records().every((record) => record.mode === 'report')).toBe(true);
-  expect(existsSync(gcLogFile())).toBe(false);
+  expect(clearedKinds()).toEqual([]);
 });
 
 test('the age sweep removes only what is provably stale', async () => {
@@ -293,7 +308,7 @@ test('the age sweep removes only what is provably stale', async () => {
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(newEntry)).toBe(true);
   expect(readManifest().caches.map((entry) => entry.dir)).toEqual([cache]);
-  expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'remove-orphan', 'trim-cache', 'unregister-cache']);
+  expect(clearedKinds().toSorted()).toEqual(['cache', 'cache', 'workspaceDirectory', 'workspaceOutputs']);
 });
 
 describe('executing single actions', () => {
@@ -472,10 +487,7 @@ test('finished worktrees are removed, except a pinned one and the one the pass s
   expect(existsSync(worktrees.pinned!)).toBe(true);
   expect(existsSync(worktrees.current!)).toBe(true);
   expect(existsSync(worktrees.open!)).toBe(true);
-  expect(actionKinds()).toEqual(['remove-worktree']);
-  const removed = records().find((record) => record.event === 'maintenance_action')!;
-  expect(removed).toMatchObject({ level: 'warn', mode: 'on' });
-  expect(removed.workspace).toBeUndefined();
+  expect(clearedKinds()).toEqual(['worktree']);
   expect(
     records()
       .filter((record) => record.event === 'maintenance_skip')
@@ -500,7 +512,7 @@ test('the age sweep keeps an idle unmerged worktree unless maintenance.removeIdl
   await runMaintenance('test');
 
   expect(existsSync(worktrees.idle ?? '')).toBe(true);
-  expect(actionKinds()).not.toContain('remove-worktree');
+  expect(clearedKinds()).not.toContain('worktree');
 }, 60_000);
 
 test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
@@ -520,7 +532,7 @@ test('the age sweep removes a clean pushed worktree unused for olderThanDays, an
   expect(existsSync(dirty)).toBe(true);
   expect(existsSync(unpushed)).toBe(true);
   expect(existsSync(recent)).toBe(true);
-  expect(actionKinds()).toEqual(['remove-worktree']);
+  expect(clearedKinds()).toEqual(['worktree']);
 }, 60_000);
 
 test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {
@@ -572,7 +584,7 @@ test('the age sweep deletes a parked simulator unused for olderThanDays through 
 
   expect(deleted).toEqual(['OLD-PARKED']);
   expect(readParked('ios').map((record) => record.udid)).toEqual(['NEW-PARKED']);
-  expect(actionKinds()).toContain('delete-parked-device');
+  expect(clearedKinds()).toContain('parkedDevice');
 });
 
 test('report mode lists a worktree once when the worktree check plans one the last sweep already planned', async () => {

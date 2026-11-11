@@ -221,10 +221,6 @@ export function maintenanceStateFile(): string {
   return join(maintenanceDir(), 'state.json');
 }
 
-export function maintenanceNdjsonFile(): string {
-  return join(maintenanceDir(), 'maintenance.ndjson');
-}
-
 export function gcLogDir(): string {
   return join(configDir(), 'gc');
 }

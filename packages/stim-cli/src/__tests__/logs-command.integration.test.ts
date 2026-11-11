@@ -302,6 +302,25 @@ describe('logs command', () => {
       expect(out).toHaveLength(2);
     });
 
+    test('returns the maintenance pass records written beside the items, and --errors keeps its failures', async () => {
+      const pass = { ts: 3, src: 'gc', level: 'info', event: 'maintenance_pass', runId: 'p-1', trigger: 'maintenance' };
+      const failure = { ...pass, ts: 4, level: 'error', event: 'maintenance_failure' };
+      appendFileSync(
+        join(tmpHome, 'gc', 'gc.ndjson'),
+        [pass, failure].map((r) => `${JSON.stringify({ ...r, msg: r.event })}\n`).join(''),
+      );
+      await run({ source: ['gc'], json: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.event)).toEqual([
+        'gc_item',
+        'gc_item',
+        'maintenance_pass',
+        'maintenance_failure',
+      ]);
+      out.length = 0;
+      await run({ source: ['gc'], json: true, errors: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.event)).toEqual(['gc_item', 'maintenance_failure']);
+    });
+
     test('refuses gc beside another source', async () => {
       await run({ source: ['gc', 'metro'] });
       expect(exitCode).toBe(1);
