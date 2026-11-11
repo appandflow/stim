@@ -27,6 +27,7 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
+import { buildClaimRoot } from '../engine-store/claims.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
@@ -72,7 +73,45 @@ function unresolvedDaemonClaims(): ClaimProblem[] {
   return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
 }
 
-const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
+/**
+ * Every claim a starting stimd takes that Stim cannot resolve: under `run/stimd`, `daemon/claim` and its engine build,
+ * whose claims every Stim home on this machine shares.
+ */
+export function unresolvedStimdStartClaims(): ClaimProblem[] {
+  const engine = ownStoreEngine();
+  return [
+    ...unresolvedDaemonClaims(),
+    ...(engine ? readClaimSet(buildClaimRoot(engine.root, engine.build)).unresolved : []),
+  ];
+}
+
+/** One refusal that names every one of `claims` with the commands that remove them all in one round. */
+export function unresolvedDaemonClaimsError(claims: ClaimProblem[]): Error & { code: string; remedy: string } {
+  return Object.assign(
+    new Error(
+      `The Stim daemon ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved.`,
+    ),
+    {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: `Check that the stimd that holds each claim${homesOf(claims)} and the children it ran have stopped, then run ${removeCommands(claims)} and retry.`,
+    },
+  );
+}
+
+const claimReason = (claim: ClaimProblem) =>
+  claim.pendingChild
+    ? 'its holder recorded a child it started without identifying it: it was stopped before recording the child, or it could not verify that the child stopped'
+    : claim.reason;
+
+const claimList = (claims: ClaimProblem[]) =>
+  claims
+    .map((claim) => `${claim.path} (${claimReason(claim)}${claim.home ? `, for the Stim home ${claim.home}` : ''})`)
+    .join(' and ');
+
+const homesOf = (claims: ClaimProblem[]) => {
+  const homes = [...new Set(claims.flatMap((claim) => (claim.home ? [claim.home] : [])))];
+  return homes.length ? ` (of ${homes.join(' and ')})` : '';
+};
 
 /**
  * How to remove `claims` in one round: one command for the claim files, and each directory-level problem (an
@@ -89,16 +128,7 @@ function removeCommands(claims: ClaimProblem[]): string {
 
 function requireResolvedStimdHome(): void {
   if (readClaimSet(stimdClaimRoot()).unresolved.length === 0) return;
-  const claims = unresolvedDaemonClaims();
-  throw Object.assign(
-    new Error(
-      `The Stim daemon ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved.`,
-    ),
-    {
-      code: 'STIM_CLAIM_UNAVAILABLE',
-      remedy: `Check that the prior daemon and its children have stopped, then run ${removeCommands(claims)} and retry.`,
-    },
-  );
+  throw unresolvedDaemonClaimsError(unresolvedDaemonClaims());
 }
 
 async function admitExisting(

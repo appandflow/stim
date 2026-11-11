@@ -17,7 +17,7 @@ Before replacing the website's canonical datasets, archive the completed set:
 node scripts/snapshot-benchmark-times.mjs <campaign> website/src/data/benchmarks docs/benchmark-history/<campaign>.json
 ```
 
-The snapshot command requires all 48 unique model/platform/scenario/arm cells,
+The snapshot command requires every model/platform/scenario/arm cell the benchmark matrix lists (`website/src/data/benchmark-matrix.json`; a React Native dataset's `fixture` field and a native pair's platform and backend select the row),
 valid finite timings, and first-activity timing metadata. It refuses to overwrite
 an existing snapshot. Run evidence must already have passed the benchmark export
 audit; this command checks campaign completeness, not raw run validity.
@@ -25,3 +25,9 @@ audit; this command checks campaign completeness, not raw run validity.
 Publish the new canonical datasets and their current proof files only after the
 whole replacement campaign passes the audit, then snapshot that complete set.
 Do not archive individual failed attempts here.
+
+Snapshots written by the current script use `schemaVersion` 3: each run has
+`seconds` and `timingOrigin` (`first-agent-activity` for React Native datasets,
+`dispatch-to-completed-task` for native pairs) instead of `settingsReadySeconds`
+and a file-level origin. `rc.json` and `1.0.0.json` stay schema 1; nothing in the
+repository reads these files, so they are unaffected.

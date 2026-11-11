@@ -3,10 +3,15 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeF
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import { scenarioForRecord } from './agent-benchmark/matrix.mjs';
 
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
-const platforms = ['ios', 'android', 'macos'];
+const platforms = ['ios', 'android', 'macos', 'exact-ios'];
+const variants = [
+  ['standalone', 'comparison.json'],
+  ['launch-crash', 'comparison-launch-crash.json'],
+];
 const requiredChecks = [
   'sourceExact',
   'runnerCompleted',
@@ -26,7 +31,8 @@ const requiredEvidence = [
   'proof/coordinator-process-after.json',
 ];
 
-function acceptedRun(directory, platform, arm) {
+function acceptedRun(directory, platformDirectory, arm, variant) {
+  const platform = platformDirectory.replace(/^exact-/, '');
   const meta = readJson(join(directory, 'meta.json'));
   const record = readJson(join(directory, 'run.json'));
   const audit = readJson(join(directory, 'audit.json'));
@@ -38,6 +44,9 @@ function acceptedRun(directory, platform, arm) {
     record.runId !== basename(directory) ||
     record.platform !== platform ||
     meta.platform !== platform ||
+    (record.variant ?? 'standalone') !== variant ||
+    (meta.variant ?? 'standalone') !== variant ||
+    (variant === 'launch-crash' && audit.checks?.crashReproducedBeforeSource !== true) ||
     record.arm !== arm ||
     meta.arm !== arm ||
     record.source !== true ||
@@ -51,7 +60,7 @@ function acceptedRun(directory, platform, arm) {
     cleanup.status !== 'complete' ||
     requiredChecks.some((name) => audit.checks?.[name] !== true)
   ) {
-    throw new Error(`Native ${platform} ${arm} needs an accepted audit and completed cleanup`);
+    throw new Error(`Native ${platformDirectory} ${variant} ${arm} needs an accepted audit and completed cleanup`);
   }
   const seconds = (Date.parse(meta.finishedAt) - Date.parse(meta.dispatchAt)) / 1000;
   if (
@@ -60,7 +69,7 @@ function acceptedRun(directory, platform, arm) {
     Math.abs(record.elapsedSeconds - seconds) > 0.001 ||
     !Number.isFinite(record.elapsedSeconds)
   )
-    throw new Error(`Native ${platform} ${arm} timing does not match its recorded turn`);
+    throw new Error(`Native ${platformDirectory} ${variant} ${arm} timing does not match its recorded turn`);
   if (requiredEvidence.some((name) => !audit.hashes?.[name])) throw new Error('Native audit evidence is incomplete');
   const root = realpathSync(directory);
   for (const [name, expected] of Object.entries(audit.hashes)) {
@@ -87,15 +96,17 @@ function acceptedRun(directory, platform, arm) {
 export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory) {
   const pairs = [];
   const copies = [];
-  for (const platform of platforms) {
-    const comparisonPath = join(campaignRoot, 'native', platform, 'comparison.json');
+  for (const [platform, [variant, comparisonName]] of platforms.flatMap((name) =>
+    variants.map((entry) => [name, entry]),
+  )) {
+    const comparisonPath = join(campaignRoot, 'native', platform, comparisonName);
     if (!existsSync(comparisonPath)) continue;
     const comparison = readJson(comparisonPath);
     const runs = ['stim', 'control'].map((arm) => {
       const id = comparison.results?.[arm]?.runId;
       if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id))
-        throw new Error(`Missing native ${platform} ${arm} run`);
-      return acceptedRun(join(campaignRoot, 'native', platform, 'results', id), platform, arm);
+        throw new Error(`Missing native ${platform} ${variant} ${arm} run`);
+      return acceptedRun(join(campaignRoot, 'native', platform, 'results', id), platform, arm, variant);
     });
     const [stim, control] = runs;
     if (
@@ -112,6 +123,7 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
       if (typeof stim.meta[key] !== 'string' || stim.meta[key] !== control.meta[key])
         throw new Error(`Native pair differs in ${key}`);
     }
+    const runnerVersion = stim.meta.runner === 'claude' ? 'claudeVersion' : 'codexVersion';
     for (const key of [
       'fixtureCommit',
       'stimVersion',
@@ -121,7 +133,7 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
       'macosBuild',
       'xcodeVersion',
       'xcodeBuild',
-      'codexVersion',
+      runnerVersion,
     ]) {
       if (
         typeof stim.meta.provenance?.[key] !== 'string' ||
@@ -135,7 +147,9 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
     )
       throw new Error('Native pair uses different fixture or compatibility tools');
     pairs.push({
-      platform,
+      platform: platform.replace(/^exact-/, ''),
+      variant,
+      scenario: scenarioForRecord(variant),
       cohort: stim.meta.cohort,
       backend: stim.meta.fixture.framework,
       model: stim.meta.model,
@@ -151,13 +165,13 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
           'macosBuild',
           'xcodeVersion',
           'xcodeBuild',
-          'codexVersion',
+          runnerVersion,
           'fixtureCommit',
         ].map((key) => [key, stim.meta.provenance[key]]),
       ),
       timeReductionPercent: 100 * (1 - stim.seconds / control.seconds),
       runs: runs.map(({ directory, meta, record, audit, seconds }) => {
-        const imageName = `${platform}-${record.arm}.png`;
+        const imageName = `${platform}${variant === 'standalone' ? '' : `-${variant}`}-${record.arm}.png`;
         copies.push([join(directory, 'proof/screen.png'), join(proofDirectory, imageName)]);
         return {
           arm: record.arm,

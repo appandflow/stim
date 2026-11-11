@@ -19,36 +19,51 @@ afterEach(() => {
 });
 
 describe('benchmark matrix', () => {
-  it('runs the existing Expo and standalone cells for control and Stim', () => {
+  it('runs the Expo and standalone cells for control and Stim without further setup', () => {
     for (const [platform, scenario] of [
       ['expo-ios', 'launch'],
+      ['expo-android', 'native-change'],
       ['expo-android', 'error-fix'],
       ['macos', 'launch'],
-      ['native-ios', 'launch'],
+      ['native-ios', 'error-fix'],
     ]) {
       for (const arm of ['control', 'stim'])
         expect(assertRunnableCell(platform, scenario, arm).status).toBe('runnable');
     }
   });
 
-  it('names the missing piece of a cell that cannot run yet', () => {
-    expect(() => assertRunnableCell('bare-ios', 'launch', 'stim')).toThrow(/bare React Native fixture/);
-    expect(() => assertRunnableCell('web', 'launch', 'control')).toThrow(/web proof method/);
-    expect(() => assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli')).toThrow(/pinned local install/);
+  it('gives native change to the React Native rows only', () => {
+    expect(benchmarkCell('bare-android', 'native-change', 'stim').status).toBe('not-yet-runnable');
+    for (const platform of ['macos', 'native-ios', 'native-android', 'exact-ios']) {
+      expect(benchmarkCell(platform, 'native-change', 'stim').status).toBe('not-applicable');
+    }
+    expect(scenarioForVariant('native', 'readiness')).toBe('native-change');
+    expect(() => scenarioForVariant('native', 'native')).toThrow(/unsupported variant/);
   });
 
-  it('gives the Expo tool arm only Expo platforms', () => {
+  it('keeps a cell blocked until the pins it needs are set, and names them', () => {
+    expect(() => assertRunnableCell('bare-ios', 'launch', 'stim')).toThrow(/bare React Native fixture/);
+    expect(assertRunnableCell('bare-ios', 'launch', 'stim', { BARE_FIXTURE_COMMIT: 'abc' }).status).toBe('runnable');
+    expect(() => assertRunnableCell('exact-ios', 'error-fix', 'control', {})).toThrow(/Exact fixture/);
+    expect(() => assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli')).toThrow(/@expo\/agent-cli version/);
+    expect(
+      assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli', {
+        EXPO_AGENT_CLI_VERSION: '1.0.27',
+        EXPO_AGENT_CLI_INTEGRITY: 'sha512-x',
+        EXPO_SKILLS_SHA256: 'x',
+      }).status,
+    ).toBe('runnable');
+  });
+
+  it('has no web row and gives the Expo tool arm only Expo platforms', () => {
     const covered = new Set(
       benchmarkMatrix()
         .filter((cell) => cell.arm === 'expo-agent-cli' && cell.status !== 'unsupported')
         .map((cell) => cell.platform),
     );
     expect([...covered].toSorted()).toEqual(['expo-android', 'expo-ios']);
+    expect(benchmarkMatrix().some((cell) => cell.platform === 'web')).toBe(false);
     expect(benchmarkCell('bare-ios', 'launch', 'expo-agent-cli').status).toBe('unsupported');
-    expect(benchmarkCell('macos', 'error-fix', 'stim').missing[0]).toMatch(/native launch-crash/);
-    expect(() => scenarioForVariant('native', 'readiness')).toThrow(/unsupported variant/);
-    expect(() => scenarioForVariant('standalone', 'readiness')).toThrow(/unsupported variant/);
-    expect(scenarioForVariant('standalone', 'native')).toBe('launch');
   });
 
   it('keeps the model an axis whose campaign list defaults to Sonnet only', () => {

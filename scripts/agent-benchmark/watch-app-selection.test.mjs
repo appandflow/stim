@@ -127,6 +127,49 @@ describe('benchmark Android emulator selection', () => {
     ).toMatchObject({ error: 'control-emulator-mismatch' });
   });
 
+  it('takes the one new emulator the Expo agent CLI names itself, but not a wrong image, a pre-existing AVD or two', () => {
+    const options = {
+      arm: 'expo-agent-cli',
+      baseline: new Set(),
+      expectedControl: expectedAndroid,
+      expectedStim: {},
+      preexistingNames: new Set(['my-daily-avd']),
+    };
+    const managed = { ...androidDevice, name: 'expo-managed-device' };
+    expect(selectAndroidCandidate([managed], options)).toEqual({ candidate: managed });
+    expect(
+      selectAndroidCandidate([{ ...managed, systemImage: 'system-images;android-35;google_apis;arm64-v8a' }], options),
+    ).toMatchObject({
+      error: 'expo-agent-cli-emulator-mismatch',
+    });
+    expect(selectAndroidCandidate([{ ...managed, runtimeIdentifier: 'Android-35' }], options)).toMatchObject({
+      error: 'expo-agent-cli-emulator-mismatch',
+    });
+    expect(selectAndroidCandidate([{ ...managed, name: 'my-daily-avd' }], options)).toMatchObject({
+      error: 'expo-agent-cli-adopted-preexisting-emulator',
+    });
+    expect(selectAndroidCandidate([managed, { ...managed, udid: 'emulator-5556' }], options)).toMatchObject({
+      error: 'multiple-candidate-emulators',
+    });
+  });
+
+  it('applies the same rule to simulators the Expo agent CLI manages', () => {
+    const pinned = { name: 'x', deviceTypeIdentifier: 'type', runtimeIdentifier: 'rt' };
+    const options = { arm: 'expo-agent-cli', baseline: new Set(['old']), expectedControl: pinned };
+    const fresh = {
+      udid: 'new',
+      name: 'tool-made',
+      isAvailable: true,
+      deviceTypeIdentifier: 'type',
+      runtimeIdentifier: 'rt',
+    };
+    expect(selectIosCandidate([fresh], options)).toEqual({ candidate: fresh });
+    expect(selectIosCandidate([{ ...fresh, runtimeIdentifier: 'other' }], options)).toMatchObject({
+      error: 'expo-agent-cli-simulator-mismatch',
+    });
+    expect(selectIosCandidate([{ ...fresh, udid: 'old' }], options)).toEqual({ candidate: null });
+  });
+
   it('rejects a different Stim AVD even when its image and profile match the prepared pool', () => {
     const expectedStim = { ...expectedAndroid, name: 'stim-seed' };
     const options = { arm: 'stim', baseline: new Set(), expectedControl: expectedAndroid, expectedStim };

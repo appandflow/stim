@@ -14,17 +14,42 @@ exact bytes, so editing a helper during a run invalidates that attempt.
 
 ## Matrix, arms and models
 
-`matrix.mjs` defines the platforms, the two scenarios (app launch and error fix),
-the arms and the campaign model list; its data lives in
-`website/src/data/benchmark-matrix.json`, which the website also renders. Today an
-arm contributes its skills (the runner home and the profile check) and its
-blockers. `dispatch` refuses a cell that is not runnable and names the missing
-piece, and refuses a variant outside the two scenarios (the earlier `native`
-variant included; its recordings stay valid). The `expo-agent-cli` arm is
-registered but blocked: its install, skill setup and audits are planned, not
-implemented. `pins.env` may set `MODELS` to a comma-separated list; the default is
-`claude-sonnet-5-5`. `dispatch` takes `<model> <arm> <variant>` and refuses a model
-outside that list. Everything is local; there is no remote variant.
+`matrix.mjs` defines the platforms, the three scenarios (app launch, native
+change, error fix), the arms and the campaign model list; its data lives in
+`website/src/data/benchmark-matrix.json`, which the website also renders. React
+Native rows (Expo and bare) have all three scenarios; standalone native, macOS
+and Exact have app launch and error fix. A platform or arm names the `pins.env`
+keys it needs; `dispatch` passes the pins to `assertRunnableCell`, so a cell
+refuses with the missing piece until its pin is set. `pins.env` may set `MODELS`
+to a comma-separated list; the default is `claude-sonnet-5-5`. `FIXTURE_KIND=bare`
+selects the bare React Native fixture (commit pin `BARE_FIXTURE_COMMIT`); the
+default is Trailhead. Everything is local; there is no remote variant.
+
+The `readiness` driver (`driver.mjs`) runs variants `javascript` (app launch),
+`native` (native change) and `launch-crash` (error fix) on Expo and bare React
+Native fixtures. `native-driver.mjs` runs standalone native, macOS and Exact
+with variants `standalone` and `launch-crash`. Specifications of the fixtures
+that do not exist yet are in [`docs/benchmark-fixtures.md`](../../docs/benchmark-fixtures.md).
+
+### Expo agent CLI arm
+
+Pins: `EXPO_AGENT_CLI_VERSION` (exact release), `EXPO_AGENT_CLI_INTEGRITY` (the
+npm `sha512-` value) and `EXPO_SKILLS_SHA256` (digest of the directory
+`STIM_BENCH_EXPO_SKILLS` points at, which holds the Expo skills the tool
+installs). `driver.mjs prepare-expo-agent-cli` installs the pinned release with
+`npm install --prefix $STIM_BENCH_ROOT/expo-agent-cli` and writes an
+`expo-agent-cli` shim; it is separate from `runtime/` so the arm cannot read the
+Stim package. Dispatch re-checks the version, integrity, skills digest and that
+the fixture's `package.json` does not set `buildBackend` or `deviceBackend` to
+`eas`, puts the shim on the arm's `PATH`, sets `EXPO_NO_TELEMETRY=1` and removes
+`EXPO_TOKEN`. Collection rejects the cloud usage named in the package README
+(`--eas`, `deploy`, `feedback`, `login`, `logout`, `register`, `eas` or `eas-cli`
+invocations, `EXPO_TOKEN`, `@latest`) from the recorded commands. The tool
+manages its own device: the watcher accepts the single new device without
+matching a name, and the proof still runs `agent-device` against the device the
+run reports. Not run yet: the install, whether the shim or a bare `npx` call
+resolves the pinned copy, how the tool allocates and releases its device, the
+flags for Android, and the skills setup that fills `STIM_BENCH_EXPO_SKILLS`.
 
 ## Task prompts
 

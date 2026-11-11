@@ -13,7 +13,7 @@
           "source": "stim-package"
         }
       ],
-      "blockers": []
+      "requires": []
     },
     {
       "id": "control",
@@ -24,7 +24,7 @@
           "source": "skills-root"
         }
       ],
-      "blockers": []
+      "requires": []
     },
     {
       "id": "expo-agent-cli",
@@ -39,10 +39,19 @@
           "source": "expo-skills"
         }
       ],
-      "blockers": [
-        "pinned local install of the tool (version and integrity) with a login-shell resolution check",
-        "installation of the tool skills and instructions during preparation, with their bytes pinned",
-        "device allocation, cloud-flag and credential audits for the tool in collect and cleanup"
+      "requires": [
+        {
+          "pin": "EXPO_AGENT_CLI_VERSION",
+          "missing": "pinned @expo/agent-cli version"
+        },
+        {
+          "pin": "EXPO_AGENT_CLI_INTEGRITY",
+          "missing": "pinned @expo/agent-cli package integrity"
+        },
+        {
+          "pin": "EXPO_SKILLS_SHA256",
+          "missing": "digest of the Expo skills the tool installs, prepared once and pinned"
+        }
       ]
     }
   ],
@@ -50,132 +59,131 @@
     {
       "id": "expo-ios",
       "label": "Expo iOS simulator",
+      "driver": "readiness",
+      "fixture": "trailhead",
       "driverPlatform": "ios",
-      "scenarios": ["launch", "error-fix"],
+      "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
       "blockers": [],
-      "driver": "readiness"
+      "requires": []
     },
     {
       "id": "expo-android",
       "label": "Expo Android emulator",
+      "driver": "readiness",
+      "fixture": "trailhead",
       "driverPlatform": "android",
-      "scenarios": ["launch", "error-fix"],
+      "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
       "blockers": [],
-      "driver": "readiness"
+      "requires": []
     },
     {
       "id": "bare-ios",
       "label": "Bare React Native iOS simulator",
-      "scenarios": ["launch", "error-fix"],
+      "driver": "readiness",
+      "fixture": "bare",
+      "driverPlatform": "ios",
+      "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "the tool targets Expo projects only"
       },
       "proof": "agent-device Settings screenshot",
-      "blockers": ["bare React Native fixture with Settings screen, prebuilt iOS project and golden state"],
-      "driver": "readiness"
+      "blockers": [],
+      "requires": [
+        {
+          "pin": "BARE_FIXTURE_COMMIT",
+          "missing": "bare React Native fixture commit (spec in docs/benchmark-fixtures.md)"
+        }
+      ]
     },
     {
       "id": "bare-android",
       "label": "Bare React Native Android emulator",
-      "scenarios": ["launch", "error-fix"],
+      "driver": "readiness",
+      "fixture": "bare",
+      "driverPlatform": "android",
+      "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "the tool targets Expo projects only"
       },
       "proof": "agent-device Settings screenshot",
-      "blockers": ["bare React Native fixture with Settings screen, prebuilt Android project and golden state"],
-      "driver": "readiness"
-    },
-    {
-      "id": "web",
-      "label": "Web (stim web)",
-      "scenarios": ["launch", "error-fix"],
-      "arms": ["control", "stim"],
-      "unsupportedArms": {
-        "expo-agent-cli": "smoke does not run on web and no web dev target is documented"
-      },
-      "proof": "undecided: agent-device does not drive a browser",
-      "blockers": ["web proof method (product decision)", "web fixture and golden state"],
-      "driver": "readiness"
+      "blockers": [],
+      "requires": [
+        {
+          "pin": "BARE_FIXTURE_COMMIT",
+          "missing": "bare React Native fixture commit (spec in docs/benchmark-fixtures.md)"
+        }
+      ]
     },
     {
       "id": "macos",
       "label": "macOS (stim macos)",
+      "driver": "native",
+      "fixture": "native",
       "driverPlatform": "macos",
       "scenarios": ["launch", "error-fix"],
-      "scenarioBlockers": {
-        "error-fix": [
-          "native launch-crash fixture variant (a crash in app startup that the logs surface) and its collector audit"
-        ]
-      },
       "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
       "proof": "agent-device native macOS screenshot and snapshot",
       "blockers": [],
-      "driver": "native"
+      "requires": []
     },
     {
       "id": "native-ios",
       "label": "Standalone native iOS",
+      "driver": "native",
+      "fixture": "native",
       "driverPlatform": "ios",
       "scenarios": ["launch", "error-fix"],
-      "scenarioBlockers": {
-        "error-fix": [
-          "native launch-crash fixture variant (a crash in app startup that the logs surface) and its collector audit"
-        ]
-      },
       "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
       "proof": "agent-device screenshot and snapshot",
       "blockers": [],
-      "driver": "native"
+      "requires": []
     },
     {
       "id": "native-android",
       "label": "Standalone native Android",
+      "driver": "native",
+      "fixture": "native",
       "driverPlatform": "android",
       "scenarios": ["launch", "error-fix"],
-      "scenarioBlockers": {
-        "error-fix": [
-          "native launch-crash fixture variant (a crash in app startup that the logs surface) and its collector audit"
-        ]
-      },
       "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
       "proof": "agent-device screenshot and snapshot",
       "blockers": [],
-      "driver": "native"
+      "requires": []
     },
     {
       "id": "exact-ios",
       "label": "Exact iOS",
+      "driver": "native",
+      "fixture": "exact",
+      "driverPlatform": "ios",
       "scenarios": ["launch", "error-fix"],
-      "scenarioBlockers": {
-        "error-fix": [
-          "native launch-crash fixture variant (a crash in app startup that the logs surface) and its collector audit"
-        ]
-      },
       "arms": ["control", "stim"],
       "unsupportedArms": {
-        "expo-agent-cli": "standalone native apps are not Expo projects"
+        "expo-agent-cli": "Exact apps are not Expo projects"
       },
       "proof": "agent-device screenshot and snapshot",
-      "blockers": [
-        "Exact-enabled fixture (the Exact integration is changing)",
-        "decide whether Exact is a platform row"
-      ],
-      "driver": "native"
+      "blockers": [],
+      "requires": [
+        {
+          "pin": "EXACT_FIXTURE_COMMIT",
+          "missing": "Exact fixture commit (spec in docs/benchmark-fixtures.md)"
+        }
+      ]
     }
   ]
 }

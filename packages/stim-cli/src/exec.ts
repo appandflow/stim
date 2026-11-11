@@ -187,7 +187,10 @@ function reportChild(
       reportCleanup: true,
       remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
     });
-    const error = Object.assign(failed?.(failure) ?? failure, { reportResourceSettled: cleanupSettled });
+    const error = Object.assign(failed?.(failure) ?? failure, {
+      reportResourceSettled: cleanupSettled,
+      ...(pid === undefined ? {} : { reportChild: { pid, processToken: captured?.ok ? captured.token : null } }),
+    });
     child.stdin?.destroy();
     child.stdout?.destroy();
     child.stderr?.destroy();
@@ -206,7 +209,9 @@ function reportChild(
           identity = observe();
         }
         if (identity === 'unknown') {
-          refuse(`Cannot verify cleanup for report child ${pid}; its process or descendants were left untouched.`);
+          refuse(
+            `Cannot verify cleanup for report child ${pid}${captured && !captured.ok ? ` (its identity was not captured at spawn: ${captured.reason})` : ''}; its process or descendants were left untouched.`,
+          );
         }
       }
       if (

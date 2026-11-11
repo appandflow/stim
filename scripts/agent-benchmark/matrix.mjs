@@ -3,13 +3,21 @@ import data from '../../website/src/data/benchmark-matrix.json' with { type: 'js
 export const BENCHMARK_MODEL_PIN = 'claude-sonnet-5-5';
 
 const DRIVER_VARIANT_SCENARIOS = {
-  readiness: { javascript: 'launch', 'launch-crash': 'error-fix' },
-  native: { standalone: 'launch' },
+  readiness: { javascript: 'launch', native: 'native-change', 'launch-crash': 'error-fix' },
+  native: { standalone: 'launch', 'launch-crash': 'error-fix' },
 };
 
 export function scenarioForVariant(variant, driver) {
   const scenario = DRIVER_VARIANT_SCENARIOS[driver]?.[variant];
   if (!scenario) throw new Error(`unsupported variant for the ${driver} driver: ${variant}`);
+  return scenario;
+}
+
+export function scenarioForRecord(variant) {
+  const scenario = Object.values(DRIVER_VARIANT_SCENARIOS)
+    .map((variants) => variants[variant])
+    .find(Boolean);
+  if (!scenario) throw new Error(`unsupported variant: ${variant}`);
   return scenario;
 }
 
@@ -39,11 +47,19 @@ function benchmarkPlatform(id) {
   return platform;
 }
 
-export function matrixPlatformForDriver(driverPlatform) {
-  return `expo-${driverPlatform}`;
+export function matrixPlatformForDriver(driverPlatform, fixtureKind = 'trailhead') {
+  return `${fixtureKind === 'bare' ? 'bare' : 'expo'}-${driverPlatform}`;
 }
 
-export function benchmarkCell(platformId, scenario, armId) {
+function missingPins(requires, pins) {
+  return (requires ?? []).filter(({ pin }) => !pins?.[pin]).map(({ missing }) => missing);
+}
+
+export function nativeMatrixPlatform(driverPlatform, framework) {
+  return framework === 'exact' ? 'exact-ios' : driverPlatform === 'macos' ? 'macos' : `native-${driverPlatform}`;
+}
+
+export function benchmarkCell(platformId, scenario, armId, pins = null) {
   const platform = benchmarkPlatform(platformId);
   const arm = benchmarkArm(armId);
   if (!platform.scenarios.includes(scenario)) {
@@ -58,7 +74,12 @@ export function benchmarkCell(platformId, scenario, armId) {
       missing: [platform.unsupportedArms?.[armId] ?? 'arm does not support this platform'],
     };
   }
-  const missing = [...platform.blockers, ...(platform.scenarioBlockers?.[scenario] ?? []), ...arm.blockers];
+  const missing = [
+    ...platform.blockers,
+    ...(platform.scenarioBlockers?.[scenario] ?? []),
+    ...missingPins(platform.requires, pins),
+    ...missingPins(arm.requires, pins),
+  ];
   return {
     platform: platformId,
     scenario,
@@ -74,8 +95,8 @@ export function benchmarkMatrix() {
   ).filter((cell) => cell.status !== 'not-applicable');
 }
 
-export function assertRunnableCell(platformId, scenario, armId) {
-  const cell = benchmarkCell(platformId, scenario, armId);
+export function assertRunnableCell(platformId, scenario, armId, pins = null) {
+  const cell = benchmarkCell(platformId, scenario, armId, pins);
   if (cell.status !== 'runnable') {
     throw new Error(`benchmark cell ${platformId}/${scenario}/${armId} is ${cell.status}: ${cell.missing.join('; ')}`);
   }

@@ -32,7 +32,10 @@ export default function NativeBenchmarkResults(): ReactNode {
         {data.pairs.map((pair) => {
           const maximum = Math.max(...pair.runs.map((run) => run.taskSeconds));
           return (
-            <article className={styles.card} key={pair.platform}>
+            <article
+              className={styles.card}
+              key={`${pair.platform}-${pair.backend}-${(pair as { variant?: string }).variant ?? 'standalone'}`}
+            >
               <div className={styles.cardHeading}>
                 <div>
                   <h3>{names[pair.platform] ?? pair.platform}</h3>
