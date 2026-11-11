@@ -31,6 +31,7 @@ import {
   type ProjectRecord,
 } from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
+import { installedIosApp } from '../../engine/installed-artifact.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
@@ -200,6 +201,7 @@ export interface IosDeps {
   readBundleExecutable: typeof readBundleExecutable;
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
+  installedIosApp: typeof installedIosApp;
   clearOtherUserApps: typeof clearOtherUserApps;
   clearIosAppData: typeof clearIosAppData;
   resetIosKeychain: typeof resetIosKeychain;
@@ -315,6 +317,7 @@ export const DEFAULT_DEPS: IosDeps = {
   readBundleExecutable,
   swapJsBundle,
   installIosApp,
+  installedIosApp,
   clearOtherUserApps,
   clearIosAppData,
   resetIosKeychain,

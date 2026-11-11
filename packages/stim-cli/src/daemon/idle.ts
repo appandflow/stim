@@ -6,6 +6,7 @@ import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
+  hostedNativeRecords,
   IDLE_STAGE_KEY,
   readDeviceIdleShutdowns,
   readIdleStop,
@@ -19,7 +20,7 @@ import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { runIdleStop } from '../commands/stop.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { holdsDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import {
@@ -34,7 +35,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { MODE_COMMAND } from '../stimd/metro/state.ts';
+import { MODE_COMMAND, readWorkspaceLaunches, revivesWithoutMetro } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -223,9 +224,21 @@ export function writeWorkspaceEvent(
   writer.close();
 }
 
-/** Whether `stim revive` resumes the workspace: its dev server recorded an idle stop and its port is still reserved. */
+/**
+ * Whether `stim revive` resumes the workspace: its dev server recorded an idle stop and its port is still reserved, or
+ * it holds a local launch that revive relaunches without Metro.
+ */
 export function revivable(path: string): boolean {
-  return readIdleStop(readWorkspaceState(path)) !== null && typeof getProject(path)?.metroPort === 'number';
+  const state = readWorkspaceState(path);
+  if (readIdleStop(state) !== null && typeof getProject(path)?.metroPort === 'number') return true;
+  return Object.entries(readWorkspaceLaunches(path)).some(([key, record]) => {
+    const parsed = parseDeviceSlotKey(key);
+    return (
+      parsed !== null &&
+      !hostedNativeRecords(state, parsed.platform)[parsed.slot] &&
+      revivesWithoutMetro(parsed.platform, record)
+    );
+  });
 }
 
 async function recordStage(path: string, minutes: number, shutDown: readonly string[], freedBytes: number) {

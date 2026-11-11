@@ -445,7 +445,9 @@ the workspace's owned simulator, installs the .app it reports, and launches it
 as a native process without Metro (metroPort: null). --configuration Release
 adds --release (Exact's shipping build; its first build takes minutes); any other
 configuration and --scheme are refused. The build starts once Stim has booted
-that simulator, and build-only runs (stim ci build) are refused. Exact
+that simulator, and build-only runs (stim ci build) are refused. stim android
+and stim start refuse an Exact app with STIM_NO_PROJECT: Stim runs it on iOS
+simulators only, without Metro; use Exact's own commands for Android. Exact
 compiles incrementally in the checkout's target/ directory, so Stim keeps no
 artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
 is build output: the idle stage and gc --delete clear it from an idle
@@ -2571,7 +2573,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   stage line, and --json \`dormantStage\` { at, dormantDays, deletedDevices,
   archived }, until the next Stim command in it. When it deleted a device, the next
   \`stim ios\` or \`stim android\` creates one; with none deleted, \`stim
-  revive\` resumes the workspace while its dev server's idle stop survives.
+  revive\` resumes the workspace while its dev server's idle stop or a
+  native-process launch survives.
 
   IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators

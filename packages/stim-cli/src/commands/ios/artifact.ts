@@ -1169,6 +1169,45 @@ export async function acquireIosArtifactOrRecorded(
   return recorded ? recordedIosArtifact(recorded) : acquireIosArtifact(request, d);
 }
 
+/** The app `bundleId` as installed on the run's booted owned simulator; the run neither builds nor installs it. */
+export async function installedIosArtifact({
+  bundleId,
+  booted,
+  installedApp,
+  runCommand,
+}: {
+  bundleId: string;
+  booted: (() => Promise<{ ok: true; udid: string } | { ok: false; reason: string }>) | undefined;
+  installedApp: (udid: string, bundleId: string) => Promise<string | null>;
+  runCommand: string;
+}): Promise<IosArtifactResult> {
+  const device = booted ? await booted() : { ok: false as const, reason: 'The run has no owned simulator to boot.' };
+  if (!device.ok) {
+    return {
+      ok: false,
+      failure: {
+        code: 'STIM_NO_DEVICE',
+        message: device.reason,
+        remedy: `Run \`${runCommand}\` to boot, install and launch it.`,
+      },
+      compilationCache: COMPILATION_CACHE_NOT_RUN,
+    };
+  }
+  const appPath = await installedApp(device.udid, bundleId);
+  if (!appPath) {
+    return {
+      ok: false,
+      failure: {
+        code: 'STIM_NO_RECORDED_BUILD',
+        message: `${bundleId} is no longer installed on simulator ${device.udid}, so there is no app to relaunch without a build.`,
+        remedy: `Run \`${runCommand}\` to build, install and launch it.`,
+      },
+      compilationCache: COMPILATION_CACHE_NOT_RUN,
+    };
+  }
+  return recordedIosArtifact({ appPath, bundleId, builtAt: '' });
+}
+
 function recordedIosArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedIosArtifact } {
   return {
     ok: true,

@@ -124,7 +124,23 @@ const exactApp: ProjectIntegration = {
       root: 'explicit',
       application: true,
       platforms: () => ['ios'],
-      validate: (operation) => (operation === 'ios' ? null : undefined),
+      validate: (operation) => {
+        if (operation === 'ios') return null;
+        if (operation === 'android')
+          return {
+            kind: 'not-an-app',
+            message: `${root} is an Exact app, and Stim runs Exact apps on iOS simulators only.`,
+            remedy:
+              "Run stim ios to build and run it on this workspace's simulator; use Exact's own commands for Android.",
+          };
+        if (operation === 'dev-server')
+          return {
+            kind: 'not-an-app',
+            message: `${root} is an Exact app, which runs without a Metro dev server.`,
+            remedy: "Run stim ios to build and launch it on this workspace's simulator.",
+          };
+        return undefined;
+      },
       ios: async () => (await import('./exact-ios.ts')).exactIosProject(root),
       doctor: async () => (await import('./exact-ios.ts')).exactDoctor(),
     };

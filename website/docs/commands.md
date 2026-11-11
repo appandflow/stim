@@ -660,7 +660,8 @@ EXACT_SIM=<udid> ./exact.mjs test ios
 Exact limits worktrees: a worktree needs the same folder name as the checkout
 it was created in, and `EXACT2` set to the Exact checkout when it sits at
 another folder depth. Only iOS simulators are supported; macOS, web, Android
-and physical devices use Exact's own commands.
+and physical devices use Exact's own commands. `stim android` (iOS
+simulators only) and `stim start` (no Metro) refuse an Exact app with `STIM_NO_PROJECT`.
 
 `stim doctor --platform ios` checks what `./exact.mjs ios` needs on this Mac,
 where the launcher looks for it:
@@ -1091,8 +1092,8 @@ and restores exactly what the stop paused, never more:
 - **Metro.** When the dev server's last stop was an idle stop, it starts it
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
-- **Devices.** For each recorded launch except Release and native-process
-  launches (see below), it boots the owned simulator or
+- **Devices.** For each recorded launch except Release, Android
+  native-process and hosted launches (see below), it boots the owned simulator or
   emulator the app ran on (the same UDID or AVD), on this machine and through
   the same device admission as `ios` and `android` (`concurrency.maxDevices`
   included). It never creates or adopts another device.
@@ -1100,21 +1101,28 @@ and restores exactly what the stop paused, never more:
   launch installed, without fingerprinting or building. In-app state is gone.
   An app still running is left alone unless Metro restarted.
 
-Release and native-process launches do not use Metro, and hosted launches
-belong to their host, so revive does not relaunch them; run `stim ios` or
-`stim android` for them. Revive refuses instead of widening:
+An app that runs without Metro, such as an [Exact](https://github.com/expo/exact)
+app, has nothing to restart: revive boots the owned simulator its recorded
+launch ran on, through the same ownership check and admission, and launches
+the app already installed there. It installs nothing and never builds, so it
+works after the idle stage deleted the app's build directory. Release launches
+of a React Native app and Android native-process launches do not use Metro,
+and hosted launches belong to their host, so revive does not relaunch them; run `stim ios` or `stim android` for
+them. Revive refuses instead of widening:
 
 - `STIM_NO_METRO` when Metro is not running and its last stop was not an idle
   stop (it was never started, or a signal or crash stopped it), or when
   `stim stop` or automatic maintenance stopped the workspace after the idle
-  stop.
+  stop. When the workspace's last launch ran without Metro, or its app never
+  uses Metro, the remedy names `stim ios` or `stim android`, not `stim start`.
 - `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
   this workspace's owned device, or, when agent-device runs it as its boot
   hook, when the device agent-device asked for is neither one of them nor one
   this workspace owns.
 - `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
   gone, for example after `stim gc`, or the launch names none (never cached, or
-  recorded before revive). Run as agent-device's boot hook for a device this
+  recorded before revive), or when the simulator no longer has an app that
+  runs without Metro installed. Run as agent-device's boot hook for a device this
   workspace owns, it also refuses with this code when the last launch on that
   device is one revive does not relaunch, or no launch is recorded on it. The
   remedy names `stim ios` or `stim android`.
@@ -1133,7 +1141,8 @@ com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.
 `--json` prints one object, `{ "revived": { "metro": { "port", "stoppedAt",
 "reason", "restarted" }, "devices": [{ "platform", "slot", "deviceId",
 "deviceName", "rebooted", "app": { "bundleId", "relaunched", "launched" } }] } }`.
-`relaunched: true` means in-app state is gone. agent-device runs
+`relaunched: true` means in-app state is gone. `metro.port` is `null` when
+revive relaunched only apps that run without Metro. agent-device runs
 `stim revive --json` itself when it finds the workspace's device shut down and
 reads the workspace's boot hook; revive then restores only the launch on that
 device, plus Metro. See

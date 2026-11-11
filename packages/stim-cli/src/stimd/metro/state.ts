@@ -120,6 +120,11 @@ export function launchWithoutMetro(record: WorkspaceLaunchRecord): string | null
   return record.runtime === 'process' ? 'a native-process launch' : null;
 }
 
+/** Whether `stim revive` relaunches this launch without Metro: a native-process iOS app, from the copy its simulator holds. */
+export function revivesWithoutMetro(platform: string, record: WorkspaceLaunchRecord): boolean {
+  return platform === 'ios' && record.runtime === 'process';
+}
+
 export function readWorkspaceLaunches(root: string): Record<string, WorkspaceLaunchRecord> {
   const launches = readWorkspaceState(root)?.launches;
   if (!launches || typeof launches !== 'object' || Array.isArray(launches)) return {};

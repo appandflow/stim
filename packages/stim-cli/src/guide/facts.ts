@@ -507,10 +507,13 @@ leased until <time>" for each one.`,
   metro           { port, stoppedAt, reason, restarted }. restarted is true
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
-                  and are null when Metro was already running
+                  and are null when Metro was already running. port is
+                  null when revive relaunched only native-process launches
+                  of a workspace with no Metro to resume
   devices         one entry per recorded launch on a local owned
-                  simulator or emulator, except Release, native-process and
-                  hosted launches, which revive does not relaunch. Run as
+                  simulator or emulator, except Release, Android
+                  native-process and hosted launches, which revive does
+                  not relaunch. Run as
                   agent-device's boot hook, only the launch on the device
                   agent-device asked for: { platform, slot, deviceId, deviceName,
                   rebooted, app: { bundleId, relaunched, launched } }.
@@ -1533,7 +1536,7 @@ RULES
   deletedDevices names the owned devices it deleted; archived says its logs
   moved to the archive. When it deleted a device, the next stim ios or stim
   android creates one; with none deleted, stim revive resumes the workspace
-  while its dev server's idle stop survives.
+  while its dev server's idle stop or a native-process launch survives.
 
   An owned booted simulator or detected emulator also carries app, whether
   the workspace's app process is alive on it now:

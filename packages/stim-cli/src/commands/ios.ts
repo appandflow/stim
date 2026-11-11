@@ -5,7 +5,13 @@ import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/pla
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitCli, runProcessOperation } from '../cli-operation.ts';
-import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import {
+  acquireIosArtifact,
+  acquireIosArtifactOrRecorded,
+  installedIosArtifact,
+  type PreparedIosArtifact,
+} from './ios/artifact.ts';
+import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { artifactErrorCode, settleArtifactCleanup, unresolvedCleanup } from '../engine/acquire-artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
@@ -416,6 +422,11 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
   return d;
 }
 
+function iosRunDeps(overrides: Partial<IosDeps>, slot: string, installedApp: string | undefined): IosDeps {
+  const d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
+  return installedApp ? { ...d, installIosApp: async () => ({ skipped: true }) } : d;
+}
+
 async function runIos(
   context: StimContext,
   projectRoot: string | null,
@@ -425,7 +436,7 @@ async function runIos(
   onFailure: (error: FailArgs) => void,
 ): Promise<IosRunCompletion | null> {
   const slot = validateDeviceSlot(opts.slot);
-  let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
+  let d = iosRunDeps(overrides, slot, opts.installedApp);
   const onReclaim = observeBuildCleanup(progress);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
@@ -1213,68 +1224,75 @@ async function runIos(
       });
       const acquiredArtifact = unlessCancelled(
         context,
-        await acquireIosArtifactOrRecorded(
-          recordedLookup.build,
-          {
-            context,
-            root,
-            logFile,
-            configuration,
-            buildMachine,
-            physical,
-            recipe: integration.artifact({
-              operation: context,
-              root,
-              logFile,
-              configuration,
-              buildScheme,
-              buildProfile,
-              ...iosArtifactTargetInputs({
-                udid,
-                pendingDevice,
-                physical,
-                remote: Boolean(remoteDevice),
-                hosted: hostedTarget,
-                simulatorArch,
+        opts.installedApp
+          ? await installedIosArtifact({
+              bundleId: opts.installedApp,
+              booted,
+              installedApp: d.installedIosApp,
+              runCommand: nativeRunCommand(PLATFORM, slot),
+            })
+          : await acquireIosArtifactOrRecorded(
+              recordedLookup.build,
+              {
+                context,
+                root,
+                logFile,
                 configuration,
-                lanAddress,
-                metroPort,
-                settings,
-                booted,
-              }),
-              optimizations: optimizations.ios,
-              easProfile: opts.easProfile,
-              cache: cachePolicy,
-              phase,
-              note,
-              logWriter,
-              estimates,
-              step: progress.step,
-              setPodsMs: (ms) => stats.setPodsMs(ms),
-            }),
-            cache: {
-              policy: cachePolicy,
-              providerConfig: cacheProviderConfig,
-              disabledByFlag: opts.buildCache === false,
-            },
-            easBuild,
-            maxBuilds: limits.maxBuilds,
-            progress: {
-              phase,
-              note,
-              logWriter,
-              stats,
-              step: progress.step,
-              miss: progress.miss,
-              hit: progress.hit,
-              place: progress.place,
-              waitingOn: progress.waitingOn,
-              waitingFor: progress.waitingFor,
-              incremental: progress.incremental,
-            },
-          },
-          d,
-        ),
+                buildMachine,
+                physical,
+                recipe: integration.artifact({
+                  operation: context,
+                  root,
+                  logFile,
+                  configuration,
+                  buildScheme,
+                  buildProfile,
+                  ...iosArtifactTargetInputs({
+                    udid,
+                    pendingDevice,
+                    physical,
+                    remote: Boolean(remoteDevice),
+                    hosted: hostedTarget,
+                    simulatorArch,
+                    configuration,
+                    lanAddress,
+                    metroPort,
+                    settings,
+                    booted,
+                  }),
+                  optimizations: optimizations.ios,
+                  easProfile: opts.easProfile,
+                  cache: cachePolicy,
+                  phase,
+                  note,
+                  logWriter,
+                  estimates,
+                  step: progress.step,
+                  setPodsMs: (ms) => stats.setPodsMs(ms),
+                }),
+                cache: {
+                  policy: cachePolicy,
+                  providerConfig: cacheProviderConfig,
+                  disabledByFlag: opts.buildCache === false,
+                },
+                easBuild,
+                maxBuilds: limits.maxBuilds,
+                progress: {
+                  phase,
+                  note,
+                  logWriter,
+                  stats,
+                  step: progress.step,
+                  miss: progress.miss,
+                  hit: progress.hit,
+                  place: progress.place,
+                  waitingOn: progress.waitingOn,
+                  waitingFor: progress.waitingFor,
+                  incremental: progress.incremental,
+                },
+              },
+              d,
+            ),
       );
       if (!acquiredArtifact.ok) {
         compilationCache = acquiredArtifact.compilationCache;

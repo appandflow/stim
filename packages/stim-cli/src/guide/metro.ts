@@ -268,14 +268,17 @@ end the job with \`stim stop\`.
   emulator a recorded launch ran on, on this machine and through the
   same admission as \`ios\` and \`android\`, and relaunches that app from
   cold from the build cache entry that launch installed, without
-  fingerprinting or building. The run may use only that device: it refuses
+  fingerprinting or building. A native-process iOS launch (an Exact app, no
+  Metro) needs no idle stop: revive boots its owned simulator and launches the
+  app installed there, with no install and no Metro. The run may use only that device: it refuses
   instead of creating or adopting another one. In-app state is gone. An app that is still running is left alone
-  unless Metro restarted. Release, native-process and hosted launches are not
-  relaunched. Run as agent-device's boot hook (guide logs), it restores only
+  unless Metro restarted. Release, Android native-process and hosted
+  launches are not relaunched. Run as agent-device's boot hook (guide logs), it restores only
   the launch on the device agent-device asked for, plus Metro. It refuses
   with STIM_NO_METRO when the last stop was not an idle stop or the
   workspace was stopped since, STIM_DEVICE_LOST when the owned device is
-  gone, and STIM_NO_RECORDED_BUILD when the app is. stimd reads the
+  gone, and STIM_NO_RECORDED_BUILD when the app is, or when the simulator
+  no longer has a native-process app installed. stimd reads the
   setting on each tick; a value that is not a whole number of 0 or more is
   refused, as \`stim settings set\` refuses it.
 
