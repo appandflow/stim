@@ -3,7 +3,8 @@ import { parseArgs } from 'node:util';
 export interface OpOption {
   /**
    * Commander-style flags: `--json`, `--scope <scope>`, `--source <s...>`, `--name [value]` (an optional value), or
-   * `--no-name`, which sets the `--name` option's key to false and needs a `--name` option beside it.
+   * `--no-name`, which sets the `--name` option's key to false. Without a `--name` option beside it, `--no-name`'s own
+   * key defaults to true, as commander's lone negation does.
    */
   readonly flags: string;
   readonly description: string;
@@ -27,10 +28,15 @@ type LongName<F extends string> = F extends `--${infer N} ${string}` ? N : F ext
 type Negated<O extends Record<string, OpOption>> = {
   [K in keyof O]: LongName<O[K]['flags']> extends `no-${infer P}` ? P : never;
 }[keyof O];
+type LongNames<O extends Record<string, OpOption>> = { [K in keyof O]: LongName<O[K]['flags']> }[keyof O];
+type Paired<O extends Record<string, OpOption>, F extends string> =
+  LongName<F> extends `no-${infer P}` ? (P extends LongNames<O> ? true : false) : false;
 type OptionValues<O extends Record<string, OpOption>> = {
-  readonly [K in keyof O as LongName<O[K]['flags']> extends `no-${string}` ? never : K]?:
-    | OptionValue<O[K]>
-    | (LongName<O[K]['flags']> extends Negated<O> ? false : never);
+  readonly [K in keyof O as Paired<O, O[K]['flags']> extends true ? never : K]?: LongName<
+    O[K]['flags']
+  > extends `no-${string}`
+    ? boolean
+    : OptionValue<O[K]> | (LongName<O[K]['flags']> extends Negated<O> ? false : never);
 };
 
 type ArgValue<S extends string> = S extends `<${string}>` ? string : string | undefined;
@@ -58,6 +64,8 @@ export interface Op {
   readonly options: Readonly<Record<string, OpOption>>;
   /** Options after a subcommand's name belong to the subcommand, and the root's `-V` is not read. */
   readonly positionalOptions: boolean;
+  /** Every word after the op's name reaches `run` unparsed: no help, version, option or arity handling. */
+  readonly passThrough: boolean;
   readonly commands: readonly Op[];
   run?(input: OpInput<Readonly<Record<string, unknown>>, readonly (string | undefined)[]>): unknown;
 }
@@ -69,6 +77,7 @@ export function defineOp<const O extends Record<string, OpOption> = {}, const A 
   description: string;
   options?: O;
   positionalOptions?: boolean;
+  passThrough?: boolean;
   commands?: readonly Op[];
   run?(input: OpInput<OptionValues<O>, ArgValues<A>>): unknown;
 }): Op {
@@ -77,6 +86,7 @@ export function defineOp<const O extends Record<string, OpOption> = {}, const A 
     argumentDescriptions: {},
     options: {},
     positionalOptions: false,
+    passThrough: false,
     commands: [],
     ...definition,
   };
@@ -105,6 +115,8 @@ interface Spec {
   readonly variadic: boolean;
   /** The key a `--no-*` option sets to false. */
   readonly negates?: string;
+  /** A `--no-*` option without its positive option: its key starts true. */
+  readonly lone: boolean;
 }
 
 function specs(op: Op): Spec[] {
@@ -112,9 +124,11 @@ function specs(op: Op): Spec[] {
   return entries.map(([key, option]) => {
     const [long = '', value = ''] = option.flags.split(' ');
     let negates: string | undefined;
+    let lone = false;
     if (long.startsWith('--no-')) {
       negates = entries.find(([, other]) => other.flags.split(' ')[0] === `--${long.slice(5)}`)?.[0];
-      if (negates === undefined) throw new Error(`${op.name}: ${long} needs a --${long.slice(5)} option`);
+      lone = negates === undefined;
+      negates ??= key;
     }
     return {
       key,
@@ -124,6 +138,7 @@ function specs(op: Op): Spec[] {
       optionalValue: value.startsWith('['),
       variadic: value.endsWith('...>'),
       negates,
+      lone,
     };
   });
 }
@@ -158,7 +173,9 @@ function scan(op: Op, args: string[]): Scan {
     allowPositionals: true,
     tokens: true,
   });
-  const options: Record<string, unknown> = {};
+  const options: Record<string, unknown> = Object.fromEntries(
+    known.filter((spec) => spec.lone).map((spec) => [spec.key, true]),
+  );
   const operands: string[] = [];
   let leading: number | undefined;
   let help = false;
@@ -394,6 +411,11 @@ function checkArity(op: Op, operands: string[]): void {
  * line the op does not accept throws {@link CliUsageError}. Resolves to the exit code.
  */
 export async function runCli(op: Op, args: string[], context: CliContext): Promise<number> {
+  if (op.passThrough) {
+    await context.before?.([op.name]);
+    await op.run?.({ args, options: {}, parent: {}, version: context.version });
+    return 0;
+  }
   if (!op.positionalOptions && args.slice(0, end(args)).some((arg) => arg === '--version' || arg.startsWith('-V'))) {
     process.stdout.write(`${context.version}\n`);
     return 0;
