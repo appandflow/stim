@@ -134,7 +134,7 @@ REMOTE DEVICE BACKENDS
   it creates or reconnects the session, so a failed build starts no session
   and the install follows the connection directly. EAS does not inherit the
   proxy credentials. Always tear the session down: \`stop\`,
-  \`worktree remove\`, and \`gc --delete\` can end sessions that Stim proves
+  \`worktree remove\`, and \`gc\` can end sessions that Stim proves
   it owns.
   \`stim status\` lists each recorded session with its preview URL (see
   \`guide facts\`).
@@ -288,7 +288,7 @@ end the job with \`stim stop\`.
   while the workspace keeps its port (\`stim stop\` releases the port, so its
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
-                   stim worktree remove, stim gc --delete, stim start
+                   stim worktree remove, stim gc, stim start
                    --reset-cache, or automatic maintenance with its idle
                    reason (guide cleanup, IDLE STOP)
     signal         a SIGTERM or SIGINT with no Stim stop request recorded,
@@ -315,9 +315,9 @@ end the job with \`stim stop\`.
   A dev server that dies, or one a restarted stimd took over, leaves its root: remove it with
   \`watchman watch-del <root>\`. Removing a root stops its recrawls; the
   daemon's memory footprint shrinks only when the daemon restarts, which drops
-  the watches of every other client. \`stim gc --cache watchman\` reports the
-  daemon's footprint, roots and clients, and with --delete shuts it down only
-  when no client is connected (\`guide cleanup memory\`).
+  the watches of every other client. \`stim gc --dry-run\` reports the
+  daemon's footprint, roots and clients, and \`stim gc\` at high or critical shuts
+  it down only when no client is connected (\`guide cleanup memory\`).
 
   ENVIRONMENT: the dev server, including a metro.config.js evaluated inside
   the expo child, gets the environment of the command that STARTED it, which

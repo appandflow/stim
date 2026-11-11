@@ -1416,7 +1416,7 @@ export interface MachineHistory {
 }
 
 /**
- * The machine's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
+ * The machine's disk and build detail: the payloads of the `stim gc --dry-run --json` report and of `stim stats --json`, both run in
  * the home directory. A part is null when its command failed, and its `gcError` or `statsError` says why.
  * `measuredAt` is when the commands started. The server keeps one result for 60 seconds, shared by every connection.
  */

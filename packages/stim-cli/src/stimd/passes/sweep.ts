@@ -187,7 +187,7 @@ async function planGradleDaemonStop(
     const plan = plans.get(pid);
     if (!plan || !plan.reclaimable)
       return {
-        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon gc --delete --cache gradle-daemons stops'}`,
+        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon stim gc stops'}`,
       };
   }
   return { pids: [...blockers] };

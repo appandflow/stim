@@ -699,7 +699,7 @@ function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | 
   const unchecked = lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED;
   const stale = [fetch, unchecked ? 'its pull request was not checked' : null].filter(Boolean);
   return stale.length
-    ? `merge state not refreshed: ${stale.join(', ')}; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`
+    ? `merge state not refreshed: ${stale.join(', ')}; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc\` checks again`
     : null;
 }
 

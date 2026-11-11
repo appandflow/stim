@@ -400,7 +400,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         Minutes after which EAS stops each EAS Simulator session
                         Stim creates (--remote eas or the easFallback), so a
                         session nobody ended stops billing. A positive integer;
-                        default 30. Machine scope only. stop and gc --delete
+                        default 30. Machine scope only. stop and gc
                         still end a session sooner; a run after the cap expires
                         replaces the stopped session. Stim passes it to eas sim
                         as --max-duration-minutes. EAS rejects a value above the
@@ -865,8 +865,7 @@ THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
 reason: the disk they sit on is the whole machine's. A parked simulator keeps
-its apps and data, so it can hold gigabytes until \`stim gc --cache parked
---delete\` erases it.
+its apps and data, so it can hold gigabytes until \`stim gc\` at high or critical deletes it.
 
   {
     "pool": { "iosParkedMax": 3 }
@@ -875,7 +874,7 @@ its apps and data, so it can hold gigabytes until \`stim gc --cache parked
 in ~/.stim/config.json, or STIM_POOL_IOS_PARKED_MAX in the environment, which
 overrides the file. Absent means 3. \`0\` turns parking and adoption off:
 \`worktree remove\` deletes the simulator, \`ios\` never adopts, and a pool
-that already exists stays where it is until \`gc --delete\`. A value that is
+that already exists stays where it is until \`gc\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
 
@@ -1577,7 +1576,7 @@ its pinned stim-server key is the existing build-machine finding with state key-
 that left the tailnet is not-on-tailnet; doctor adds nothing for them.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
-\`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
+\`gc.worktreeGraceMinutes\` is how long \`gc\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest
 activity: a write to its git index, HEAD or HEAD reflog, its Stim workspace
 state or logs, the merge of its branch into the default branch, or when its
@@ -1866,10 +1865,10 @@ and every 'gc' report shows it from then on, tagged (registered):
 entriesDepth is how far below dir one entry sits (default 1, a flat store).
 Pass 2 for a root with a layer of grouping above the entries -- a Metro
 FileStore shards across 256 directories, a build cache is keyed
-<platform>/<key> -- or 'gc --delete --older-than N' removes a whole shard or
+<platform>/<key> -- or the age sweep removes a whole shard or
 platform instead of one entry. Pass prune: 'atomic' for a cache whose index
-references its own data (an LLVM CAS): it is then left alone by --older-than
-and emptied whole only by 'gc --delete --cache all'.
+references its own data (an LLVM CAS): it is then left alone by age trimming
+and emptied whole only by 'gc --pressure critical'.
 Registration is idempotent and keyed on the directory.
 dir must be absolute (a leading ~ is expanded) and dedicated to the cache.
 register throws for a path that is or contains the home directory, the system

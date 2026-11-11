@@ -1415,8 +1415,8 @@ async function shutDownDevices(
 
 function deviceShutdownRemedy(kind: 'ios' | 'android', label: string): string {
   return kind === 'ios'
-    ? `check it with \`xcrun simctl list devices\`, then \`xcrun simctl shutdown ${label}\` yourself -- if it will not respond, \`stim gc --delete\` reclaims it`
-    : `check it with \`adb devices\`, then \`adb -s <serial> emu kill\` yourself -- if it will not respond, \`stim gc --delete\` reclaims it`;
+    ? `check it with \`xcrun simctl list devices\`, then \`xcrun simctl shutdown ${label}\` yourself -- if it will not respond, \`stim gc\` reclaims it`
+    : `check it with \`adb devices\`, then \`adb -s <serial> emu kill\` yourself -- if it will not respond, \`stim gc\` reclaims it`;
 }
 
 function reportDevice(

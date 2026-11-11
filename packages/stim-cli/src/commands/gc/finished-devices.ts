@@ -86,7 +86,7 @@ export async function deleteFinishedDevices(
     const outcome = await deleteIdleWorkspaceDevices(canonicalPath(project), {
       windowMs: graceMs,
       protectedRoot: triggeringRoot(operation),
-      purpose: 'stim gc --delete',
+      purpose: 'stim gc',
       operation,
       output,
     });

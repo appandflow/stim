@@ -81,7 +81,7 @@ describe('the other Stim homes of gc', () => {
         ],
         teardown: [
           `cd '${project}' && STIM_HOME='${home}' stim worktree remove`,
-          `STIM_HOME='${home}' stim gc --delete`,
+          `STIM_HOME='${home}' stim gc`,
           `rm -rf '${home}'`,
         ],
       }),
@@ -121,7 +121,7 @@ describe('the other Stim homes of gc', () => {
 
     expect(teardown(linked)).toEqual([
       `cd '${tree}' && STIM_HOME='${linked}' stim worktree remove`,
-      `STIM_HOME='${linked}' stim gc --delete`,
+      `STIM_HOME='${linked}' stim gc`,
       `rm -rf '${linked}'`,
     ]);
     expect(teardown(source)?.[0]).toBe(

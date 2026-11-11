@@ -269,7 +269,7 @@ async function liveBlock(
       runningPids: [],
     };
   const running = processes.length
-    ? `Gradle pid ${processes.join(', ')} may use ${home}; stop idle daemons with stim gc --delete --cache gradle-daemons`
+    ? `Gradle pid ${processes.join(', ')} may use ${home}; stop idle daemons with stim gc --pressure high`
     : null;
   const runningPids = processes;
   if (running && !pastRunning)

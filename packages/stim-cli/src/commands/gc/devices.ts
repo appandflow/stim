@@ -588,8 +588,8 @@ export async function eraseParkedDevices(
     if (device.listed !== true) {
       const unverified = device.listed === null;
       const detail = unverified
-        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --cache parked --delete.'
-        : 'it is not on this machine; stim gc --delete drops its pool record.';
+        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --pressure high.'
+        : 'it is not on this machine; stim gc drops its pool record.';
       if (unverified) failures++;
       output.log((unverified ? chalk.red : chalk.dim)(`Did not erase ${what}: ${detail}`));
       output.record('parkedDevice', unverified ? 'failed' : 'kept', device.name, { id: device.id, detail });
@@ -627,7 +627,7 @@ export async function deleteParkedAvds(
       output.log(chalk.red(`Could not verify parked android emulator ${avd.name}; its pool record was kept.`));
       output.record('parkedDevice', 'failed', avd.name, {
         id: avd.name,
-        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc --delete.',
+        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc.',
       });
       continue;
     }
@@ -661,7 +661,7 @@ export async function deleteParkedSims(
       output.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
       output.record('parkedDevice', 'failed', sim.name, {
         id: sim.udid,
-        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc --delete.',
+        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc.',
       });
       continue;
     }

@@ -177,7 +177,7 @@ Branch on the code, never on the message.`,
   --clean-install\` and, on that conflict, \`pod update <names>\` of only the named
   pods, then retries once; it refuses when git tracks ios/, so a tracked
   Podfile.lock is never edited. Elsewhere run \`pod update <names>\` in ios/ yourself.
-  start, ios and android also refuse with this code when \`gc --delete\`
+  start, ios and android also refuse with this code when \`gc\`
   lightened the worktree and the \`stim worktree warm\` they ran to restore
   its node_modules and ios/Pods failed. The warm's own lines say why; fix
   that, then run \`stim worktree warm\` or retry the command.`,
@@ -234,7 +234,7 @@ Branch on the code, never on the message.`,
   reach the object first -- often pods you did not touch -- and they change
   between runs.
   Stim empties the whole cache at once, the way
-  \`gc --delete --cache "compilation cache"\` does, and fails the build. It
+  \`gc --pressure critical\` does for every shared cache, and fails the build. It
   does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
   cache, so it is a cold one. The emptying is recorded in the cleanup log (stim logs --source gc).
   Every iOS build that compiles with the cache holds a shared claim on it,
@@ -243,7 +243,8 @@ Branch on the code, never on the message.`,
   maintenance. When another build holds it or its claim is unresolved, Stim
   leaves the cache alone, because that build may be using it, and the message
   says so. Once nothing else is building, run
-  \`gc --delete --cache "compilation cache"\`, then run the command again.
+  \`gc --pressure critical\`, which empties it with the other shared caches, then
+  run the command again.
   A build on a build worker gets the same handling on the worker, which
   empties its own cache for that client. With --remote-build <machine> the
   build fails with this code and the worker's message; otherwise it falls
@@ -852,7 +853,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   device or remote config that is not the workspace's, \`boot\` and
   \`shutdown\` refuse with STIM_BAD_ARG instead.
   If Android creation says an AVD already exists on disk but is not listed,
-  run \`npx stim gc\` to inspect orphaned owned AVDs, then \`npx stim gc --delete\`
+  run \`npx stim gc --dry-run\` to inspect orphaned owned AVDs, then \`npx stim gc\`
   to reclaim those safe to delete before retrying. Keep anything GC cannot
   verify; do not delete AVD directories by hand. A registered unrecorded owned
   AVD is recovered, reusing its existing emulator when its identity is verified.
@@ -914,7 +915,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
 "this project's sim is X, but --device-type asked for Y"
   The project already owns a simulator of a different model, and Stim will
   not silently boot a different one. Reap it (\`worktree remove\`, or
-  \`gc --delete\`) and run \`stim ios\` again to create the requested model,
+  \`gc\`) and run \`stim ios\` again to create the requested model,
   which loses the old sim's app state, or pass \`--slot <name>\` to create it
   beside the current one. The \`remedy\` field in \`--json\` names the same
   choices.
@@ -1070,10 +1071,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Android emulators. \`stim status\` shows the pressure level and
   $STIM_HOME/daemon/daemon.ndjson what the ladder did. To free more:
 
-    stim gc                            # what the ladder and gc would reclaim
-    stim gc --delete                   # run the ladder at high, prune dead entries
-    stim gc --delete --cache all       # the ladder at critical, empty the caches
-    stim gc --delete --worktrees       # remove clean, idle worktrees
+    stim gc --dry-run                  # what gc would reclaim at the measured level
+    stim gc                            # run it: the plan and the ladder, prune dead entries
+    stim gc --pressure critical        # the ladder at critical, empty the caches,
+                                       # remove clean pushed worktrees idle 7 days
 
   Ask before deleting anything outside Stim, such as Xcode DerivedData or
   simulators Stim did not create. Lowering disk.hardFloorGb (0 never
@@ -1476,9 +1477,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   foldable support (SupportPixelFold in its advancedFeatures.ini) refuse the
   same way, since the emulator quits on boot; the remedy names an installed
   image that has it, or an sdkmanager install when none does.
-  \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
-  carries the name; the remedy names the caches on this machine. \`gc\`
-  refuses --cache together with --worktrees the same way. \`stim settings
+  \`gc --pressure <level>\` refuses with STIM_BAD_ARG when the level is not
+  normal, high or critical. \`stim settings
   set\` and \`get\` refuse a removed setting, naming what replaced it, and
   \`start\`, \`ios\`, \`android\`, \`web\`, \`macos\`, \`revive\` and \`gc\` refuse
   while the environment sets a removed setting's variable, such as
@@ -1670,7 +1670,7 @@ emulator process <pid> is still running"
   recorded before shutdown, still matches. "(Stim could not verify the
   identity of <pid>, so it sent no signal)" means that identity could not be
   read or no longer matches. Check \`ps -p <pid> -o command=\`, stop the
-  process yourself, then re-run the command or \`gc --delete\`. Windows has
+  process yourself, then re-run the command or \`gc\`. Windows has
   no process-table check and Stim signals nothing there: it waits for the pid
   in the AVD's process lock after \`adb emu kill\`, and refuses at once when
   adb cannot reach the emulator.`,

@@ -269,14 +269,13 @@ ANDROID EMULATOR RESTARTS
   display until it next boots.
 
 DESTRUCTIVE COMMANDS -- ask the user first
-  gc --delete             deletes orphaned devices this Stim home created, tens of GB
-  gc --delete --cache all empties the shared build caches every project uses
-  gc --delete --cache <name>
-                          empties only the caches that carry <name>
+  gc             deletes orphaned devices this Stim home created, tens of GB
+                          (preview with gc --dry-run)
+  gc --pressure critical  also empties every shared build cache Stim registered
   worktree remove --force discards uncommitted and untracked work
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
-(the workspace you name) and \`gc --delete\` (the machine). For a local device,
+(the workspace you name) and \`gc\` (the machine). For a local device,
 \`stop\` shuts it down and never deletes it (an owned iOS simulator first stays
 booted for \`pool.bootedGraceMinutes\` when memory permits, \`guide lifecycle pool\`).
 For a recorded EAS session,
@@ -451,7 +450,7 @@ stim android and stim start refuse an Exact app with STIM_NO_PROJECT: Stim runs
 it on iOS simulators only, without Metro; use Exact's own commands for Android.
 Exact compiles incrementally in the checkout's target/ directory, so Stim keeps no
 artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
-is build output: the idle stage and gc --delete clear it from an idle
+is build output: the idle stage and gc clear it from an idle
 workspace (never while another process, such as a shell or an exact.mjs
 command, runs from or works in the app, nor on Windows), and the next build
 then compiles from scratch.
@@ -1041,8 +1040,8 @@ The oldest parked devices beyond the host's platform limit are deleted through
 owned-device teardown, also after a limit decrease. Adoption-time reconciliation
 retires missing, renamed, running or unowned candidates; failed retirement keeps
 the record. Revocation retires that client's parked devices.
-On the hosting Mac, unscoped \`stim gc\` lists parked hosted devices and
-\`stim gc --delete\` deletes them through their session homes under a session
+On the hosting Mac, \`stim gc --dry-run\` lists parked hosted devices and
+\`stim gc\` deletes them through their session homes under a session
 claim. Held claims and unverified ownership keep the device. Android deletion
 requires visibility from this shell's Android environment; otherwise run gc with
 the server's ANDROID_AVD_HOME/HOME. Records no longer listed in their session
@@ -1430,14 +1429,14 @@ result as proof instead of requiring an unrelated screenshot.`,
   process lock to clear. A device that never gets there is reported as
   FAILED, not shut down, and the run's exit code reflects it; \`--json\`
   carries the same outcome in \`device.<platform>.status\` ("failed") plus a
-  \`remedy\` field naming the manual command and \`stim gc --delete\` as the
+  \`remedy\` field naming the manual command and \`stim gc\` as the
   fallback:
 
     device      failed to shut down stim-e2e-2: simulator 9C1F.. is still
                 Booted after 2 shutdown attempts and 30s of waiting
                 check it with \`xcrun simctl list devices\`, then \`xcrun
                 simctl shutdown 9C1F..\` yourself -- if it will not respond,
-                \`stim gc --delete\` reclaims it
+                \`stim gc\` reclaims it
 
   \`stop\` still never deletes the device itself, even on this failure path.
 
@@ -1493,7 +1492,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     },
     pool: {
       summary:
-        'parked and adopted simulators and emulators: what park and adoption clear or keep, the model and runtime match, emulator storage, gc erase',
+        'parked and adopted simulators and emulators: what park and adoption clear or keep, the model and runtime match, emulator storage',
       body: () => `  THE SIMULATOR POOL
   \`worktree remove\` PARKS this workspace's owned simulator instead of
   deleting it, and the next workspace that wants the same model and runtime
@@ -1521,7 +1520,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   build prints \`install     unchanged\` and skips the copy. A parked record's
   cache key that differs from this run's skips that comparison. App-group
   containers, the pasteboard, photos, Safari data and Simulator settings are
-  not cleared; \`gc --cache parked --delete\` erases a parked simulator when a
+  not cleared; delete the parked simulator (gc at high or critical) when a
   clean system image is needed.
   Every install \`stim ios\` makes on a local owned iOS simulator, an adopted one included, also allows
   "Paste from Other Apps" for the installed bundle id alone, so a Command-V from
@@ -1533,7 +1532,7 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
   uses the Mac's disk, not a fixed partition, so there is no free-space check
-  on iOS; \`stim gc\` lists each parked simulator's app and size.
+  on iOS; \`stim gc --dry-run\` lists each parked simulator's app and size.
 
   Park takes only a simulator that reports Shutdown, or a booted one kept booted as above. It waits up to 15s for
   the shutdown to settle, retries the shutdown once, and waits up to 15s more.
@@ -1597,7 +1596,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
   No match creates a new simulator, as before. After a runtime upgrade the
   parked simulators on the old runtime are never adopted; they leave by
-  eviction or \`gc --delete\`.
+  eviction or \`gc\`.
 
   The pool targets at most \`pool.iosParkedMax\` simulators (default 3). Past that the oldest parked one is deleted:
 
@@ -1616,7 +1615,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   protected. New versions resolve that marker through the same identity claim.
   When a marker outlives its owner, Stim cannot tell whether the erase or
   deletion ran, so adoption treats the device as erased and drops the recorded
-  app, cache key and scheme approvals. A \`gc --cache parked --delete\` erase
+  app, cache key and scheme approvals. An erase
   that fails after the erase command started keeps the device parked without
   them for the same reason.
   A crash during a synchronous device-tool call leaves that work unverifiable; inspect
@@ -1638,27 +1637,19 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     pool: 2 parked iOS simulators (max 3)
 
-  \`stim gc\` reports the pool, and \`stim gc --delete\` empties every entry
-  it can re-verify:
+  \`stim gc --dry-run\` reports the pool, and \`stim gc\` at high or critical
+  empties every entry it can re-verify:
 
     Parked simulators (2, 4.1G):
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago com.example.app 2.3G
-                  --delete attempts verified deletions and keeps failures.
+                  gc attempts verified deletions and keeps failures.
 
-  \`stim gc --cache parked\` reports only the pool, and with --delete ERASES
-  each parked simulator (\`simctl erase\`) and emulator (user data and
-  snapshots) it can re-verify instead of deleting it. The device stays parked
-  for adoption, with no app recorded; the next adopter installs its app again.
-  \`--cache all\` leaves them alone. Erase takes only a simulator
-  that reports Shutdown and an emulator that is not running and no workspace
-  references, under the same per-device claim as adoption.
+  No CLI path erases a parked device and keeps it parked.
 
-  \`gc --older-than <days>\` reports and deletes, or with \`--cache parked\`
-  erases, only the devices parked at least that long; one parked at an unknown
-  time stays. Automatic maintenance's daily age sweep deletes the devices
-  parked for maintenance.olderThanDays (7; 0 never) the same way.
+  Automatic maintenance's daily age sweep deletes the devices
+  parked for maintenance.olderThanDays (7; 0 never).
 
-  If simulator listing or deletion fails, \`gc --delete\` reports the failure
+  If simulator listing or deletion fails, \`gc\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
   ownership record.
 
@@ -1666,16 +1657,15 @@ result as proof instead of requiring an unrelated screenshot.`,
   for unlisted \`stim-\` devices stays refused: a parked record in THIS config
   proves that simulator is Stim's and parked by this home. \`stop\` never
   parks -- it shuts the owned simulator down and keeps it assigned. Neither
-  does \`gc --delete\`, which is deleting what it finds.
+  does \`gc\`, which is deleting what it finds.
 
   ANDROID EMULATOR POOL
   Android uses the same bounded park/adopt lifecycle, with
   \`pool.androidParkedMax\` (default 3) or STIM_POOL_ANDROID_PARKED_MAX.
   A redirected STIM_HOME disables parking unless that environment override
   is set. Zero disables parking and adoption. \`stop\` keeps the assignment;
-  \`worktree remove\` parks eligible AVDs, \`gc --delete\` empties the pool
-  and \`gc --cache parked --delete\` wipes their user data (with
-  --older-than, only the AVDs parked that long).
+  \`worktree remove\` parks eligible AVDs, and \`gc\` at high or critical
+  empties the pool.
 
   Adoption matches the system image, data partition size, and the creation
   settings from android.avdConfig / android.avdConfigFile. The AVD keeps its
@@ -2491,8 +2481,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             cap is set.
 
   \`stim status\` shows capacity.builds and capacity.devices with their
-  holders, booting devices marked booting. \`stim gc\` reports stale build
-  slots the way it reports stale build locks, and \`gc --delete\` clears them.
+  holders, booting devices marked booting. \`stim gc --dry-run\` reports stale build
+  slots the way it reports stale build locks, and \`gc\` clears them.
   Set a cap with \`stim settings set concurrency.maxBuilds 2\`, by editing
   ~/.stim/config.json, or via the env vars (see \`guide settings\`).`,
     },
@@ -2555,9 +2545,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   metro.ndjson as a pressure_action record with its reason, bytes freed and
   the command that brings back what it removed. daemon.mode report logs each
   action it would take and acts on nothing; daemon.mode off runs no rung.
-  \`stim gc\` shows what the ladder would do now at high and at critical, with
-  sizes; \`stim gc --delete\` runs it to its end at high whatever the level,
-  and \`stim gc --delete --cache all\` at critical (\`guide cleanup\`).
+  \`stim gc --dry-run\` shows what a run would do now, with
+  sizes; \`stim gc\` runs the ladder at the measured level,
+  \`stim gc --pressure high\` to its end at high whatever the level,
+  and \`stim gc --pressure critical\` at critical (\`guide cleanup\`).
 
   7. refuse: \`start\`, \`ios\` and \`android\` refuse with STIM_LOW_DISK only
      while free disk on the workspace's or $STIM_HOME's volume is under
@@ -2640,7 +2631,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                   set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
-  gc              --delete --older-than <days> --cache <name|all|workspaces|recordings|parked> --worktrees --json
+  gc              --dry-run --pressure <normal|high|critical> --json
   worktree warm    --refresh; remove [path] --force
 
   DEVICE SLOTS
@@ -2977,7 +2968,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   ALREADY owns a simulator and \`--device-type\` names a different model, or
   \`--runtime\` a different iOS version, Stim refuses rather than silently
   booting the wrong one: reap the current sim with \`stim worktree remove\`
-  (or \`stim gc --delete\`), then run \`stim ios\` again to create the
+  (or \`stim gc\`), then run \`stim ios\` again to create the
   requested one. \`--device-profile\` does the same for an AVD of another
   profile. To keep both devices, give the new one its own \`--slot\`. The
   ios.runtime and android.systemImage settings apply at creation only, so an
@@ -3052,7 +3043,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
-  the devicectl launch session. \`gc --delete\` and the daily maintenance sweep remove expired lease files;
+  the devicectl launch session. \`gc\` and the daily maintenance sweep remove expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
   WATCHING THE PHONE: while this workspace holds the lease, stim-server
@@ -3148,7 +3139,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   failure for a normal reinstall. Unplugging the phone ends devicectl, which
   ends the collector: it removes its own registration and exits. A separately
   held \`device lock\` lease survives collector exit until released or expired;
-  \`gc --delete\` can remove its expired lease file. Whether it closes with collector_stopped or
+  \`gc\` can remove its expired lease file. Whether it closes with collector_stopped or
   collector_failed follows devicectl's exit code, which no one has watched a
   cable-pull produce yet. See \`guide logs\` for what the device stream can
   and cannot carry, and appandflow/stim#179.
@@ -3567,8 +3558,8 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   safe-to-restart process comes with its command; Stim never runs it:
     fseventsd                      sudo killall fseventsd (launchd restarts it;
                                    file watchers rescan once)
-    Watchman                       stim gc --delete --cache watchman
-    Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
+    Watchman                       stim gc --pressure high
+    Gradle or Kotlin daemon        stim gc --pressure high
   Any other process is named with its size only; ask before quitting it.
   Boot does not wait for this read: the pressure message prints at once and the
   named processes follow on a second memory line when top finishes.

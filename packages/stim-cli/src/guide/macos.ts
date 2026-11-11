@@ -61,7 +61,7 @@ entries before stopping its previous owned app, rebuilding and launching. SwiftP
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
 Every process running an app bundle from that directory is the workspace's
 owned app, including copies opened through LaunchServices (open, agent-device
-open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
+open). stim macos, stim stop, stim worktree remove and stim gc stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
 STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. When

@@ -205,7 +205,7 @@ an `image` line while it downloads (about 2 GB).
 - One install runs per SDK root and Stim home; a second run waits for it.
 - `stim doctor` notes a missing image, and `stim doctor --fix --platform android`
   installs it right away.
-- `stim gc` marks the images Stim installed with `stimInstalled`, next to the
+- `stim gc --dry-run --json` marks the images Stim installed with `stimInstalled`, next to the
   `sdkmanager --uninstall` command that removes them.
 
 Set `android.installImages` to `never` to refuse with the install command
@@ -434,7 +434,7 @@ prevents local fallback. See [automatic machine pools](./remote-machines.md#auto
 `remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
 stops each EAS Simulator session Stim creates, for `--remote eas` and
 `remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
-whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+whose workspace was deleted by hand. `stim stop` and `stim gc` still end a
 session sooner, and a later run replaces an expired one. EAS rejects a value above
 the account plan's session limit. A run reuses a live session without checking how
 much of the cap is left.
@@ -760,7 +760,7 @@ without changing ownership claims or recordings. It does not restore an
 inaccessible volume or grant filesystem access; the underlying access problem
 still needs to be resolved.
 
-`gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
+`gc.worktreeGraceMinutes` is how long `stim gc` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest
 git or Stim activity, the merge of its branch, or when its pull request was
 merged or closed. Absent means 120; `0` removes
@@ -949,7 +949,7 @@ See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and de
 ## Automatic maintenance
 
 Automatic maintenance follows [`daemon.mode`](#stim-daemon), `on` by default:
-a pass removes what `stim gc --delete` would remove under the caps below and
+a pass removes what `stim gc` would remove under the caps below and
 logs every action. `report` measures, plans and logs and deletes nothing, and
 `off` runs no pass. It is `off` in CI unless `STIM_DAEMON` is set. A
 `STIM_HOME`-scoped home runs passes like any other.
@@ -972,7 +972,7 @@ sysctl fails, and other platforms use `os.freemem()`.
 The build-cache and Metro caps trim entries down to 80% of the limit. The Swift
 compilation cache can only be emptied whole, so a pass empties it once it is
 over `caches.swiftCompilationCacheMaxGb`, and never while an iOS build holds
-its claim on it or that claim is unresolved. Plain `stim gc --delete` applies
+its claim on it or that claim is unresolved. `stim gc` applies
 the same cap. Under disk pressure the
 [pressure ladder](./build-caches.md#disk-pressure) trims the caches further.
 `caches.ccacheMaxGb` is passed to ccache, which evicts by itself.
@@ -984,13 +984,11 @@ entries, parked simulators and emulators, and clean, pushed linked worktrees
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
-`maintenance.removeFinishedWorktrees` controls the worktree check. Manual
-`stim gc --delete --cache gradle-daemons` requires sustained memory pressure
-(the daemon's high or critical memory level) and no local build, including
-iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
+`maintenance.removeFinishedWorktrees` controls the worktree check. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
+build, including iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
 workspace whose device is hosted on a remote Mac, after
 `maintenance.idleStopHours` without real activity (removing a finished worktree
-tears down that workspace's own, as `gc --delete` does). Debug check logs are
+tears down that workspace's own, as `gc` does). Debug check logs are
 off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
@@ -1071,7 +1069,7 @@ set.
 
 While no `stimd` runs, a command under the hard disk floor runs the pressure
 ladder in its own process, never for the command's own workspace, acting in
-`on` and only logging in `report`. `stim gc --delete` runs the ladder in its
+`on` and only logging in `report`. `stim gc` runs the ladder at high or critical in its
 own process whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment

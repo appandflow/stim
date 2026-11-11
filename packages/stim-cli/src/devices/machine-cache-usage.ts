@@ -407,7 +407,7 @@ function assembleMachineCacheReport(
                 remedy: `rm -rf ${quote(transforms)}`,
               }
             : null,
-          remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --delete --cache gradle-versions',
+          remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --pressure high',
         };
       }),
   );

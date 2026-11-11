@@ -129,7 +129,7 @@ import Testing
     #expect(library.detail?.contains("counted under Stim") == true)
     #expect(library.detail?.contains("SwiftPM cache, counted separately") == true)
     #expect(report.total(.otherTools).bytes == 1800)
-    #expect(report.free.map(\.action) == [.cache("Build cache")])
+    #expect(report.free.map(\.action) == [.cache("/Users/me/Library/Caches/stim")])
   }
 
   @Test func absentOrUnreadableSwiftpmCacheDoesNotCreateAStorageRow() throws {
@@ -346,9 +346,9 @@ import Testing
 @Suite struct FreeCacheTests {
   let paths = StoragePaths(home: "/Users/me")
 
-  /// Catches a cache that `stim gc --delete --cache` leaves alone still being offered as freeable and counted in the
+  /// Catches a cache that an emptied cache item leaves alone still being offered as freeable and counted in the
   /// Free total.
-  @Test func hidesACacheTheScopedDeleteLeavesAlone() throws {
+  @Test func hidesACacheTheItemDeleteLeavesAlone() throws {
     let json = """
       {"sections":{"caches":[
         {"name":"Build cache","dir":"/s/build-cache","bytes":4096,"scopedEmpty":{"willEmpty":true,"emptySkipped":null}},
@@ -367,7 +367,7 @@ import Testing
   let home = "/Users/me"
   let worktree = FreeAction.removeWorktree(path: "/r/.w/a", repository: "/r")
 
-  /// Catches a checkbox that promises to keep something stim gc --delete deletes anyway, and a whole cache
+  /// Catches a checkbox that promises to keep something stim gc deletes anyway, and a whole cache
   /// emptied without being asked for.
   @Test func stimGcIncludesWorktreesAndOutputsAndCachesStayOptIn() {
     let items = [
@@ -379,15 +379,15 @@ import Testing
     let defaults = FreePlan.defaultSelection(items)
     #expect(!defaults.contains(.cache("/s/build-cache")))
     #expect(FreePlan.bytes(items, selected: defaults) == 15)
-    #expect(FreePlan.commands(defaults, home: home).map(\.arguments) == [["gc", "--json", "--delete"]])
+    #expect(FreePlan.commands(defaults, home: home).map(\.arguments) == [["gc", "--json"]])
     #expect(!FreePlan.canToggle(worktree, selected: defaults) && FreePlan.frees(worktree, selected: [.gc]))
 
     let alone: Set<FreeAction> = [worktree, .workspaceOutputs, .cache("/s/build-cache")]
     let commands = FreePlan.commands(alone, home: home)
     #expect(
       commands.map(\.arguments) == [
-        ["worktree", "remove", "/r/.w/a"], ["gc", "--json", "--delete", "--cache", "workspaces"],
-        ["gc", "--json", "--delete", "--cache", "/s/build-cache"],
+        ["worktree", "remove", "/r/.w/a"], ["gc", "--json", "--item", "workspace-outputs"],
+        ["gc", "--json", "--item", "cache", "/s/build-cache"],
       ])
     #expect(commands.first?.cwd == "/r")
     #expect(FreePlan.bytes(items, selected: alone) == 23)
@@ -403,9 +403,8 @@ import Testing
 
   /// Catches several commands squeezed into one gc preview whose Delete would act on only one of them.
   @Test func previewsOnlyASingleGcRun() {
-    #expect(FreePlan.preview(FreePlan.commands([.gc], home: home)) == ["gc", "--json"])
-    #expect(
-      FreePlan.preview(FreePlan.commands([.cache("x")], home: home)) == ["gc", "--json", "--cache", "x"])
+    #expect(FreePlan.preview(FreePlan.commands([.gc], home: home)) == ["gc", "--json", "--dry-run"])
+    #expect(FreePlan.preview(FreePlan.commands([.cache("x")], home: home)) == nil)
     #expect(FreePlan.preview(FreePlan.commands([.gc, .cache("x")], home: home)) == nil)
     #expect(FreePlan.preview(FreePlan.commands([worktree], home: home)) == nil)
   }
@@ -448,27 +447,13 @@ import Testing
   }
 }
 
-@Suite struct GcDeleteScopeTests {
-  @Test func selectsACacheAloneByNameElseByDirectory() {
-    let gradle = GcReport.Cache(name: "Gradle build cache", dir: "/g", bytes: nil, note: nil, willEmpty: nil)
-    let build = GcReport.Cache(name: "Build cache", dir: "/b", bytes: nil, note: nil, willEmpty: nil)
-    let cas = GcReport.Cache(name: "Xcode CAS", dir: "/x", bytes: nil, note: nil, willEmpty: nil)
-    let example = GcReport.Cache(name: "Metro", dir: "/m/example", bytes: nil, note: nil, willEmpty: nil)
-    let examples = GcReport.Cache(name: "Metro", dir: "/m/example-2", bytes: nil, note: nil, willEmpty: nil)
-    let all = [gradle, build, cas, example, examples]
-    #expect(gradle.selector(among: all) == "Gradle build cache")
-    #expect(build.selector(among: all) == "/b")
-    #expect(cas.selector(among: all) == "Xcode CAS")
-    #expect(examples.selector(among: all) == "/m/example-2")
-    #expect(example.selector(among: all) == nil)
-  }
-
-  @Test func aScopedPreviewDeletesOnlyThatScope() {
-    #expect(GcPreview.deleteArguments(after: ["gc", "--json"]) == ["gc", "--json", "--delete"])
+@Suite struct GcApplyTests {
+  @Test func aPreviewAppliesAsTheSameRunWithoutDryRun() {
+    #expect(GcPreview.deleteArguments(after: ["gc", "--dry-run", "--json"]) == ["gc", "--json"])
     #expect(
-      GcPreview.deleteArguments(after: ["gc", "--json", "--cache", "Xcode CAS"])
-        == ["gc", "--json", "--cache", "Xcode CAS", "--delete"])
-    #expect(GcPreview.deleteArguments(after: ["gc", "--delete"]) == nil)
+      GcPreview.deleteArguments(after: ["gc", "--dry-run", "--pressure", "high", "--json"])
+        == ["gc", "--pressure", "high", "--json"])
+    #expect(GcPreview.deleteArguments(after: ["gc", "--json"]) == nil)
   }
 }
 
@@ -496,13 +481,13 @@ import Testing
     #expect(changes(["start"]))
     #expect(changes(["worktree", "remove"]))
     #expect(changes(["ports", "release", "bench"]))
-    #expect(changes(["gc", "--delete", "--json"]))
+    #expect(changes(["gc", "--json"]))
     #expect(changes(["settings", "set", "gc.worktreeGraceMinutes", "0", "--scope", "machine"]))
   }
 
   @Test func reloadsReadsAndDryRunsDoNot() {
     #expect(!changes(["reload"]))
-    #expect(!changes(["gc", "--json"]))
+    #expect(!changes(["gc", "--dry-run", "--json"]))
     #expect(!changes(["settings", "get", "gc.worktreeGraceMinutes"]))
     #expect(!changes(["logs", "--errors"]))
     #expect(!changes(["ports", "get", "bench"]))

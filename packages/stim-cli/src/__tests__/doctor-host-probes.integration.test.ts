@@ -75,7 +75,7 @@ function delayedHostProbe() {
 test('memory culprit reads yield for top and ps and retain the Java daemon diagnosis', async () => {
   const { executor, calls } = delayedHostProbe();
   expect(await responsive(() => readMemoryCulpritsAsync(executor, 'darwin', 48 * 1024 ** 3))).toMatchObject([
-    { pid: 123, name: 'Gradle daemon', command: 'stim gc --delete --cache gradle-daemons' },
+    { pid: 123, name: 'Gradle daemon', command: 'stim gc --pressure high' },
   ]);
   expect(calls).toEqual(['/usr/bin/top', '/bin/ps']);
   calls.length = 0;

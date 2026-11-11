@@ -28,7 +28,7 @@ final class DaemonPressureMonitor: ObservableObject {
     }
   }
 
-  /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs `stim gc --delete`
+  /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs `stim gc`
   /// only while the level is still raised, and otherwise opens the Machine page.
   func runPlanFromNotification() {
     NSApp.activate(ignoringOtherApps: true)
@@ -41,7 +41,7 @@ final class DaemonPressureMonitor: ObservableObject {
 
   func freeDiskSpace() {
     actions.run(
-      "Reclaim disk space", steps: [StimCommand(["gc", "--delete", "--json"], cwd: NSHomeDirectory())],
+      "Reclaim disk space", steps: [StimCommand(["gc", "--json"], cwd: NSHomeDirectory())],
       key: ActionCenter.machineKey, present: true)
   }
 
@@ -64,8 +64,8 @@ final class DaemonPressureMonitor: ObservableObject {
     Notifier.postPressure(
       id: "pressure-\(Date().timeIntervalSince1970)", title: daemon.headline,
       body: daemon.mode == "on" && daemon.running != nil
-        ? "The stim-daemon is reclaiming what it safely can. Free space outside Stim, or run stim gc --delete."
-        : "No stim-daemon is reclaiming in this Stim home. Run stim gc --delete, or free space outside Stim.",
+        ? "The stim-daemon is reclaiming what it safely can. Free space outside Stim, or run stim gc."
+        : "No stim-daemon is reclaiming in this Stim home. Run stim gc, or free space outside Stim.",
       offersPlan: true)
   }
 }

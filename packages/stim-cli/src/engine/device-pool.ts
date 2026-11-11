@@ -101,7 +101,8 @@ function poolBusyRefusal(
     return {
       code: DEVICE_BUSY,
       message: `Every connected device has an unreadable lease file, so Stim cannot tell who holds them: ${unreadable.join('; ')}.`,
-      remedy: 'Read each file and, once you know no run depends on it, delete it. `stim gc` reports them on every run.',
+      remedy:
+        'Read each file and, once you know no run depends on it, delete it. `stim gc --dry-run` reports them on every run.',
       lease: NO_LEASE_FACTS,
     };
   }

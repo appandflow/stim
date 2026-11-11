@@ -1,12 +1,12 @@
 import Foundation
 
-/// The dry-run report printed by `stim gc --json`, reduced to what a person
-/// reviews before `stim gc --delete`.
+/// The dry-run report printed by `stim gc --dry-run --json`, reduced to what a person
+/// reviews before `stim gc`.
 public struct GcPreview: Sendable {
   public struct Entry: Hashable, Sendable {
     public var label: String
     public var bytes: Int64?
-    /// Why `--delete` leaves this entry alone, or nil when it acts on it.
+    /// Why `stim gc` leaves this entry alone, or nil when it acts on it.
     public var kept: String?
   }
 
@@ -23,7 +23,7 @@ public struct GcPreview: Sendable {
     public var errorDescription: String? {
       switch self {
       case .refused(let message, let remedy): return [message, remedy].compactMap { $0 }.joined(separator: " ")
-      case .unreadable: return "stim gc --json did not print a report."
+      case .unreadable: return "stim gc --dry-run --json did not print a report."
       }
     }
   }
@@ -32,7 +32,7 @@ public struct GcPreview: Sendable {
   /// Sections that have entries, in the order the text report prints them.
   public var sections: [Section]
 
-  /// Bytes the entries `--delete` acts on take, where the report measured them.
+  /// Bytes the entries `stim gc` acts on take, where the report measured them.
   public var reclaimableBytes: Int64 {
     sections.flatMap(\.entries).filter { $0.kept == nil }.compactMap(\.bytes).reduce(0, +)
   }
@@ -79,12 +79,11 @@ public struct GcPreview: Sendable {
     "easSessionSweepNotices", "skipped", "unverifiedDevices", "simulatorLaunchdFolders",
   ]
 
-  /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same scope with
-  /// `--delete`, so a preview of one cache never becomes a full `gc --delete`. Nil for arguments that are
-  /// not a `gc --json` dry run.
+  /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same run without
+  /// `--dry-run`. Nil for arguments that are not a `gc --dry-run --json` run.
   public static func deleteArguments(after preview: [String]) -> [String]? {
-    guard preview.first == "gc", preview.contains("--json"), !preview.contains("--delete") else { return nil }
-    return preview + ["--delete"]
+    guard preview.first == "gc", preview.contains("--json"), preview.contains("--dry-run") else { return nil }
+    return preview.filter { $0 != "--dry-run" }
   }
 
   public init(json: Data) throws {
@@ -106,13 +105,12 @@ public struct GcPreview: Sendable {
         guard !items.isEmpty else { return nil }
         let entries = items.map { Self.entry($0, key: key) }
         return Section(key: key, title: title, entries: entries)
-      } + Self.ladderSection(object["ladder"])
+      } + Self.actionsSection(object)
   }
 
-  /// What `stim gc --delete` runs of the pressure ladder: its high level, as the dry run previewed it.
-  private static func ladderSection(_ ladder: Any?) -> [Section] {
-    let levels = (ladder as? [String: Any])?["levels"] as? [[String: Any]] ?? []
-    let actions = levels.first { $0["level"] as? String == "high" }?["actions"] as? [[String: Any]] ?? []
+  /// The maintenance pass `stim gc` runs, at the level the dry run measured.
+  private static func actionsSection(_ object: [String: Any]) -> [Section] {
+    let actions = object["actions"] as? [[String: Any]] ?? []
     guard !actions.isEmpty else { return [] }
     let entries = actions.map { action in
       Entry(
@@ -121,7 +119,7 @@ public struct GcPreview: Sendable {
         bytes: (action["bytes"] as? NSNumber)?.int64Value,
         kept: action["outcome"] as? String == "kept" ? action["detail"] as? String ?? "kept" : nil)
     }
-    return [Section(key: "ladder", title: "Pressure ladder at high", entries: entries)]
+    return [Section(key: "actions", title: "Maintenance pass at \(object["level"] as? String ?? "normal")", entries: entries)]
   }
 
   private static func entry(_ item: [String: Any], key: String) -> Entry {

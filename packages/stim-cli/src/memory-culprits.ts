@@ -42,19 +42,19 @@ const RESTARTABLE: readonly Restartable[] = [
     name: 'Watchman',
     matches: ({ name }) => name === 'watchman',
     bytes: 2 * GIB,
-    command: 'stim gc --delete --cache watchman',
+    command: 'stim gc --pressure high',
     note: 'Stim stops the daemon only when no workspace uses it; the next Metro starts a fresh one.',
   },
   {
     name: 'Gradle daemon',
     matches: ({ name }, commandLine) => name === 'java' && GRADLE_DAEMON.test(commandLine ?? ''),
-    command: 'stim gc --delete --cache gradle-daemons',
+    command: 'stim gc --pressure high',
     note: GRADLE_NOTE,
   },
   {
     name: 'Kotlin daemon',
     matches: ({ name }, commandLine) => name === 'java' && KOTLIN_DAEMON.test(commandLine ?? ''),
-    command: 'stim gc --delete --cache gradle-daemons',
+    command: 'stim gc --pressure high',
     note: GRADLE_NOTE,
   },
 ];

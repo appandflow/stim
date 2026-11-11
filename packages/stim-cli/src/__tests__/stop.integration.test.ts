@@ -508,7 +508,7 @@ test('a failed device teardown fails the run and says why, with a remedy', async
   expect(ios.status).toBe('failed');
   expect(ios.reason).toMatch(/still Booted/);
   expect(ios.remedy).toMatch(/xcrun simctl shutdown U1/);
-  expect(ios.remedy).toMatch(/stim gc --delete/);
+  expect(ios.remedy).toMatch(/stim gc/);
 });
 
 test('a failed Android device teardown reports an adb-flavored remedy', async () => {
@@ -526,7 +526,7 @@ test('a failed Android device teardown reports an adb-flavored remedy', async ()
   assert(android);
   expect(android.status).toBe('failed');
   expect(android.remedy).toMatch(/adb devices/);
-  expect(android.remedy).toMatch(/stim gc --delete/);
+  expect(android.remedy).toMatch(/stim gc/);
 });
 
 describe('devices shut down concurrently', () => {

@@ -188,7 +188,7 @@ it recorded.
   stim stop --slot web    closes only Chrome, keeping the profile, Metro and
                           every device
   stim worktree remove    closes Chrome and deletes the profile
-  stim gc --delete        does the same for a workspace whose path is gone,
+  stim gc        does the same for a workspace whose path is gone,
                           and forgets ledger entries of deleted profiles
 The profile is deleted only when the created-devices ledger lists it. After
 Chrome is gone, Stim removes the SingletonLock files a killed Chrome leaves,

@@ -74,10 +74,10 @@ stim guide settings
 ```
 
 If this machine ran an earlier build of Stim: BEFORE anything else, run
-`stim status` and `stim gc` (report-only) and read both skeptically — compatibility
+`stim status` and `stim gc --dry-run` (report-only) and read both skeptically — compatibility
 against state an earlier build wrote is not guaranteed. Old cache dirs
 (`~/.stim-build-cache`, `~/.<name>-metro-cache`) are dead and ignored;
-stale device records should surface in `gc`, not crash anything. Anything
+stale device records should surface in `gc --dry-run`, not crash anything. Anything
 odd here is a HIGH-severity finding.
 
 ## Use a fixture that looks like a real repo
@@ -108,9 +108,8 @@ suite's `--home`, whose dedicated caches must start empty.
 ## Safety rules (non-negotiable)
 
 - NEVER modify the target repo's source checkout. Worktrees only.
-- NEVER run `gc --delete`, `gc --delete --cache all`, or
-  `gc --delete --cache <name>` without the user's explicit approval in this
-  session. Bare `gc` (report) is always fine.
+- NEVER run `gc`, with or without `--pressure`, without the user's explicit
+  approval in this session. `gc --dry-run` (report) is always fine.
 - Touch no simulator/emulator except `stim-*` ones YOUR runs created.
 - No raw `simctl recordVideo` (it can wedge a machine with a global lock);
   record only through your device tool's own mechanism, prefer screenshots.
@@ -162,12 +161,12 @@ Deviate when reality demands it — and log why as a friction.
    - `stim status` → your workspaces gone from the registry
    - `git -C <repo> status --porcelain` and `git worktree list` → main
      checkout byte-identical to before you started (capture a baseline!)
-   - bare `stim gc` → nothing orphaned that you created
+   - `stim gc --dry-run` → nothing orphaned that you created
 
 ## Manual gaps beyond the native suites
 
 The automated `loop` and `caches` suites own fresh bare/Expo fixtures, cache
-growth and reuse, Pods reuse, single-flight, and `gc` visibility. Manual work
+growth and reuse, Pods reuse, single-flight, and `gc --dry-run` visibility. Manual work
 is only for shapes the release actually changes and automation cannot model.
 
 | Row                           | Run when                                                                  | Required evidence                                                                                                                                                                                                                                                      |
@@ -237,7 +236,7 @@ phone. What a phone has to settle:
    `--payload-url` opened the right URL.
 5. **Cleanup on unplug.** Pull the cable with the collector running. It must
    remove its own `collectors.ios` registration and exit; `status` must stop
-   reporting it and `gc` must find nothing, because a phone is never recorded
+   reporting it and `gc --dry-run` must find nothing, because a phone is never recorded
    as a device. Then reconnect and run `ios --device` again: the replacement
    must start cleanly. **Which closing record does it write?** A non-zero
    devicectl exit becomes `collector_failed`, a zero exit becomes
@@ -283,10 +282,10 @@ phone has to settle, and what is already settled:
    lands (phase 6), because a cached Release app carries its builder's JS.
    Prove `metroPort` is null, no LAN machinery runs, and the process is alive on
    the phone three seconds after launch.
-7. **The app dies with its collector.** `stop` (or `gc --delete`, or pulling the
+7. **The app dies with its collector.** `stop` (or `gc`, or pulling the
    cable) ends the collector, and because the collector is the launch, the app
    closes on the phone. Confirm the app is still INSTALLED, that `status` and
-   `gc` report no device, and that the next `ios --device` starts it again.
+   `gc --dry-run` report no device, and that the next `ios --device` starts it again.
    **OBSERVED 2026-09-01**: SIGTERM to the collector alone terminates the app.
 8. **An uninstall costs the developer trust.** After any uninstall -- including
    the signer-conflict retry -- the next launch is refused until the trust is
@@ -390,7 +389,7 @@ lock ios --for 5m`; in B, `stim ios --device --wait 10`. B prints a waiting
 9. **A corrupt lease file on a real listing.** NOT YET RUN ON HARDWARE: write
    garbage into the phone's lease file, then an id-less run must refuse
    `STIM_DEVICE_BUSY` naming the file rather than treat the phone as free, and
-   `stim gc` must report the file without deleting it.
+   `stim gc --dry-run` must report the file without deleting it.
 
 ## Launch-status contract
 

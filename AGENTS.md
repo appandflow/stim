@@ -757,7 +757,7 @@ Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
 parked one before creating. While the disk pressure level is high or critical it
 deletes instead of parking. Owned devices are disposable: the stim-daemon's
-dormant stage and pressure ladder, automatic maintenance and `gc --delete`
+dormant stage and pressure ladder, automatic maintenance and `gc`
 delete the owned devices of an idle workspace, never of one that is in use,
 leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
@@ -771,11 +771,11 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, the stim-daemon's pressure ladder at high or critical
-disk pressure, or automatic maintenance's age sweep after
-`maintenance.olderThanDays`; erase them only with `gc --cache parked
---delete`. Every route uses centralized teardown and ownership revalidation.
-`gc --delete` deletes parked hosted devices through their owning session home.
+simulator, `stim gc` at high or critical, the stim-daemon's pressure ladder at
+high or critical disk pressure, or automatic maintenance's age sweep after
+`maintenance.olderThanDays`; no CLI path erases one and keeps it parked. Every
+route uses centralized teardown and ownership revalidation. `gc` deletes parked
+hosted devices through their owning session home.
 Park keeps a simulator that is booted when it parks it booted for
 `pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
 is free, and records `bootedUntil`; adoption of it still resets and verifies as
@@ -814,7 +814,7 @@ scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
 `devices/teardown.ts` never sees a physical device. `stop` and `worktree remove`
-release the workspace's leases; `gc --delete` deletes only expired lease
+release the workspace's leases; `gc` deletes only expired lease
 files.
 
 ### 3. Fixed invocations; never derive commands from project scripts

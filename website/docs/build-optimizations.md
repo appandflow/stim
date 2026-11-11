@@ -95,7 +95,7 @@ Debug builds for the iOS simulator also pass `DEBUG_INFORMATION_FORMAT=dwarf`,
 so Xcode skips the dSYM bundle and the `dsymutil` step at the end of every link.
 The debug information stays in the object files under the workspace's
 DerivedData, where lldb and Xcode find it while those files exist. After
-`stim gc --delete` clears DerivedData, a rebuild restores it. Release builds and
+`stim gc` clears DerivedData, a rebuild restores it. Release builds and
 device builds keep the project's own setting, so Release still produces dSYMs
 for crash reporting. This has no option.
 

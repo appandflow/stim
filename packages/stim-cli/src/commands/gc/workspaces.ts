@@ -499,7 +499,7 @@ interface WorkspaceOutputsOptions {
   signal?: AbortSignal;
   operation?: StimContext;
   /**
-   * Lighten workspaces for `gc --delete`: include the project's in-tree build directories, keep only a workspace
+   * Lighten workspaces for `stim gc`: include the project's in-tree build directories, keep only a workspace
    * that is building or ran a native command within LIGHTEN_AFTER_MS, and ignore its dev server and devices.
    */
   lighten?: boolean;

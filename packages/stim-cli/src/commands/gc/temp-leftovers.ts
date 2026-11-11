@@ -52,10 +52,11 @@ export interface TempLeftoverReport {
 }
 
 const REMEDIES: Record<TempLeftoverKind, string> = {
-  stim: 'stim gc --delete removes them once they are idle for 24 hours',
+  stim: 'stim gc --pressure high removes them once they are idle for 24 hours',
   xctrace:
-    'stim gc --delete removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
-  swiftpm: 'stim gc --delete removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
+    'stim gc --pressure high removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
+  swiftpm:
+    'stim gc --pressure high removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
   jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
 };
 

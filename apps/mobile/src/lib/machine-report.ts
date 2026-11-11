@@ -491,7 +491,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
         title: device.name ?? id,
         detail,
         bytes: device.bytes,
-        command: 'stim gc --delete',
+        command: 'stim gc',
       });
     }
   };
@@ -505,7 +505,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: t`Data of a removed workspace`,
       detail: dir.dir ?? t`Stim workspace directory`,
       bytes: dir.bytes,
-      command: 'stim gc --delete',
+      command: 'stim gc',
     });
   }
   for (const project of s.deadProjects ?? []) {
@@ -515,7 +515,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: t`Record of a deleted folder`,
       detail: t`${path} is gone`,
       bytes: null,
-      command: 'stim gc --delete',
+      command: 'stim gc',
     });
   }
   for (const log of s.workspaceLogs ?? []) {
@@ -526,7 +526,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: t`Logs of ${workspace}`,
       detail: t`Over the cap; each log keeps its newest 8 MiB`,
       bytes: log.trimBytes,
-      command: 'stim gc --delete',
+      command: 'stim gc',
     });
   }
   for (const output of s.workspaceBuildOutputs ?? []) {
@@ -543,7 +543,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
           })
         : t`Not in use; rebuilt on the next run`,
       bytes: output.bytes,
-      command: 'stim gc --delete --cache workspaces',
+      command: 'stim gc --pressure high',
     });
   }
   for (const worktree of s.linkedWorktrees ?? []) {
@@ -621,7 +621,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       id: recording.dir,
       title: recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : t`A removed workspace`,
       detail: recording.withWorkspace
-        ? t`Its workspace was removed; stim gc --delete deletes it with the workspace data`
+        ? t`Its workspace was removed; stim gc deletes it with the workspace data`
         : null,
       bytes: recording.bytes,
     }))

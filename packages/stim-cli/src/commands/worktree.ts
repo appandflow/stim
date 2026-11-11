@@ -1333,7 +1333,7 @@ async function removeOrRefuse(
       const mainRoot = pending.worktreeMainRoot;
       if (!existsSync(mainRoot)) {
         output.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
-        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc\`.`));
         output.fail();
         return;
       }
@@ -1787,7 +1787,7 @@ async function removeOrRefuse(
                       ? `deleting ${moved} in the background from ${trash.dir}`
                       : disposed === 'deleted'
                         ? `deleted ${moved}`
-                        : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+                        : `left ${moved} in ${trash.dir}; stim gc deletes them`,
                   ),
                 ),
               );

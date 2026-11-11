@@ -33,7 +33,7 @@ export function bootedParkedDue({
   sims: readonly IosSimRecord[] | null;
   now: number;
   memory: HostMemoryPressure | null;
-  /** Takes every marked simulator whatever its grace period, as `gc --delete` does. */
+  /** Takes every marked simulator whatever its grace period, as `stim gc` does. */
   all?: boolean;
 }): BootedParkedDue[] {
   if (sims === null) return [];

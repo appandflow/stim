@@ -23,7 +23,7 @@ import Testing
     #expect(offer.isAvailable && offer.title == "Reclaim Memory" && offer.stops == 1)
     #expect(offer.consequence.hasPrefix("Shuts down the watchman daemon to free "))
     #expect(offer.bytes == 4_456_448_000 && offer.staleRoots == 1)
-    #expect(offer.command(cwd: "/h") == StimCommand(["gc", "--delete", "--json", "--cache", "watchman"], cwd: "/h"))
+    #expect(offer.command(cwd: "/h") == GcItem.watchman.command(cwd: "/h"))
   }
 
   @Test func namesWhoUsesWatchmanWhenGcKeepsIt() throws {

@@ -1270,7 +1270,7 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['gc', 'stats', 'buildMachines', 'measuredAt'],
         additionalProperties: false,
         properties: {
-          gc: { type: ['object', 'null'], description: 'The payload of the `stim gc --json` dry run.' },
+          gc: { type: ['object', 'null'], description: 'The payload of the `stim gc --dry-run --json` report.' },
           gcError: { type: 'string' },
           stats: { type: ['object', 'null'], description: 'The payload of `stim stats --json`.' },
           statsError: { type: 'string' },

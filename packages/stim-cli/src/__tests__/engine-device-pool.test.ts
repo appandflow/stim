@@ -106,7 +106,7 @@ describe('choosing from the pool', () => {
     expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
     expect(result.refusal.message).toMatch(/Every connected device has an unreadable lease file/);
     expect(result.refusal.message).toContain(deviceLeasePath('ios', 'A-CORRUPT'));
-    expect(result.refusal.remedy).toMatch(/`stim gc` reports them on every run/);
+    expect(result.refusal.remedy).toMatch(/`stim gc --dry-run` reports them on every run/);
     expect(result.refusal.lease).toEqual({
       platform: null,
       id: null,

@@ -135,7 +135,7 @@ run replaces it or stop clears it.
                   webPreviewUrl }], empty when the workspace has none
   backend         "eas"
   state           "claimed"    Stim's ownership ledger holds this workspace's
-                               claim, so \`stop\` and \`gc --delete\` can end it
+                               claim, so \`stop\` and \`gc\` can end it
                   "unclaimed"  the ledger has no claim for this workspace;
                                \`stop\` still ends the recorded session
                   "unknown"    the ledger could not be read
@@ -205,7 +205,7 @@ leased until <time>" for each one.`,
   udid            the owned simulator this workspace installed onto, or the
                   phone's UDID on \`--device\`. A physical device gets no
                   owned-device registry entry; its ID is stored in a temporary
-                  lease. \`stop\` releases workspace leases and \`gc --delete\`
+                  lease. \`stop\` releases workspace leases and \`gc\`
                   removes expired lease files
   deviceName      its name, or null
   deviceType      the owned simulator's MODEL, as
@@ -855,31 +855,43 @@ RULES
   full commands.`,
     },
     gc: {
-      summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
-      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked>]
-          [--worktrees] --json
+      summary:
+        'the gc payload: mode, level, pressure, actions, blocked, failures, results, the dry-run sections and inventory, and the gc refusals',
+      body: () => `  stim gc [--dry-run] [--pressure <normal|high|critical>] --json
 
-  The report the text prints, as one payload. Show the user its sections
-  before you run \`gc --delete\`. Under --delete it is the report that run
-  acted on: \`results\` lists each entry's outcome, \`failures\` counts the
-  entries it could not delete, and a nonzero count exits 1. Run
-  \`stim gc --json\` again to see what is left.
+  The run the text prints, as one payload. \`stim gc\` runs one maintenance
+  pass now at the level the machine measures and deletes; \`--dry-run\`
+  reports what it would delete and deletes nothing; \`--pressure\` runs at
+  that level instead of the measured one. Show the user a dry run before you
+  run \`gc\`. \`results\` lists each entry the run acted on, \`failures\`
+  counts the actions that failed, and a nonzero count exits 1. Run
+  \`stim gc --dry-run --json\` again to see what is left.
 
   mode            "dry-run" | "delete"
-  cacheScope      the --cache name, or null. When set, devices, project
-                  entries and locks were not inspected and their sections
-                  are empty, except that --cache parked fills
-                  parkedSimulators and parkedEmulators
-  olderThan       the --older-than days, or null
-  worktreeSweep   null without --worktrees; otherwise { olderThan, defaulted }:
-                  the idle days a linked worktree needs, and whether that is
-                  the default 7 because --older-than was not given. Merged
-                  worktrees are swept either way
-  actionable      true when --delete with the same flags reclaims something
-  failures        null on a dry run; otherwise the entries it could not
-                  delete or shut down
-  results         what --delete did, one { kind, status, label,
-                  id, bytes, detail } per entry it acted on; empty on a dry
+  level           the level the run used: pressure.level unless --pressure
+                  chose one
+  pressure        what the machine measures (\`guide lifecycle budget\`)
+  actionable      true when the same run takes at least one action: "would"
+                  on a dry run, "done" otherwise
+  failures        null on a dry run; otherwise the actions that failed
+  actions         one { rung, kind, target, workspace?, outcome, bytes,
+                  reason, detail, restore? } per entry the run looked at.
+                  rung is null for the automatic maintenance plan, which
+                  every level runs, and the ladder rung otherwise. outcome
+                  is "would" (a dry run), "done", "kept" (left alone; reason
+                  says why) or "failed" (reason says why and what to retry).
+                  bytes is what it frees or freed, where gc could measure
+                  it. kind is the action: idle-stage, delete-build-outputs,
+                  delete-parked-device, trim-cache, empty-cache,
+                  dormant-stage, delete-dependencies, stop-gradle-daemons,
+                  stop-watchman, delete-gradle-version,
+                  delete-temp-leftovers, delete-trash, remove-worktree and
+                  the maintenance plan's own kinds. restore says how to
+                  rebuild what a delete removed, where that applies
+  blocked         one string per thing the run could not decide or reach,
+                  each for a person to look at; empty when nothing blocks
+  results         what the run did, one { kind, status, label,
+                  id, bytes, detail } per action that ran; empty on a dry
                   run. status is "done", "kept" (left alone, detail says
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice,
@@ -887,20 +899,13 @@ RULES
                   workspaceOutputs, worktreeDependencies, recording,
                   workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
-                  cache, gradleVersion, tempLeftover (one "done" labelled
-                  with the TMPDIR it cleared, plus a "kept" or "failed" per
-                  entry gc checked again or could not delete), trash (the
-                  same, labelled with $STIM_HOME/trash).
+                  cache, gradleVersion, tempLeftover, trash, archive,
+                  watchman, workspaceLogs, ledgerEntry, statusCache and
+                  homeEntry.
                   label is a device, path or cache name; id is the UDID,
-                  AVD name or path behind it, or null. Under --cache
-                  parked, a "done" parkedDevice was erased and stays
-                  parked; otherwise it was deleted. The pressure ladder's
-                  actions come as devServer (the idle stage), workspaceOutputs,
-                  parkedDevice, cache, device (the dormant stage),
-                  worktreeDependencies, gradleDaemon, gradleVersion,
-                  tempLeftover and trash, labelled with their target
-  inventory       null except on a dry run without --cache. Report
-                  only: gc never acts on it, even under --delete.
+                  AVD name or path behind it, or null
+  inventory       present on a dry run only. Report
+                  only: gc never acts on it.
                   { devices, runtimes, systemImages, notices }
     devices       { kind, id, name, model, runtime, state, lastUsedAt, bytes,
                     directory, owner, project, slot }  every available iOS
@@ -932,36 +937,12 @@ RULES
                     timing out or an AVD or system image folder Stim
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
-  maintenance     top-level { mode, pressure, actions, blocked,
-                  skips, note, invalid? }, the next maintenance plan
-                  from live pressure and cached sizes. note says when no
-                  pass has run yet. No du runs for this preview.
-  ladder          top-level, on a dry run without --cache: { pressure,
-                  levels, workspaces }. pressure is the level the machine
-                  measures now (\`guide lifecycle budget\`). levels is
-                  [{ level: "high" | "critical", command, actions }]: what
-                  the pressure ladder would do now at that level whatever
-                  the machine measures, which \`command\` runs ("stim gc
-                  --delete" at high, "stim gc --delete --cache all" at
-                  critical). Each action is { rung, kind, target,
-                  workspace?, outcome: "would", bytes, detail }, bytes being
-                  what it would free where gc could measure it. kind is
-                  idle-stage, delete-build-outputs, delete-parked-device,
-                  trim-cache, empty-cache, dormant-stage, delete-dependencies
-                  (critical only), stop-gradle-daemons, stop-watchman,
-                  delete-gradle-version, delete-temp-leftovers or
-                  delete-trash. workspaces is each registered workspace's
-                  { path, stage: "running" | "idle" | "dormant" | "stopped",
-                  since, kept? }: since is its last activity while running,
-                  when the daemon staged it while idle or dormant, and its
-                  last Stim command while stopped; kept says why the idle
-                  stage leaves a running workspace whatever its activity
-  sections        one array per report section, in the text order. Every key
+  sections        on a dry run only: one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }
     invalidProjects         { path }  the registry key is not absolute
     orphanedPorts           { project, label, port }
-    orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
+    orphanedWorkspaces      { dir, projectRoot, bytes }  a run removes the
                               whole workspace directory; projectRoot is null
                               for an empty directory with no workspace.json
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
@@ -1007,9 +988,8 @@ RULES
                               while their install signature is unchanged,
                               the same measurement status and the daemon
                               use). null
-                              for a root outside git. Without --worktrees,
-                              the source checkout and roots outside git
-                              are left out
+                              for a root outside git. The source checkout and roots
+                              outside git are left out
     unlistedWorktreeDirectories
                             { path, repository, bytes, remedy }  a
                               directory directly under a repository's
@@ -1022,8 +1002,7 @@ RULES
                               run after checking it
     parkedSimulators        { udid, name, model, runtime, parkedAt, app,
                               bytes, listed }  app is the bundle id recorded
-                              at park, else null; with --older-than, only
-                              those parked at least that long
+                              at park, else null
     parkedEmulators         { name, systemImage, deviceProfile, parkedAt, app,
                               bytes, listed }  app is the package name;
                               likewise
@@ -1033,15 +1012,14 @@ RULES
                               the UDID or AVD name, name is the device label.
                               listed means its private home ledger lists the
                               device; false means already removed and is not
-                              actionable; null means unreadable. --older-than
-                              filters by parkedAt; --cache scopes leave this empty
+                              actionable; null means unreadable
     otherHomes              { path, state: "present" | "gone" | "unverified",
                               createdAt, lastSeenAt, bytes, privateBytes,
                               workspaces, devices: [{ kind, id, name,
                               present, command }], teardown, forgettable }
                               Stim homes of the machine list
                               (~/.stim/machine/homes/homes.json) other than
-                              this one, from an unscoped gc only; empty
+                              this one, from a gc dry run only; empty
                               under STIM_HOME. Report-only: devices are
                               the other home's, never this home's. teardown
                               is the ordered commands that tear a present
@@ -1049,7 +1027,7 @@ RULES
                               this machine (null when the listing failed);
                               command deletes a present device of a gone
                               home by hand. forgettable (gone, nothing left)
-                              makes --delete drop the list entry only
+                              makes a run drop the list entry only
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this
                               Stim home has no record of creating; never
@@ -1060,11 +1038,11 @@ RULES
                               simulator in Xcode's device set; never deleted,
                               bytes null when du did not answer
     staleDevices            { kind, id, name, project, slot, idleDays,
-                              bytes }  only with --older-than
+                              bytes }  always empty
     finishedDevices         { kind, id, name, project, slot, bytes, reason }
                               owned devices of a workspace whose linked
                               worktree gc keeps although its branch is
-                              merged or its pull request ended; --delete
+                              merged or its pull request ended; a run
                               deletes them unless the workspace is in use,
                               leased, driven, locked, shared with a live
                               stim share, pinned by maintenance.keep or used
@@ -1077,25 +1055,25 @@ RULES
                               ones whose size could not be read; parked
                               devices are under parkedSimulators and
                               parkedEmulators
-    staleDeviceRecords      { kind, id, project, slot }  --delete clears
+    staleDeviceRecords      { kind, id, project, slot }  a run clears
                               the record only
     staleLedgerEntries      { kind: "ios" | "android" | "web", id }
                               simulators this Stim home created that a
                               complete simctl listing no longer shows, AVD
                               names with no registration or data in any AVD
                               root, and browser profile paths whose
-                              directory is gone; --delete forgets the
+                              directory is gone; a run forgets the
                               ledger entry only
     staleEasLedgerEntries   { id, workspaceRoot }  entries of the machine
                               EAS session ledger whose id is not a UUID and
                               whose absolute workspace root is missing on a
-                              mounted volume; --delete forgets the entry
+                              mounted volume; a run forgets the entry
                               only and contacts no EAS session
     staleStatusCaches       { kind: "disk-usage" | "pull-request" | "git-merge",
                               path, file, bytes }  entries of
                               $STIM_HOME/disk-usage, pull-requests and
                               git-merge whose path is gone from a
-                              mounted volume; --delete removes the file
+                              mounted volume; a run removes the file
     orphanedEasSessions     { id, name, platform, status, projectScope }
     staleBuildLocks         { path, platform, key, pid, projectRoot }
     staleBuildSlots         { path, index, pid, projectRoot }
@@ -1110,14 +1088,14 @@ RULES
     skipped                 { path, detail }  not classified as dead
     workspaceLogs           { dir, projectRoot, bytes, trimBytes, willTrim,
                               reason, detail }  logs/ of each workspace;
-                              trimBytes is what --delete would drop from
+                              trimBytes is what a run would drop from
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is
-                              what --delete would remove; withWorkspace
+                              what a run would remove; withWorkspace
                               marks those of a gone workspace, removed with
                               its workspace directory
     workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
@@ -1129,26 +1107,20 @@ RULES
                               android/build,
                               android/.gradle, .build, android/.cxx,
                               android/<module>/.cxx, .dd and an Exact
-                              app's target/ that --delete
+                              app's target/ that a run
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
-                              --delete --cache workspaces would lighten (plain
-                              --delete clears only idle ones, through the
-                              ladder); --cache workspaces omits the
-                              directories that --delete removes whole (dead
-                              projects and orphanedWorkspaces), and --cache
-                              all does not
+                              a run would lighten; an idle workspace's
+                              outputs go at every level, a running one's
+                              never
     agentDevice             <AgentDeviceUsage|null>  report-only; workspace state
-                              goes only with its workspace;
-                              null with any --cache scope
-    swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
-                              null with any --cache scope
+                              goes only with its workspace
+    swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted
     gradleVersions          { home, olderThanDays, blocked, gradleRunning,
                               gradleRunningPids, versions: [{ version, dirs,
                               bytes, lastModifiedAt, willDelete, reason,
-                              detail }], leftovers } | null; only with
-                              --cache gradle-versions. blocked is null or
+                              detail }], leftovers } | null. blocked is null or
                               { reason, detail } with machine-global,
                               no-registry, unsafe-layout, listing-failed,
                               unreadable-project, gradle-running or
@@ -1158,12 +1130,11 @@ RULES
                               version's reason is null, one of those,
                               not-a-directory, walk-failed, too-many-entries
                               or recently-modified. leftovers lists
-                              .stim-delete-* directories --delete finishes
+                              .stim-delete-* directories a run finishes
                               removing
     machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
                               deviceSupport, orphanedDerivedData, runnerBuilds }
-                              | null report-only, never deleted; null with any
-                              --cache scope. gradle: { home, unusedVersions:
+                              | null report-only, never deleted. gradle: { home, unusedVersions:
                               [{ version, bytes, dirs, transforms, remedy }]
                               (transforms is null or { dir, bytes,
                               privateBytes, remedy } for caches/<version>/
@@ -1194,8 +1165,8 @@ RULES
                               (instruments*.ktrace), swiftpm
                               (TemporaryDirectory.* directories) or jest (Jest's
                               jest_<uid in base 36> cache, never deleted). deleteCount
-                              is what --delete removes. null with STIM_HOME
-                              set or any --cache scope
+                              is what a run removes. null with STIM_HOME
+                              set
     trash                   { root, entries: [{ path, worktree, removedAt,
                               bytes, willDelete, kept }] } | null  ignored
                               directories worktree remove moved out of a
@@ -1207,18 +1178,13 @@ RULES
                               invalid trash.json, or the worktree that
                               still exists (not for a warm entry), that
                               keeps a directory;
-                              --delete deletes the rest, only remove-*
+                              a run deletes the rest, only remove-*
                               entries with a valid trash.json. null when the
-                              trash is empty or under any --cache scope
+                              trash is empty
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
-                              garbage; willEmpty marks the ones --delete
-                              would empty. scopedEmpty is { willEmpty,
-                              emptySkipped } and says what \`--delete
-                              --cache <selector>\` without --older-than
-                              would do to the cache; it is present without
-                              --cache and null with it, where willEmpty
-                              already says so. Caches that share a name
+                              garbage; willEmpty marks the ones a run
+                              would empty. Caches that share a name
                               carry their directory's last component, as
                               "Metro transform cache: <store>"
     memory                  { kind: "watchman" | "gradleDaemon" |
@@ -1227,23 +1193,19 @@ RULES
                               measure: "footprint" | "rss", version,
                               gradleHome, offloadClient, state: "idle" |
                               "busy" | "unknown", reclaimable, reason,
-                              detail }  without --cache, or with --cache
-                              watchman or gradle-daemons; reclaimable marks
-                              the ones gc --delete would stop (watchman) or
-                              gc --delete --cache gradle-daemons would
-                              (\`guide cleanup memory\`)
+                              detail }  reclaimable marks the ones a run
+                              would stop (\`guide cleanup memory\`)
     watchmanRoots           { path, stale: "missing" | "pruned-worktree" |
                               null, subscriptions, triggers, removable,
                               detail }  removable marks the stale roots
-                              gc --delete (or --cache watchman) would
-                              watch-del
+                              a run would watch-del
     memoryNotices           { message }  why the memory sweep was skipped
   bytes is null when the size is unknown: not measured, or the measurement
   failed. idleDays is null when the last use is unknown. listed is false for
   a parked device that is no longer on this machine, and null when its
   listing was unavailable.
 
-  reason is null for an entry --delete acts on, and otherwise a stable code
+  reason is null for an entry a run acts on, and otherwise a stable code
   to branch on; detail is the text line, for the user. Never parse detail.
   A linked worktree's detail is never null.
     workspaceBuildOutputs   unresolved | locked | lock-unknown | in-use |
@@ -1267,10 +1229,9 @@ RULES
 
     { "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }
 
-  - a --cache name that no shared cache carries; the remedy names the
-    caches on this machine
-  - --cache together with --worktrees
-  - --cache watchman or gradle-daemons together with --older-than`,
+  - an unknown option, including the removed --delete, --cache,
+    --older-than and --worktrees
+  - a --pressure value other than normal, high or critical`,
     },
     status: {
       summary:
@@ -1321,7 +1282,7 @@ RULES
               volume, such as after git worktree remove or rm -rf; absent
               otherwise, and for a folder on a volume that is not mounted.
               phase is then never warming or ready. status only reports it:
-              the entry stays registered until stim gc --delete or
+              the entry stays registered until stim gc or
               stim worktree remove <path> removes it.
 
   Each environment also carries stage, where the workspace is as Stim
@@ -2188,7 +2149,7 @@ AGENT-DEVICE DISK USAGE
   Dead lock owners and leases do not mark entries in use.
   workspaces: [{ dir, projectRoot, bytes }]; hosted: { dir, bytes, sessions } | null.
   $STIM_HOME/agent-device-usage.json caches the measurement and resolved roots
-  for 10 minutes. stats and unscoped gc measure; no other command measures this
+  for 10 minutes. stats and gc measure; no other command measures this
   state. Server stats.get reads only the cached value.
   Stim never trims or deletes the shared runner builds, sessions, logs and other
   state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
@@ -2201,11 +2162,10 @@ SWIFTPM CACHE DISK USAGE
   bytes is null and complete is false if du fails; absent directories have
   present: false, bytes: 0 and complete: true. Plain output omits absent caches.
   $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
-  keyed on the resolved dir. stats and unscoped gc alone run du -sk with a
+  keyed on the resolved dir. stats and gc alone run du -sk with a
   20-second timeout. Server stats.get reads only the cached value. status,
   start, ios, android and the pressure ladder never measure it. gc reports it as
-  sections.swiftpmCache, never in caches or actionable; --delete and
-  --older-than leave it untouched, and any --cache scope reports null.
+  sections.swiftpmCache, never in caches or actionable; no gc run touches it.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a

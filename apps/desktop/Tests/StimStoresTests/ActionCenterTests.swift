@@ -62,7 +62,7 @@ struct ActionCenterTests {
   @Test(arguments: [
     ["doctor", "--fix"], ["device", "unlock", "ios", "--slot", "secondary"],
     ["stop"], ["start"], ["reload"], ["reload", "web", "--json"], ["ios"], ["android"], ["macos"], ["web"],
-    ["gc", "--delete", "--json"], ["gc", "--idle", "30m", "--json"],
+    ["gc", "--json"], ["gc", "--idle", "30m", "--json"],
     ["worktree", "remove"], ["worktree", "remove", "/target", "--force"], ["worktree", "warm"],
     ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],

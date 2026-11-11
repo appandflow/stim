@@ -10,7 +10,6 @@ import { gcReportFile, maintenanceRunClaims, type DaemonPressure, type PressureL
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
-import { collectGradleVersions } from './gc/gradle-versions.ts';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { listMountedVolumes } from '../fs-util.ts';
@@ -196,7 +195,7 @@ async function collectGcReport(
       : [],
     ownedDeviceDisk: devices.ownedDeviceDisk,
     memory: await collectGcMemory({ watchman: true, gradle: true }, env, operation),
-    gradleVersions: await collectGradleVersions({ olderThanDays: null, now, operation }),
+    gradleVersions: null,
     agentDeviceUsage,
     swiftpmCacheUsage,
     machineCaches,

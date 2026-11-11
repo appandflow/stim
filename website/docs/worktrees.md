@@ -64,14 +64,14 @@ From a linked worktree's app subdirectory, removal reclaims that app's environme
 ## Remove finished worktrees in bulk
 
 <StimTabs
-code={`stim gc
-stim gc --delete
-stim gc --delete --worktrees --older-than 3`}
+code={`stim gc --dry-run
+stim gc
+stim gc --pressure critical`}
 />
 
-- **Preview.** `stim gc` lists what it would keep or remove. It uses local refs and cached pull request status. `--delete` can refresh them.
-- **Clean up finished work.** `--delete` can remove worktrees Stim has used after their branch merges or their pull request merges or closes. It can also remove clean, inactive worktrees based on the default branch with no commits of their own. Automatic maintenance does this by default.
-- **Include idle work.** `--worktrees --older-than 3` also includes clean, pushed worktrees unused by Stim for at least three days, even if unmerged. Deleting them drops ignored files such as `.env.local`.
+- **Preview.** `stim gc --dry-run` lists what `stim gc` would keep or remove. It uses local refs and cached pull request status. `stim gc` refreshes them.
+- **Clean up finished work.** `stim gc` removes worktrees Stim has used after their branch merges or their pull request merges or closes, once the grace period has passed. It also removes clean, inactive worktrees based on the default branch with no commits of their own. Automatic maintenance does this by default. At `--pressure high`, `stim gc` removes clean finished worktrees without waiting for the grace period.
+- **Include idle work.** `--pressure critical` also removes clean, pushed worktrees unused by Stim for seven days, even if unmerged. Deleting them drops ignored files such as `.env.local`.
 
 Stim keeps active, locked and pinned worktrees. It also keeps unpushed commits unless it can verify they were covered by a merge, including a squash or rebase merge. The default grace period for finished work is two hours. Lock an important checkout with `git worktree lock` or pin it with `maintenance.keep`. To turn off automatic removal, set `maintenance.removeFinishedWorktrees` to `false`. [Cleanup options](./commands.md#gc)
 
@@ -82,8 +82,8 @@ A finished worktree with uncommitted changes can be removed after Stim saves a r
 Open **Archived** in Desktop or the phone app to view retained build history, logs and device replay. An archived workspace is read-only. Logs and recordings can contain secrets, and retention limits apply. [Archive retention settings](./settings.md#archive-retention)
 
 <StimTabs
-code={`stim gc --cache archived
-stim gc --delete --cache archived --older-than 14`}
+code={`stim gc --dry-run
+stim gc --pressure critical`}
 />
 
-The first command lists archives. The second deletes those removed more than 14 days ago. [Archive selectors](./commands.md#archive-cache-selectors)
+`stim gc` deletes archives past their retention limits at every level. At `--pressure critical` it also deletes the logs, recordings and agent actions of every archive and keeps each archive record. The CLI cannot delete one archive; Stim Desktop can.

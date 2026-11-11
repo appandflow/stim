@@ -213,7 +213,7 @@ stage, the pressure ladder and the dormant stage, whether or not anyone
 watches; with no stim-daemon, the dev server's supervisor keeps it up too.
 The daemon never shuts its device down for a run waiting for a device slot;
 that run keeps waiting and its progress line names the share. Automatic
-maintenance and stim gc --delete keep the devices of its finished worktree.
+maintenance and stim gc keep the devices of its finished worktree.
 Frames streamed to viewers are not activity, so the share alone holds it.
 The stage line of stim status and the daemon's workspace_kept log name the
 share. stim share stop or the share's expiry lets the idle stage proceed: a

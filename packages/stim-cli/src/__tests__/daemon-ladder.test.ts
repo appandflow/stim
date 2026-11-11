@@ -597,7 +597,7 @@ describe('the pressure ladder', () => {
 });
 
 describe('the ladder stim gc forces', () => {
-  test('runs every rung at the forced level whatever the measured level, and gc --older-than limits rung 2 to devices parked that long', async () => {
+  test('runs every rung at the forced level whatever the measured level', async () => {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     for (const [udid, days] of [
       ['OLD-PARKED', 10],
@@ -620,7 +620,7 @@ describe('the ladder stim gc forces', () => {
         },
       });
     }
-    const parkedTargets = async (parkedOlderThanDays?: number) =>
+    const parkedTargets = async () =>
       (
         await runLadder(
           {
@@ -630,7 +630,7 @@ describe('the ladder stim gc forces', () => {
             devices: [],
             simsFailed: false,
             remeasure: async () => pressure('normal'),
-            force: { level: 'high', why: 'stim gc --delete', ...(parkedOlderThanDays ? { parkedOlderThanDays } : {}) },
+            force: { level: 'high', why: 'stim gc' },
             fromRung: 2,
           },
           pressure('normal'),
@@ -638,7 +638,6 @@ describe('the ladder stim gc forces', () => {
       ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
 
     expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
-    expect(await parkedTargets(5)).toEqual(['OLD-PARKED']);
   });
 });
 

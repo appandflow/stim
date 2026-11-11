@@ -124,7 +124,7 @@ export async function ensureOwnedAndroidDevice({
     if (!record.bootPending) {
       throw new AvdRecoveryError(
         `this project's emulator ${avdName} uses system image ${currentImage}, but ${requestedImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
-        'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+        'Run `stim worktree remove` (or `stim gc`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
       );
     }
     replacedProfile = ownedAvdDeviceProfile(avdName);
@@ -158,7 +158,7 @@ export async function ensureOwnedAndroidDevice({
       if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
         throw new AvdRecoveryError(
           `this project's emulator uses device profile ${currentProfile}, but ${requestedProfile} was requested. Stim will not silently boot a different model.`,
-          'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+          'Run `stim worktree remove` (or `stim gc`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
         );
       }
       if (resolved.notOwned) {
@@ -224,9 +224,7 @@ export async function ensureOwnedAndroidDevice({
             ),
           );
           note(
-            chalk.dim(
-              'Boot it yourself, or run `stim gc --delete` to clear the assignment so Stim can create an owned AVD.',
-            ),
+            chalk.dim('Boot it yourself, or run `stim gc` to clear the assignment so Stim can create an owned AVD.'),
           );
         }
         return record;

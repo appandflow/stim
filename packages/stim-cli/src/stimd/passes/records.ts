@@ -164,7 +164,11 @@ export async function planRecords({
 /** At critical: every device recording, and the logs, recordings and agent actions of every archive. */
 export async function planHistory(operation?: StimContext): Promise<MaintenanceAction[]> {
   const actions: MaintenanceAction[] = [];
-  const recordings = await collectRecordings({ whole: true, olderThan: null, now: Date.now() }, [], operation?.signal);
+  const recordings = await collectRecordings(
+    { whole: false, olderThan: 0, now: Date.now() },
+    [],
+    operation?.signal,
+  );
   const bytes = recordings.filter((entry) => entry.willDelete).reduce((sum, entry) => sum + entry.deleteBytes, 0);
   if (bytes > 0)
     actions.push({
@@ -241,7 +245,7 @@ export async function executeRecordAction(
       });
     case 'would-delete-recordings':
       return run(async () => {
-        const plan = { whole: true, olderThan: null, now: Date.now() };
+        const plan = { whole: false, olderThan: 0, now: Date.now() };
         return deleteRecordings(await collectRecordings(plan, [], signal), plan, GC_OUTPUT, signal);
       });
     case 'would-delete-archives':

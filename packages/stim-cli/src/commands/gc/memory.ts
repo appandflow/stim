@@ -42,8 +42,6 @@ export interface MemoryScope {
   watchmanMinBytes?: number;
 }
 
-
-
 type MemoryKeptCode = 'in-use' | 'busy' | 'unknown' | 'build-running' | 'stim-server';
 
 export interface MemoryProcess {
@@ -903,7 +901,7 @@ export function memoryLines(
     ? 'footprint, resident size where unreadable'
     : 'physical footprint';
   const lines = [
-    `Memory (${measure}) - shared helpers that grow while they run; --delete stops an unused watchman and --cache gradle-daemons stops idle Gradle and Kotlin daemons under memory pressure with no build running:`,
+    `Memory (${measure}) - shared helpers that grow while they run; stim gc at high stops an unused watchman and idle Gradle and Kotlin daemons with no build running:`,
   ];
   for (const entry of report.processes) {
     const state = entry.reclaimable
@@ -928,7 +926,7 @@ export function memoryLines(
     if (!report.processes.some((entry) => entry.cacheKind === kind)) continue;
     const roots = kind === WATCHMAN_KIND ? report.watchmanRoots.filter((root) => root.removable).length : 0;
     const note = roots ? ` (and ${roots} stale root(s) removed)` : '';
-    const command = kind === WATCHMAN_KIND && !scoped ? 'stim gc --delete' : `stim gc --delete --cache ${kind}`;
+    const command = 'stim gc --pressure high';
     parts.push(`${formatBytes(reclaimableBytes(report, kind))} with ${command}${note}`);
   }
   if (parts.length) lines.push(`  reclaimable ${formatBytes(reclaimableBytes(report))}: ${parts.join('; ')}`);
@@ -1285,7 +1283,7 @@ export function watchmanStopBytes(underPressure: boolean): number {
 
 /**
  * Whether automatic maintenance shuts watchman down: null when its footprint is under the threshold, a reason when
- * the check keeps it, and `stop` when it is large enough and the same check `gc --delete` applies finds it unused.
+ * the check keeps it, and `stop` when it is large enough and the same check `stim gc` applies finds it unused.
  */
 export function planWatchmanStop(
   daemon: MemoryProcess | undefined,
@@ -1297,7 +1295,7 @@ export function planWatchmanStop(
     : { stop: false, reason: daemon.detail ?? 'it could not be proven unused' };
 }
 
-/** Shuts down the watchman daemon `pid` and removes its stale roots under the checks `gc --delete` applies, then waits for it to exit. Nothing runs while STIM_HOME scopes the config. */
+/** Shuts down the watchman daemon `pid` and removes its stale roots under the checks `stim gc` applies, then waits for it to exit. Nothing runs while STIM_HOME scopes the config. */
 export async function stopUnusedWatchman(
   pid: number,
   output: GcOutput = GC_OUTPUT,
@@ -1341,7 +1339,7 @@ export function watchmanFinding(report: MemoryReport): Finding | null {
       `The shared watchman daemon (pid ${daemon.pid}) has a ${formatBytes(daemon.bytes)} ${daemon.measure} with ` +
       `${report.watchmanRoots.length} watched root(s), ${stale} of them stale; ${state}. Removing roots stops their ` +
       'recrawls, but only a restart returns the memory.',
-    fix: 'Automatic maintenance shuts it down once nothing uses it. To do it now, run `stim gc --cache watchman` to see its roots and clients, then `stim gc --delete --cache watchman`.',
+    fix: 'Automatic maintenance shuts it down once nothing uses it. To do it now, run `stim gc --pressure high --dry-run` to see whether it is idle, then `stim gc --pressure high`.',
   };
 }
 

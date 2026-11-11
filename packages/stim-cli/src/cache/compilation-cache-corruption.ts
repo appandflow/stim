@@ -44,7 +44,7 @@ function recordInMaintenanceLog(workspace: string, msg: string, fields: Record<s
 }
 
 /**
- * Empties the shared compilation cache a failed build reported corrupt, through the path `gc --delete --cache` uses,
+ * Empties the shared compilation cache a failed build reported corrupt, through the path `gc` uses,
  * unless another build may be using it. It never retries the build; the result is the refusal to print.
  */
 export async function clearCorruptCompilationCache(
@@ -66,7 +66,7 @@ export async function clearCorruptCompilationCache(
       code: COMPILATION_CACHE_CORRUPT,
       message,
       remedy:
-        'Once the reason above is resolved, run `stim gc --delete --cache "compilation cache"`, then run the same command again.',
+        'Once the reason above is resolved, run `stim gc --pressure critical`, which empties every shared cache Stim registered, then run the same command again.',
     };
   }
   const message = `The shared compilation cache at ${dir} was corrupt (the compiler reported: ${line}). Stim emptied it.`;

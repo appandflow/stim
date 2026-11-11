@@ -62,7 +62,7 @@ emulator. A physical device reached with `ios --device` or `android --device`
 is leased for the run and never added to the owned-device registry.
 
 `stim stop` releases an active environment without deleting its local device.
-`stim worktree remove` reclaims the worktree environment. `stim gc --delete`
+`stim worktree remove` reclaims the worktree environment. `stim gc`
 removes orphaned resources. This ownership model makes cleanup safe after an
 agent exits early. [Getting started](./getting-started.md#terms) defines these
 terms.
@@ -74,7 +74,7 @@ and access to private development services. Stim lets coding agents use that
 existing setup with worktree isolation.
 
 Local CPU, memory, and disk are finite. `stim doctor`, `stim status`, and
-`stim gc` make those limits visible. Remote devices remain available when a
+`stim gc --dry-run` make those limits visible. Remote devices remain available when a
 local simulator is not the right target.
 
 ## When you probably don't need Stim

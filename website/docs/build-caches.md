@@ -475,24 +475,23 @@ and native output. See [worktree isolation](./worktrees.md) for its full scope.
 ## Inspect and clean caches
 
 <StimTabs
-code={`stim gc
-stim gc --delete --older-than 30
-stim gc --delete --cache all`}
+code={`stim gc --dry-run
+stim gc
+stim gc --pressure critical`}
 />
 
-The first command only reports sizes, what the
-[pressure ladder](#disk-pressure) would free now at high and at critical, and
-each workspace's stage. Age-based cleanup removes unused entries.
-`gc --delete` without `--cache` also runs the pressure ladder to its end at
-high, whatever the machine measures. `--cache all` empties managed caches and
-makes future builds cold, and with `--delete` runs the ladder at critical
-instead; it prunes no stale entries, so `gc --delete` on its own remains the
-way to do that.
-`--cache "compilation cache"` empties one cache instead of every one.
+`stim gc --dry-run` reports what `stim gc` would delete now, with sizes, and
+deletes nothing. `stim gc` runs one maintenance pass at the level the machine
+measures. `--pressure <normal|high|critical>` runs at that level instead,
+whatever the machine measures. Every level runs the automatic maintenance plan,
+which trims caches over their caps and removes unused entries. `high` adds the
+[pressure ladder](#disk-pressure) to its end. `critical` also empties every
+shared cache Stim registered, which makes future builds cold. The CLI has no
+flag that picks one cache; Stim Desktop can empty a single cache.
 
 The one exception to leaving caches alone is the Swift compilation cache. When
-it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), a plain
-`stim gc --delete` empties it whole, as automatic maintenance does. It cannot be
+it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), `stim gc`
+empties it whole, as automatic maintenance does. It cannot be
 trimmed by age without corrupting its index. The cache is kept, with the build
 named, while an iOS build holds its claim on it.
 
@@ -517,8 +516,8 @@ does an app built by the same run. A cache provider keeps its own copy of an
 entry; add `--no-build-cache` to skip it.
 
 Each iOS build holds a shared claim on the compilation cache while xcodebuild
-runs, in a `compilation-cache.claims` directory beside it. `gc --delete
---cache`, automatic maintenance, the pressure ladder and the corruption check empty the cache only
+runs, in a `compilation-cache.claims` directory beside it. `gc`,
+automatic maintenance, the pressure ladder and the corruption check empty the cache only
 after taking that claim exclusively, so none of them can empty it under a
 running xcodebuild. Xcode builds you run outside Stim take no claim.
 
@@ -531,17 +530,16 @@ Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
 outputs", with the size, last use and verdict of each workspace.
 
 <StimTabs
-code={`stim gc --delete
-stim gc --delete --cache workspaces
-stim gc --delete --cache workspaces --older-than 7`}
+code={`stim gc --dry-run
+stim gc`}
 />
 
-`gc --delete --cache workspaces` clears the outputs of every workspace that is
-not building and did not run `stim ios`, `stim android` or `stim macos` in the
-last 15 minutes, and prints the bytes it freed for each. Plain `gc --delete`
-clears them only through the [pressure ladder](#disk-pressure): for a workspace
-with nothing running idle 2 minutes or more, and in the idle stage of a running
-one. A workspace whose worktree is locked with `git worktree lock` keeps its
+`stim gc` clears the outputs of a workspace over `maintenance.workspaceOutputsMaxGb`
+or unused for `maintenance.olderThanDays`, as long as it is not building and did
+not run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
+prints the bytes it freed. At high or critical it also clears them through the
+[pressure ladder](#disk-pressure): for a workspace with nothing running idle 2
+minutes or more, and in the idle stage of a running one. A workspace whose worktree is locked with `git worktree lock` keeps its
 outputs at any disk pressure level, and so does a workspace whose worktree git
 cannot list. A running dev server, a booted or hosted simulator or emulator, or
 a tunnel does not keep the outputs. They stay while a `stim ios` or
@@ -556,12 +554,7 @@ the app, and on Windows) when git ignores every file in the
 directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that
 only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
-and the Metro cache are never touched. With `--cache workspaces`,
-`--older-than <days>` clears only workspaces no Stim command has used for that
-many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them.
-`--cache parked` is the one reserved name that `all` leaves out: it erases
-parked simulators and emulators (see [owned devices](./owned-devices.md)). The
+and the Metro cache are never touched here. The
 workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
 running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
 set and other macOS files.
@@ -578,7 +571,7 @@ restages the app.
 At critical, the [pressure ladder](#disk-pressure) deletes the `node_modules`
 and `ios/Pods` of idle linked worktrees that have a Stim workspace, never the
 source checkout's. The `stim-daemon` does this at critical disk pressure, and
-`gc --delete --cache all` runs the ladder at critical whatever the machine
+`gc --pressure critical` runs the ladder at critical whatever the machine
 measures. A worktree locked with `git worktree lock` always keeps them, so a
 rollback checkout stays runnable. Otherwise a worktree keeps them while its dev
 server runs or a native run or build holds it, for 2 minutes after its last
@@ -605,17 +598,16 @@ Stim home, deleting the oldest footage first. Idle time and time after
 `stim stop` do not age footage out, so a stopped workspace stays replayable.
 
 <StimTabs
-code={`stim gc
-stim gc --delete --cache recordings
-stim gc --delete --older-than 7`}
+code={`stim gc --dry-run
+stim gc
+stim gc --pressure critical`}
 />
 
-`gc` lists each workspace's recordings and their size. Plain `gc --delete`
+`gc --dry-run` lists each workspace's recordings and their size. `stim gc`
 deletes only the recordings of dead or orphaned workspaces, with their
 workspace directory, and keeps them when it cannot prove the project is gone.
-`--cache recordings` deletes every workspace's recordings and nothing else, and
-`--cache all` includes them. `--older-than <days>` deletes footage recorded
-before then. `stim worktree remove` deletes the workspace's recordings with its
+`--pressure critical` also deletes every recording that is not being written.
+`stim worktree remove` deletes the workspace's recordings with its
 directory. To stop recording altogether, see
 [Device recordings](./settings.md#device-recordings).
 
@@ -625,7 +617,7 @@ shared caches on a different volume. The same values can live in the machine con
 
 ## Automatic maintenance
 
-Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
+Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc --dry-run` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
 
 Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. [Maintenance settings](./settings.md#automatic-maintenance)
 
@@ -651,7 +643,7 @@ and above normal runs one ladder top-down until the level clears:
 
 Cleanup protects active builds, leases, live shares and pinned workspaces. At critical disk pressure it can remove dependencies from idle linked worktrees. Run `stim worktree warm` to restore missing copies from the source checkout. The source checkout's dependencies stay in place.
 
-Run `stim gc` to preview high and critical cleanup. `stim gc --delete` runs the high ladder, and `stim gc --delete --cache all` runs the critical ladder, regardless of the current pressure. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
+Run `stim gc --dry-run` to preview cleanup at the measured level, or add `--pressure high` or `--pressure critical` to preview that level. `stim gc` runs the measured level, and `stim gc --pressure high` or `--pressure critical` runs the ladder at that level, regardless of the current pressure. Plain output ends with the path of the full report, `$STIM_HOME/gc/last-report.txt`, and each deleted item is appended to `$STIM_HOME/gc/gc.ndjson`. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
 
 If a run reports `STIM_LOW_DISK`, free disk space and retry. See the installed reference for the full cleanup rules and recovery options.
 

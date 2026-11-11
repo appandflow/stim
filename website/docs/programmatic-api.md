@@ -232,7 +232,7 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `gc()` and `collectGarbage()` cancel
+and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `gc()`, `collectGarbage()` and `deleteGarbageItem()` cancel
 their owned work; `stop()` and other reads finish their work first.
 
 ## Warm a worktree
@@ -326,7 +326,7 @@ takes precedence over the original request error.
 
 ```ts
 const doctor = await stim.doctor({ platform: 'ios', signal });
-const garbage = await stim.gc({ cache: 'workspaces', signal });
+const garbage = await stim.gc({ pressure: 'high', signal });
 console.log(doctor.findings, garbage.sections);
 ```
 
@@ -371,31 +371,36 @@ Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
 Desktop uses the private `desktop-machine-access` subscription on its own bundled
 server; phone, network and other local connections cannot request access through it.
 
-`gc({ cache?, olderThan?, worktrees?, measureBuildState? })` returns the GC JSON dry-run report.
-It never deletes resources or shuts down idle devices. `olderThan` is a whole
-number of days, and `cache` and `worktrees` have the CLI's scope semantics.
+`gc({ pressure?, measureBuildState? })` returns the `stim gc --dry-run --json` report.
+It never deletes resources or shuts down idle devices. `pressure` is `normal`,
+`high` or `critical` and previews that level instead of the measured one.
 `measureBuildState: false` reports each worktree's `buildState` sizes only from
 the disk-usage cache: a size measured over an hour ago, or before its directory
 changed, is `null`, and no `du` runs.
-Invalid scopes reject with `StimError` and their remedy. Reports can refresh
+An invalid `pressure` rejects with `StimError` (`STIM_BAD_ARG`). Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
-`collectGarbage({ cache?, olderThan?, worktrees?, delete?, signal? })`
-runs the CLI's GC selections and actions in process and returns `{ report, exitCode }`.
-`exitCode` is 0 or 1; it does not change `process.exitCode`. `delete: true`
-enables deletion and, as `stim gc --delete` does, runs the pressure ladder to
-its end at high without a `cache`, or at critical with `cache: 'all'`. The
-CLI's scoped-home restrictions also apply.
+`collectGarbage({ pressure?, signal? })`
+runs `stim gc` in process, at the measured level or at `pressure`, and returns
+`{ report, exitCode }`. `exitCode` is 0 or 1; it does not change
+`process.exitCode`. The CLI's scoped-home restrictions also apply.
 
 ```ts
 const { report, exitCode } = await stim.collectGarbage({
-  cache: 'workspaces',
-  delete: true,
+  pressure: 'high',
   signal,
 });
 console.log(report.results, exitCode);
 ```
+
+`deleteGarbageItem({ item, signal? })` deletes one item and returns
+`{ results, exitCode }`. `item` is `{ kind: 'cache', dir }`,
+`{ kind: 'workspace-outputs' }`,
+`{ kind: 'archive', id, part?: 'logs' | 'recordings' | 'agentActions' }`,
+`{ kind: 'watchman' }` or `{ kind: 'gradle-daemons' }`. An item that names none
+of these rejects with `STIM_BAD_ARG`. The CLI has no command for a single
+item.
 
 A deletion holds this home's exclusive maintenance claim.
 Concurrent maintenance rejects with `STIM_CLAIM_REFUSED` and names the held claim.

@@ -22,6 +22,8 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
   public var detail: String?
 
   public struct Options: Decodable, Hashable, Sendable {
+    public var level: String?
+    public var pressure: Bool?
     public var delete: Bool?
     public var worktrees: Bool?
     public var olderThan: Int?
@@ -93,6 +95,7 @@ public struct GcRun: Identifiable, Hashable, Sendable {
 extension GcHistoryItem.Options {
   public var command: String {
     var words = ["stim", "gc"]
+    if pressure == true { words += ["--pressure", level ?? "high"] }
     if delete == true { words.append("--delete") }
     if worktrees == true { words.append("--worktrees") }
     if let olderThan { words += ["--older-than", String(olderThan)] }

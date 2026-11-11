@@ -308,9 +308,8 @@ to keep:
 worktree remove parks the workspace's simulator or emulator for later adoption.
 During owned-device teardown, Stim best-effort closes local agent-device sessions
 on that exact device; failures warn and teardown continues (guide cleanup).
-A parked device is Stim-owned: never delete or erase one by hand. gc --delete clears
-verified entries and keeps failures; gc --cache parked --delete erases them and keeps
-them parked; see guide lifecycle pool. First launch on a
+A parked device is Stim-owned: never delete or erase one by hand. gc at high or
+critical deletes verified entries and keeps failures; see guide lifecycle pool. First launch on a
 physical iPhone can need the one-time taps named by the remedy.
 
 stim android --device [serial] and stim ios --device [udid] install on a
@@ -319,7 +318,7 @@ hardware. It records a temporary lease, not an owned-device registry entry.
 
 A --device run leases that device for the run. stim device lock ios --for 10m
 holds it across runs; stim device unlock gives it back. Never delete another
-workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
+workspace's lease file under ~/.stim/device-locks; gc removes expired
 ones.
 
 stim device provision ios [udid] registers a phone with the project's Apple
@@ -370,24 +369,23 @@ Ask the user before these actions:
   existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
-- gc --delete, because it deletes orphaned resources, removes clean linked
+- gc, because it deletes orphaned resources, removes clean linked
   worktrees that a stim command has run in (one another tool manages is kept
   as not-registered) whose branch or pull request is merged (or whose pull
-  request was closed), and runs the pressure ladder to its end at high: every
-  workspace idle 2 minutes or more goes idle (stim revive resumes it),
-  parked devices are deleted, shared caches are trimmed, and workspaces idle
-  10 minutes or more go dormant, losing their owned devices. That includes
-  the workspace you run it from: an app you are not driving right now stops.
-  It never touches a workspace that is building, driven, leased, shared
-  with stim share, hosted or pinned by maintenance.keep, and keeps
-  node_modules and Pods unless --cache all. Run stim gc
-  --json first and show the user its sections and its ladder (guide facts
-  gc). gc --delete --cache all also empties the shared build caches and the
-  build outputs, and runs the ladder at critical, which deletes node_modules
-  and ios/Pods of idle linked worktrees (worktree warm restores them).
-  gc --delete --cache workspaces clears only the outputs.
-- gc --delete --worktrees, because it runs worktree remove on every clean,
-  idle linked worktree Stim manages, across projects.
+  request was closed), and, at the measured level, runs the pressure ladder:
+  at high every workspace idle 2 minutes or more goes idle (stim revive
+  resumes it), parked devices are deleted, shared caches are trimmed, and
+  workspaces idle 10 minutes or more go dormant, losing their owned devices.
+  That includes the workspace you run it from: an app you are not driving
+  right now stops. It never touches a workspace that is building, driven,
+  leased, shared with stim share, hosted or pinned by maintenance.keep, and
+  keeps node_modules and Pods below critical. Run stim gc --dry-run first (add
+  --json for the sections) and show the user what it would delete (guide facts
+  gc). gc --pressure critical also empties every shared cache Stim registered
+  and runs the ladder at critical, which deletes node_modules and ios/Pods of
+  idle linked worktrees (worktree warm restores them) and removes clean pushed
+  worktrees idle 7 days, across projects. The CLI has no flag that picks one
+  cache or item; Stim Desktop does.
 - settings set daemon.mode on in a home where it is off or report, because
   it lets Stim itself stop idle workspaces, delete their build outputs and
   devices, trim caches and remove finished worktrees later, with no command
@@ -520,7 +518,7 @@ FULL TOPIC LIST
   stim guide logs                 # filters, record shape, and capture limits
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
-  stim guide cleanup memory       # watchman and Gradle daemon memory; gc --cache watchman
+  stim guide cleanup memory       # watchman and Gradle daemon memory; gc --pressure high
   stim guide tutorial             # tutorial sections
   stim guide tutorial run         # create the app and build in a tour worktree
   stim guide settings             # configuration files and supported keys`,

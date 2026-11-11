@@ -149,13 +149,13 @@ the workspace keeps its port. `stim stop` releases the port, so its own stops
 show only in the timeline. In `--json`, the environment's `metro.lastStop`
 carries it:
 
-| `reason`        | Meaning                                                                                                                                                                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
-| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                     |
-| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                    |
-| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                         |
-| `vanished`      | The dev server is gone and recorded no cause, usually because it died while no stimd ran, or after a machine restart. `stim stop` logs `supervisor_vanished`.                                                    |
+| `reason`        | Meaning                                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc`, `stim start --reset-cache`, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
+| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                            |
+| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                           |
+| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                |
+| `vanished`      | The dev server is gone and recorded no cause, usually because it died while no stimd ran, or after a machine restart. `stim stop` logs `supervisor_vanished`.                                           |
 
 ## Watchman roots
 
@@ -428,7 +428,7 @@ in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
 records are dropped first. A file written before Stim capped it can be much
-larger. `stim gc` reports each workspace's log size, and `stim gc --delete` trims
+larger. `stim gc --dry-run` reports each workspace's log size, and `stim gc` trims
 a file over 16 MiB to its newest 8 MiB in workspaces that are not in use. See
 [`gc`](./commands.md#gc).
 
@@ -576,7 +576,7 @@ available, and check that it actually bound the supplied port.
 prints its PID and command. Stopping listeners requires `lsof` on macOS and
 Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
-server. Both leave Metro alone. `worktree remove`, `gc --delete` and automatic
+server. Both leave Metro alone. `worktree remove`, `gc` and automatic
 maintenance release named allocations without stopping their listeners.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
@@ -629,7 +629,7 @@ The argument is a label from `ports get` or a raw port that a tool of this works
 | iPhone (`ios --device`)                      | Refused. USB carries no reverse forward.                                                                                                                                                                            |
 | Hosted iOS or Android (`--remote <machine>`) | Bridged through the client's links to the host; see [Reverse ports on hosted devices](./remote-machines.md#reverse-ports-on-hosted-devices).                                                                        |
 
-`stim stop` removes the reverses from the devices and keeps the recorded ports, so the next launch applies them again. `worktree remove`, `gc --delete` and automatic maintenance forget them with the workspace. `ports release` and `ports stop` remove a label's reverse before they free the port. An EAS Simulator session (`--remote eas`) cannot reach this machine, so it is not reversed.
+`stim stop` removes the reverses from the devices and keeps the recorded ports, so the next launch applies them again. `worktree remove`, `gc` and automatic maintenance forget them with the workspace. `ports release` and `ports stop` remove a label's reverse before they free the port. An EAS Simulator session (`--remote eas`) cannot reach this machine, so it is not reversed.
 
 Appduct and similar tools that connect from the app back to a daemon advertise an address in a one-time link. Set that address to the loopback, reverse the daemon's port, and deliver the link with `agent-device`:
 

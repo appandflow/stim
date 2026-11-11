@@ -109,7 +109,7 @@ export function poolLine({ platform, parked, booted = 0, max }: PoolFacts): stri
   if (parked <= 0) return null;
   const what = plural(parked, `parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`);
   const kept = booted > 0 ? `, ${booted} kept booted` : '';
-  return max > 0 ? `pool: ${what} (max ${max}${kept})` : `pool: ${what} (parking off${kept}; gc --delete removes them)`;
+  return max > 0 ? `pool: ${what} (max ${max}${kept})` : `pool: ${what} (parking off${kept}; stim gc removes them)`;
 }
 
 export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;

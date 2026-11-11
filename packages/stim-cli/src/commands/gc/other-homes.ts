@@ -117,7 +117,7 @@ async function teardownCommands(
   for (const root of live) folders.add(await removalFolder(root, operation));
   return [
     ...[...folders].map((folder) => `cd ${quotedPath(folder)} && ${env} stim worktree remove`),
-    `${env} stim gc --delete`,
+    `${env} stim gc`,
     `rm -rf ${quotedPath(home)}`,
   ];
 }

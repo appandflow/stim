@@ -359,7 +359,7 @@ export function renderStatus(
     if (state.pathMissing)
       out.push(
         chalk.yellow(
-          `  ! the folder is gone; run \`stim worktree remove ${quotedPath(path)}\` or \`stim gc --delete\` to remove the entry`,
+          `  ! the folder is gone; run \`stim worktree remove ${quotedPath(path)}\` or \`stim gc\` to remove the entry`,
         ),
       );
     for (const note of state.issues.filter((issue) => issue.severity === 'info')) {

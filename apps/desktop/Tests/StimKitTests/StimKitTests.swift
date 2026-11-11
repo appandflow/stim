@@ -839,20 +839,23 @@ import Testing
 }
 
 @Suite struct GcPreviewTests {
-  @Test func unrecognizedDevicesAreKeptAndTheLadderAtHighIsWhatDeleteRuns() throws {
+  @Test func unrecognizedDevicesAreKeptAndThePassActionsAreWhatGcRuns() throws {
     let json = """
       {"mode":"dry-run","actionable":true,"failures":null,"sections":{
         "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-desktop-duo-test","command":"xcrun simctl delete U9"}]
-      },"ladder":{"pressure":{"level":"normal","disk":"normal","memory":"normal","reasons":[]},"workspaces":[],"levels":[
-        {"level":"high","command":"stim gc --delete","actions":[
-          {"rung":1,"kind":"delete-build-outputs","target":"/w/app","outcome":"would","bytes":2048,"detail":""}]},
-        {"level":"critical","command":"stim gc --delete --cache all","actions":[
-          {"rung":5,"kind":"delete-dependencies","target":"/w/app/node_modules","outcome":"would","bytes":9,"detail":""}]}]}}
+      },"level":"high","pressure":{"level":"high","reasons":[]},"blocked":[],"results":[],"actions":[
+        {"rung":1,"kind":"delete-build-outputs","target":"/w/app","outcome":"would","bytes":2048,"detail":""},
+        {"rung":null,"kind":"delete-worktree","target":"/w/busy","outcome":"kept","bytes":0,"detail":"in use"}]}
       """
     let report = try GcPreview(json: Data(json.utf8))
-    #expect(report.sections.map(\.key) == ["unverifiedDevices", "ladder"])
+    #expect(report.sections.map(\.key) == ["unverifiedDevices", "actions"])
     #expect(report.sections[0].entries.allSatisfy { $0.kept != nil })
-    #expect(report.sections[1].entries == [GcPreview.Entry(label: "delete build outputs /w/app", bytes: 2048, kept: nil)])
+    #expect(report.sections[1].title == "Maintenance pass at high")
+    #expect(
+      report.sections[1].entries == [
+        GcPreview.Entry(label: "delete build outputs /w/app", bytes: 2048, kept: nil),
+        GcPreview.Entry(label: "delete worktree /w/busy", bytes: 0, kept: "in use"),
+      ])
     #expect(report.deletableCount == 1)
   }
 
@@ -923,11 +926,11 @@ import Testing
   }
 
   @Test func surfacesTheRefusalContract() {
-    let json = #"{"code":"STIM_BAD_ARG","message":"No shared cache carries \"x\".","remedy":"Pass --cache all."}"#
+    let json = #"{"code":"STIM_BAD_ARG","message":"No shared cache carries \"x\".","remedy":"Pass a cache."}"#
     #expect {
       try GcPreview(json: Data(json.utf8))
     } throws: { error in
-      (error as? GcPreview.Failure)?.errorDescription == "No shared cache carries \"x\". Pass --cache all."
+      (error as? GcPreview.Failure)?.errorDescription == "No shared cache carries \"x\". Pass a cache."
     }
   }
 }
@@ -1001,10 +1004,10 @@ import Testing
   }
 
   @Test func onlyActingGcJsonRunsHaveAnOutcome() {
-    #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
-    #expect(!GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
-    #expect(!GcOutcome.describes(["gc", "--json"]))
-    #expect(!GcOutcome.describes(["gc", "--delete"]))
+    #expect(GcOutcome.describes(["gc", "--json"]))
+    #expect(GcOutcome.describes(GcItem.watchman.arguments))
+    #expect(!GcOutcome.describes(["gc", "--dry-run", "--json"]))
+    #expect(!GcOutcome.describes(["gc"]))
   }
 }
 

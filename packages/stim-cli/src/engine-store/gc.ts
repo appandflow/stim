@@ -60,7 +60,7 @@ function trimNpmCache(cache: string, now: number, keep: ReadonlySet<string>): vo
   }
 }
 
-/** `stim gc --delete`: collects an installed store unless a promotion holds its lock. */
+/** `stim gc`: collects an installed store unless a promotion holds its lock. */
 export async function collectInstalledStore(root: string): Promise<void> {
   if (!existsSync(join(root, 'current.json'))) return;
   const lock = await takeLock(root, '.lock.sock');
