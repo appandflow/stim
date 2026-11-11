@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { buildCacheRoot, configDir, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   fingerprintIndexDir,
@@ -26,7 +26,12 @@ import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
 import { cacheEntryProtectionFor } from '../stimd/passes/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
-import { planRung6 } from '../stimd/passes/sweep.ts';
+import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
+import { planHistory } from '../stimd/passes/records.ts';
+import { maintenancePinned } from '../stimd/passes/protect.ts';
+import { planCacheEmptying } from '../commands/gc/caches.ts';
+import { isInsideWorkspaces } from '../commands/gc/workspaces.ts';
+import { DEFAULT_WORKTREE_IDLE_DAYS, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -60,10 +65,10 @@ export interface LadderInput {
   fromRung?: number;
   /**
    * Runs every rung at this level whatever the machine measures, without stopping once the level clears: what
-   * `stim gc --delete` runs, and what `stim gc` previews at each level.
+   * `stim gc` runs at high or critical, and what `stim gc --dry-run` previews.
    */
-  force?: { level: 'high' | 'critical'; why: string; parkedOlderThanDays?: number };
-  /** Measures what each action would free when it does not act, for `stim gc`'s preview. */
+  force?: { level: 'high' | 'critical'; why: string };
+  /** Measures what each action would free when it does not act, for `stim gc --dry-run`. */
   measure?: boolean;
   /** The tick's `simctl list`, whose data path sizes the preview reports for simulators. */
   sims?: readonly IosSimRecord[] | null;
@@ -161,7 +166,11 @@ const actContext = (settings: MaintenanceSettings): ActContext => ({
 async function run(
   context: RungContext,
   plan: MaintenanceAction,
-  { restore, bytes }: { restore?: string; bytes?: () => Promise<number> } = {},
+  {
+    restore,
+    bytes,
+    worktreeSweep,
+  }: { restore?: string; bytes?: () => Promise<number>; worktreeSweep?: WorktreeSweep } = {},
 ): Promise<void> {
   if (!context.act) {
     recordAction(
@@ -182,7 +191,12 @@ async function run(
   }
   let outcome: ActionOutcome;
   try {
-    outcome = await executeAction(plan, { ...actContext(context.settings), operation: context.operation });
+    outcome = await executeAction(plan, {
+      ...actContext(context.settings),
+      protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
+      operation: context.operation,
+      ...(worktreeSweep ? { worktreeSweep } : {}),
+    });
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     context.operation?.signal.throwIfAborted();
@@ -206,7 +220,7 @@ async function run(
 }
 
 function wouldDetail(context: Pick<RungContext, 'force'>): string {
-  return context.force ? 'stim gc --delete would do this' : 'daemon.mode report acts on nothing';
+  return context.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
 }
 
 /** Rung 0, before the idle stage: the parked simulators kept booted for a later adoption, which hold memory for nothing in use. */
@@ -269,9 +283,7 @@ async function parkedRung(context: RungContext): Promise<void> {
       at: record.parkedAt,
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
-  const days = context.force?.parkedOlderThanDays;
-  const cutoff = days === undefined ? Infinity : Date.now() - days * 86_400_000;
-  for (const device of parked.filter((entry) => !(Date.parse(String(entry.at)) > cutoff))) {
+  for (const device of parked) {
     if (context.level === 'high' && !(await context.stillShort())) return;
     await run(
       context,
@@ -377,6 +389,7 @@ async function cachesRung(context: RungContext): Promise<void> {
         });
     }
   }
+  if (critical) await emptyRegisteredCaches(context, [buildCacheRoot(), metroCacheRoot(), compilation]);
   for (const [directory, lock] of [
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
@@ -395,6 +408,49 @@ async function cachesRung(context: RungContext): Promise<void> {
         detail: 'the next build fingerprints its tree in full',
       },
       context.why,
+    );
+  }
+}
+
+/**
+ * At critical, every other shared cache Stim registered emptied whole, as its own action: ccache, the macOS artifact
+ * cache and the React Native and Android caches. A report-only cache, one outside a scoped home, one Stim does not own
+ * and one inside a workspace stay; an atomic cache a build holds is kept when it runs.
+ */
+async function emptyRegisteredCaches(context: RungContext, handled: readonly string[]): Promise<void> {
+  const roots = handled.map(canonicalOrNull).filter((root): root is string => root !== null);
+  const inside = (dir: string) => {
+    const path = canonicalOrNull(dir);
+    return path !== null && roots.some((root) => path === root || path.startsWith(`${root}${sep}`) || root.startsWith(`${path}${sep}`));
+  };
+  const caches = planCacheEmptying(
+    (await discoverCachesAsync(context.operation?.env, context.operation?.cwd)).filter(
+      (cache) => !inside(cache.dir) && !isInsideWorkspaces(cache.dir),
+    ),
+    true,
+    context.operation?.env,
+  );
+  for (const cache of caches) {
+    if (!(await context.stillShort())) return;
+    if (!cache.willEmpty) {
+      if (cache.prune !== 'report-only')
+        recordAction(
+          context,
+          { rung: 3, kind: 'empty-cache', target: cache.dir, outcome: 'kept', bytes: 0, detail: cache.emptySkipped ?? 'kept' },
+          context.why,
+        );
+      continue;
+    }
+    await run(
+      context,
+      {
+        kind: 'would-empty-cache',
+        target: cache.dir,
+        dir: cache.dir,
+        bytes: 0,
+        reason: `${cache.name}, emptied whole at critical`,
+      },
+      { bytes: async () => (await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0 },
     );
   }
 }
@@ -517,9 +573,56 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
   const plan = await planRung6(context.settings, {
     disk: causes.includes('disk'),
     memory: causes.includes('memory'),
+    everyGradleVersion: context.level === 'critical',
     operation: context.operation,
   });
   for (const action of plan.actions) {
+    if (!(await context.stillShort())) return;
+    await run(context, action);
+  }
+}
+
+/**
+ * Rung 7, finished worktrees: at high, the clean ones whose branch is merged or whose pull request ended, without
+ * waiting out `gc.worktreeGraceMinutes`; at critical also clean, pushed ones no Stim command used for 7 days. Every
+ * other keep rule of the worktree check holds: in use, leased, locked, pinned, unpushed, or not provably merged.
+ */
+async function worktreesRung(context: RungContext): Promise<void> {
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const pins = new Map<string, boolean>();
+  const planned = await planWorktrees({
+    protectedRoot,
+    pinned: (workspace) => {
+      let value = pins.get(workspace);
+      if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
+      return value;
+    },
+    now: Date.now(),
+    graceMs: 0,
+    refresh: context.act,
+    idleDays: context.level === 'critical' ? DEFAULT_WORKTREE_IDLE_DAYS : null,
+    operation: context.operation,
+  });
+  const clean = planned.sweep.worktrees.filter((worktree) => !worktree.dirty);
+  const sweep = { ...planned.sweep, worktrees: clean };
+  for (const worktree of planned.sweep.worktrees)
+    if (worktree.dirty)
+      recordAction(
+        context,
+        { rung: 7, kind: 'remove-worktree', target: worktree.path, outcome: 'kept', bytes: 0, detail: 'it has uncommitted changes; the worktree check archives and removes it after its grace period' },
+        context.why,
+      );
+  for (const action of planned.actions) {
+    if (action.kind !== 'would-remove-worktree' || !clean.some((worktree) => worktree.path === action.target)) continue;
+    if (!(await context.stillShort())) return;
+    await run({ ...context, why: `${context.why}; ${action.reason}` }, action, { worktreeSweep: sweep });
+  }
+}
+
+/** Rung 8, at critical only: every device recording not being written, and the logs, recordings and agent actions of every archive. */
+async function historyRung(context: RungContext): Promise<void> {
+  if (context.level !== 'critical') return;
+  for (const action of await planHistory(context.operation)) {
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -533,10 +636,12 @@ const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise
   4: dormantRung,
   5: dependenciesRung,
   6: sweepRung,
+  7: worktreesRung,
+  8: historyRung,
 };
 
 /**
- * The pressure ladder after the activity pass, whose idle stage at 2 minutes is rung 1: rungs 1 to 6 top-down while
+ * The pressure ladder after the activity pass, whose idle stage at 2 minutes is rung 1: rungs 1 to 8 top-down while
  * the level stays above normal, each measuring again before it acts and running only for the causes it relieves (a
  * memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
  * every workspace with a blocker and takes the longest-idle first. Returns the actions and the last measurement.

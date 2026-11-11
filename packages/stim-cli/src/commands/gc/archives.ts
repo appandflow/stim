@@ -1,10 +1,9 @@
 import { readArchivesAsync, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { deleteSelectedArchives, sweepArchiveStaging, type ArchiveStaging } from '../../archive.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { parseArchiveSelector } from './archive-selector.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
-import type { ArchiveKind } from './archive-selector.ts';
+export type ArchiveKind = 'logs' | 'recordings' | 'agentActions';
 
 export interface ArchiveSelection {
   records: { id: string; kinds: string[]; bytes: number; expires: ArchivedWorkspace['expires']; willDelete: boolean }[];
@@ -23,15 +22,13 @@ async function stagingOrNone(signal?: AbortSignal): Promise<ArchiveStaging[]> {
   }
 }
 
+/** One archive by `id`, or every archive; with `kind`, only that kind of their content. */
 export async function collectArchives(
-  scope: string,
-  olderThan: number | null,
-  now: number,
+  { kind, id }: { kind: ArchiveKind | null; id: string | null },
   signal?: AbortSignal,
 ): Promise<ArchiveSelection> {
   signal?.throwIfAborted();
   const records = await readArchivesAsync(signal);
-  const { kind, id } = parseArchiveSelector(scope) ?? { kind: null, id: null };
   const match = id !== null ? records.find((record) => record.id.toLowerCase() === id.toLowerCase()) : null;
   return {
     records: records
@@ -45,9 +42,7 @@ export async function collectArchives(
             ),
         bytes: kind ? record.bytes[kind] : record.bytes.total,
         expires: record.expires,
-        willDelete:
-          (id === null && olderThan !== null ? now - Date.parse(record.removedAt) >= olderThan * 86_400_000 : true) &&
-          (!kind || record.bytes[kind] > 0),
+        willDelete: !kind || record.bytes[kind] > 0,
       })),
     staging: await stagingOrNone(signal),
     unknownId: id !== null && !match ? id : null,

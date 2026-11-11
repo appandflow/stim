@@ -42,23 +42,7 @@ export interface MemoryScope {
   watchmanMinBytes?: number;
 }
 
-/** The memory kind `--cache` names, or null for any other name. */
-export function memoryCacheKind(cache: string | null | undefined): MemoryCacheKind | null {
-  const wanted = cache?.trim().toLowerCase();
-  return wanted === WATCHMAN_KIND || wanted === GRADLE_DAEMONS_KIND ? wanted : null;
-}
 
-/** The memory kind `gc --delete` acts on: the one `--cache` names, or watchman when there is no `--cache`. */
-function reclaimedKind(cache: string | null | undefined): MemoryCacheKind | null {
-  return cache?.trim() ? memoryCacheKind(cache) : WATCHMAN_KIND;
-}
-
-/** Which helpers a gc run inspects: both without --cache, one for its own kind, none for any other --cache. */
-export function memoryScope(cache: string | null | undefined): MemoryScope | null {
-  if (!cache?.trim()) return { watchman: true, gradle: true };
-  const kind = memoryCacheKind(cache);
-  return kind ? { watchman: kind === WATCHMAN_KIND, gradle: kind === GRADLE_DAEMONS_KIND } : null;
-}
 
 type MemoryKeptCode = 'in-use' | 'busy' | 'unknown' | 'build-running' | 'stim-server';
 
@@ -1325,26 +1309,15 @@ export async function stopUnusedWatchman(
   return planned ? reclaimWatchman({ ...report, processes: [planned] }, output, operation) : 0;
 }
 
-/** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */
-export function memoryWorkPending(cache: string | null, report: MemoryReport | null | undefined): boolean {
-  const kind = reclaimedKind(cache);
-  if (!kind || !report) return false;
-  return (
-    reclaimableBytes(report, kind) > 0 ||
-    (kind === WATCHMAN_KIND && report.watchmanRoots.some((root) => root.removable))
-  );
-}
-
-/** Acts on the one memory kind `--cache` names, and on watchman alone for an unscoped run; never on `--cache all`. */
+/** Shuts down an unused watchman after removing its stale roots, or stops the idle Gradle and Kotlin daemons. */
 export async function reclaimMemory(
-  cache: string | null,
+  kind: MemoryCacheKind,
   report: MemoryReport | null | undefined,
   output: GcOutput = GC_OUTPUT,
   operation?: StimContext,
 ): Promise<number> {
   operation?.signal.throwIfAborted();
-  const kind = reclaimedKind(cache);
-  if (!kind || !report || report.processes.length === 0) return 0;
+  if (!report || report.processes.length === 0) return 0;
   if (kind === WATCHMAN_KIND) return reclaimWatchman(report, output, operation);
   const guard = (entry?: MemoryProcess) => manualDaemonsKept(operation, operation?.env ?? process.env, entry);
   const kept = await guard();

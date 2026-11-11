@@ -66,7 +66,7 @@ import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
-const DEFAULT_WORKTREE_IDLE_DAYS = 7;
+export const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 const DIRTY_PATHS_SHOWN = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;

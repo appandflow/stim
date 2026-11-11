@@ -7,7 +7,7 @@ import {
   type StimReloadOptions,
   type StimClient,
   type StimStartOptions,
-  type StimGcMutationOptions,
+  type StimGcItem,
   type StimWorktreeWarmOptions,
   type StimWorktreeRemoveOptions,
 } from 'stim';
@@ -387,7 +387,7 @@ function gcAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
   limits: CommandLimits,
-  options: Omit<StimGcMutationOptions, 'signal'>,
+  options: { dryRun: boolean; pressure?: 'normal' | 'high' | 'critical' },
   onProgress: (progress: StimProgress) => void,
 ) {
   return lifecycleAction(
@@ -397,11 +397,39 @@ function gcAction(
     'stim gc',
     'STIM_GC_TIMEOUT',
     async (client, signal) => {
-      const { report, exitCode } = await client.collectGarbage({ ...options, signal });
+      if (options.dryRun) {
+        const report = await client.gc({ pressure: options.pressure, signal });
+        return { ok: true, stdout: JSON.stringify(report), summary: 'Garbage collection dry run completed.' };
+      }
+      const { report, exitCode } = await client.collectGarbage({ pressure: options.pressure, signal });
       const stdout = JSON.stringify(report);
       return exitCode === 0
         ? { ok: true, stdout, summary: 'Garbage collection completed.' }
         : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
+    },
+    onProgress,
+  );
+}
+
+function gcItemAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  item: StimGcItem,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim gc',
+    'STIM_GC_TIMEOUT',
+    async (client, signal) => {
+      const { results, exitCode } = await client.deleteGarbageItem({ item, signal });
+      const stdout = JSON.stringify({ mode: 'delete', item, failures: results.filter((r) => r.status === 'failed').length, results });
+      return exitCode === 0
+        ? { ok: true, stdout, summary: 'Cleanup completed.' }
+        : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Cleanup reported failures.' };
     },
     onProgress,
   );
@@ -928,34 +956,78 @@ export function subscribeBuild(ctx: ConnectionContext, id: RequestId, params: un
   );
 }
 
+const GC_LEVELS = ['normal', 'high', 'critical'] as const;
+const GC_ARCHIVE_PARTS = ['logs', 'recordings', 'agentActions'];
+
+function validCwd(cwd: unknown): cwd is string {
+  return typeof cwd === 'string' && cwd.length <= 4096 && !cwd.includes('\0') && isAbsolute(cwd);
+}
+
 export function subscribeGc(ctx: ConnectionContext, id: RequestId, params: unknown, owner: PairedDevice): void {
   if (
     !isJsonObject(params) ||
-    Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
-    typeof params.cwd !== 'string' ||
-    params.cwd.length > 4096 ||
-    params.cwd.includes('\0') ||
-    !isAbsolute(params.cwd) ||
-    (params.cache !== undefined &&
-      (typeof params.cache !== 'string' || !params.cache.trim() || params.cache.length > 1024)) ||
-    (params.olderThan !== undefined &&
-      (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
-    (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
-    (params.delete !== undefined && typeof params.delete !== 'boolean')
+    Object.keys(params).some((key) => !['cwd', 'dryRun', 'pressure'].includes(key)) ||
+    !validCwd(params.cwd) ||
+    typeof params.dryRun !== 'boolean' ||
+    (params.pressure !== undefined && !GC_LEVELS.includes(params.pressure as (typeof GC_LEVELS)[number]))
   )
     return ctx.error(
       id,
       'bad-request',
-      'GC requires an absolute cwd and valid cache, age, worktree and delete selectors.',
+      'GC requires an absolute cwd, a dryRun boolean and an optional pressure of normal, high or critical.',
     );
   const request = {
-    cache: typeof params.cache === 'string' ? params.cache : undefined,
-    olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
-    worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
-    delete: typeof params.delete === 'boolean' ? params.delete : undefined,
+    dryRun: params.dryRun,
+    ...(params.pressure === undefined ? {} : { pressure: params.pressure as (typeof GC_LEVELS)[number] }),
   };
   subscribeLifecycle(ctx, id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
     gcAction(cwd, ctx.options.env, ctx.actionLimits, request, onProgress),
+  );
+}
+
+function gcItemOf(value: unknown): StimGcItem | null {
+  if (!isJsonObject(value)) return null;
+  const keys = Object.keys(value);
+  const only = (...allowed: string[]) => keys.every((key) => key === 'kind' || allowed.includes(key));
+  switch (value.kind) {
+    case 'cache':
+      return only('dir') && validCwd(value.dir) ? { kind: 'cache', dir: value.dir } : null;
+    case 'archive':
+      return only('id', 'part') &&
+        typeof value.id === 'string' &&
+        /^[\w.-]{1,200}$/.test(value.id) &&
+        (value.part === undefined || GC_ARCHIVE_PARTS.includes(String(value.part)))
+        ? {
+            kind: 'archive',
+            id: value.id,
+            ...(value.part === undefined ? {} : { part: value.part as 'logs' | 'recordings' | 'agentActions' }),
+          }
+        : null;
+    case 'workspace-outputs':
+    case 'watchman':
+    case 'gradle-daemons':
+      return only() ? { kind: value.kind } : null;
+    default:
+      return null;
+  }
+}
+
+/** Deletes one item Stim Desktop chose; the CLI has no way to pick items. */
+export function subscribeGcItem(ctx: ConnectionContext, id: RequestId, params: unknown, owner: PairedDevice): void {
+  const item = isJsonObject(params) ? gcItemOf(params.item) : null;
+  if (
+    !isJsonObject(params) ||
+    Object.keys(params).some((key) => key !== 'cwd' && key !== 'item') ||
+    !validCwd(params.cwd) ||
+    !item
+  )
+    return ctx.error(
+      id,
+      'bad-request',
+      'GC item requires an absolute cwd and an item: a cache dir, workspace-outputs, an archive id with an optional part, watchman or gradle-daemons.',
+    );
+  subscribeLifecycle(ctx, id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
+    gcItemAction(cwd, ctx.options.env, ctx.actionLimits, item, onProgress),
   );
 }
 

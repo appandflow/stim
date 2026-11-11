@@ -62,6 +62,7 @@ import {
 import { stopIdleWorkspace } from './idle-stop.ts';
 import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import { executeRecordAction } from './records.ts';
 
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
@@ -178,16 +179,27 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
   };
 }
 
-async function emptyCompilationCache(action: MaintenanceAction): Promise<ActionOutcome> {
-  const dir = sharedCompilationCache();
+/** Empties the cache at `action.dir`, the shared compilation cache by default, unless a build or the scoped home keeps it. */
+async function emptyCache(action: MaintenanceAction): Promise<ActionOutcome> {
+  const dir = action.dir ?? sharedCompilationCache();
   const discovered = await discoverCachesAsync();
-  const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' }, discovered);
-  if (blocked) return kept(blocked);
+  const compilation = canonicalPath(dir) === canonicalPath(sharedCompilationCache());
+  if (compilation) {
+    const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' }, discovered);
+    if (blocked) return kept(blocked);
+  }
   const cache = discovered.find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
-  if (cache?.prune !== 'atomic') return kept('it is not a registered cache Stim empties whole');
+  if (!cache) return kept('it is not a cache Stim registered');
+  if (compilation && cache.prune !== 'atomic') return kept('it is not a registered cache Stim empties whole');
   const [planned] = planCacheEmptying([{ ...cache, bytes: action.bytes }], true);
   const { results } = await quietly(() => emptyCaches(planned ? [planned] : []));
   return outcomeOf(results, action.bytes);
+}
+
+async function recordAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const before = lowestFree(measureDisk());
+  const { results } = await executeRecordAction(action, context.operation, quietly);
+  return outcomeOf(results, action.bytes || freedSince(before));
 }
 
 async function clearOutputs(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
@@ -415,7 +427,9 @@ async function stopWatchmanAction(action: MaintenanceAction): Promise<ActionOutc
 async function deleteGradleVersionAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const before = lowestFree(measureDisk());
   try {
-    const result = await deleteGradleVersion(action.target, { olderThanDays: context.settings.gradleVersionIdleDays });
+    const result = await deleteGradleVersion(action.target, {
+      olderThanDays: action.olderThanDays ?? context.settings.gradleVersionIdleDays,
+    });
     return result.deleted ? { status: 'done', bytes: freedSince(before), detail: result.detail } : kept(result.detail);
   } catch (error) {
     return {
@@ -494,7 +508,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-trim-cache':
       return trimCache(action, context);
     case 'would-empty-cache':
-      return emptyCompilationCache(action);
+      return emptyCache(action);
     case 'would-remove-worktree':
       return removeWorktree(action, context);
     case 'would-remove-orphan':
@@ -546,6 +560,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteExpiredArchivesAction(context);
     case 'would-dormant-stage':
       return enterDormantStage(action, context.operation);
+    case 'would-prune-project':
+    case 'would-delete-orphaned-devices':
+    case 'would-forget-stale-records':
+    case 'would-trim-workspace-logs':
+    case 'would-delete-recordings':
+    case 'would-delete-hosted-devices':
+    case 'would-delete-eas-sessions':
+    case 'would-delete-archives':
+      return recordAction(action, context);
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

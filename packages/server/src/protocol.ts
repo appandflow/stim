@@ -1871,14 +1871,46 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('desktop.gc.subscribe', {
             type: 'object',
-            required: ['cwd'],
+            required: ['cwd', 'dryRun'],
             additionalProperties: false,
             properties: {
               cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-              cache: { type: 'string', minLength: 1, maxLength: 1024, pattern: '^.*\\S.*$' },
-              olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
-              worktrees: { type: 'boolean' },
-              delete: { type: 'boolean' },
+              dryRun: { type: 'boolean' },
+              pressure: { enum: ['normal', 'high', 'critical'] },
+            },
+          }),
+          request('desktop.gc.item.subscribe', {
+            type: 'object',
+            required: ['cwd', 'item'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              item: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    required: ['kind', 'dir'],
+                    additionalProperties: false,
+                    properties: { kind: { const: 'cache' }, dir: { type: 'string', minLength: 1, maxLength: 4096 } },
+                  },
+                  {
+                    type: 'object',
+                    required: ['kind', 'id'],
+                    additionalProperties: false,
+                    properties: {
+                      kind: { const: 'archive' },
+                      id: { type: 'string', pattern: '^[\\w.-]{1,200}$' },
+                      part: { enum: ['logs', 'recordings', 'agentActions'] },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    required: ['kind'],
+                    additionalProperties: false,
+                    properties: { kind: { enum: ['workspace-outputs', 'watchman', 'gradle-daemons'] } },
+                  },
+                ],
+              },
             },
           }),
           request('desktop.worktree.warm.subscribe', {

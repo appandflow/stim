@@ -110,6 +110,18 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'delete-gradle-version': 'gradleVersion',
   'clear-build-dirs': 'buildDirectory',
   'delete-dependencies': 'dependencies',
+  'prune-project': 'project',
+  'delete-orphaned-devices': 'device',
+  'forget-stale-records': 'ledgerEntry',
+  'trim-workspace-logs': 'workspaceLogs',
+  'delete-recordings': 'recording',
+  'delete-hosted-devices': 'parkedHostedDevice',
+  'delete-eas-sessions': 'easSession',
+  'delete-archives': 'archive',
+  'delete-build-outputs': 'workspaceOutputs',
+  'idle-stage': 'devServer',
+  'dormant-stage': 'device',
+  'delete-trash': 'trash',
 };
 
 export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcome): GcLogItem {

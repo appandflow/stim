@@ -26,7 +26,15 @@ export type MaintenanceActionKind =
   | 'would-delete-process-locks'
   | 'would-delete-device-lease'
   | 'would-delete-expired-archives'
-  | 'would-dormant-stage';
+  | 'would-dormant-stage'
+  | 'would-prune-project'
+  | 'would-delete-orphaned-devices'
+  | 'would-forget-stale-records'
+  | 'would-trim-workspace-logs'
+  | 'would-delete-recordings'
+  | 'would-delete-hosted-devices'
+  | 'would-delete-eas-sessions'
+  | 'would-delete-archives';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -172,6 +180,14 @@ const KINDS: readonly string[] = [
   'would-delete-device-lease',
   'would-delete-expired-archives',
   'would-dormant-stage',
+  'would-prune-project',
+  'would-delete-orphaned-devices',
+  'would-forget-stale-records',
+  'would-trim-workspace-logs',
+  'would-delete-recordings',
+  'would-delete-hosted-devices',
+  'would-delete-eas-sessions',
+  'would-delete-archives',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */

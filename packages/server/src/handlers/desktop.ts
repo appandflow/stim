@@ -19,6 +19,7 @@ import { defaultSetupDeps } from '../setup.ts';
 import {
   subscribeReload,
   subscribeGc,
+  subscribeGcItem,
   subscribeMachineAccess,
   subscribeRemedy,
   subscribeWorktreeRemove,
@@ -197,6 +198,7 @@ export function desktopMethod(
       'desktop.run.subscribe',
       'desktop.build.subscribe',
       'desktop.gc.subscribe',
+      'desktop.gc.item.subscribe',
       'desktop.worktree.remove.subscribe',
       'desktop.worktree.warm.subscribe',
       'desktop.plan.get',
@@ -224,6 +226,7 @@ export function desktopMethod(
       'desktop.run.subscribe',
       'desktop.build.subscribe',
       'desktop.gc.subscribe',
+      'desktop.gc.item.subscribe',
       'desktop.worktree.warm.subscribe',
       'desktop.worktree.remove.subscribe',
       'desktop.machine-access.subscribe',
@@ -316,6 +319,7 @@ export function desktopMethod(
     'desktop.machine-access.subscribe': subscribeMachineAccess,
     'desktop.remedy.subscribe': subscribeRemedy,
     'desktop.gc.subscribe': subscribeGc,
+    'desktop.gc.item.subscribe': subscribeGcItem,
     'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
     'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
   };

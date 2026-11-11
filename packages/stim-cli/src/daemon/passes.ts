@@ -318,25 +318,25 @@ export interface ForcedLadder {
 
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
- * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 6 (rung 5 only at
- * critical). `stim gc --delete` runs one level with `act`; `stim gc` previews both from one measurement, measuring what
- * each action would free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 8 (rungs 5 and 8 only at
+ * critical). `stim gc` runs one level with `act`; `stim gc --dry-run` previews it, measuring what each action would
+ * free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
  */
 export async function runForcedLadder({
   levels,
   act,
   why,
   trigger,
-  parkedOlderThanDays,
   operation,
+  protectedRoot,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
   why: string;
   trigger: string;
-  /** Takes only the devices parked at least this many days ago, as `gc --older-than` asks. */
-  parkedOlderThanDays?: number;
   operation?: StimContext;
+  /** The workspace of the command that runs the ladder, which no rung takes. */
+  protectedRoot?: string;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
   if (!config) return null;
@@ -374,7 +374,7 @@ export async function runForcedLadder({
           workspace: entry.path,
           outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
           bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
-          detail: entry.outcome === 'would-idle' ? 'stim gc --delete would do this' : entry.detail,
+          detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });
       }
@@ -387,9 +387,10 @@ export async function runForcedLadder({
           sims: measured.sims,
           simsFailed: measured.sims === null,
           remeasure: async () => pressure,
-          force: { level, why, ...(parkedOlderThanDays === undefined ? {} : { parkedOlderThanDays }) },
+          force: { level, why },
           measure: !act,
           operation,
+          ...(protectedRoot ? { protectedRoot } : {}),
         },
         pressure,
       );
