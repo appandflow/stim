@@ -58,6 +58,7 @@ function harness(overrides: Partial<ReviveDeps> = {}) {
       runs.push(request);
       return { ok: true, deviceId: 'U1', deviceName: 'stim-app', launched: true };
     },
+    detectProject: async () => ({ platforms: ['ios', 'android'], devServer: true }),
     ...overrides,
   };
   return { deps, calls, runs };
@@ -83,6 +84,7 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
         builtAt: '',
         cache: { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' },
       },
+      installedApp: 'com.example.app',
       expectedDevice: 'U1',
     },
   ]);
@@ -283,6 +285,86 @@ test.each<[string, Partial<ReviveDeps>, string]>([
   assert(!result.ok);
   expect(result.error.code).toBe('STIM_NO_RECORDED_BUILD');
   expect(result.error.remedy).toContain(`\`${command}\``);
+  expect(calls).toEqual([]);
+});
+
+const exactLaunch: WorkspaceLaunchRecord = {
+  appId: 'com.example.exact',
+  deviceId: 'U1',
+  metroPort: null,
+  release: false,
+  runtime: 'process',
+  launchedAt: '2026-11-01T10:00:00.000Z',
+  artifact: { configuration: 'Debug', fingerprint: null, cacheKey: null, cacheHit: false },
+};
+
+const exactDeps: Partial<ReviveDeps> = {
+  getProject: () => ({ ...project, metroPort: null }),
+  readState: () => ({ deviceIdleShutdowns: { ios: { at: '2026-11-01T10:30:00.000Z', idleMinutes: 15 } } }),
+  readLaunches: () => ({ ios: exactLaunch }),
+  detectProject: async () => ({ platforms: ['ios'], devServer: false }),
+};
+
+test.each<[string, string | null]>([
+  ['run by hand', null],
+  ["run as agent-device's boot hook", 'U1'],
+])(
+  'a native-process launch whose simulator was shut down comes back from its installed app without Metro, %s',
+  async (_name, requestedDevice) => {
+    const { deps, calls, runs } = harness(exactDeps);
+    const result = await runRevive({ root: '/project', note: () => {}, requestedDevice, deps });
+    assert(result.ok);
+    expect(calls).toEqual(['ios']);
+    expect(runs).toEqual([
+      {
+        slot: 'default',
+        configuration: 'Debug',
+        recordedBuild: null,
+        installedApp: 'com.example.exact',
+        expectedDevice: 'U1',
+      },
+    ]);
+    expect(result.facts.revived.metro).toEqual({ port: null, stoppedAt: null, reason: null, restarted: false });
+    expect(reviveLines(result.facts, 0)).toEqual([
+      'Simulator stim-app rebooted.',
+      'com.example.exact relaunched from cold on Simulator stim-app; in-app state is gone.',
+    ]);
+  },
+);
+
+test('a native-process app still running on its booted simulator is left as is', async () => {
+  const { deps, calls } = harness({ ...exactDeps, resolveIos: async () => sim('Booted') });
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(result.ok);
+  expect(calls).toEqual([]);
+  expect(reviveLines(result.facts, 0)).toEqual([
+    'com.example.exact is running on Simulator stim-app; left as is.',
+    'Nothing to revive.',
+  ]);
+});
+
+test.each<[string, Partial<ReviveDeps>, string]>([
+  [
+    'an app without Metro was stopped, which clears its launches',
+    { ...exactDeps, readLaunches: () => ({}) },
+    'STIM_NO_METRO',
+  ],
+  ['an app without Metro was never registered', { ...exactDeps, getProject: () => null }, 'STIM_NO_PROJECT'],
+  [
+    'the last launch was a Release build and Metro was stopped',
+    {
+      readState: () => ({}),
+      readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
+    },
+    'STIM_NO_METRO',
+  ],
+])('when %s, the refusal names stim ios, never stim start', async (_name, overrides, code) => {
+  const { deps, calls } = harness(overrides);
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(!result.ok);
+  expect(result.error.code).toBe(code);
+  expect(result.error.remedy).toContain('`stim ios`');
+  expect(result.error.remedy).not.toContain('stim start');
   expect(calls).toEqual([]);
 });
 

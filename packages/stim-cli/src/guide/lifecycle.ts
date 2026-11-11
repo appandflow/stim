@@ -2571,7 +2571,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   stage line, and --json \`dormantStage\` { at, dormantDays, deletedDevices,
   archived }, until the next Stim command in it. When it deleted a device, the next
   \`stim ios\` or \`stim android\` creates one; with none deleted, \`stim
-  revive\` resumes the workspace while its dev server's idle stop survives.
+  revive\` resumes the workspace while its dev server's idle stop or a
+  native-process launch survives.
 
   IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators

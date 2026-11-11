@@ -575,6 +575,15 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     '`stim ios`',
   ],
   [
+    'a shut-down owned simulator, from a native-process launch revive relaunches',
+    'ios',
+    {
+      readLaunches: () => ({ ios: { ...iosLaunch, runtime: 'process', metroPort: null } }),
+      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+    },
+    '`stim revive`',
+  ],
+  [
     'an owned emulator that is not running, from a native-process launch revive skips',
     'android',
     {

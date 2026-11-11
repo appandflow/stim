@@ -807,7 +807,7 @@ parked pool is untouched) and its logs archived. In a linked worktree, its
 bytes, recorded so `stim worktree warm` restores them; copy-on-write clones
 under that, and trees Stim could not size, stay. When it deleted a device, the next `stim ios` or `stim android` creates
 one; with none deleted, `stim revive` resumes the workspace while its dev
-server's idle stop survives.
+server's idle stop, or a launch of an app that runs without Metro, survives.
 
 Try it with an agent:
 

@@ -94,13 +94,16 @@ Branch on the code, never on the message.`,
   Metro. It refuses a missing, changed, unresponsive, or foreign port. Run
   \`stim start\`, or run \`ios\` or \`android\` again.
 
-  \`revive\` resumes only an idle stop. It refuses when this workspace's Metro
-  is not running and was never started, was last stopped for another reason
-  (a signal, a crash), or the workspace was stopped after the idle stop
+  \`revive\` resumes only an idle stop, or a native-process launch (Exact)
+  that is still recorded. It refuses when this workspace's Metro is not
+  running and was never started, was last stopped for another reason (a
+  signal, a crash), or the workspace was stopped after the idle stop
   (\`stim stop\` or automatic maintenance released its port): there is
   nothing paused to resume, and revive never starts a Metro the workspace did
   not have. Nothing was started. Run \`stim start\`, then \`stim ios\` or
-  \`stim android\`.
+  \`stim android\`. When the workspace's last launch ran without Metro (a
+  Release build), or its app never uses Metro and \`stim stop\` cleared its
+  launch, the remedy is the \`stim ios\` or \`stim android\` command alone.
 
   \`ios\` and \`android\` do not emit this code. A Debug run with no healthy
   dev server on the reserved port starts one, as \`stim start\` would, and
@@ -1389,11 +1392,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   launch installed, never the build output path, which a later build can
   overwrite. That entry is gone (\`gc\` or automatic maintenance evicted it),
   or the launch names none: its app was never cached, or the launch was
-  recorded by a Stim version before revive. Run as agent-device's boot hook
-  for a device this workspace owns, it also refuses with this code when the
-  last launch on that device is one revive does not relaunch (a Release or
-  native-process launch, or one whose record does not name that device), or
-  when no launch is recorded on that device. Revive never fingerprints or builds, so nothing was started. Run the
+  recorded by a Stim version before revive. A native-process iOS launch
+  (Exact) is relaunched from the app its simulator holds; it refuses with
+  this code when the booted simulator no longer has that app installed. Run
+  as agent-device's boot hook for a device this workspace owns, it also
+  refuses with this code when the last launch on that device is one revive
+  does not relaunch (a Release launch, or one whose record does not name that
+  device), or when no launch is recorded on that device. Revive never fingerprints or builds, so nothing was started. Run the
   printed \`stim ios\` or \`stim android\` command; it restores the app
   from the cache or builds it.
 

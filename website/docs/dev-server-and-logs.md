@@ -117,7 +117,9 @@ a blank screen. [`stim revive`](./commands.md#revive) resumes exactly what the
 idle stop paused, and nothing more: it restarts the dev server, boots the owned
 simulators and emulators the app last ran on, and relaunches the app from cold
 from the build cache entry that launch installed. In-app state is gone. It
-never builds, and never creates or adopts a device.
+never builds, and never creates or adopts a device. For an app that runs
+without Metro, such as an Exact app, it boots the owned simulator and
+relaunches the app installed there.
 
 <StimTabs code={`stim revive`} />
 
@@ -506,7 +508,8 @@ device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 exits after five idle minutes with no open session. This is opt-in per command; forgetting the
 variable uses `~/.agent-device`.
 
-`stim start` also writes `boot-hook.json` into that directory. An agent-device
+`stim start`, or a `stim ios` run of an app without Metro such as an Exact app,
+also writes `boot-hook.json` into that directory. An agent-device
 that reads it runs [`stim revive`](./commands.md#revive) when the simulator or
 emulator it was asked to use is shut down, instead of booting the device
 itself, then checks that the device is booted. The device comes back through

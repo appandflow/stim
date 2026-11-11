@@ -5356,6 +5356,34 @@ describe('a recorded build', () => {
     expect(getProject(root)?.platforms?.ios).toMatchObject({ deviceUdid: UDID });
   });
 
+  test('already installed on the owned simulator is launched without a build or an install', async () => {
+    reserve();
+    const container = join(root, 'device', 'Fixture.app');
+    mkdirSync(container, { recursive: true });
+    const { exitCode, calls } = await run(
+      { installedApp: 'dev.fixture.app' },
+      { installedIosApp: async (_udid, bundleId) => (bundleId === 'dev.fixture.app' ? container : null) },
+    );
+    expect(exitCode).toBe(null);
+    for (const step of ['resolveBuild', 'buildIos', 'installIosApp']) expect(calls.order).not.toContain(step);
+    expect(calls.order).toContain('launchIosApp');
+  });
+
+  test('no longer installed on the owned simulator is refused with STIM_NO_RECORDED_BUILD naming stim ios', async () => {
+    reserve();
+    const { exitCode, logs, calls } = await run(
+      { json: true, installedApp: 'dev.fixture.app' },
+      { installedIosApp: async () => null },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_NO_RECORDED_BUILD',
+      remedy: expect.stringContaining('`stim ios`'),
+    });
+    for (const step of ['resolveBuild', 'buildIos', 'installIosApp', 'launchIosApp'])
+      expect(calls.order).not.toContain(step);
+  });
+
   test('is refused when the selectors differ from the recorded build', async () => {
     reserve();
     const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');

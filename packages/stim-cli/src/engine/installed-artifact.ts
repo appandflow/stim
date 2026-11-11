@@ -192,21 +192,29 @@ export async function deviceHoldsApk(
   return artifactsMatch(hashFile(apkPath), installed);
 }
 
-export async function deviceHoldsBundle(
-  { udid, bundleId, appPath }: { udid: string; bundleId: string; appPath: string },
+/** The `.app` the booted simulator `udid` has installed for `bundleId`, or null when simctl names none. */
+export async function installedIosApp(
+  udid: string,
+  bundleId: string,
   { exec = null }: { exec?: Executor | null } = {},
-): Promise<boolean> {
+): Promise<string | null> {
   const e = exec || getExecutor();
-  let container: string | null;
   try {
-    container = parseAppContainerPath(
+    return parseAppContainerPath(
       await e.runFileAsync('xcrun', ['simctl', 'get_app_container', udid, bundleId], {
         timeoutMs: DEVICE_PATH_TIMEOUT_MS,
       }),
     );
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function deviceHoldsBundle(
+  { udid, bundleId, appPath }: { udid: string; bundleId: string; appPath: string },
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<boolean> {
+  const container = await installedIosApp(udid, bundleId, { exec });
   if (!container) return false;
   const installed = hashBundle(container);
   if (!installed) return false;
