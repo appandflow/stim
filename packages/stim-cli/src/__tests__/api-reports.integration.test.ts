@@ -34,6 +34,19 @@ import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
+const removal = vi.hoisted((): { after?: (path: unknown) => void } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      const result = await fs.rm(...args);
+      removal.after?.(args[0]);
+      return result;
+    },
+  };
+});
+
 let scratch: string;
 let fixtureAbort: AbortController;
 let activeReports: Set<Promise<unknown>>;
@@ -265,7 +278,7 @@ test('concurrent GC clients isolate homes, output and results without changing p
   }
 });
 
-test('concurrent GC mutations empty only their selected cache and keep results and progress in the calling client', async () => {
+test('concurrent GC mutations empty only their selected cache and return results to the calling client', async () => {
   const items = [fixture('delete-first'), fixture('delete-second')];
   const kept = fixture('keep');
   const cwd = process.cwd();
@@ -276,26 +289,19 @@ test('concurrent GC mutations empty only their selected cache and keep results a
   try {
     const reports = await Promise.all(
       items.map(async (item) => {
-        const progress: string[] = [];
         const result = await trackRead((signal) =>
-          createStim({
-            projectRoot: item.root,
-            home: item.home,
-            env: item.env,
-            onProgress: ({ stream, message }) => {
-              expect(stream).toBe('stderr');
-              progress.push(message);
-            },
-          }).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
+          createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+            item: { kind: 'cache', dir: item.cache },
+            signal,
+          }),
         );
-        return { item, results: result.results, exitCode: result.exitCode, progress };
+        return { item, results: result.results, exitCode: result.exitCode };
       }),
     );
-    for (const { item, results, progress, exitCode } of reports) {
+    for (const { item, results, exitCode } of reports) {
       expect(exitCode).toBe(0);
       expect(results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
       expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
-      expect(progress.length).toBeGreaterThan(0);
     }
     expect(readFileSync(join(kept.cache, 'artifact'), 'utf8')).toBe('keep');
     expect(log).not.toHaveBeenCalled();
@@ -602,17 +608,21 @@ test('GC mutations in one home refuse concurrent maintenance and name the held c
   const item = fixture('contention');
   const options = { projectRoot: item.root, home: item.home, env: item.env };
   let competing: Promise<unknown> | undefined;
-  const result = await trackRead((signal) =>
-    createStim({
-      ...options,
-      onProgress: () => {
-        competing ??= createStim(options)
-          .deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal })
-          .catch((error: unknown) => error);
-      },
-    }).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
-  );
-  expect(result.exitCode).toBe(0);
+  const executor = getExecutor();
+  const run = executor.runFileAsync;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
+    if (file === 'du')
+      competing ??= trackRead((signal) =>
+        createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
+      ).catch((error: unknown) => error);
+    return run(file, args, opts);
+  });
+  try {
+    const result = await trackRead((signal) => createStim(options).collectGarbage({ pressure: 'normal', signal }));
+    expect(result.exitCode).toBe(0);
+  } finally {
+    probe.mockRestore();
+  }
   if (!competing) throw new Error('The competing maintenance request was not started');
   expect(await competing).toMatchObject({ code: 'STIM_CLAIM_REFUSED', remedy: expect.stringContaining(item.home) });
   const next = await trackRead((signal) =>
@@ -640,19 +650,27 @@ test.each(['before mutation', 'between caches'] as const)(
       }),
     );
     const controller = new AbortController();
-    const client = createStim({
-      projectRoot: item.root,
-      home: item.home,
-      env: item.env,
-      onProgress: () => {
-        if (when === 'before mutation' || artifacts.some((path) => !existsSync(path))) controller.abort();
-      },
+    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+    const executor = getExecutor();
+    const run = executor.runFileAsync;
+    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
+      if (file === 'du' && when === 'before mutation') controller.abort();
+      return run(file, args, opts);
     });
-    await expect(
-      trackRead((signal) =>
-        client.collectGarbage({ pressure: 'critical', signal: AbortSignal.any([signal, controller.signal]) }),
-      ),
-    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    if (when === 'between caches')
+      removal.after = () => {
+        if (artifacts.some((path) => !existsSync(path))) controller.abort();
+      };
+    try {
+      await expect(
+        trackRead((signal) =>
+          client.collectGarbage({ pressure: 'critical', signal: AbortSignal.any([signal, controller.signal]) }),
+        ),
+      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    } finally {
+      probe.mockRestore();
+      removal.after = undefined;
+    }
     expect(artifacts.filter(existsSync)).toHaveLength(when === 'before mutation' ? 2 : 1);
     const next = await trackRead((signal) => client.collectGarbage({ pressure: 'critical', signal }));
     expect(next.exitCode).toBe(0);

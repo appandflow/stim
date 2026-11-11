@@ -109,12 +109,7 @@ function artifactWorktree(
   const entry = matchWorktreeEntry(entries, root);
   if (!entry || entry.bare || 'refusal' in source) return null;
   const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
-  return {
-    path: entry.path,
-    linked: entry.path !== source.path,
-    locked: Boolean(entry.locked),
-    keys,
-  };
+  return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
 /** The worktrees whose artifacts maintenance may clear, read without blocking when an operation is given. */
@@ -285,9 +280,7 @@ async function inUseOf(
     reasons.set(
       key,
       kind === 'build'
-        ? await workspaceBuildReasonsAsync(key, signal, operation, {
-            nativeRun,
-          })
+        ? await workspaceBuildReasonsAsync(key, signal, operation, { nativeRun })
         : await workspaceInUseAsync(key, { nativeRun }, signal, operation),
     );
   }
@@ -435,16 +428,8 @@ export async function collectArtifactsAsync(
 /** Regenerable directories of idle worktrees, oldest activity first; dependencies only in linked worktrees. */
 export function collectArtifacts(
   kind: ArtifactKind,
-  options: {
-    now: number;
-    windowMs: number;
-    protectedRoot: string;
-    pinned: (workspace: string) => boolean;
-  },
-): {
-  candidates: ArtifactCandidate[];
-  skips: { target: string; reason: string }[];
-} {
+  options: { now: number; windowMs: number; protectedRoot: string; pinned: (workspace: string) => boolean },
+): { candidates: ArtifactCandidate[]; skips: { target: string; reason: string }[] } {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
   const running = kind === 'dependencies' ? readRunningProcesses() : null;
@@ -459,12 +444,7 @@ export function collectArtifacts(
         } catch {
           continue;
         }
-        const candidate = {
-          worktree: worktree.path,
-          path,
-          keys: worktree.keys,
-          locked: worktree.locked,
-        };
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
         const reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
           : keptReason(candidate, kind, { ...options, running });
@@ -502,18 +482,10 @@ export async function clearArtifact(
   if (kind === 'dependencies' && worktree && !worktree.linked)
     return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
   if (!worktree || !isKnownDir(kind, action.target))
-    return {
-      status: 'kept',
-      bytes: 0,
-      detail: 'it is no longer a regenerable directory of a known worktree',
-    };
+    return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
-    return {
-      status: 'kept',
-      bytes: 0,
-      detail: 'the command that started this pass runs inside its worktree',
-    };
+    return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
   const agents = worktree.linked ? ((await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? []) : [];
   const candidate = {
     worktree: worktree.path,
@@ -527,13 +499,7 @@ export async function clearArtifact(
   const early = keptReason(
     candidate,
     kind,
-    {
-      ...options,
-      pinned,
-      now: Date.now(),
-      running,
-      inUse: await inUseOf(candidate, kind, signal, operation),
-    },
+    { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
     await artifactReads(candidate, kind, signal, operation),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };

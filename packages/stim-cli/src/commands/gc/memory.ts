@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { freemem, totalmem } from 'node:os';
 import chalk from 'chalk';
 import { buildWorkerRoot, loadConfig, readDaemonSnapshot } from '@stim-cli/core/state';
-import { formatLongDuration, plural } from '../../command-output.ts';
+import { plural } from '../../command-output.ts';
 import { readHostProcessTableAsync, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
@@ -467,12 +467,6 @@ function stimWorkspaceOf(
   return null;
 }
 
-function reclaimableBytes(report: MemoryReport, kind?: MemoryCacheKind): number {
-  return report.processes
-    .filter((entry) => entry.reclaimable && (kind === undefined || entry.cacheKind === kind))
-    .reduce((sum, entry) => sum + entry.bytes, 0);
-}
-
 type BoundWatchman = (args: string[], operation?: StimContext) => Promise<unknown>;
 
 const boundWatchman: BoundWatchman = async (args, operation) => {
@@ -884,53 +878,6 @@ function processLabel(entry: MemoryProcess): string {
     ? `offload client ${entry.offloadClient}`
     : (entry.gradleHome ?? 'unknown Gradle home');
   return `Gradle ${entry.version ?? '?'} daemon pid ${entry.pid} (${where})`;
-}
-
-function uptime(startedAt: string | null, now: number): string {
-  const at = startedAt ? Date.parse(startedAt) : NaN;
-  return Number.isFinite(at) ? `up ${formatLongDuration(Math.max(0, now - at))}` : 'uptime unknown';
-}
-
-export function memoryLines(
-  report: MemoryReport | null | undefined,
-  scoped: MemoryCacheKind | null,
-  now: number = Date.now(),
-): string[] {
-  if (!report || (report.processes.length === 0 && report.notices.length === 0)) return [];
-  const measure = report.processes.some((entry) => entry.measure === 'rss')
-    ? 'footprint, resident size where unreadable'
-    : 'physical footprint';
-  const lines = [
-    `Memory (${measure}) - shared helpers that grow while they run; stim gc at high stops an unused watchman and idle Gradle and Kotlin daemons with no build running:`,
-  ];
-  for (const entry of report.processes) {
-    const state = entry.reclaimable
-      ? 'idle'
-      : entry.kind === 'watchman' && entry.state === 'busy'
-        ? 'in use'
-        : entry.state;
-    lines.push(`  ${processLabel(entry)} ${formatBytes(entry.bytes)}, ${uptime(entry.startedAt, now)}, ${state}`);
-    if (entry.kind === 'watchman') {
-      const stale = report.watchmanRoots.filter((root) => root.stale !== null).length;
-      lines.push(`              ${report.watchmanRoots.length} root(s), ${stale} stale`);
-      for (const root of report.watchmanRoots.filter((r) => r.stale !== null)) {
-        lines.push(`              stale root ${root.path}: ${root.detail}${root.removable ? '' : '; kept'}`);
-      }
-    }
-    if (entry.detail) lines.push(`              ${entry.reclaimable ? '' : 'kept: '}${entry.detail}`);
-  }
-  for (const notice of report.notices) lines.push(`  ${notice}`);
-  const kinds: MemoryCacheKind[] = scoped ? [scoped] : [WATCHMAN_KIND, GRADLE_DAEMONS_KIND];
-  const parts: string[] = [];
-  for (const kind of kinds) {
-    if (!report.processes.some((entry) => entry.cacheKind === kind)) continue;
-    const roots = kind === WATCHMAN_KIND ? report.watchmanRoots.filter((root) => root.removable).length : 0;
-    const note = roots ? ` (and ${roots} stale root(s) removed)` : '';
-    const command = 'stim gc --pressure high';
-    parts.push(`${formatBytes(reclaimableBytes(report, kind))} with ${command}${note}`);
-  }
-  if (parts.length) lines.push(`  reclaimable ${formatBytes(reclaimableBytes(report))}: ${parts.join('; ')}`);
-  return lines;
 }
 
 function sameProcess(entry: MemoryProcess, rows: ReadonlyMap<number, HostProcess> | null): boolean {

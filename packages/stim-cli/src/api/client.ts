@@ -10,6 +10,7 @@ import {
   validRunId,
   userHome,
   easMachineStateRoot,
+  isJsonObject,
 } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
@@ -38,6 +39,7 @@ import { executeGc, readGcReport, withGcMaintenanceClaim } from '../commands/gc.
 import { ARCHIVE_PARTS, deleteGcItem, GC_ITEM_KINDS, type GcItem } from '../commands/gc/item.ts';
 import { removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from '../engine/logs.ts';
 import { readProjectStats } from '../engine/stats-report.ts';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -126,19 +128,17 @@ export async function runOp(name: string, args: unknown[], ctx: StimOptions): Pr
 const GC_LEVELS: readonly unknown[] = ['normal', 'high', 'critical'];
 
 function validGcItem(item: unknown): item is GcItem {
-  if (typeof item !== 'object' || item === null) return false;
-  const value = item as Record<string, unknown>;
-  if (!GC_ITEM_KINDS.includes(value.kind as GcItem['kind'])) return false;
-  const keys = Object.keys(value);
+  if (!isJsonObject(item) || !GC_ITEM_KINDS.some((kind) => kind === item.kind)) return false;
+  const keys = Object.keys(item);
   const only = (...allowed: string[]) => keys.every((key) => key === 'kind' || allowed.includes(key));
-  if (value.kind === 'cache')
-    return only('dir') && typeof value.dir === 'string' && value.dir.length > 0 && value.dir.length <= 4096;
-  if (value.kind === 'archive')
+  if (item.kind === 'cache')
+    return only('dir') && typeof item.dir === 'string' && item.dir.length > 0 && item.dir.length <= 4096;
+  if (item.kind === 'archive')
     return (
       only('id', 'part') &&
-      typeof value.id === 'string' &&
-      /^[\w.-]{1,200}$/.test(value.id) &&
-      (value.part === undefined || ARCHIVE_PARTS.includes(value.part as never))
+      typeof item.id === 'string' &&
+      /^[\w.-]{1,200}$/.test(item.id) &&
+      (item.part === undefined || ARCHIVE_PARTS.some((part) => part === item.part))
     );
   return only();
 }
@@ -459,12 +459,31 @@ export function createLocalStim(options: StimOptions): StimClient {
         );
       const operation = beginReport('deleteGarbageItem', signal);
       return lifecycle(operation, (context) =>
-        withGcMaintenanceClaim({}, () =>
+        withGcMaintenanceClaim({}, (claim) =>
           runReport(context, (bounded) =>
-            withAmbientContext(bounded, async () => {
-              const result = await deleteGcItem(item, bounded);
-              if (result.refusal) throw new StimError(result.refusal);
-              return { results: result.results, exitCode: result.failures ? (1 as const) : (0 as const) };
+            withAmbientContext(bounded, () => {
+              declareSpawnsOn(bounded, claim);
+              const task = deleteGcItem(item, bounded)
+                .then((result) => {
+                  if (result.refusal) throw new StimError(result.refusal);
+                  return { results: result.results, exitCode: result.failures ? (1 as const) : (0 as const) };
+                })
+                .finally(() => stopDeclaringSpawnsOn(bounded, claim));
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
             }),
           ),
         ).catch((cause: unknown) => {

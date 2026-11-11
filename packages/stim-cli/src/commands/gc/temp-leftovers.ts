@@ -60,13 +60,6 @@ const REMEDIES: Record<TempLeftoverKind, string> = {
   jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
 };
 
-const LABELS: Record<TempLeftoverKind, string> = {
-  stim: 'Stim temp directories',
-  xctrace: 'xctrace recordings (instruments*.ktrace)',
-  swiftpm: 'SwiftPM temp directories (TemporaryDirectory.*)',
-  jest: 'Jest cache',
-};
-
 function kindOf(name: string, stat: Stats, jestName: string | null): TempLeftoverKind | null {
   const unstaged = name.startsWith(STAGING_PREFIX) ? name.slice(STAGING_PREFIX.length) : name;
   if (stat.isDirectory() && STIM_PREFIXES.some((prefix) => unstaged.startsWith(prefix))) return 'stim';
@@ -295,21 +288,6 @@ function summarize(report: TempLeftoverReport): TempLeftoverGroup[] {
       },
     ];
   });
-}
-
-export function tempLeftoverLines(report: TempLeftoverReport | null | undefined): string[] {
-  if (!report?.entries.length) return [];
-  const groups = summarize(report);
-  const total = groups.reduce((sum, group) => sum + group.bytes, 0);
-  const lines = [`TMPDIR leftovers (${formatBytes(total)} in ${report.entries.length}) - ${report.root}:`];
-  for (const group of groups) {
-    lines.push(`  ${formatBytes(group.bytes).padStart(10)}  ${LABELS[group.kind]}: ${group.count}`);
-    if (group.deleteCount)
-      lines.push(`              stim gc would DELETE ${group.deleteCount} (${formatBytes(group.deleteBytes)})`);
-    for (const { reason, count } of group.kept) lines.push(`              kept ${count}: ${reason}`);
-    lines.push(`              remedy: ${group.remedy}`);
-  }
-  return lines;
 }
 
 export function tempLeftoverSection(

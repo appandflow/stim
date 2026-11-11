@@ -193,9 +193,7 @@ export async function regenerableDirProblem(root: string, path: string, signal?:
   }
   if (canonicalPath(path) !== join(canonicalPath(root), rel))
     return 'it or a directory above it is a link, or it lies outside its project';
-  const tracked = await gitQuietAsync(root, ['ls-files', '--', rel], {
-    signal,
-  });
+  const tracked = await gitQuietAsync(root, ['ls-files', '--', rel], { signal });
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });

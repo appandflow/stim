@@ -434,7 +434,13 @@ function gcItemAction(
       });
       return exitCode === 0
         ? { ok: true, stdout, summary: 'Cleanup completed.' }
-        : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Cleanup reported failures.' };
+        : {
+            ok: false,
+            stdout,
+            code: 'STIM_GC_FAILED',
+            message: 'Cleanup reported failures.',
+            remedy: 'Read each failed result, fix its cause and delete the item again.',
+          };
     },
     onProgress,
   );
@@ -962,7 +968,11 @@ export function subscribeBuild(ctx: ConnectionContext, id: RequestId, params: un
 }
 
 const GC_LEVELS = ['normal', 'high', 'critical'] as const;
-const GC_ARCHIVE_PARTS = ['logs', 'recordings', 'agentActions'];
+const GC_ARCHIVE_PARTS = ['logs', 'recordings', 'agentActions'] as const;
+
+const gcLevel = (value: unknown): (typeof GC_LEVELS)[number] | undefined => GC_LEVELS.find((level) => level === value);
+const archivePart = (value: unknown): (typeof GC_ARCHIVE_PARTS)[number] | undefined =>
+  GC_ARCHIVE_PARTS.find((part) => part === value);
 
 function validCwd(cwd: unknown): cwd is string {
   return typeof cwd === 'string' && cwd.length <= 4096 && !cwd.includes('\0') && isAbsolute(cwd);
@@ -974,17 +984,15 @@ export function subscribeGc(ctx: ConnectionContext, id: RequestId, params: unkno
     Object.keys(params).some((key) => !['cwd', 'dryRun', 'pressure'].includes(key)) ||
     !validCwd(params.cwd) ||
     typeof params.dryRun !== 'boolean' ||
-    (params.pressure !== undefined && !GC_LEVELS.includes(params.pressure as (typeof GC_LEVELS)[number]))
+    (params.pressure !== undefined && !gcLevel(params.pressure))
   )
     return ctx.error(
       id,
       'bad-request',
       'GC requires an absolute cwd, a dryRun boolean and an optional pressure of normal, high or critical.',
     );
-  const request = {
-    dryRun: params.dryRun,
-    ...(params.pressure === undefined ? {} : { pressure: params.pressure as (typeof GC_LEVELS)[number] }),
-  };
+  const pressure = gcLevel(params.pressure);
+  const request = { dryRun: params.dryRun, ...(pressure ? { pressure } : {}) };
   subscribeLifecycle(ctx, id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
     gcAction(cwd, ctx.options.env, ctx.actionLimits, request, onProgress),
   );
@@ -1001,11 +1009,11 @@ function gcItemOf(value: unknown): StimGcItem | null {
       return only('id', 'part') &&
         typeof value.id === 'string' &&
         /^[\w.-]{1,200}$/.test(value.id) &&
-        (value.part === undefined || GC_ARCHIVE_PARTS.includes(String(value.part)))
+        (value.part === undefined || archivePart(value.part))
         ? {
             kind: 'archive',
             id: value.id,
-            ...(value.part === undefined ? {} : { part: value.part as 'logs' | 'recordings' | 'agentActions' }),
+            ...(archivePart(value.part) ? { part: archivePart(value.part) } : {}),
           }
         : null;
     case 'workspace-outputs':

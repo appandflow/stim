@@ -11,7 +11,7 @@ import { recordEasSessionClaim, readEasSessionLedger } from '../engine/eas-sessi
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
-import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { collectProjectEasSessions } from '../commands/gc/records.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -405,7 +405,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
     try {
       const pending = withAmbientContext(operation, () =>
         phase === 'inventory'
-          ? runGc({ pressure: 'normal', json: true }, { ...dependencies(root), operation })
+          ? collectProjectEasSessions({ ...dependencies(root), operation })
           : deleteEasSessions(
               {
                 projectScope: root,
@@ -419,18 +419,10 @@ test.each(['inventory', 'get', 'stop'] as const)(
             ),
       );
       const failure = await pending.then(
-        () => (phase === 'inventory' ? JSON.parse(String(log.mock.calls.at(-1)?.[0])) : null),
+        () => null,
         (cause) => cause,
       );
       expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      const maintenanceRefusal =
-        phase === 'inventory'
-          ? await withGcMaintenanceClaim({}, async () => {}).then(
-              () => null,
-              (cause) => cause,
-            )
-          : null;
-      expect(maintenanceRefusal?.code ?? null).toBe(phase === 'inventory' ? 'STIM_CLAIM_REFUSED' : null);
       if (!owned) throw new Error('The controlled EAS command did not start');
       expect(inspectProcessIdentity(owned)).toBe('same');
       for (const handle of handles)

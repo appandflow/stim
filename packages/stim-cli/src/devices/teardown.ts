@@ -39,7 +39,6 @@ import {
   deleteParkedIosSim,
   deleteIosSim,
   listAllIosSimsAsync,
-  eraseIosSim,
   listIosDeviceTypesAsync,
   parkedSimName,
   parseRuntimeVersion,
@@ -70,14 +69,7 @@ import {
   ownedAvdSystemImage,
   wipeAvdUserData,
 } from './android.ts';
-import {
-  eraseParkedAfter,
-  keepParkedAfter,
-  parkSim,
-  readParked,
-  removeParkedAfter,
-  type ParkedSim,
-} from './sim-pool.ts';
+import { keepParkedAfter, parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import {
   claimRemoveCommand,
@@ -131,29 +123,18 @@ export async function teardownParkedAvd(
       'android',
       avdName,
       async () => {
-        const result = await teardownOwnedAvd(avdName, {
-          del: true,
-          owner: { pool: true },
-          operation,
-        });
+        const result = await teardownOwnedAvd(avdName, { del: true, owner: { pool: true }, operation });
         if (result.status !== 'torn-down' && result.status !== 'missing') throw new Error(result.reason);
       },
       operation,
     );
     return removed
       ? { status: 'torn-down', label: avdName }
-      : {
-          status: 'skipped',
-          kind: 'not-parked',
-          reason: 'emulator is no longer parked',
-        };
+      : { status: 'skipped', kind: 'not-parked', reason: 'emulator is no longer parked' };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }
 
@@ -163,11 +144,7 @@ export async function teardownParkedIosSim(
     label,
     deleteSim = deleteParkedIosSim,
     operation,
-  }: {
-    label?: string;
-    deleteSim?: typeof deleteParkedIosSim;
-    operation?: StimContext;
-  } = {},
+  }: { label?: string; deleteSim?: typeof deleteParkedIosSim; operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
   try {
     operation?.signal.throwIfAborted();
@@ -187,20 +164,12 @@ export async function teardownParkedIosSim(
       },
       operation,
     );
-    if (!removed)
-      return {
-        status: 'skipped',
-        kind: 'not-parked',
-        reason: 'simulator is no longer parked',
-      };
+    if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? removed.name };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }
 
@@ -243,113 +212,12 @@ export async function shutDownBootedParkedIosSim(
       },
       operation,
     );
-    if (!kept)
-      return {
-        status: 'skipped',
-        kind: 'not-parked',
-        reason: 'simulator is no longer parked',
-      };
+    if (!kept) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? kept.name };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
-  }
-}
-
-export async function eraseParkedIosSim(
-  udid: string,
-  { label, operation }: { label?: string; operation?: StimContext } = {},
-): Promise<TeardownOutcome> {
-  try {
-    operation?.signal.throwIfAborted();
-    const erased = await eraseParkedAfter(
-      'ios',
-      udid,
-      async (record, eraseStarted) => {
-        await closeOwnedDeviceSessions(
-          { platform: 'ios', id: udid },
-          async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
-          undefined,
-          undefined,
-          operation,
-        );
-        if (record.bootedUntil !== undefined) await shutDownParkedIosSimIfLive(udid, operation);
-        const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ signal: operation?.signal, operation }));
-        if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
-        if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
-        const state = (resolved.sim as IosSimRecord).state;
-        if (state !== 'Shutdown') throw new Error(`simulator ${udid} is ${state}, not Shutdown; it was kept`);
-        operation?.signal.throwIfAborted();
-        eraseStarted();
-        await eraseIosSim(udid, operation);
-      },
-      operation,
-    );
-    if (!erased)
-      return {
-        status: 'skipped',
-        kind: 'not-parked',
-        reason: 'simulator is no longer parked',
-      };
-    return { status: 'torn-down', label: label ?? erased.name };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
-    operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
-  }
-}
-
-export async function eraseParkedAvd(
-  avdName: string,
-  { operation }: { operation?: StimContext } = {},
-): Promise<TeardownOutcome> {
-  try {
-    operation?.signal.throwIfAborted();
-    const erased = await eraseParkedAfter(
-      'android',
-      avdName,
-      async (_record, eraseStarted) => {
-        if (
-          (
-            await resolveOwnedAvdSerialAsync(avdName, {
-              timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
-              operation,
-              signal: operation?.signal,
-            })
-          ).serial
-        )
-          throw new Error(`AVD ${avdName} is running; it was kept`);
-        const result = await teardownOwnedAvd(avdName, {
-          wipe: true,
-          owner: { pool: true },
-          onWipeStart: eraseStarted,
-          operation,
-        });
-        if (result.status !== 'torn-down') throw new Error(result.reason ?? `AVD ${avdName} is ${result.status}`);
-      },
-      operation,
-    );
-    return erased
-      ? { status: 'torn-down', label: avdName }
-      : {
-          status: 'skipped',
-          kind: 'not-parked',
-          reason: 'emulator is no longer parked',
-        };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
-    operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }
 
@@ -383,10 +251,7 @@ interface ShutdownSettleClock {
 
 async function resolveOwnedIosSimNow(udid: string, operation?: StimContext): Promise<ResolvedIosSim> {
   operation?.signal.throwIfAborted();
-  const sims = await listAllIosSimsAsync({
-    operation,
-    signal: operation?.signal,
-  });
+  const sims = await listAllIosSimsAsync({ operation, signal: operation?.signal });
   operation?.signal.throwIfAborted();
   return resolveOwnedIosSim(udid, sims);
 }
@@ -402,10 +267,7 @@ async function settleIosSimShutdown(
     while (resolved.sim && resolved.sim.state !== 'Shutdown' && now() < deadline) {
       await (sleep
         ? sleep(IOS_SHUTDOWN_POLL_MS)
-        : cancellableSleep(IOS_SHUTDOWN_POLL_MS, {
-            signal: operation?.signal,
-            what: 'simulator shutdown',
-          }));
+        : cancellableSleep(IOS_SHUTDOWN_POLL_MS, { signal: operation?.signal, what: 'simulator shutdown' }));
       resolved = await resolveOwnedIosSimNow(udid, operation);
     }
     if (!resolved.sim || resolved.sim.state === 'Shutdown' || attempt === IOS_SHUTDOWN_ATTEMPTS) return resolved;
@@ -452,13 +314,7 @@ async function parkOwnedIosSim(
     ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
   };
   const evicted = await withConfigLockAsync(() =>
-    parkSim({
-      platform: 'ios',
-      projectPath: park.projectPath,
-      slot: park.slot,
-      record,
-      max: park.max,
-    }),
+    parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max }),
   );
   return { record, evicted };
 }
@@ -507,22 +363,14 @@ export async function teardownOwnedIosSim(
     const current = await resolveOwnedIosSimNow(udid, operation);
     if (current.missing) return { status: 'missing' };
     if (current.notOwned)
-      return {
-        status: 'skipped',
-        kind: 'not-owned',
-        reason: 'simulator ownership changed before shutdown',
-      };
+      return { status: 'skipped', kind: 'not-owned', reason: 'simulator ownership changed before shutdown' };
     if (deferShutdown && !del && workspace && current.sim?.state === 'Booted') {
       if (deferShutdown.appId) await terminateIosApp(udid, deferShutdown.appId).catch(() => {});
       const deferredUntil = await recordDeferredShutdown(workspace, deferShutdown.slot, {
         udid,
         until: deferShutdown.until,
       });
-      return {
-        status: 'torn-down',
-        label: label ?? current.sim.name ?? udid,
-        deferredUntil,
-      };
+      return { status: 'torn-down', label: label ?? current.sim.name ?? udid, deferredUntil };
     }
     const keepBooted = Boolean(del && park && park.max > 0 && park.bootedUntil && current.sim?.state === 'Booted');
     if (!keepBooted) await shutdownIosSim(udid, operation);
@@ -537,10 +385,7 @@ export async function teardownOwnedIosSim(
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
-          const result = await teardownParkedIosSim(entry.udid, {
-            label: entry.name,
-            operation,
-          });
+          const result = await teardownParkedIosSim(entry.udid, { label: entry.name, operation });
           if (result.status === 'torn-down') {
             removed.push({ udid: entry.udid, name: entry.name });
           } else if (result.status === 'failed') {
@@ -566,11 +411,7 @@ export async function teardownOwnedIosSim(
     }
     if (del) {
       await deleteIosSim(udid, operation);
-      return {
-        status: 'torn-down',
-        label: label ?? sim.name ?? udid,
-        ...(parkFallback ? { parkFallback } : {}),
-      };
+      return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
     }
     const settled = await settleIosSimShutdown(udid, shutdownClock, operation);
     if (settled.sim && settled.sim.state !== 'Shutdown') {
@@ -741,11 +582,7 @@ async function teardownUnregisteredAvd(
       throw new Error(`AVD ${avdName} is not listed but its storage remains; it was kept.`);
     return { status: 'missing' };
   }
-  if (!del)
-    return {
-      status: 'skipped',
-      reason: 'AVD registration is missing; its data was kept.',
-    };
+  if (!del) return { status: 'skipped', reason: 'AVD registration is missing; its data was kept.' };
   for (const candidate of candidates) {
     if (candidate.name !== avdName) throw new Error(`AVD data does not match ${avdName}; it was kept.`);
     await removeOrphanedAvdDirectory(candidate, owner, operation);
@@ -811,10 +648,7 @@ export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOpti
       );
     }
     operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   } finally {
     if (operation) stopDeclaringSpawnsOn(operation, claim);
     if (!retained) releaseClaim(claim);
@@ -827,11 +661,7 @@ async function serialFree(
   operation?: StimContext,
 ): Promise<boolean> {
   operation?.signal.throwIfAborted();
-  const adb = await listAdbDevicesAsync({
-    timeoutMs,
-    operation,
-    signal: operation?.signal,
-  });
+  const adb = await listAdbDevicesAsync({ timeoutMs, operation, signal: operation?.signal });
   operation?.signal.throwIfAborted();
   return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
 }
@@ -885,16 +715,8 @@ async function teardownClaimedAvd(
       if (wipe) throw new Error(`AVD ${avdName} is not registered; its data was kept.`);
       return await teardownUnregisteredAvd(avdName, del, owner, orphanedDirectory, operation);
     }
-    if (onlyIfMissing)
-      return {
-        status: 'skipped',
-        reason: 'AVD registration appeared; its record was kept.',
-      };
-    if (orphanedDirectory)
-      return {
-        status: 'skipped',
-        reason: 'AVD registration appeared; its data was kept.',
-      };
+    if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
+    if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
     const stillStopped = async (sessionSerial: string) => {
       const current = await resolveAvd(avdName);
@@ -936,10 +758,7 @@ async function teardownClaimedAvd(
         // adb keeps listing an emulator as offline for a moment after its process exits.
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
         while (!(await serialFree(serial, Math.max(1, deadline - Date.now()), operation)) && Date.now() < deadline)
-          await cancellableSleep(250, {
-            signal: operation?.signal,
-            what: 'emulator release',
-          });
+          await cancellableSleep(250, { signal: operation?.signal, what: 'emulator release' });
         await closeOwnedDeviceSessions(
           { platform: 'android', id: serial, avdName },
           stillStopped,
@@ -1001,24 +820,14 @@ async function teardownClaimedAvd(
             ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
           };
           const evicted = await withConfigLockAsync(() =>
-            parkSim({
-              platform: 'android',
-              projectPath: park.projectPath,
-              slot: park.slot,
-              max: park.max,
-              record,
-            }),
+            parkSim({ platform: 'android', projectPath: park.projectPath, slot: park.slot, max: park.max, record }),
           );
           const removed: ParkedDevice[] = [];
           const failures: string[] = [];
           for (const entry of evicted) {
             const result = await teardownParkedAvd(entry.name, { operation });
             if (result.status === 'torn-down')
-              removed.push({
-                udid: entry.name,
-                name: entry.name,
-                platform: 'android',
-              });
+              removed.push({ udid: entry.name, name: entry.name, platform: 'android' });
             else if (result.status === 'failed')
               failures.push(`could not delete evicted ${entry.name}: ${result.reason}`);
           }
@@ -1072,20 +881,14 @@ async function stopOwnedChrome(record: OwnedProcess, profile: string, operation?
     if (state === 'gone') return true;
     if (state === 'unknown') return false;
     try {
-      await signalProcessTreeAsync(record.pid, signal, {
-        group: true,
-        operation,
-      });
+      await signalProcessTreeAsync(record.pid, signal, { group: true, operation });
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
     }
     const deadline = Date.now() + CHROME_KILL_WAIT_MS;
     while ((await chromeProcessStateAsync(record, profile, operation)) !== 'gone' && Date.now() < deadline)
-      await cancellableSleep(50, {
-        signal: operation?.signal,
-        what: 'Chrome shutdown',
-      });
+      await cancellableSleep(50, { signal: operation?.signal, what: 'Chrome shutdown' });
   }
   return (await chromeProcessStateAsync(record, profile, operation)) === 'gone';
 }
@@ -1111,10 +914,7 @@ export async function teardownOwnedBrowser(
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     options.operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }
 
@@ -1143,17 +943,11 @@ export async function teardownBrowserHeld(
           process.kill(record.pid, 'SIGTERM');
         } catch {}
         if (!(await waitForProcessExit(record, BROWSER_EXIT_WAIT_MS, signal))) {
-          return {
-            status: 'failed',
-            reason: `browser supervisor pid ${record.pid} did not exit`,
-          };
+          return { status: 'failed', reason: `browser supervisor pid ${record.pid} did not exit` };
         }
       }
       if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess, profile, operation))) {
-        return {
-          status: 'failed',
-          reason: `Chrome pid ${record.chromeProcess.pid} did not exit`,
-        };
+        return { status: 'failed', reason: `Chrome pid ${record.chromeProcess.pid} did not exit` };
       }
       const exited = record.chromeProcess;
       const holder = liveProfileHolder(profile, {
@@ -1167,10 +961,7 @@ export async function teardownBrowserHeld(
         };
       }
       if (exited && process.platform !== 'win32') await waitForGroupExit(exited.pid, CHROME_KILL_WAIT_MS);
-      const claims = clearFreeClaimSet({
-        root: webClaimRoot(root),
-        label: 'browser supervisor',
-      });
+      const claims = clearFreeClaimSet({ root: webClaimRoot(root), label: 'browser supervisor' });
       if (claims.status !== 'cleared') {
         return {
           status: 'skipped',
@@ -1199,11 +990,7 @@ export async function teardownBrowserHeld(
     if (existsSync(profile)) removeSingletonFiles(profile);
     if (deleteProfile && existsSync(profile)) {
       if (!readCreatedDevices().web.has(profile)) {
-        return {
-          status: 'skipped',
-          kind: 'not-owned',
-          reason: `${profile} is not in Stim's ledger; it was kept`,
-        };
+        return { status: 'skipped', kind: 'not-owned', reason: `${profile} is not in Stim's ledger; it was kept` };
       }
       await rm(profile, { recursive: true, force: true });
       signal?.throwIfAborted();
@@ -1213,9 +1000,6 @@ export async function teardownBrowserHeld(
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     signal?.throwIfAborted();
-    return {
-      status: 'failed',
-      reason: String((error as Error)?.message || error),
-    };
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }

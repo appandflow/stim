@@ -47,7 +47,7 @@ export interface ToolCacheResult {
 }
 
 /** The command line `argv` as a person types it. */
-export const commandText = (argv: readonly string[]): string => argv.join(' ');
+const commandText = (argv: readonly string[]): string => argv.join(' ');
 
 /**
  * The child environment for a tool command: run from the home directory, never prompting, and with a UTF-8 locale
@@ -94,7 +94,7 @@ function gradleSharedCaches(env: NodeJS.ProcessEnv): string[] {
 }
 
 /** The caches of the package managers and build tools installed on this machine, with where each keeps its data. */
-export async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<ToolCache[]> {
+async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<ToolCache[]> {
   const exec = getExecutor();
   const present = (tool: string) => exec.findExecutable(tool, { env }) !== null;
   const found: ToolCache[] = [];

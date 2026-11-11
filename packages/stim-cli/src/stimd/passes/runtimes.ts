@@ -14,7 +14,7 @@ const SIMCTL_TIMEOUT_MS = 60_000;
 const RUNTIME_DELETE_TIMEOUT_MS = 10 * 60_000;
 
 /** The runtime delete argv: `xcrun simctl runtime delete <identifier>`, the image's own identifier. */
-export const runtimeDeleteArgs = (identifier: string): string[] => ['simctl', 'runtime', 'delete', identifier];
+const runtimeDeleteArgs = (identifier: string): string[] => ['simctl', 'runtime', 'delete', identifier];
 
 function versionKey(version: string | null): number[] {
   return (version ?? '').split('.').map((part) => Number(part) || 0);

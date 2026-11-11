@@ -18,20 +18,9 @@ export const SETTING_SCOPES: readonly SettingScope[] = ['machine', 'workspace', 
 
 export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
-  | {
-      kind: 'path';
-      absolute?: boolean;
-      relative?: boolean;
-      patternHelp?: string;
-    }
+  | { kind: 'path'; absolute?: boolean; relative?: boolean; patternHelp?: string }
   | { kind: 'strings' }
-  | {
-      kind: 'number';
-      integer?: boolean;
-      minimum?: number;
-      exclusiveMinimum?: number;
-      maximum?: number;
-    }
+  | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
   | { kind: 'object' }
@@ -57,11 +46,7 @@ export function shownSettingType(type: SettingType): Exclude<SettingType, Plugin
   if (type.kind !== 'plugin-ref') return type;
   return type.choices
     ? { kind: 'choice', choices: type.choices }
-    : {
-        kind: 'string',
-        pattern: '\\S',
-        patternHelp: 'a module path or package name',
-      };
+    : { kind: 'string', pattern: '\\S', patternHelp: 'a module path or package name' };
 }
 
 /**
@@ -102,13 +87,7 @@ export type SettingsPayload = {
   project: string | null;
   files: Partial<Record<SettingScope, string>>;
   settings: SettingEntry[];
-  unknown: Array<{
-    key: string;
-    scope: SettingScope;
-    file: string;
-    value: unknown;
-    replacement?: string;
-  }>;
+  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown; replacement?: string }>;
 };
 
 /** The masked JSON result of a settings set or unset. */
@@ -144,11 +123,7 @@ function sameNumber(old: unknown): string | null {
 }
 const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
 const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
-const fixed = (env: string): RemovedSetting => ({
-  replacement: FIXED_LADDER,
-  env,
-  refuses: true,
-});
+const fixed = (env: string): RemovedSetting => ({ replacement: FIXED_LADDER, env, refuses: true });
 // prettier-ignore
 export const REMOVED_SETTINGS: ReadonlyMap<string, RemovedSetting> = new Map(Object.entries({
   'remote.buildMode': { key: 'remote.build', replacement: 'remote.build', env: 'STIM_REMOTE_BUILD_MODE', value: (old) => old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null },
@@ -252,26 +227,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_ANDROID_CAS_TOOLCHAIN',
   },
   {
-    ...optimization('android.pch', 'Android precompiled headers', {
-      kind: 'choice',
-      choices: ANDROID_PCH_CHOICES,
-    }),
+    ...optimization('android.pch', 'Android precompiled headers', { kind: 'choice', choices: ANDROID_PCH_CHOICES }),
     default: 'auto',
   },
   optimization('android.gradleBuildCache', 'Gradle build cache'),
   optimization('android.targetAbiOnly', 'Narrow Debug and hosted Android builds to the device ABI'),
-  {
-    key: 'ios.deviceType',
-    type: STRING,
-    scopes: EVERY,
-    description: 'Simulator model for owned simulators',
-  },
-  {
-    key: 'ios.runtime',
-    type: STRING,
-    scopes: EVERY,
-    description: 'iOS runtime owned simulators are created on',
-  },
+  { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
+  { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
     key: 'ios.autoInstallRuntime',
     type: BOOLEAN,
@@ -305,10 +267,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.projectPath',
-    type: {
-      ...RELATIVE_PATH,
-      patternHelp: 'a directory path relative to the app directory',
-    },
+    type: { ...RELATIVE_PATH, patternHelp: 'a directory path relative to the app directory' },
     scopes: ['workspace', 'committed'],
     default: 'ios',
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
@@ -323,10 +282,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.simslimProfile',
-    type: {
-      ...RELATIVE_PATH,
-      patternHelp: 'a relative JSON file path inside the app directory',
-    },
+    type: { ...RELATIVE_PATH, patternHelp: 'a relative JSON file path inside the app directory' },
     scopes: PROJECT,
     description: 'JSON profile under the app that keeps simulator service categories or labels enabled when slimming',
   },
@@ -343,11 +299,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.signingIdentitySha1',
-    type: {
-      kind: 'string',
-      pattern: '^[0-9A-Fa-f]{40}$',
-      patternHelp: 'a 40-character hex SHA-1 hash',
-    },
+    type: { kind: 'string', pattern: '^[0-9A-Fa-f]{40}$', patternHelp: 'a 40-character hex SHA-1 hash' },
     scopes: PROJECT,
     description: 'SHA-1 of the signing identity, when two share a name',
   },
@@ -361,22 +313,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.appStoreConnectKeyId',
-    type: {
-      kind: 'string',
-      pattern: '^[A-Za-z0-9]+$',
-      patternHelp: 'the key ID App Store Connect shows',
-    },
+    type: { kind: 'string', pattern: '^[A-Za-z0-9]+$', patternHelp: 'the key ID App Store Connect shows' },
     scopes: MACHINE,
     env: 'STIM_ASC_KEY_ID',
     description: 'Key ID of ios.appStoreConnectKeyPath',
   },
   {
     key: 'ios.appStoreConnectIssuerId',
-    type: {
-      kind: 'string',
-      pattern: '^[A-Za-z0-9-]+$',
-      patternHelp: 'the issuer ID App Store Connect shows',
-    },
+    type: { kind: 'string', pattern: '^[A-Za-z0-9-]+$', patternHelp: 'the issuer ID App Store Connect shows' },
     scopes: MACHINE,
     env: 'STIM_ASC_ISSUER_ID',
     description: 'Issuer ID of ios.appStoreConnectKeyPath',
@@ -391,12 +335,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     description: "Address a phone uses to reach this workspace's Metro",
   },
-  {
-    key: 'android.systemImage',
-    type: STRING,
-    scopes: EVERY,
-    description: 'SDK system image for owned AVDs',
-  },
+  { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
     key: 'android.installImages',
     type: { kind: 'choice', choices: ['auto', 'never'] },
@@ -424,25 +363,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'android.avdConfigFile',
-    type: {
-      ...RELATIVE_PATH,
-      patternHelp: 'a relative file path inside the app directory',
-    },
+    type: { ...RELATIVE_PATH, patternHelp: 'a relative file path inside the app directory' },
     scopes: PROJECT,
     description: 'AVD config.ini fragment under the app',
   },
-  {
-    key: 'android.avdConfig',
-    type: OBJECT,
-    scopes: PROJECT,
-    description: 'Validated AVD config values',
-  },
+  { key: 'android.avdConfig', type: OBJECT, scopes: PROJECT, description: 'Validated AVD config values' },
   {
     key: 'android.gradleRoot',
-    type: {
-      ...RELATIVE_PATH,
-      patternHelp: 'a directory path relative to the app directory',
-    },
+    type: { ...RELATIVE_PATH, patternHelp: 'a directory path relative to the app directory' },
     scopes: ['workspace', 'committed'],
     default: 'android',
     description:
@@ -459,12 +387,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: ':app',
     description: "The app's Gradle project path, such as :app",
   },
-  {
-    key: 'android.variant',
-    type: STRING,
-    scopes: PROJECT,
-    description: 'Gradle build variant',
-  },
+  { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
   {
     key: 'android.artifactInputs',
     type: OBJECT,
@@ -517,18 +440,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description:
       "Command that starts this project's dev server, as an argv array run from the app directory; {port} is replaced with the reserved Metro port",
   },
-  {
-    key: 'metro.ngrokUrl',
-    type: STRING,
-    scopes: PROJECT,
-    description: 'Stable ngrok URL for the managed tunnel',
-  },
-  {
-    key: 'metro.publicUrl',
-    type: STRING,
-    scopes: PROJECT,
-    description: 'Existing public Metro URL',
-  },
+  { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
+  { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },
   {
     key: 'metro.port',
     type: { kind: 'number', integer: true, minimum: 1024, maximum: 65535 },
@@ -566,11 +479,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'macos.product',
-    type: {
-      kind: 'string',
-      pattern: '^[A-Za-z0-9_-]+$',
-      patternHelp: 'a Swift Package executable product name',
-    },
+    type: { kind: 'string', pattern: '^[A-Za-z0-9_-]+$', patternHelp: 'a Swift Package executable product name' },
     scopes: PROJECT,
     description: 'The Swift Package executable product stim macos builds in Debug.',
   },
@@ -756,12 +665,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     description: 'Second-tier cache provider module',
   },
-  {
-    key: 'cache.options',
-    type: OBJECT,
-    scopes: PROJECT,
-    description: 'Options passed to the cache provider',
-  },
+  { key: 'cache.options', type: OBJECT, scopes: PROJECT, description: 'Options passed to the cache provider' },
   {
     key: 'iosSimulatorApp',
     type: { kind: 'choice', choices: IOS_SIMULATOR_APPS },
@@ -1067,11 +971,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'hosting.agentDriver',
-    type: {
-      kind: 'plugin-ref',
-      plugin: 'agent-driver',
-      choices: HOSTED_AGENT_DRIVERS,
-    },
+    type: { kind: 'plugin-ref', plugin: 'agent-driver', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,
     default: 'none',
     description:
@@ -1439,11 +1339,7 @@ export function machineSettingValue(
   { config, env }: { config: unknown; env: NodeJS.ProcessEnv },
 ): { value: unknown; error: string | null } {
   const setting = settingDefinition(key);
-  if (!setting)
-    return {
-      value: undefined,
-      error: `${key} is not in the settings registry`,
-    };
+  if (!setting) return { value: undefined, error: `${key} is not in the settings registry` };
   const raw = setting.env ? env[setting.env] : undefined;
   const explicit = raw !== undefined && raw !== '';
   let value: unknown;
@@ -1457,10 +1353,7 @@ export function machineSettingValue(
       const group = parts.slice(0, index).join('.');
       const container = settingValueAt(config, group);
       if (container !== undefined && !isJsonObject(container))
-        return {
-          value: undefined,
-          error: `${group} in the config is not an object`,
-        };
+        return { value: undefined, error: `${group} in the config is not an object` };
     }
     const configured = settingValueAt(config, key);
     checked = configured === undefined ? setting.default : configured;

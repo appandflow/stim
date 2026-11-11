@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { machineCacheUsageFile, readMachineCacheUsage } from '@stim-cli/core/state';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
-import { machineCacheLines } from '../devices/machine-cache-usage-output.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { withAmbientContext } from '@stim-cli/core';
@@ -239,19 +238,17 @@ test.skipIf(!posixModes)('an unreadable wrapper is reported like an unreadable p
   try {
     const report = await getMachineCacheReport(null);
     expect(report.gradle.unreadableProjects).toEqual([project]);
-    expect(machineCacheLines(report).join('\n')).toContain('missing or unreadable');
   } finally {
     chmodSync(file, 0o644);
   }
 });
 
-test('off macOS no simulator line appears, since simctl is never asked', async () => {
+test('off macOS no simulator runtime is listed, since simctl is never asked', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' });
   const report = await getMachineCacheReport(null);
   expect(report.simRuntimes).toEqual({ checked: true, runtimes: [] });
   expect(report.complete).toBe(true);
   expect(calls.some(([file]) => file === 'xcrun')).toBe(false);
-  expect(machineCacheLines(report)).toEqual([]);
 });
 
 const spoilers: [string, (file: string) => void][] = [
@@ -281,7 +278,6 @@ test('an unused Gradle version lists its transforms with their own size and a ma
     },
   ]);
   expect(calls.flat()).not.toContain(join(caches, '9.4.1', 'transforms'));
-  expect(machineCacheLines(report).join('\n')).toContain(`transforms: ${transforms} 4M (1M its own)`);
 });
 
 function derivedData(name: string, plist: string | null): string {
@@ -322,9 +318,6 @@ test('DerivedData is reported only when its recorded workspace is gone from a mo
     privateBytes: 1_048_576,
     remedy: `rm -rf '${orphan}'`,
   });
-  const lines = machineCacheLines(report).join('\n');
-  expect(lines).toContain('Xcode DerivedData of workspaces that no longer exist');
-  expect(lines).toContain(`workspace ${join(home, 'gone', 'App.xcworkspace')}`);
 });
 
 test('no DerivedData is listed off macOS', async () => {

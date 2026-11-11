@@ -77,10 +77,7 @@ export function keepReserve(): void {
   }
 }
 
-export function claimPass(trigger: string): {
-  acquired?: ClaimHandle;
-  held?: ClaimHolder;
-} {
+export function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
   const take = () => {
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),
@@ -247,10 +244,7 @@ function partsAfter(
   previous: MaintenanceState['byCheck'],
   planned: ReadonlySet<MaintenancePlanPart>,
   result: PlannedMaintenance,
-  outcomes: readonly {
-    action: MaintenanceAction;
-    outcome: ActionOutcome;
-  }[] = [],
+  outcomes: readonly { action: MaintenanceAction; outcome: ActionOutcome }[] = [],
 ): PlanParts {
   const parts: PlanParts = { ...previous };
   for (const part of planned) {
@@ -301,11 +295,7 @@ function tickDeviceReads({ operation, measured }: MaintenanceTick): OwnedDeviceR
   return {
     sims: () => {
       if (!tickListsSims(loadConfig()))
-        return listAllIosSimsAsync({
-          timeoutMs: DEVICE_LIST_TIMEOUT_MS,
-          signal,
-          operation,
-        });
+        return listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation });
       if (measured.sims === null) throw new Error(measured.simsError ?? 'the simulator list failed');
       return measured.sims;
     },
@@ -381,11 +371,7 @@ export async function runMaintenance(
     } catch (error) {
       noteWriteError(error);
     }
-    gcLog = openGcLog({
-      trigger: 'maintenance',
-      runId: `p-${claim.claimId}`,
-      via: trigger,
-    });
+    gcLog = openGcLog({ trigger: 'maintenance', runId: `p-${claim.claimId}`, via: trigger });
     const record = (
       event: MaintenanceRecord['event'],
       level: MaintenanceRecord['level'],
@@ -435,11 +421,7 @@ export async function runMaintenance(
           if (culprits) state.pressure.memory.culprits = culprits;
           for (const disk of state.pressure.disk)
             record('maintenance_check', 'debug', `Disk free on ${disk.volume}: ${(disk.freeMb / 1024).toFixed(1)}G`, {
-              check: {
-                kind: 'disk-free',
-                value: disk.freeMb / 1024,
-                unit: 'GiB',
-              },
+              check: { kind: 'disk-free', value: disk.freeMb / 1024, unit: 'GiB' },
             });
           record('maintenance_check', 'debug', `Memory pressure: ${state.pressure.memory.level ?? 'unavailable'}`, {
             check: {
@@ -493,12 +475,7 @@ export async function runMaintenance(
       writeState(state);
       return;
     }
-    const partPlanned = {
-      caps,
-      sweep: ran.has('sweep'),
-      worktree: plannedWorktrees,
-      idle: ran.has('idle'),
-    };
+    const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
     try {
@@ -508,12 +485,7 @@ export async function runMaintenance(
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
         background,
-        ...(tick
-          ? {
-              operation: tick.operation,
-              deviceActivity: tickDeviceActivity(tick),
-            }
-          : {}),
+        ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
       });
     } catch (error) {
       throwUnverifiedCleanup(error);
@@ -550,11 +522,7 @@ export async function runMaintenance(
           outcome = await executeAction(action, context);
         } catch (error) {
           throwUnverifiedCleanup(error);
-          outcome = {
-            status: 'failed',
-            bytes: 0,
-            detail: error instanceof Error ? error.message : String(error),
-          };
+          outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
         results.push({ action, outcome });
         if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));

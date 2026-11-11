@@ -57,10 +57,7 @@ function sharedDetail({ bytes, privateBytes }: Measured): string {
 export function selectDependencies(
   ranked: readonly RankedDependency[],
   unknown: 'take' | 'keep',
-): {
-  take: RankedDependency[];
-  kept: { dependency: RankedDependency; detail: string }[];
-} {
+): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
   const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
   const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null);
   const take: RankedDependency[] = known
@@ -100,12 +97,7 @@ export async function rankDependencies(
   if (!rank.size) return [];
   const found = await collectArtifactsAsync(
     'dependencies',
-    {
-      now: Date.now(),
-      windowMs: 0,
-      protectedRoot,
-      pinned: maintenancePinnedReader(operation),
-    },
+    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation) },
     operation?.signal ?? new AbortController().signal,
     operation,
   );
@@ -137,11 +129,7 @@ export async function clearDependency(
   reason: string,
   operation?: StimContext,
   requireRestorable = true,
-): Promise<{
-  status: 'done' | 'kept' | 'failed';
-  bytes: number;
-  detail: string;
-}> {
+): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
       {
@@ -165,11 +153,7 @@ export async function clearDependency(
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     operation?.signal.throwIfAborted();
-    return {
-      status: 'failed',
-      bytes: 0,
-      detail: error instanceof Error ? error.message : String(error),
-    };
+    return { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -201,11 +185,7 @@ export async function runDormantDependencies(
       dependency.privateBytes === null
         ? `${why}; its real size is unknown`
         : `${why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
-    const result: {
-      status: DaemonLadderAction['outcome'];
-      bytes: number;
-      detail: string;
-    } = input.act
+    const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
       ? await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
       : {
           status: 'would',
@@ -225,17 +205,8 @@ export async function runDormantDependencies(
     });
     const level = result.status === 'failed' ? 'warn' : 'info';
     const msg = `dormant stage: ${VERBS[result.status]} ${target} (${formatBytes(result.bytes)} freed): ${result.detail}; ${reason}${result.status === 'done' ? `; restore with ${RESTORE}` : ''}`;
-    const fields = {
-      target,
-      outcome: result.status,
-      bytes: result.bytes,
-      reason,
-      ...restore,
-    };
-    input.log(level, 'dormant_dependencies', msg, {
-      ...fields,
-      workspace: dependency.workspace,
-    });
+    const fields = { target, outcome: result.status, bytes: result.bytes, reason, ...restore };
+    input.log(level, 'dormant_dependencies', msg, { ...fields, workspace: dependency.workspace });
     if (result.status === 'done' || result.status === 'failed')
       try {
         writeWorkspaceEvent(dependency.workspace, level, 'dormant_dependencies', msg, fields);
@@ -256,11 +227,7 @@ async function dependencyTrees(operation: StimContext): Promise<string[]> {
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
   for (const path of await dependencyTrees(operation)) {
-    const { outcome } = await refreshMeasure(path, {
-      timeoutMs: WALK_TIMEOUT_MS,
-      claim: true,
-      operation,
-    });
+    const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
     if (outcome === 'busy') return;
   }
 }

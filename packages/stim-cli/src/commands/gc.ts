@@ -126,15 +126,8 @@ async function collectGcReport(
   phase('report', 'measuring what Stim keeps on disk', operation);
   const agentDeviceUsage = await getAgentDeviceUsage({ operation });
   const swiftpmCacheUsage = await getSwiftpmCacheUsage({ operation });
-  const machineCaches = await getMachineCacheReport(agentDeviceUsage, {
-    operation,
-  });
-  const tempLeftovers = await collectTempLeftovers({
-    now,
-    env,
-    signal: operation?.signal,
-    operation,
-  });
+  const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
+  const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal, operation });
   const trash = await collectTrash({ signal: operation?.signal, operation });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
@@ -149,13 +142,7 @@ async function collectGcReport(
   const hostedApps = await collectHostedAppStorage(operation);
   const devices = await collectDeviceRecords(cfg, deadProjects, deps);
   const worktreeSweep = await measureWorktreeSweep(
-    await collectWorktreeSweep({
-      idle: false,
-      olderThan: null,
-      now,
-      refresh: false,
-      operation,
-    }),
+    await collectWorktreeSweep({ idle: false, olderThan: null, now, refresh: false, operation }),
     operation,
     measureBuildState,
   );
@@ -204,12 +191,7 @@ async function collectGcReport(
     recordings: await collectRecordings({ whole: false, olderThan: null, now }, gone, operation?.signal),
     worktreeSweep,
     finishedDevices: devices.listed
-      ? collectFinishedDevices({
-          config: cfg,
-          ...devices.listed,
-          sweep: worktreeSweep,
-          now,
-        })
+      ? collectFinishedDevices({ config: cfg, ...devices.listed, sweep: worktreeSweep, now })
       : [],
     ownedDeviceDisk: devices.ownedDeviceDisk,
     memory: await collectGcMemory({ watchman: true, gradle: true }, env, operation),
@@ -285,11 +267,7 @@ function resultOf(action: LevelRunAction): GcResult {
 
 /** `stim gc --dry-run --json` as the API's read-only `gc()` returns it: the plan and the storage sections. */
 export async function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
-  const run = await runMaintenanceAtLevel({
-    level: options.pressure,
-    act: false,
-    operation: deps.operation,
-  });
+  const run = await runMaintenanceAtLevel({ level: options.pressure, act: false, operation: deps.operation });
   const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
   return {
     ...runPayload(run, false),
@@ -399,11 +377,7 @@ export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Pr
     const failure =
       claimFailure(error, gcRetryCommand(opts)) ??
       (deps.operation?.signal.aborted
-        ? {
-            code: 'STIM_CANCELLED',
-            message: 'GC was cancelled.',
-            remedy: 'Retry the same GC command.',
-          }
+        ? { code: 'STIM_CANCELLED', message: 'GC was cancelled.', remedy: 'Retry the same GC command.' }
         : null);
     if (!failure) throw error;
     console.error(`${failure.code}: ${failure.message}`);
@@ -469,19 +443,13 @@ const gc: Op = defineOp({
   description:
     "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes, unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods. At high, the pressure ladder to its end as well: idle dev servers and their build outputs, parked devices, shared caches trimmed to half their caps, idle workspaces made dormant, node_modules and Pods of idle linked worktrees, idle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean merged worktrees without the grace period. At critical, every shared cache Stim registered emptied, clean pushed worktrees idle 7 days, every device recording and archived content, then the caches of other tools through their own commands (npm, Yarn, pnpm, CocoaPods, Gradle), which high also runs while free disk stays under disk.minFreeGb. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
   options: {
-    dryRun: {
-      flags: '--dry-run',
-      description: 'report what the run would delete, and delete nothing',
-    },
+    dryRun: { flags: '--dry-run', description: 'report what the run would delete, and delete nothing' },
     pressure: {
       flags: '--pressure <level>',
       description: 'run at this level, normal, high or critical, instead of the measured one',
       parse: parsePressureLevel,
     },
-    json: {
-      flags: '--json',
-      description: 'print the result as JSON on stdout; every other line goes to stderr',
-    },
+    json: { flags: '--json', description: 'print the result as JSON on stdout; every other line goes to stderr' },
   },
   run: async ({ options: opts }) => {
     if (!opts.dryRun) {

@@ -46,7 +46,7 @@ export interface LevelRun {
 }
 
 /** Measures disk and memory once and classifies them as the daemon would. */
-export async function measureLevel(operation?: StimContext): Promise<DaemonPressure> {
+async function measureLevel(operation?: StimContext): Promise<DaemonPressure> {
   const config = loadConfig();
   const { thresholds } = diskThresholds(config, operation?.env);
   const [disk, memory] = await Promise.all([
@@ -133,15 +133,7 @@ export async function runMaintenanceAtLevel({
   });
   blocked.push(...plan.blocked);
   for (const skip of plan.skips)
-    take({
-      rung: null,
-      kind: 'keep',
-      target: skip.target,
-      outcome: 'kept',
-      bytes: 0,
-      reason: '',
-      detail: skip.reason,
-    });
+    take({ rung: null, kind: 'keep', target: skip.target, outcome: 'kept', bytes: 0, reason: '', detail: skip.reason });
   const context = {
     settings,
     background: false,
@@ -153,11 +145,7 @@ export async function runMaintenanceAtLevel({
     operation?.signal.throwIfAborted();
     if (!act) {
       take({
-        ...fromOutcome(action, {
-          status: 'done',
-          bytes: action.bytes,
-          detail: 'stim gc would do this',
-        }),
+        ...fromOutcome(action, { status: 'done', bytes: action.bytes, detail: 'stim gc would do this' }),
         outcome: 'would',
       });
       continue;
@@ -168,11 +156,7 @@ export async function runMaintenanceAtLevel({
     } catch (error) {
       if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
       operation?.signal.throwIfAborted();
-      outcome = {
-        status: 'failed',
-        bytes: 0,
-        detail: error instanceof Error ? error.message : String(error),
-      };
+      outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
     }
     take(fromOutcome(action, outcome));
   }

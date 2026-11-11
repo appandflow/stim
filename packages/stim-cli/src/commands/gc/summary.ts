@@ -40,7 +40,7 @@ const CATEGORIES: Record<string, string> = {
 
 const LARGEST_SHOWN = 3;
 
-export const categoryOf = (action: Pick<LevelRunAction, 'kind'>): string => CATEGORIES[action.kind] ?? 'Other';
+const categoryOf = (action: Pick<LevelRunAction, 'kind'>): string => CATEGORIES[action.kind] ?? 'Other';
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 

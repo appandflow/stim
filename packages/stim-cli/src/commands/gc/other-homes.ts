@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { readCreatedDevices, readJsonObject, readStimHomes, type StimHomeEntry } from '@stim-cli/core/state';
 import chalk from 'chalk';
-import { formatLongDuration, plural, quotedPath, shortUdid } from '../../command-output.ts';
+import { quotedPath } from '../../command-output.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { forgetStimHomes, isTrackedStimHome, stimHomesRoot } from '../../engine/stim-home-registry.ts';
-import { formatBytes, isAbsentPath, isOnMountedVolume } from '../../fs-util.ts';
+import { isAbsentPath, isOnMountedVolume } from '../../fs-util.ts';
 import { measureTree } from '../../private-size.ts';
 import { nativeCanonicalPath, repoRootAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
@@ -177,47 +177,6 @@ export async function collectOtherHomes(
     describeHome(entry, listing, mountedVolumes, operation),
   );
   return { homes: homes.toSorted((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt)), notice: null };
-}
-
-function ago(at: string, now: number): string {
-  return `${formatLongDuration(Math.max(0, now - Date.parse(at)))} ago`;
-}
-
-function deviceLine(device: OtherHomeDevice, home: OtherHome): string[] {
-  const label =
-    device.kind === 'ios' ? `ios ${device.name ?? 'simulator'} (${shortUdid(device.id)})` : `android ${device.id}`;
-  if (device.present === false) return [`    ${label}: not on this machine`];
-  if (device.present === null) return [`    ${label}: listing unavailable`];
-  if (home.state === 'present') return [`    ${label}: on this machine, owned by that home`];
-  if (home.state === 'unverified')
-    return [`    ${label}: on this machine; its home is on a volume that is not mounted`];
-  return [`    orphaned from ${home.path}: ${label} is still on this machine`, `      ${device.command}`];
-}
-
-export function otherHomeLines(homes: readonly OtherHome[] = [], now: number = Date.now()): string[] {
-  if (!homes.length) return [];
-  const lines = [
-    `Other Stim homes (${homes.length}) - report only; this home never changes them, and their devices are not its own:`,
-  ];
-  for (const home of homes) {
-    const size =
-      home.privateBytes !== null
-        ? `, ${formatBytes(home.privateBytes)} private`
-        : home.bytes !== null
-          ? `, ${formatBytes(home.bytes)}`
-          : '';
-    const state =
-      home.state === 'present'
-        ? `${plural(home.workspaces, 'workspace')}${size}`
-        : home.state === 'gone'
-          ? 'gone'
-          : 'directory missing on a volume that is not mounted; kept';
-    lines.push(`  ${home.path} (${state}, last seen ${ago(home.lastSeenAt, now)})`);
-    for (const device of home.devices) lines.push(...deviceLine(device, home));
-    if (home.forgettable) lines.push('    nothing of it is left on this machine; stim gc forgets the LIST ENTRY only.');
-    for (const command of home.teardown) lines.push(`    ${command}`);
-  }
-  return lines;
 }
 
 export function forgetGoneHomes(

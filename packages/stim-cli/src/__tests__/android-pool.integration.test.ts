@@ -16,7 +16,7 @@ import { recordCreatedDevice, readCreatedDevices } from '../devices/created-devi
 import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/sim-pool.ts';
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import * as iosDevices from '../devices/ios.ts';
-import { eraseParkedAvd, teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
+import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
 import { IMPOSSIBLE_PID, makeExitingChild, writeAvdProcessLock } from './_factories.ts';
 
@@ -351,34 +351,6 @@ test('parking keeps the AVD user data and records the installed app', async () =
   expect(readParked('android')).toEqual([
     expect.objectContaining({ name: 'stim-new', packageName: 'com.example.app', cacheKey: 'abc-debug' }),
   ]);
-});
-
-test('erasing a parked AVD wipes its user data and snapshots and keeps it parked without its app', async () => {
-  park('stim-old', { packageName: 'com.example.app', cacheKey: 'abc-debug' });
-  const directory = join(home, 'avd', 'stim-old.avd');
-  fillUserData(directory);
-
-  expect((await eraseParkedAvd('stim-old')).status).toBe('torn-down');
-
-  expect(readdirSync(directory).toSorted()).toEqual(['config.ini', 'userdata.img']);
-  const [record] = readParked('android');
-  expect(record).toMatchObject({ name: 'stim-old' });
-  expect(record).not.toHaveProperty('packageName');
-  expect(record).not.toHaveProperty('cacheKey');
-  expect(avds).toEqual(new Set(['stim-old']));
-});
-
-test('erasing refuses a parked AVD a workspace references and keeps its data and record', async () => {
-  park('stim-old', { packageName: 'com.example.app' });
-  const directory = join(home, 'avd', 'stim-old.avd');
-  fillUserData(directory);
-  upsertProject('/other', { platforms: { android: { avdName: 'stim-old', owned: true } } });
-
-  const result = await eraseParkedAvd('stim-old');
-
-  expect(result.status).toBe('failed');
-  expect(readdirSync(directory)).toContain('userdata-qemu.img.qcow2');
-  expect(readParked('android')).toEqual([expect.objectContaining({ packageName: 'com.example.app' })]);
 });
 
 test('an AVD that cannot be parked keeps its user data until it is deleted', async () => {

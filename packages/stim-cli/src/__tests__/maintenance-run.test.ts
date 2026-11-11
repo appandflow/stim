@@ -474,17 +474,12 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   }
 });
 
-test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
+test('invalid maintenance settings are explained in status rather than silently reported as off', async () => {
   process.env.STIM_MAINTENANCE_SWEEP_HOURS = 'bad';
   try {
     expect(maintenanceStatus()).toMatchObject({
       mode: 'off',
       invalid: expect.stringContaining('maintenance.sweepHours'),
-    });
-    expect(await preview.previewMaintenance()).toMatchObject({
-      mode: 'off',
-      invalid: expect.stringContaining('maintenance.sweepHours'),
-      note: expect.stringContaining('maintenance.sweepHours'),
     });
   } finally {
     delete process.env.STIM_MAINTENANCE_SWEEP_HOURS;
@@ -500,10 +495,6 @@ test('an invalid cache cap falls back only that cap while report mode remains en
       invalid: expect.stringContaining('caches.buildCacheMaxGb'),
     });
     expect(maintenanceStatus()).toMatchObject({
-      mode: 'report',
-      invalid: expect.stringContaining('caches.buildCacheMaxGb'),
-    });
-    expect(await preview.previewMaintenance()).toMatchObject({
       mode: 'report',
       invalid: expect.stringContaining('caches.buildCacheMaxGb'),
     });

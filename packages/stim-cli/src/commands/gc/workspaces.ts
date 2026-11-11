@@ -328,7 +328,7 @@ export async function collectOrphanedWorkspaces(
   return { orphaned, skipped: classified.skipped };
 }
 
-export const REBUILD_COST: string =
+const REBUILD_COST: string =
   'The next build of an unchanged app installs from the shared build cache; after a native change the ' +
   'compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules ' +
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
@@ -362,7 +362,7 @@ async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<stri
   return dirs;
 }
 
-export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
+const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
   'gradle-build',
   'android-cas',
@@ -808,6 +808,6 @@ export async function deleteOrphanedWorkspaces(
   return failures;
 }
 
-export function sizeText(bytes: number | null): string {
+function sizeText(bytes: number | null): string {
   return bytes === null ? 'size unknown' : formatBytes(bytes);
 }

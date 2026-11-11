@@ -1,6 +1,5 @@
 import { readArchivesAsync, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { deleteSelectedArchives, sweepArchiveStaging, type ArchiveStaging } from '../../archive.ts';
-import { formatBytes } from '../../fs-util.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export type ArchiveKind = 'logs' | 'recordings' | 'agentActions';
@@ -51,21 +50,6 @@ export async function collectArchives(
   };
 }
 
-export function archiveLines(selection: ArchiveSelection | undefined): string[] {
-  if (!selection) return [];
-  return [
-    `Archived workspaces (${selection.records.length}):`,
-    ...selection.records.map(
-      (record) =>
-        `  ${record.id}: ${record.kinds.join(', ')}, ${formatBytes(record.bytes)}, expires ${JSON.stringify(record.expires)}${record.willDelete ? '' : ' (kept)'}`,
-    ),
-    ...selection.staging.map(
-      (entry) =>
-        `  ${entry.path}: ${entry.kept ? `kept: ${entry.reason}` : 'abandoned staging'}${entry.removeCommand ? `; ${entry.removeCommand}` : ''}`,
-    ),
-  ];
-}
-
 export async function deleteArchives(
   selection: ArchiveSelection | undefined,
   output: GcOutput = GC_OUTPUT,
@@ -107,11 +91,4 @@ export function archiveRefusal(
   const message = `Unknown archive "${selection.unknownId}".`;
   const remedy = `Known archive ids: ${selection.knownIds.join(', ') || '(none)'}`;
   return { code: 'STIM_BAD_ARG', message, remedy };
-}
-
-export function archiveWorkPending(selection: ArchiveSelection | undefined, otherWork: boolean): boolean {
-  return (
-    otherWork ||
-    Boolean(selection?.records.some((record) => record.willDelete) || selection?.staging.some((entry) => !entry.kept))
-  );
 }

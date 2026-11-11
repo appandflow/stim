@@ -21,8 +21,6 @@ import {
 import { listAvdsAsync, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
-  eraseParkedAvd,
-  eraseParkedIosSim,
   teardownOwnedIosSim,
   teardownOwnedAvd,
   teardownParkedIosSim,
@@ -569,49 +567,6 @@ export async function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedA
     });
   }
   return reports;
-}
-
-export async function eraseParkedDevices(
-  sims: readonly ParkedSimReport[],
-  avds: readonly ParkedAvdReport[],
-  output: GcOutput = GC_OUTPUT,
-  operation?: StimContext,
-): Promise<number> {
-  let failures = 0;
-  const devices = [
-    ...sims.map((sim) => ({ platform: 'ios', id: sim.udid, name: sim.name, listed: sim.listed, bytes: sim.bytes })),
-    ...avds.map((avd) => ({ platform: 'android', id: avd.name, name: avd.name, listed: avd.listed, bytes: avd.bytes })),
-  ];
-  for (const device of devices) {
-    operation?.signal.throwIfAborted();
-    const what = `parked ${device.platform === 'ios' ? 'ios sim' : 'android emulator'} ${device.name}`;
-    if (device.listed !== true) {
-      const unverified = device.listed === null;
-      const detail = unverified
-        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --pressure high.'
-        : 'it is not on this machine; stim gc drops its pool record.';
-      if (unverified) failures++;
-      output.log((unverified ? chalk.red : chalk.dim)(`Did not erase ${what}: ${detail}`));
-      output.record('parkedDevice', unverified ? 'failed' : 'kept', device.name, { id: device.id, detail });
-      continue;
-    }
-    const result =
-      device.platform === 'ios'
-        ? await eraseParkedIosSim(device.id, { label: device.name, operation })
-        : await eraseParkedAvd(device.id, { operation });
-    operation?.signal.throwIfAborted();
-    if (result.status === 'torn-down') {
-      output.log(chalk.green(`Erased ${what}; it stays parked`));
-      output.record('parkedDevice', 'done', device.name, { id: device.id, bytes: device.bytes });
-    } else if (result.status === 'failed') {
-      failures++;
-      output.log(chalk.red(`Failed to erase ${what}: ${result.reason}`));
-      output.record('parkedDevice', 'failed', device.name, { id: device.id, detail: result.reason });
-    } else {
-      output.log(chalk.dim(`Skipped ${device.name}; it is no longer parked.`));
-    }
-  }
-  return failures;
 }
 
 export async function deleteParkedAvds(

@@ -40,9 +40,7 @@ vi.mock('../commands/worktree.ts', async (importOriginal) => ({
     return { exitCode: warm.exitCode };
   },
 }));
-vi.mock('../devices/machine-cache-usage.ts', () => ({
-  getMachineCacheReport: async () => null,
-}));
+vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 
 let home: string;
 let projects: string;
@@ -168,12 +166,7 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
 }
 
 type LevelPayload = {
-  actions: {
-    rung: number | null;
-    kind: string;
-    target: string;
-    outcome: string;
-  }[];
+  actions: { rung: number | null; kind: string; target: string; outcome: string }[];
 };
 
 function criticalDependencies(payload: LevelPayload): string[] {
@@ -187,10 +180,7 @@ test.skipIf(process.platform === 'win32')(
       { name: 'feature', workspace: true },
       { name: 'rollback', workspace: true },
     ]);
-    execSync(`git worktree lock --reason rollback "${roots.rollback}"`, {
-      cwd: roots.repo,
-      timeout: 15_000,
-    });
+    execSync(`git worktree lock --reason rollback "${roots.rollback}"`, { cwd: roots.repo, timeout: 15_000 });
 
     const { payload } = await gcJson();
     await quietly(() => runGc({ pressure: 'critical' }));
@@ -302,13 +292,9 @@ test.skipIf(process.platform === 'win32')(
 
     recordLightened([root], dir);
     warm.exitCode = 1;
-    expect(await restoreLightenedDependencies(root, context)).toMatchObject({
-      code: 'STIM_DEPS_FAILED',
-    });
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
     warm.exitCode = 0;
-    expect(await restoreLightenedDependencies(root, context)).toMatchObject({
-      code: 'STIM_DEPS_FAILED',
-    });
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
     expect(recordedDirs(root)).toEqual([dir]);
 
     writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');

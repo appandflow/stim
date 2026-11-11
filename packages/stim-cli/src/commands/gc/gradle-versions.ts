@@ -4,22 +4,18 @@ import { lstat, readdir, rm } from 'node:fs/promises';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import chalk from 'chalk';
 import { envDir } from '../../devices/activity.ts';
 import { getExecutor } from '../../exec.ts';
-import { formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { getConfigDir, loadConfig } from '../../workspace/config.ts';
 import { measureDu } from '../../devices/report-only-usage.ts';
 import { gradleUserHome, gradleVersionDirs, projectGradleVersions } from '../../devices/machine-cache-usage.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { describeError } from './eas-sessions.ts';
-import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { userHome } from '@stim-cli/core/state';
 
-const GRADLE_VERSIONS_KIND = 'gradle-versions';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PS_TIMEOUT_MS = 10_000;
 const MAX_WALK_ENTRIES = 500_000;
@@ -68,10 +64,6 @@ export interface GradleVersionSweep {
   gradleRunningPids: number[];
   versions: GradleVersionEntry[];
   leftovers: string[];
-}
-
-export function includesGradleVersions(name: string | null | undefined): boolean {
-  return name?.trim().toLowerCase() === GRADLE_VERSIONS_KIND;
 }
 
 function realpathOrNull(path: string): string | null {
@@ -468,87 +460,10 @@ export async function deleteGradleVersion(
   if (!dirs.every((dir) => plainChild(dir, state.home)))
     return { deleted: false, detail: `one of its paths is no longer a plain directory inside ${state.home}` };
   operation?.signal.throwIfAborted();
-  const staged = dirs.map(stage);
+  const staged = [...dirs.map(stage), ...state.leftovers];
   for (const dir of staged) {
     operation?.signal.throwIfAborted();
     await rm(dir, { recursive: true, force: true });
   }
   return { deleted: true, detail: dirs.join(', ') };
-}
-
-async function deleteLeftovers(sweep: GradleVersionSweep, output: GcOutput, operation?: StimContext): Promise<number> {
-  let failures = 0;
-  for (const dir of sweep.leftovers) {
-    operation?.signal.throwIfAborted();
-    try {
-      await rm(dir, { recursive: true, force: true });
-      output.log(chalk.green(`Finished deleting ${dir}`));
-      output.record('gradleVersion', 'done', basename(dir), { id: dir });
-    } catch (error) {
-      operation?.signal.throwIfAborted();
-      failures += 1;
-      output.log(chalk.red(`Failed to finish deleting ${dir}: ${describeError(error)}`));
-      output.record('gradleVersion', 'failed', basename(dir), { id: dir, detail: describeError(error) });
-    }
-  }
-  return failures;
-}
-
-export async function deleteGradleVersions(
-  sweep: GradleVersionSweep | null | undefined,
-  output: GcOutput = GC_OUTPUT,
-  operation?: StimContext,
-): Promise<number> {
-  operation?.signal.throwIfAborted();
-  if (!sweep) return 0;
-  let failures = await deleteLeftovers(sweep, output, operation);
-  for (const entry of sweep.versions) {
-    operation?.signal.throwIfAborted();
-    if (!entry.willDelete) continue;
-    try {
-      const result = await deleteGradleVersion(entry.version, { olderThanDays: sweep.olderThanDays, operation });
-      if (result.deleted) {
-        output.log(chalk.green(`Deleted Gradle ${entry.version}: ${result.detail}`));
-        output.record('gradleVersion', 'done', `Gradle ${entry.version}`, { bytes: entry.bytes, id: entry.dirs[0] });
-      } else {
-        output.log(chalk.yellow(`Kept Gradle ${entry.version}: ${result.detail}`));
-        output.record('gradleVersion', 'kept', `Gradle ${entry.version}`, { detail: result.detail });
-      }
-    } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-        throw error;
-      operation?.signal.throwIfAborted();
-      failures += 1;
-      output.log(chalk.red(`Failed to delete Gradle ${entry.version}: ${describeError(error)}`));
-      output.record('gradleVersion', 'failed', `Gradle ${entry.version}`, { detail: describeError(error) });
-    }
-  }
-  return failures;
-}
-
-export function gradleVersionsPending(sweep: GradleVersionSweep | null | undefined): boolean {
-  return Boolean(sweep?.leftovers.length || sweep?.versions.some((entry) => entry.willDelete));
-}
-
-export function gradleVersionLines(sweep: GradleVersionSweep | null | undefined): string[] {
-  if (!sweep) return [];
-  const lines: string[] = [];
-  if (sweep.blocked) lines.push(chalk.yellow(`Gradle versions are all kept: ${sweep.blocked.detail}`));
-  for (const dir of sweep.leftovers) lines.push(`Unfinished Gradle removal to delete: ${dir}`);
-  if (!sweep.versions.length) {
-    lines.push(`Gradle versions no registered project pins: none in ${sweep.home}`);
-    return lines;
-  }
-  const deleting = sweep.versions.filter((entry) => entry.willDelete);
-  const known = deleting.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
-  lines.push(
-    `Gradle versions no registered project pins (${plural(deleting.length, 'version')} deletable, ${formatBytes(known)}):`,
-  );
-  for (const entry of sweep.versions) {
-    const size = entry.bytes === null ? 'unknown' : formatBytes(entry.bytes);
-    lines.push(`  ${entry.version}: ${size}${entry.willDelete || sweep.blocked ? '' : `, kept: ${entry.detail}`}`);
-    for (const dir of entry.dirs) lines.push(chalk.dim(`    ${dir}`));
-  }
-  lines.push(chalk.dim('  modules-2, build-cache-1, jdks and other shared Gradle caches are never deleted.'));
-  return lines;
 }

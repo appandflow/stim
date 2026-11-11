@@ -14,7 +14,7 @@ import {
   raiseLease,
   releaseRunLease,
   releaseWorkspaceLeases,
-  removeExpiredLease,
+  removeExpiredLeaseAsync,
   selectPoolDevice,
   takeLease,
   type DeviceLease,
@@ -595,7 +595,7 @@ describe('the real file protocol', { timeout: 30_000 }, () => {
     ]).toContainEqual(world);
   });
 
-  test('a lease that stopped being expired survives the delete that reported it', () => {
+  test('a lease that stopped being expired survives the delete that reported it', async () => {
     const root = join(scratch, 'a');
     const path = deviceLeasePath('ios', UDID);
     const rewrite = (expiresAt: number) => {
@@ -608,11 +608,11 @@ describe('the real file protocol', { timeout: 30_000 }, () => {
     assert(reported);
 
     rewrite(Date.now() + 600_000);
-    expect(removeExpiredLease(reported)).toBe(false);
+    expect(await removeExpiredLeaseAsync(reported)).toBe(false);
     expect(existsSync(path)).toBe(true);
 
     rewrite(Date.now() - 1000);
-    expect(removeExpiredLease(reported)).toBe(true);
+    expect(await removeExpiredLeaseAsync(reported)).toBe(true);
     expect(existsSync(path)).toBe(false);
   });
 

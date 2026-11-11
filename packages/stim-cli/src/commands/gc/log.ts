@@ -29,11 +29,7 @@ export interface GcLog {
   record(result: GcLogItem): void;
 }
 
-const VERBS = {
-  done: 'Cleared',
-  kept: 'Kept',
-  failed: 'Failed to clear',
-} as const;
+const VERBS = { done: 'Cleared', kept: 'Kept', failed: 'Failed to clear' } as const;
 
 function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord {
   const path = [result.id, result.label].find((value) => value !== null && isAbsolute(value)) ?? null;

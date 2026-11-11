@@ -379,11 +379,6 @@ export function worktreeRemovalReason(
   return `idle ${candidate.idleDays ?? 0}d`;
 }
 
-/** The pull request note a kept worktree's report line carries, such as `PR #12 merged`, or null. */
-export function worktreePullRequestNote(candidate: Pick<WorktreeCandidate, 'pullRequest'>): string | null {
-  return pullRequestNote(candidate.pullRequest);
-}
-
 function lastUsedOf(keys: readonly string[]): number {
   const times = keys.map(workspaceLastUsed).filter(Number.isFinite);
   return times.length ? Math.max(...times) : NaN;

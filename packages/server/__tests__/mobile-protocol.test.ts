@@ -115,13 +115,7 @@ test('Gradle artifact offers and downloads require a complete query with a resol
     project: '',
     sourceDigest: 'a'.repeat(64),
     inputs: { complete: true, ignored: [], outputs: ['build'] },
-    android: {
-      variant: 'debug',
-      abi: null,
-      compilerCache: 'none',
-      gradleBuildCache: true,
-      pch: 'auto',
-    },
+    android: { variant: 'debug', abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
   };
   const artifact = { fingerprint: 'b'.repeat(64), cacheKey: 'worker-key' };
   for (const method of ['build.offer', 'build.cached-artifact']) {
@@ -133,51 +127,27 @@ test('Gradle artifact offers and downloads require a complete query with a resol
       { ...query, sourceDigest: 'not-a-digest' },
       { ...query, receipt: { privateFile: '/private/signing.jks' } },
     ])
-      expect(
-        accepts({
-          id: 1,
-          method,
-          params: { ...params, gradleArtifact: invalid },
-        }),
-      ).toBe(false);
+      expect(accepts({ id: 1, method, params: { ...params, gradleArtifact: invalid } })).toBe(false);
   }
 });
 
 test('the wire schema accepts person-side session queries and stops while refusing ambiguous params and phases', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
-  const acceptsResponse = validator.compile({
-    $ref: 'protocol#/$defs/ServerResponse',
-  });
-  const acceptsStop = validator.compile({
-    $ref: 'protocol#/$defs/HostedSessionStopResult',
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsResponse = validator.compile({ $ref: 'protocol#/$defs/ServerResponse' });
+  const acceptsStop = validator.compile({ $ref: 'protocol#/$defs/HostedSessionStopResult' });
   for (const request of [
     { id: 1, method: 'device-host.sessions' },
     { id: 1, method: 'device-host.sessions', params: {} },
-    {
-      id: 1,
-      method: 'device-host.sessions.stop',
-      params: { session: 'session-id' },
-    },
+    { id: 1, method: 'device-host.sessions.stop', params: { session: 'session-id' } },
   ])
     expect(acceptsRequest(request)).toBe(true);
   for (const request of [
-    {
-      id: 1,
-      method: 'device-host.sessions',
-      params: { session: 'session-id' },
-    },
+    { id: 1, method: 'device-host.sessions', params: { session: 'session-id' } },
     { id: 1, method: 'device-host.sessions.stop' },
     { id: 1, method: 'device-host.sessions.stop', params: { session: 1 } },
-    {
-      id: 1,
-      method: 'device-host.sessions.stop',
-      params: { session: 'session-id', client: 'other' },
-    },
+    { id: 1, method: 'device-host.sessions.stop', params: { session: 'session-id', client: 'other' } },
   ])
     expect(acceptsRequest(request)).toBe(false);
   expect(acceptsResponse({ id: 1, result: { sessions: [] } })).toBe(true);
@@ -192,47 +162,17 @@ test('the wire schema accepts person-side session queries and stops while refusi
 test('the wire schema validates Desktop report targets and pushed snapshots', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
-  const acceptsEvent = validator.compile({
-    $ref: 'protocol#/$defs/ServerEvent',
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc' } })).toBe(true);
   expect(
-    acceptsRequest({
-      id: 1,
-      method: 'desktop.reports.get',
-      params: { report: 'gc' },
-    }),
+    acceptsRequest({ id: 1, method: 'desktop.reports.subscribe', params: { report: 'doctor', cwd: '/app' } }),
   ).toBe(true);
-  expect(
-    acceptsRequest({
-      id: 1,
-      method: 'desktop.reports.subscribe',
-      params: { report: 'doctor', cwd: '/app' },
-    }),
-  ).toBe(true);
-  expect(
-    acceptsRequest({
-      id: 1,
-      method: 'desktop.reports.get',
-      params: { report: 'doctor' },
-    }),
-  ).toBe(false);
-  expect(
-    acceptsRequest({
-      id: 1,
-      method: 'desktop.reports.get',
-      params: { report: 'gc', delete: true },
-    }),
-  ).toBe(false);
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor' } })).toBe(false);
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc', delete: true } })).toBe(false);
   for (const platform of ['ios', 'android']) {
     expect(
-      acceptsRequest({
-        id: 1,
-        method: 'desktop.reports.get',
-        params: { report: 'doctor', cwd: '/app', platform },
-      }),
+      acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor', cwd: '/app', platform } }),
     ).toBe(true);
   }
   for (const params of [
@@ -248,12 +188,7 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
     snapshot: { pending: true, value: null },
   };
   expect(acceptsEvent(event)).toBe(true);
-  expect(
-    acceptsEvent({
-      ...event,
-      snapshot: { pending: false, value: [], error: 7 },
-    }),
-  ).toBe(false);
+  expect(acceptsEvent({ ...event, snapshot: { pending: false, value: [], error: 7 } })).toBe(false);
 });
 
 test.each(['desktop.settings.get', 'desktop.doctor.run'])(
@@ -261,36 +196,22 @@ test.each(['desktop.settings.get', 'desktop.doctor.run'])(
   (method) => {
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
-    const acceptsRequest = validator.compile({
-      $ref: 'protocol#/$defs/ClientRequest',
-    });
+    const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
     expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected' } })).toBe(true);
     for (const params of [undefined, {}, { cwd: '' }, { cwd: 7 }, { cwd: '/app', workspace: '/app' }]) {
       expect(acceptsRequest({ id: 1, method, params })).toBe(false);
     }
-    expect(
-      acceptsRequest({
-        id: 1,
-        method,
-        params: { cwd: '/selected', platform: 'ios' },
-      }),
-    ).toBe(method === 'desktop.doctor.run');
-    expect(
-      acceptsRequest({
-        id: 1,
-        method,
-        params: { cwd: '/selected', platform: 'web' },
-      }),
-    ).toBe(false);
+    expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'ios' } })).toBe(
+      method === 'desktop.doctor.run',
+    );
+    expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'web' } })).toBe(false);
   },
 );
 
 test('the private plan wire schema accepts native platforms and limits slots to iOS/Android', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'desktop.plan.get', params });
   for (const platform of ['ios', 'android', 'macos']) expect(accepts({ cwd: '/app', platform })).toBe(true);
   for (const platform of ['ios', 'android', 'macos'])
@@ -314,14 +235,8 @@ test('the private plan wire schema accepts native platforms and limits slots to 
 test('the settings write wire schema distinguishes set text from unset and rejects ambiguous requests', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
-  const request = (params: unknown) => ({
-    id: 1,
-    method: 'desktop.settings.write',
-    params,
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.settings.write', params });
   const target = { cwd: '/selected', key: 'ios.runtime', scope: 'workspace' };
   expect(acceptsRequest(request({ ...target, action: 'set', value: '26.4' }))).toBe(true);
   expect(acceptsRequest(request({ ...target, action: 'unset' }))).toBe(true);
@@ -342,22 +257,10 @@ test('the private GC wire schema accepts scoped cleanup selectors and refuses ma
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
-  const request = (params: unknown) => ({
-    id: 1,
-    method: 'desktop.gc.subscribe',
-    params,
-  });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
   expect(accepts(request({ cwd: '/app' }))).toBe(true);
   expect(
-    accepts(
-      request({
-        cwd: '/app',
-        cache: 'archived:history',
-        olderThan: 7,
-        worktrees: true,
-        delete: true,
-      }),
-    ),
+    accepts(request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true })),
   ).toBe(true);
   for (const params of [
     {},
@@ -377,11 +280,7 @@ test('the private warming wire schema accepts only cwd', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
-  const request = (params: unknown) => ({
-    id: 1,
-    method: 'desktop.worktree.warm.subscribe',
-    params,
-  });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.worktree.warm.subscribe', params });
   expect(accepts(request({ cwd: '/linked' }))).toBe(true);
   for (const params of [{}, { cwd: '' }, { cwd: 1 }, { cwd: '/linked', refresh: true }, { cwd: '/linked', signal: {} }])
     expect(accepts(request(params))).toBe(false);
@@ -391,11 +290,7 @@ test('the private removal wire schema accepts a separate target and rejects malf
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
-  const request = (params: unknown) => ({
-    id: 1,
-    method: 'desktop.worktree.remove.subscribe',
-    params,
-  });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.worktree.remove.subscribe', params });
   expect(accepts(request({ cwd: '/source' }))).toBe(true);
   expect(accepts(request({ cwd: '/source', target: '/linked', force: true }))).toBe(true);
   for (const params of [
@@ -418,18 +313,9 @@ test('RN cache queries cross the wire with platform-specific toolchains and refu
     platform: 'android',
     isExpo: false,
     toolchain: { stimBuild: 'b1', jdk: '17' },
-    android: {
-      variant: 'debug',
-      abi: null,
-      compilerCache: 'none',
-      gradleBuildCache: true,
-      pch: 'auto',
-    },
+    android: { variant: 'debug', abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
   };
-  const artifact = {
-    fingerprint: 'a'.repeat(64),
-    cacheKey: `react-native-android-${'a'.repeat(64)}`,
-  };
+  const artifact = { fingerprint: 'a'.repeat(64), cacheKey: `react-native-android-${'a'.repeat(64)}` };
   for (const method of ['build.offer', 'build.cached-artifact']) {
     const params = {
       repo: 'app-1',
@@ -441,10 +327,7 @@ test('RN cache queries cross the wire with platform-specific toolchains and refu
       accepts({
         id: 1,
         method,
-        params: {
-          ...params,
-          reactNativeArtifact: { ...query, toolchain: { stimBuild: 'b1' } },
-        },
+        params: { ...params, reactNativeArtifact: { ...query, toolchain: { stimBuild: 'b1' } } },
       }),
     ).toBe(false);
   }
@@ -453,9 +336,7 @@ test('RN cache queries cross the wire with platform-specific toolchains and refu
 test('the build.start wire schema accepts podsOnWorker as a boolean and refuses other fields', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'build.start', params });
   const request = {
     repo: 'example-app',
@@ -463,11 +344,7 @@ test('the build.start wire schema accepts podsOnWorker as a boolean and refuses 
     platform: 'macos',
     fingerprint: 'abc123',
     stimBuild: 'build-1',
-    macos: {
-      product: 'App',
-      infoPlist: 'Info.plist',
-      bundleId: 'dev.example.app',
-    },
+    macos: { product: 'App', infoPlist: 'Info.plist', bundleId: 'dev.example.app' },
   };
   expect(accepts(request)).toBe(true);
   expect(accepts({ ...request, podsOnWorker: true })).toBe(true);
@@ -479,9 +356,7 @@ test('the build.start wire schema accepts podsOnWorker as a boolean and refuses 
 test('the build.start wire schema accepts every BuildStartParams field, including nested optional ones', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({
-    $ref: 'protocol#/$defs/ClientRequest',
-  });
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'build.start', params });
   const full = {
     repo: 'example-app',
@@ -494,21 +369,10 @@ test('the build.start wire schema accepts every BuildStartParams field, includin
     fingerprint: 'abc123',
     fingerprintSources: [{ id: 'package.json', kind: 'file', hash: 'a'.repeat(64) }],
     fingerprintSchema: 2,
-    fingerprintEnv: {
-      set: { APP_VARIANT: 'staging', ASSET_PATH: { path: 'assets' } },
-      absent: ['USE_FRAMEWORKS'],
-    },
+    fingerprintEnv: { set: { APP_VARIANT: 'staging', ASSET_PATH: { path: 'assets' } }, absent: ['USE_FRAMEWORKS'] },
     fingerprintNative: 'tracked',
-    fingerprintLayout: {
-      projectPath: null,
-      gradleRoot: 'android',
-      module: ':app',
-    },
-    fingerprintRuntime: {
-      node: '22.22',
-      evaluator: 'b'.repeat(64),
-      packages: { expo: '58.0.0' },
-    },
+    fingerprintLayout: { projectPath: null, gradleRoot: 'android', module: ':app' },
+    fingerprintRuntime: { node: '22.22', evaluator: 'b'.repeat(64), packages: { expo: '58.0.0' } },
     fingerprintInputs: ['native-extra'],
     native: {
       provider: 'xcode',
@@ -542,13 +406,7 @@ test('the build.start wire schema accepts every BuildStartParams field, includin
     cacheArtifact: true,
     podsOnWorker: true,
     reuseArtifact: true,
-    exact: {
-      name: 'app',
-      exact2: 'a'.repeat(40),
-      bun: '1.4.2',
-      rust: '1.97.0',
-      env: { API_URL: 'x' },
-    },
+    exact: { name: 'app', exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: { API_URL: 'x' } },
   } satisfies Required<Server.BuildStartParams>;
   expect(accepts(full)).toBe(true);
 });

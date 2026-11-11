@@ -133,11 +133,7 @@ export async function idleOutputBytes(path: string, config: Config): Promise<num
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
   let total = 0;
-  for (const path of paths)
-    total +=
-      (await measuredDirectorySizeAsync(path, {
-        timeoutMs: SIZE_TIMEOUT_MS,
-      })) ?? 0;
+  for (const path of paths) total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
   return total;
 }
 
@@ -177,11 +173,7 @@ async function run(
     restore,
     bytes,
     worktreeSweep,
-  }: {
-    restore?: string;
-    bytes?: () => Promise<number>;
-    worktreeSweep?: WorktreeSweep;
-  } = {},
+  }: { restore?: string; bytes?: () => Promise<number>; worktreeSweep?: WorktreeSweep } = {},
 ): Promise<void> {
   if (!context.act) {
     recordAction(
@@ -200,6 +192,7 @@ async function run(
     );
     return;
   }
+  context.operation?.signal.throwIfAborted();
   let outcome: ActionOutcome;
   try {
     outcome = await executeAction(plan, {
@@ -211,11 +204,7 @@ async function run(
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     context.operation?.signal.throwIfAborted();
-    outcome = {
-      status: 'failed' as const,
-      bytes: 0,
-      detail: error instanceof Error ? error.message : String(error),
-    };
+    outcome = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
   const restored = outcome.status === 'done' ? (outcome.restore ?? restore) : undefined;
   recordAction(
@@ -273,9 +262,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         workspace: candidate.path,
         ...result,
         ...(result.outcome === 'done'
-          ? {
-              restore: 'the next stim ios or stim android, from the build cache when nothing changed',
-            }
+          ? { restore: 'the next stim ios or stim android, from the build cache when nothing changed' }
           : {}),
       },
       `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
@@ -325,11 +312,7 @@ async function trim(
   cache: CacheDescriptor,
   evictBytes: number,
   recentDays: number,
-): Promise<{
-  outcome: DaemonLadderAction['outcome'];
-  bytes: number;
-  detail: string;
-}> {
+): Promise<{ outcome: DaemonLadderAction['outcome']; bytes: number; detail: string }> {
   if (!context.act)
     return {
       outcome: 'would',
@@ -337,9 +320,7 @@ async function trim(
         ? 0
         : Number.isFinite(evictBytes)
           ? evictBytes
-          : ((await measuredDirectorySizeAsync(cache.dir, {
-              timeoutMs: SIZE_TIMEOUT_MS,
-            })) ?? 0),
+          : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
       detail: wouldDetail(context),
     };
   const result = pruneCache(cache, {
@@ -351,22 +332,10 @@ async function trim(
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
   const kept = result.protectedEntries ? `; ${result.protectedEntries} protected entries kept` : '';
   if (result.failed)
-    return {
-      outcome: 'failed',
-      bytes: result.bytes,
-      detail: `${result.failed} entries failed${kept}`,
-    };
+    return { outcome: 'failed', bytes: result.bytes, detail: `${result.failed} entries failed${kept}` };
   return result.removed
-    ? {
-        outcome: 'done',
-        bytes: result.bytes,
-        detail: `${result.removed} entries${kept}`,
-      }
-    : {
-        outcome: 'kept',
-        bytes: 0,
-        detail: `no unprotected entry to evict${kept}`,
-      };
+    ? { outcome: 'done', bytes: result.bytes, detail: `${result.removed} entries${kept}` }
+    : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
 /**
@@ -378,22 +347,14 @@ async function cachesRung(context: RungContext): Promise<void> {
   const critical = context.level === 'critical';
   const recentDays = critical ? 0 : context.settings.protectRecentHours / 24;
   const entries = [
-    {
-      cache: rootCache('Build cache', buildCacheRoot(), 2),
-      capGb: context.settings.buildCacheMaxGb,
-    },
-    {
-      cache: rootCache('Metro transform caches', metroCacheRoot(), 3),
-      capGb: context.settings.metroCacheMaxGb,
-    },
+    { cache: rootCache('Build cache', buildCacheRoot(), 2), capGb: context.settings.buildCacheMaxGb },
+    { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
   ];
   for (const { cache, capGb } of entries) {
     if (!existsSync(cache.dir) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
-      const bytes = await measuredDirectorySizeAsync(cache.dir, {
-        timeoutMs: SIZE_TIMEOUT_MS,
-      });
+      const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
       const target = (capGb * GIB) / 2;
       if (capGb === 0 || bytes === null || bytes <= target) continue;
       evict = bytes - target;
@@ -401,12 +362,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     const result = await trim(context, cache, evict, recentDays);
     recordAction(
       context,
-      {
-        rung: 3,
-        kind: critical ? 'empty-cache' : 'trim-cache',
-        target: cache.dir,
-        ...result,
-      },
+      { rung: 3, kind: critical ? 'empty-cache' : 'trim-cache', target: cache.dir, ...result },
       critical
         ? `${context.why}; ${cache.name === 'Build cache' ? 'trimmed to the entries a workspace, parked device or build still uses' : 'emptied except what a running dev server uses'}`
         : `${context.why}; trimmed to half of its ${capGb} GB cap`,
@@ -414,30 +370,17 @@ async function cachesRung(context: RungContext): Promise<void> {
   }
   const compilation = sharedCompilationCache();
   if (existsSync(compilation) && (await context.stillShort())) {
-    const bytes = await measuredDirectorySizeAsync(compilation, {
-      timeoutMs: SIZE_TIMEOUT_MS,
-    });
+    const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
       const blocked = cacheBlocked(
-        {
-          name: 'Swift compilation cache',
-          dir: compilation,
-          category: 'compilation-cache',
-        },
+        { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
         await discoverCachesAsync(),
       );
       if (blocked)
         recordAction(
           context,
-          {
-            rung: 3,
-            kind: 'empty-cache',
-            target: compilation,
-            outcome: 'kept',
-            bytes: 0,
-            detail: blocked,
-          },
+          { rung: 3, kind: 'empty-cache', target: compilation, outcome: 'kept', bytes: 0, detail: blocked },
           context.why,
         );
       else
@@ -456,10 +399,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
   ] as const) {
     if (!critical || !existsSync(directory) || !(await context.stillShort())) continue;
-    const bytes =
-      (await measuredDirectorySizeAsync(directory, {
-        timeoutMs: SIZE_TIMEOUT_MS,
-      })) ?? 0;
+    const bytes = (await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
     if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
     recordAction(
       context,
@@ -524,12 +464,7 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
         bytes: 0,
         reason: `${cache.name}, emptied whole at critical`,
       },
-      {
-        bytes: async () =>
-          (await measuredDirectorySizeAsync(cache.dir, {
-            timeoutMs: SIZE_TIMEOUT_MS,
-          })) ?? 0,
-      },
+      { bytes: async () => (await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0 },
     );
   }
 }
@@ -541,10 +476,7 @@ async function dormantRung(context: RungContext): Promise<void> {
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
     if (!(await context.stillShort())) return;
     await run(
-      {
-        ...context,
-        why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
-      },
+      { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
       dormantAction(candidate.path, idleMs, context.why),
       { bytes: () => workspaceDeviceBytes(context, candidate.project) },
     );
@@ -697,9 +629,7 @@ async function worktreesRung(context: RungContext): Promise<void> {
   for (const action of planned.actions) {
     if (action.kind !== 'would-remove-worktree' || !clean.some((worktree) => worktree.path === action.target)) continue;
     if (!(await context.stillShort())) return;
-    await run({ ...context, why: `${context.why}; ${action.reason}` }, action, {
-      worktreeSweep: sweep,
-    });
+    await run({ ...context, why: `${context.why}; ${action.reason}` }, action, { worktreeSweep: sweep });
   }
 }
 

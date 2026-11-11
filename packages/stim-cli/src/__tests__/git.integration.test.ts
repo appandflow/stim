@@ -16,8 +16,8 @@ import { runOperationFile } from '../engine/operation-exec.ts';
 import { maintenancePinnedAsync } from '../stimd/passes/protect.ts';
 import { collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
 import { cachedDeviceActivityAsync, workspaceActiveReasonAsync } from '../stimd/passes/activity.ts';
-import { previewMaintenance } from '../stimd/passes/preview.ts';
-import * as maintenanceMeasure from '../stimd/passes/measure.ts';
+import { plannedMaintenance } from '../stimd/passes/preview.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
 let dir: string;
 let path: string | undefined;
@@ -48,7 +48,6 @@ test.each([
   'maintenance artifacts',
   'maintenance activity',
   'maintenance preview',
-  ...(process.platform === 'darwin' ? ['maintenance pressure'] : []),
 ])('a cancelled repository %s probe preserves its actual claim when child cleanup is unverifiable', async (kind) => {
   const controller = new AbortController();
   const context = testContext({
@@ -69,12 +68,6 @@ test.each([
       }),
     );
   }
-  const readPressure = maintenanceMeasure.measurePressureAsync;
-  const pressure = vi.spyOn(maintenanceMeasure, 'measurePressureAsync').mockResolvedValue({
-    disk: [{ volume: dir, freeMb: 1024 * 1024 }],
-    memory: { level: 'normal', availableBytes: null, pressured: false },
-    warningSince: null,
-  });
   const executor = getExecutor();
   const original = executor.runFileAsync.bind(executor);
   const findOriginal = executor.findExecutable.bind(executor);
@@ -132,7 +125,6 @@ test.each([
         async (handle) => {
           claim = handle;
           const options = { ...childEnvironment(context.env), signal: context.signal, declareFor: context };
-          if (kind === 'maintenance pressure') return readPressure(null, Date.now(), context);
           if (kind === 'maintenance pin') return maintenancePinnedAsync(dir, context);
           if (kind === 'maintenance artifacts')
             return collectArtifactsAsync(
@@ -154,7 +146,11 @@ test.each([
               cachedDeviceActivityAsync(Date.now(), context.env, context.signal, context),
               context.signal,
             );
-          if (kind === 'maintenance preview') return previewMaintenance({ operation: context });
+          if (kind === 'maintenance preview')
+            return plannedMaintenance([], resolveMaintenanceSettings(undefined, context.env), {
+              sweep: true,
+              operation: context,
+            });
           if (kind === 'PR lookup')
             return pullRequestLookups({ operation: context })(dir, [
               { cwd: dir, branch: 'feature', head: '1'.repeat(40) },
@@ -176,7 +172,6 @@ test.each([
     inspect.mockRestore();
     probe.mockRestore();
     find.mockRestore();
-    pressure.mockRestore();
     controller.abort();
     for (const target of targets.toReversed())
       if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');

@@ -147,12 +147,7 @@ export interface MaintenanceStatus {
   mode: MaintenanceMode;
   invalid?: string;
   claim?: { unresolved: string; removeCommand: string };
-  lastChecks: {
-    pressure: number | null;
-    size: number | null;
-    worktree: number | null;
-    sweep: number | null;
-  };
+  lastChecks: { pressure: number | null; size: number | null; worktree: number | null; sweep: number | null };
   pressure: MaintenancePressure | null;
   sizes: MaintenanceSize[];
   lastPass: MaintenancePass | null;

@@ -68,10 +68,7 @@ export async function runHomePasses({
   const config = loadConfig();
   const now = Date.now();
   const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
-  const measured = await measureTick(config, now, {
-    signal: operation.signal,
-    operation,
-  });
+  const measured = await measureTick(config, now, { signal: operation.signal, operation });
   operation.signal.throwIfAborted();
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
@@ -131,11 +128,7 @@ export async function runHomePasses({
         )),
   ];
   const idleMs = lap();
-  const reading = {
-    devices: measured.devices,
-    simsFailed: measured.sims === null,
-    operation,
-  };
+  const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
@@ -204,9 +197,7 @@ export function createMaintenanceLane(
     msg: string,
     fields?: Record<string, unknown>,
   ) => void,
-  precompute: {
-    run(input: PrecomputeInput, act: boolean): Promise<void>;
-  } = createFingerprintPrecompute(log),
+  precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -225,29 +216,17 @@ export function createMaintenanceLane(
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
       current = (async () => {
-        const reading = {
-          devices: measured.devices,
-          simsFailed: measured.sims === null,
-          operation,
-        };
+        const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
           if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
           operation.signal.throwIfAborted();
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({
-          config,
-          act,
-          log,
-          ...reading,
-        });
+        const deleted = await runDormantDependencies({ config, act, log, ...reading });
         taken.push(...deleted);
         const dependenciesMs = lap();
-        const skipped = await runMaintenance('daemon', {
-          report: !act,
-          tick: { operation, measured },
-        });
+        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
         const maintenanceMs = lap();
         const tookMs = Math.round(performance.now() - started);
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
@@ -308,9 +287,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
   const pressure = await classify();
   if (pressure.level === 'normal') return;
   const measured = await measureTick(config, Date.now());
-  const writer = createNdjsonWriter(daemonNdjsonFile(), {
-    maxBytes: LOG_ROTATE_BYTES,
-  });
+  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
     await runLadder(
       {
@@ -388,11 +365,7 @@ export async function runForcedLadder({
     const result: ForcedLadder['levels'] = [];
     for (const level of levels) {
       const actions: DaemonLadderAction[] = [];
-      for (const entry of await runIdlePass({
-        ...reading,
-        act,
-        pressure: { level, reasons: [why] },
-      })) {
+      for (const entry of await runIdlePass({ ...reading, act, pressure: { level, reasons: [why] } })) {
         if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
         actions.push({
           rung: 1,

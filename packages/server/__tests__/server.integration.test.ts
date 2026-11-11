@@ -369,13 +369,7 @@ if (process.argv[2].startsWith('offer')) {
 `;
 
 const PAYLOADS = [
-  {
-    environments: [],
-    capacity: { live: 0 },
-    deviceLeases: [],
-    unprovisionedWorktrees: [],
-    simctlAvailable: true,
-  },
+  { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
   {
     environments: [{ path: '/work/app', live: true }],
     capacity: { live: 1 },
@@ -409,16 +403,9 @@ async function reloadBrowser(cwd = workspace, holdAttach = false) {
   const url = `http://localhost/${workspaceName(cwd)}`;
   const http = createHttpServer((_, response) => {
     response.setHeader('Content-Type', 'application/json');
-    response.end(
-      JSON.stringify({
-        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/owned`,
-      }),
-    );
+    response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/owned` }));
   });
-  const sockets = new WebSocketServer({
-    server: http,
-    path: '/devtools/browser/owned',
-  });
+  const sockets = new WebSocketServer({ server: http, path: '/devtools/browser/owned' });
   const methods: string[] = [];
   let attached!: () => void;
   const attaching = new Promise<void>((resolve) => {
@@ -555,10 +542,7 @@ async function start(
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
     tailscale,
-    tailscaleState: overrides.tailscaleState ?? {
-      state: 'not-running',
-      backendState: 'Stopped',
-    },
+    tailscaleState: overrides.tailscaleState ?? { state: 'not-running', backendState: 'Stopped' },
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
@@ -617,19 +601,13 @@ async function start(
 function connect(port: number, peer?: string, options: ConnectOptions = {}): Promise<Client> {
   return noiseConnect(`ws://127.0.0.1:${port}`, {
     ...options,
-    headers: {
-      ...(peer ? { 'x-forwarded-for': peer } : {}),
-      ...options.headers,
-    },
+    headers: { ...(peer ? { 'x-forwarded-for': peer } : {}), ...options.headers },
   });
 }
 
 /** A WebSocket on the TCP port that runs no handshake, as a protocol 1 client or a web page would open. */
 async function openPlain(port: number, peer?: string, headers: Record<string, string> = {}): Promise<Client> {
-  const socket = await openRaw(`ws://127.0.0.1:${port}`, {
-    ...(peer ? { 'x-forwarded-for': peer } : {}),
-    ...headers,
-  });
+  const socket = await openRaw(`ws://127.0.0.1:${port}`, { ...(peer ? { 'x-forwarded-for': peer } : {}), ...headers });
   return wrap(socket, socket);
 }
 
@@ -651,10 +629,7 @@ async function returning(
   access?: 'build' | 'device-host',
 ): Promise<Client> {
   const client = await connect(port, peer, { keyPair });
-  const reply = await client.request('hello', {
-    client: CLIENT,
-    ...(access ? { access } : {}),
-  });
+  const reply = await client.request('hello', { client: CLIENT, ...(access ? { access } : {}) });
   if (!('result' in reply)) throw new Error(JSON.stringify(reply));
   return client;
 }
@@ -668,15 +643,10 @@ function desktopProof(nonce: string, key = DESKTOP_KEY): string {
 /** Stim Desktop on this machine: the Unix socket, after hello and the private bootstrap proof. */
 async function desktop(): Promise<Client> {
   const client = await localConnect(server!);
-  const reply = await client.request('hello', {
-    client: CLIENT,
-    desktopBootstrap: true,
-  });
+  const reply = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
   const offered = 'result' in reply ? (reply.result as HelloResult).desktopBootstrap : undefined;
   if (!offered) throw new Error(`no Desktop bootstrap challenge: ${JSON.stringify(reply)}`);
-  await client.request('desktop.authenticate', {
-    proof: desktopProof(offered.nonce),
-  });
+  await client.request('desktop.authenticate', { proof: desktopProof(offered.nonce) });
   return client;
 }
 
@@ -775,10 +745,7 @@ afterEach(async () => {
 });
 
 test('server close cancels a home identity waiting on the config lock', async () => {
-  const lock = tryAcquireClaim({
-    root: join(root, 'home', 'config.lock.claims'),
-    mode: 'exclusive',
-  }).acquired;
+  const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
   assert(lock);
   let entered = false;
   const original = stimSelf.createStim;
@@ -838,10 +805,7 @@ test('an agent shutdown failure still closes hosted devices, frames, feeds and l
 
 describe('recorder startup', () => {
   test('serves health when recording claim directories do not exist yet', async () => {
-    const port = await start({
-      record: true,
-      env: { FAKE_STIM_PAYLOADS: '[]' },
-    });
+    const port = await start({ record: true, env: { FAKE_STIM_PAYLOADS: '[]' } });
     const response = await fetch(`http://127.0.0.1:${port}/health`);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ server: 'stim-server' });
@@ -855,10 +819,7 @@ describe('recorder startup', () => {
       chmodSync(exclusive, 0o000);
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
-        const port = await start({
-          record: true,
-          env: { FAKE_STIM_PAYLOADS: '[]' },
-        });
+        const port = await start({ record: true, env: { FAKE_STIM_PAYLOADS: '[]' } });
         expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
         expect(error).toHaveBeenCalledWith(expect.stringContaining('its directory could not be read'));
       } finally {
@@ -910,10 +871,7 @@ syncBuiltinESMExports();
       try {
         const pending = await fetch(`http://127.0.0.1:${port}/health`);
         expect(pending.status).toBe(503);
-        expect(await pending.json()).toMatchObject({
-          server: 'stim-server',
-          startup: { state: 'pending' },
-        });
+        expect(await pending.json()).toMatchObject({ server: 'stim-server', startup: { state: 'pending' } });
 
         const settled = await server!.ready;
         expect(settled).toEqual({
@@ -1010,9 +968,7 @@ for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFi
         await vi.waitFor(async () => {
           const response = await fetch(`http://127.0.0.1:${port}/health`);
           expect(response.status).toBe(200);
-          expect(await response.json()).toMatchObject({
-            startup: { state: 'ready' },
-          });
+          expect(await response.json()).toMatchObject({ startup: { state: 'ready' } });
         });
         await expect(pair(port)).resolves.toHaveProperty('id');
       } finally {
@@ -1030,12 +986,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const commandLog = join(root, 'serve-calls.ndjson');
     writeFileSync(status, typeof config === 'string' ? config : JSON.stringify(config));
     const port = await start({
-      tailscaleState: {
-        state: 'running',
-        dnsName: 'test.tail.ts.net',
-        ips: [],
-        hostName: 'test',
-      },
+      tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
       env: { FAKE_SERVE_STATUS: status, FAKE_SERVE_CALLS: commandLog, ...env },
     });
     return {
@@ -1055,18 +1006,12 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   it('creates and verifies a private free-port proxy without changing other handlers or Funnel', async () => {
     const original = {
       TCP: { '443': { HTTPS: true }, '7443': { HTTPS: true } },
-      Web: {
-        'test.tail.ts.net:443': {
-          Handlers: { '/': { Proxy: 'http://127.0.0.1:9999' } },
-        },
-      },
+      Web: { 'test.tail.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:9999' } } } },
       AllowFunnel: { 'test.tail.ts.net:443': true },
     };
     const fixture = await routeServer(original);
     const client = await desktop();
-    expect(await client.request('route.setup', {})).toMatchObject({
-      result: { state: 'routed', port: 7444 },
-    });
+    expect(await client.request('route.setup', {})).toMatchObject({ result: { state: 'routed', port: 7444 } });
     expect(existsSync(join(root, 'home', 'server', 'tailnet.json'))).toBe(true);
     expect(fixture.commands()).toEqual([
       ['serve', 'status', '--json'],
@@ -1076,9 +1021,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const config = JSON.parse(readFileSync(fixture.status, 'utf8'));
     expect(config.AllowFunnel).toEqual(original.AllowFunnel);
     expect(config.Web['test.tail.ts.net:443']).toEqual(original.Web['test.tail.ts.net:443']);
-    expect(await client.request('route.setup')).toMatchObject({
-      result: { state: 'routed', port: 7444 },
-    });
+    expect(await client.request('route.setup')).toMatchObject({ result: { state: 'routed', port: 7444 } });
     expect(fixture.commands().filter((args) => args[1] !== 'status')).toHaveLength(1);
   });
 
@@ -1091,10 +1034,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const fixture = await routeServer(config);
     const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining(reason),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining(reason) },
     });
     expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
   });
@@ -1105,20 +1045,13 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       fixture.status,
       JSON.stringify({
         TCP: { '443': { HTTPS: true } },
-        Web: {
-          'test.tail.ts.net:443': {
-            Handlers: { '/': { Proxy: `http://127.0.0.1:${fixture.port}` } },
-          },
-        },
+        Web: { 'test.tail.ts.net:443': { Handlers: { '/': { Proxy: `http://127.0.0.1:${fixture.port}` } } } },
         AllowFunnel: { 'test.tail.ts.net:443': true },
       }),
     );
     const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('Funnel'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('Funnel') },
     });
     expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
   });
@@ -1126,9 +1059,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   it.each([
     [
       'command refusal',
-      {
-        FAKE_SERVE_FAILURE: 'Enable HTTPS at https://login.tailscale.com/admin/dns',
-      },
+      { FAKE_SERVE_FAILURE: 'Enable HTTPS at https://login.tailscale.com/admin/dns' },
       'Enable HTTPS',
     ],
     ['unverified command success', { FAKE_SERVE_NO_CHANGE: '1' }, 'could not be verified'],
@@ -1137,10 +1068,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const client = await desktop();
     for (let attempt = 0; attempt < 2; attempt++) {
       expect(await client.request('route.setup')).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining(reason),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining(reason) },
       });
     }
     expect(fixture.commands().filter((args) => args[1] !== 'status')).toHaveLength(2);
@@ -1150,10 +1078,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const fixture = await routeServer({}, { FAKE_SERVE_STATUS_HANG: '1' });
     const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('timed out'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('timed out') },
     });
     expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
   });
@@ -1162,10 +1087,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const fixture = await routeServer({}, { FAKE_SERVE_HANG: '1' });
     const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('setup timed out'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('setup timed out') },
     });
     expect(JSON.parse(readFileSync(fixture.status, 'utf8'))).toEqual({});
   }, 15_000);
@@ -1184,53 +1106,30 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       ['share.stop', { workspace: root }],
       ['share.list', undefined],
     ] as const) {
-      expect(await remote.request(method, params)).toMatchObject({
-        error: { code: 'forbidden' },
-      });
+      expect(await remote.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
     }
     const loopback = await authed(fixture.port, true);
-    expect(await loopback.request('route.setup')).toMatchObject({
-      error: { code: 'forbidden' },
-    });
-    expect(
-      await loopback.request('share.start', {
-        workspace: root,
-        platform: 'ios',
-      }),
-    ).toMatchObject({
+    expect(await loopback.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
+    expect(await loopback.request('share.start', { workspace: root, platform: 'ios' })).toMatchObject({
       error: { code: 'forbidden' },
     });
     expect(fixture.commands()).toEqual([]);
 
     const local = await desktop();
-    expect(await local.request('machines.update.start', {})).toMatchObject({
-      error: { code: 'bad-request' },
-    });
+    expect(await local.request('machines.update.start', {})).toMatchObject({ error: { code: 'bad-request' } });
     expect(await local.request('machines.update.start', { machine: 'mini' })).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('has not approved this machine'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('has not approved this machine') },
     });
     expect(await local.request('machines.update.status', { machine: 'mini' })).toMatchObject({
-      result: {
-        remote: null,
-        unreachable: expect.stringContaining('has not approved this machine'),
-        upload: null,
-      },
+      result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
-    expect(await local.request('route.setup')).toMatchObject({
-      result: { state: 'routed' },
-    });
+    expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
     expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [], starting: 0 } }));
     expect(await local.request('share.stop', { workspace: root })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
     expect(await local.request('share.stop', { workspace: root, id: 'w1' })).toMatchObject({
-      error: {
-        code: 'bad-request',
-        message: expect.stringContaining('No share w1'),
-      },
+      error: { code: 'bad-request', message: expect.stringContaining('No share w1') },
     });
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
@@ -1239,23 +1138,10 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     for (const params of [
       { token: 'short' },
       { token: TOKEN, expiresAt: '2000-01-01T00:00:00.000Z' },
-      {
-        token: TOKEN,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-        expiresMinutes: 30,
-      },
-      {
-        token: TOKEN,
-        expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString(),
-      },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 3600_000).toISOString(), expiresMinutes: 30 },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString() },
     ]) {
-      expect(
-        await local.request('share.start', {
-          workspace: root,
-          platform: 'ios',
-          ...params,
-        }),
-      ).toMatchObject({
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
         error: { code: 'bad-request' },
       });
     }
@@ -1266,33 +1152,16 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       { workspace: root, slot: 'not a slot' },
       { workspace: root, id: 'w1', slot: 'beta' },
     ]) {
-      expect(await local.request('share.stop', params)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await local.request('share.stop', params)).toMatchObject({ error: { code: 'bad-request' } });
     }
     for (const [params, message] of [
       [{ slug: 'Pokedex' }, 'params.slug must be'],
       [{ slug: 'assets' }, 'params.slug cannot be assets'],
       [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
-      [
-        {
-          slug: 'pokedex',
-          token: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ',
-        },
-        'a slug or a token',
-      ],
+      [{ slug: 'pokedex', token: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ' }, 'a slug or a token'],
     ] as const) {
-      expect(
-        await local.request('share.start', {
-          workspace: root,
-          platform: 'ios',
-          ...params,
-        }),
-      ).toMatchObject({
-        error: {
-          code: 'bad-request',
-          message: expect.stringContaining(message),
-        },
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining(message) },
       });
     }
   });
@@ -1313,29 +1182,13 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
     const entries = {
       ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
-      'ios@tablet': {
-        ...saved,
-        platform: 'ios',
-        slot: 'tablet',
-        token: 'T'.repeat(43),
-        state: 'live',
-      },
-      android: {
-        ...saved,
-        platform: 'android',
-        token: 'Z'.repeat(43),
-        state: 'stopped',
-      },
+      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), state: 'live' },
+      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), state: 'stopped' },
     };
     writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links: entries }));
-    const started = vi.spyOn(ShareHub.prototype, 'start').mockImplementation(
-      async () =>
-        ({
-          id: 'w1',
-          url: 'https://x.test/s/x/',
-          expiresAt: saved.expiresAt,
-        }) as never,
-    );
+    const started = vi
+      .spyOn(ShareHub.prototype, 'start')
+      .mockImplementation(async () => ({ id: 'w1', url: 'https://x.test/s/x/', expiresAt: saved.expiresAt }) as never);
     const order: string[] = [];
     vi.spyOn(ShareHub.prototype, 'stop').mockImplementation(async () => {
       order.push(`stop saw ${JSON.stringify(savedStates())}`);
@@ -1370,17 +1223,9 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     );
 
     await client.request('share.stop', { workspace, slot: 'tablet' });
-    expect(savedStates()).toEqual({
-      ios: 'live',
-      'ios@tablet': 'stopped',
-      android: 'stopped',
-    });
+    expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
     await client.request('share.stop', { workspace });
-    expect(savedStates()).toEqual({
-      ios: 'stopped',
-      'ios@tablet': 'stopped',
-      android: 'stopped',
-    });
+    expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
     expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
   });
 
@@ -1480,31 +1325,21 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     await start();
     const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('Start Tailscale'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('Start Tailscale') },
     });
-    expect(await client.request('route.setup', { port: 443 })).toMatchObject({
-      error: { code: 'bad-request' },
-    });
+    expect(await client.request('route.setup', { port: 443 })).toMatchObject({ error: { code: 'bad-request' } });
   });
 });
 
 describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the local socket', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
-  const isHello = validator.compile<HelloResult>({
-    $ref: 'protocol#/$defs/HelloResult',
-  });
+  const isHello = validator.compile<HelloResult>({ $ref: 'protocol#/$defs/HelloResult' });
 
   /** A local-socket client that asks for the challenge, as Stim Desktop does, without answering it yet. */
   async function asking(client: Record<string, unknown> = CLIENT) {
     const socket = await localConnect(server!);
-    const reply = await socket.request('hello', {
-      client,
-      desktopBootstrap: true,
-    });
+    const reply = await socket.request('hello', { client, desktopBootstrap: true });
     assert('result' in reply && isHello(reply.result));
     return { client: socket, hello: reply.result };
   }
@@ -1520,40 +1355,28 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const offered = challenge(hello);
     expect(JSON.stringify(hello)).not.toContain(DESKTOP_KEY);
     expect(await client.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
-    expect(
-      await client.request('desktop.authenticate', {
-        proof: desktopProof(offered.nonce),
-      }),
-    ).toMatchObject({
+    expect(await client.request('desktop.authenticate', { proof: desktopProof(offered.nonce) })).toMatchObject({
       result: { authorized: true },
     });
     expect(await client.request('device-host.sessions')).toHaveProperty('result');
 
     const cli = await localConnect(server!);
-    const plain = await cli.request('hello', {
-      client: { name: 'stim', version: '1' },
-    });
-    expect(plain).toMatchObject({
-      result: { capabilities: ['read', 'control'] },
-    });
+    const plain = await cli.request('hello', { client: { name: 'stim', version: '1' } });
+    expect(plain).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(plain).not.toHaveProperty('result.desktopBootstrap');
     expect(await cli.request('stats.get')).toHaveProperty('result');
     expect(await cli.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
     expect(await cli.request('route.setup')).toHaveProperty('error.code', 'forbidden');
-    expect(
-      await cli.request('desktop.authenticate', {
-        proof: desktopProof(offered.nonce),
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await cli.request('desktop.authenticate', { proof: desktopProof(offered.nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
   });
 
   it('does not confuse a Desktop name, the key itself or the public server proof with the client proof', async () => {
     await start();
     for (const params of [undefined, {}, { proof: DESKTOP_KEY }, { proof: 'x'.repeat(43) }, 'server', 'extra']) {
-      const { client, hello } = await asking({
-        name: 'Stim Desktop',
-        version: '1',
-      });
+      const { client, hello } = await asking({ name: 'Stim Desktop', version: '1' });
       const offered = challenge(hello);
       const sent =
         params === 'server'
@@ -1570,11 +1393,10 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     await start();
     const first = await asking();
     const accepted = desktopProof(challenge(first.hello).nonce);
-    expect(
-      await first.client.request('desktop.authenticate', {
-        proof: 'y'.repeat(43),
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await first.client.request('desktop.authenticate', { proof: 'y'.repeat(43) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     expect(await first.client.request('desktop.authenticate', { proof: accepted })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -1582,38 +1404,25 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     first.client.socket.close();
     const second = await asking();
     expect(challenge(second.hello).nonce).not.toBe(challenge(first.hello).nonce);
-    expect(
-      await second.client.request('desktop.authenticate', {
-        proof: accepted,
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await second.client.request('desktop.authenticate', { proof: accepted })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     const third = await asking();
     expect(
-      await third.client.request('desktop.authenticate', {
-        proof: desktopProof(challenge(third.hello).nonce),
-      }),
+      await third.client.request('desktop.authenticate', { proof: desktopProof(challenge(third.hello).nonce) }),
     ).toHaveProperty('result.authorized', true);
   });
 
   it('a server Desktop did not start offers no challenge and grants its local socket, not its network clients, the Desktop methods', async () => {
     await start({ desktopBootstrap: null });
     const client = await localConnect(server!);
-    const hello = await client.request('hello', {
-      client: CLIENT,
-      desktopBootstrap: true,
-    });
-    expect(hello).toMatchObject({
-      result: { capabilities: ['read', 'control'] },
-    });
+    const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
+    expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
     for (const method of ['desktop.gc.subscribe', 'desktop.start.subscribe', 'desktop.worktree.remove.subscribe'])
       expect(await client.request(method, {})).toHaveProperty('error.code', 'bad-request');
-    const write = {
-      cwd: root,
-      action: 'set',
-      key: 'concurrency.maxBuilds',
-      value: '3',
-    };
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('result.changed', true);
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
     expect(await client.request('device-host.sessions')).toHaveProperty('result');
@@ -1627,24 +1436,17 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const network = await connect(port, undefined, { keyPair });
     await network.request('hello', { client: CLIENT });
     expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
-    expect(
-      await network.request('desktop.settings.write', {
-        ...write,
-        value: '5',
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await network.request('desktop.settings.write', { ...write, value: '5' })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
   });
 
   it('keeps a Desktop-started server closed to a local client that does not prove its key', async () => {
     await start();
     const { client } = await asking();
-    const write = {
-      cwd: root,
-      action: 'set',
-      key: 'concurrency.maxBuilds',
-      value: '3',
-    };
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     assert(server);
     const plain = await localConnect(server);
@@ -1670,11 +1472,10 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     await start({ desktopBootstrap: new DesktopBootstrap(replacement) });
     const { client, hello } = await asking();
     const offered = challenge(hello);
-    expect(
-      await client.request('desktop.authenticate', {
-        proof: desktopProof(offered.nonce),
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await client.request('desktop.authenticate', { proof: desktopProof(offered.nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     const again = await asking();
     expect(
       await again.client.request('desktop.authenticate', {
@@ -1690,10 +1491,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const port = await start();
     const { keyPair } = await pair(port, undefined, true);
     const client = await connect(port, undefined, { keyPair, headers });
-    const hello = await client.request('hello', {
-      client: CLIENT,
-      desktopBootstrap: true,
-    });
+    const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
     expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
       'error.code',
@@ -1704,12 +1502,9 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
   it('refuses a browser page before any hello, on loopback too', async () => {
     const port = await start();
     const { keyPair } = await pair(port, undefined, true);
-    await expect(
-      connect(port, undefined, {
-        keyPair,
-        headers: { origin: 'http://127.0.0.1' },
-      }),
-    ).rejects.toThrow('HTTP 403');
+    await expect(connect(port, undefined, { keyPair, headers: { origin: 'http://127.0.0.1' } })).rejects.toThrow(
+      'HTTP 403',
+    );
   });
 
   test.skipIf(!fakeTailscale)(
@@ -1719,10 +1514,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
       const { id, keyPair } = await pair(port, '100.64.0.2', true);
       grantDevice(id, capabilitiesFor(false));
       const client = await connect(port, '100.64.0.2', { keyPair });
-      const hello = await client.request('hello', {
-        client: CLIENT,
-        desktopBootstrap: true,
-      });
+      const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
       expect(hello).toMatchObject({ result: { capabilities: ['read'] } });
       expect(hello).not.toHaveProperty('result.desktopBootstrap');
       expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
@@ -1738,10 +1530,7 @@ describe('pairing', () => {
   it('lists only the Android phone capability in hello.host from a machine that is not a Mac', async () => {
     const port = await start({ hostsDevices: false });
     const { token } = createPairingToken();
-    const client = await connect(port, undefined, {
-      secret: token,
-      keyPair: generateNoiseKeyPair(),
-    });
+    const client = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await client.request('hello', { client: CLIENT });
     expect(hello).toHaveProperty('result.host.capabilities', ['physical-android']);
   });
@@ -1750,10 +1539,7 @@ describe('pairing', () => {
     const worker = setupClient(['build']);
     const cli = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(
-      await cli.request('hello', {
-        client: { name: 'stim', version: '1', runId: 'old', peer: 2 },
-        access: 'build',
-      }),
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 2 }, access: 'build' }),
     ).toEqual({
       id: expect.any(Number),
       error: {
@@ -1761,10 +1547,7 @@ describe('pairing', () => {
         message: `peer-too-old: Test Mac runs stim 9.9.9 (peer ${PEER}); update this Mac: npm i -g stim@9.9.9`,
       },
     });
-    expect(await cli.closedWith).toEqual({
-      code: 4401,
-      reason: 'protocol-unsupported',
-    });
+    expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
     const current = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(await current.request('hello', { client: CLIENT, access: 'build' })).toHaveProperty('result.peer', PEER);
 
@@ -1781,10 +1564,7 @@ describe('pairing', () => {
     ] as const) {
       const older = await connect(port, undefined, { keyPair });
       expect(await older.request('hello', { client })).toMatchObject({
-        error: {
-          code: 'protocol-unsupported',
-          message: expect.stringContaining(remedy),
-        },
+        error: { code: 'protocol-unsupported', message: expect.stringContaining(remedy) },
       });
     }
     const local = await localConnect(server!);
@@ -1800,30 +1580,17 @@ describe('pairing', () => {
     const { token } = createPairingToken();
     const first = await connect(port, undefined, { secret: token, keyPair });
     const paired = await first.request('hello', {
-      client: {
-        name: 'Stim Desktop',
-        version: '1.4.0',
-        desktopApi: DESKTOP_API,
-      },
+      client: { name: 'Stim Desktop', version: '1.4.0', desktopApi: DESKTOP_API },
     });
     expect(paired).toMatchObject({ result: { capabilities: ['read'] } });
     first.socket.close();
     expect(readDevices()).toEqual([
-      expect.objectContaining({
-        clientApp: 'Stim Desktop',
-        clientVersion: '1.4.0',
-        capabilities: ['read'],
-      }),
+      expect.objectContaining({ clientApp: 'Stim Desktop', clientVersion: '1.4.0', capabilities: ['read'] }),
     ]);
 
     const returningHello = await (await connect(port, undefined, { keyPair })).request('hello', { client: CLIENT });
-    expect(returningHello).toMatchObject({
-      result: { capabilities: ['read'] },
-    });
-    expect(readDevices()[0]).toMatchObject({
-      clientApp: 'Stim Desktop',
-      clientVersion: '1.4.0',
-    });
+    expect(returningHello).toMatchObject({ result: { capabilities: ['read'] } });
+    expect(readDevices()[0]).toMatchObject({ clientApp: 'Stim Desktop', clientVersion: '1.4.0' });
   });
 
   it('fills in the app of a record paired before it was recorded on its next connection', async () => {
@@ -1839,9 +1606,7 @@ describe('pairing', () => {
     assert(spent?.device);
     expect(spent.device).not.toHaveProperty('clientApp');
     const client = await connect(port, undefined, { keyPair });
-    await client.request('hello', {
-      client: { name: 'stim-mobile', version: '0.9.0', phoneApi: PHONE_API },
-    });
+    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0', phoneApi: PHONE_API } });
     expect(readDevices()).toEqual([{ ...spent.device, clientApp: 'stim-mobile', clientVersion: '0.9.0' }]);
   });
 
@@ -1849,16 +1614,9 @@ describe('pairing', () => {
     const port = await start();
     const keyPair = generateNoiseKeyPair();
     const { token } = createPairingToken();
-    const first = await connect(port, undefined, {
-      secret: token,
-      keyPair,
-      name: 'Test phone',
-    });
+    const first = await connect(port, undefined, { secret: token, keyPair, name: 'Test phone' });
     expect(first.socket).toHaveProperty('remoteKey', serverIdentity().publicKey);
-    const reply = await first.request('hello', {
-      client: CLIENT,
-      access: 'build',
-    });
+    const reply = await first.request('hello', { client: CLIENT, access: 'build' });
     expect(reply).toMatchObject({ error: { code: 'forbidden' } });
     expect(await first.closedWith).toEqual({ code: 4401, reason: 'forbidden' });
     expect(readDevices()).toEqual([
@@ -1875,12 +1633,7 @@ describe('pairing', () => {
     expect(hello).toMatchObject({
       result: {
         protocol: 2,
-        server: {
-          name: 'Test Mac',
-          version: '1.2.3',
-          stim: '9.9.9',
-          home: homedir(),
-        },
+        server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
         host: { capabilities: [...HOST_CAPABILITIES], app: null },
         peer: PEER,
@@ -1892,10 +1645,7 @@ describe('pairing', () => {
     });
 
     const second = await connect(port, undefined, { secret: token });
-    expect(await second.closedWith).toEqual({
-      code: 4401,
-      reason: 'unknown-secret',
-    });
+    expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
   });
 
@@ -1905,10 +1655,7 @@ describe('pairing', () => {
     writeFileSync(join(serverDir(), 'devices.json'), JSON.stringify({ version: 3, devices: [] }));
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const client = await connect(port, undefined, { secret: token });
-    expect(await client.closedWith).toEqual({
-      code: 4401,
-      reason: 'home-unavailable',
-    });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('registry version 3, which a newer Stim wrote'));
   });
 
@@ -1922,10 +1669,7 @@ describe('pairing', () => {
   it('closes a returning key that has no record as unauthorized', async () => {
     const port = await start();
     const stranger = await connect(port, '100.64.0.2');
-    expect(await stranger.closedWith).toEqual({
-      code: 4401,
-      reason: 'unauthorized',
-    });
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
   });
 
   it('refuses hello for a record revoked between the handshake and hello', async () => {
@@ -1936,20 +1680,14 @@ describe('pairing', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const reply = client.request('hello', { client: CLIENT });
     expect(await Promise.race([reply, client.closedWith])).not.toHaveProperty('result');
-    expect(await client.closedWith).toEqual({
-      code: 4401,
-      reason: 'unauthorized',
-    });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
   });
 
   it('refuses a server that does not hold the key the client pinned', async () => {
     const port = await start();
     const { keyPair } = await pair(port);
     await expect(
-      connect(port, undefined, {
-        keyPair,
-        serverKey: generateNoiseKeyPair().publicKey,
-      }),
+      connect(port, undefined, { keyPair, serverKey: generateNoiseKeyPair().publicKey }),
     ).rejects.toMatchObject({ code: 'server-key-mismatch' });
   });
 
@@ -1959,15 +1697,9 @@ describe('pairing', () => {
     const reply = await old.request('hello', {
       protocol: 1,
       client: CLIENT,
-      auth: {
-        pairingToken: createPairingToken().token,
-        deviceName: 'Old phone',
-      },
+      auth: { pairingToken: createPairingToken().token, deviceName: 'Old phone' },
     });
-    expect(reply).toMatchObject({
-      id: 1,
-      error: { code: 'protocol-unsupported' },
-    });
+    expect(reply).toMatchObject({ id: 1, error: { code: 'protocol-unsupported' } });
     expect(await old.closed).toBe(4400);
     expect(readDevices()).toEqual([]);
   });
@@ -1984,15 +1716,9 @@ describe('pairing', () => {
 
         expect(revokeDevice(id)).toBe(true);
         if (dropEvents) await vi.runOnlyPendingTimersAsync();
-        expect(await live.closedWith).toEqual({
-          code: 4401,
-          reason: 'unauthorized',
-        });
+        expect(await live.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
         const after = await connect(port, undefined, { keyPair });
-        expect(await after.closedWith).toEqual({
-          code: 4401,
-          reason: 'unauthorized',
-        });
+        expect(await after.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
         expect(revokeDevice(id)).toBe(false);
       } finally {
         if (dropEvents) {
@@ -2024,10 +1750,7 @@ describe('pairing', () => {
       });
       const reply = waiting.request('hello', { client: CLIENT });
       expect(await Promise.race([reply, waiting.closedWith])).not.toHaveProperty('result');
-      expect(await waiting.closedWith).toEqual({
-        code: 4401,
-        reason: 'home-unavailable',
-      });
+      expect(await waiting.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
       await expect(connect(port, undefined, { keyPair })).rejects.toThrow('503');
       expect(live.socket.readyState).toBe(WebSocket.OPEN);
       expect(revoke).not.toHaveBeenCalled();
@@ -2119,18 +1842,10 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       writeFileSync(path, `${JSON.stringify(record)}\n`);
     }
     const port = await start({
-      env: {
-        HOME: root,
-        USERPROFILE: root,
-        PATH: dirname(process.execPath),
-        STIM_DAEMON: 'off',
-      },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
-    const remote = await connect(port, undefined, {
-      secret: token,
-      keyPair: generateNoiseKeyPair(),
-    });
+    const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     await remote.request('hello', { client: CLIENT });
     assert(server);
     const plain = await localConnect(server);
@@ -2174,29 +1889,18 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(await client.request('desktop.reports.get', { report: 'remote' })).toMatchObject({
       result: { pending: false, value: { machines: [], findings: [] } },
     });
-    const subscribed = await client.request('desktop.reports.subscribe', {
-      report: 'gc',
-    });
+    const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
-    expect(await client.next()).toMatchObject({
-      event: 'desktop-report',
-      snapshot: first.result,
-    });
-    expect(
-      await client.request('desktop.reports.invalidate', {
-        report: 'doctor',
-        cwd: root,
-      }),
-    ).toHaveProperty('result');
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor', cwd: root })).toHaveProperty(
+      'result',
+    );
     expect(await client.request('desktop.reports.invalidate', { report: 'doctor' })).toHaveProperty(
       'error.code',
       'bad-request',
     );
     expect(await client.request('desktop.reports.invalidate', { report: 'gc' })).toHaveProperty('result');
-    expect(await client.next()).toMatchObject({
-      event: 'desktop-report',
-      snapshot: { pending: true },
-    });
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',
       snapshot: { pending: false, value: { mode: 'dry-run' } },
@@ -2228,12 +1932,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       { report: 'gc', platform: 'ios' },
     ])
       expect(await client.request('desktop.reports.get', params)).toMatchObject({ error: { code: 'bad-request' } });
-    expect(
-      await client.request('desktop.reports.get', {
-        report: 'doctor',
-        cwd: root,
-      }),
-    ).toMatchObject({
+    expect(await client.request('desktop.reports.get', { report: 'doctor', cwd: root })).toMatchObject({
       result: {
         pending: false,
         value: { project: root, platform: null, findings: expect.any(Array) },
@@ -2243,9 +1942,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     for (const platform of ['ios', 'android']) {
       const target = { report: 'doctor', cwd: root, platform };
       const result = await client.request('desktop.reports.get', target);
-      expect(result).toMatchObject({
-        result: { pending: false, value: { project: root, platform } },
-      });
+      expect(result).toMatchObject({ result: { pending: false, value: { project: root, platform } } });
       const subscribed = await client.request('desktop.reports.subscribe', target);
       expect(subscribed).toHaveProperty('result.subscription');
       expect(await client.next()).toMatchObject({
@@ -2254,9 +1951,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         snapshot: { pending: false, value: { platform } },
       });
       assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
-      await client.request('unsubscribe', {
-        subscription: subscribed.result.subscription,
-      });
+      await client.request('unsubscribe', { subscription: subscribed.result.subscription });
     }
     expect(readFileSync(config, 'utf8')).toBe(before);
     expect(stimCalls()).toEqual([]);
@@ -2278,11 +1973,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const before = readFileSync(config, 'utf8');
     const client = await desktop();
     expect(
-      await client.request('desktop.reports.get', {
-        report: 'doctor',
-        cwd: selected,
-        platform: 'ios',
-      }),
+      await client.request('desktop.reports.get', { report: 'doctor', cwd: selected, platform: 'ios' }),
     ).toMatchObject({
       result: { value: { project: selected, platform: 'ios' } },
     });
@@ -2297,17 +1988,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       expect(await client.request('desktop.doctor.run', params)).toHaveProperty('error.code', 'bad-request');
     }
     const started = Date.now();
-    expect(
-      await client.request('desktop.doctor.run', {
-        cwd: selected,
-        platform: 'ios',
-      }),
-    ).toMatchObject({
-      result: {
-        project: selected,
-        platform: 'ios',
-        findings: expect.any(Array),
-      },
+    expect(await client.request('desktop.doctor.run', { cwd: selected, platform: 'ios' })).toMatchObject({
+      result: { project: selected, platform: 'ios', findings: expect.any(Array) },
     });
     const recorded = JSON.parse(readFileSync(config, 'utf8')).projects[selected].doctorRuns;
     expect(Object.keys(recorded)).toEqual(['ios']);
@@ -2323,12 +2005,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     async (mode) => {
       writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
       const claim =
-        mode === 'claims-and-cleanup'
-          ? tryAcquireClaim({
-              root: join(root, 'remedy-claim'),
-              mode: 'exclusive',
-            })
-          : null;
+        mode === 'claims-and-cleanup' ? tryAcquireClaim({ root: join(root, 'remedy-claim'), mode: 'exclusive' }) : null;
       if (claim && !claim.acquired) throw new Error('The fixture claim was not acquired');
       const held = claim?.acquired;
       let recovered = false;
@@ -2352,11 +2029,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
               {
                 code: 'STIM_CLAIM_UNAVAILABLE',
                 message: cause.message,
-                ...(held
-                  ? {
-                      details: { cause: { retainedClaimRoots: [held.root] } },
-                    }
-                  : {}),
+                ...(held ? { details: { cause: { retainedClaimRoots: [held.root] } } } : {}),
               },
               { cause },
             );
@@ -2367,11 +2040,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         await start();
         const client = await desktop();
         const request = () =>
-          client.request('desktop.remedy.subscribe', {
-            cwd: workspace,
-            action: 'device-unlock',
-            platform: 'ios',
-          });
+          client.request('desktop.remedy.subscribe', { cwd: workspace, action: 'device-unlock', platform: 'ios' });
         const ended = async () => {
           for (;;) {
             const event = await client.next();
@@ -2391,9 +2060,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         }
         expect(refusals).toEqual(
           Array.from({ length: mode === 'acquisition' ? 0 : held ? 2 : 1 }, () =>
-            expect.objectContaining({
-              error: expect.objectContaining({ code: 'action-busy' }),
-            }),
+            expect.objectContaining({ error: expect.objectContaining({ code: 'action-busy' }) }),
           ),
         );
         expect(await request()).toHaveProperty('result.subscription');
@@ -2426,30 +2093,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       { cwd: selected, action: 'doctor-fix', slot: 'default' },
       { cwd: selected, action: 'device-unlock', slot: '__proto__' },
       { cwd: selected, action: 'device-unlock', platform: 'web' },
+      { cwd: selected, action: 'device-tool', request: { tool: 'exec', platform: 'ios', args: ['rm'] } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'push', platform: 'android', payload: '{"aps":{}}' } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'location', platform: 'ios', clear: true, set: '1,2' } },
       {
         cwd: selected,
         action: 'device-tool',
-        request: { tool: 'exec', platform: 'ios', args: ['rm'] },
-      },
-      {
-        cwd: selected,
-        action: 'device-tool',
-        request: { tool: 'push', platform: 'android', payload: '{"aps":{}}' },
-      },
-      {
-        cwd: selected,
-        action: 'device-tool',
-        request: { tool: 'location', platform: 'ios', clear: true, set: '1,2' },
-      },
-      {
-        cwd: selected,
-        action: 'device-tool',
-        request: {
-          tool: 'network',
-          platform: 'android',
-          state: 'off',
-          args: [],
-        },
+        request: { tool: 'network', platform: 'android', state: 'off', args: [] },
       },
       {
         cwd: selected,
@@ -2460,19 +2110,11 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     ])
       expect(await client.request('desktop.remedy.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     const expected = {
-      'doctor-fix': expect.objectContaining({
-        project: selected,
-        platform: 'ios',
-        findings: expect.any(Array),
-      }),
+      'doctor-fix': expect.objectContaining({ project: selected, platform: 'ios', findings: expect.any(Array) }),
       'device-unlock': [],
     };
     for (const action of ['doctor-fix', 'device-unlock'] as const) {
-      const subscribed = await client.request('desktop.remedy.subscribe', {
-        cwd: selected,
-        action,
-        platform: 'ios',
-      });
+      const subscribed = await client.request('desktop.remedy.subscribe', { cwd: selected, action, platform: 'ios' });
       expect(subscribed).toHaveProperty('result.subscription');
       let ended;
       for (;;) {
@@ -2482,10 +2124,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
           break;
         }
       }
-      expect(ended).toMatchObject({
-        event: 'desktop-remedy-ended',
-        exitCode: 0,
-      });
+      expect(ended).toMatchObject({ event: 'desktop-remedy-ended', exitCode: 0 });
       assert('stdout' in ended && typeof ended.stdout === 'string');
       const output = JSON.parse(ended.stdout);
       expect(output).toEqual(expected[action]);
@@ -2507,10 +2146,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     }
     expect(toolEnded).toMatchObject({ exitCode: 1 });
     assert('stdout' in toolEnded && typeof toolEnded.stdout === 'string');
-    expect(JSON.parse(toolEnded.stdout)).toMatchObject({
-      code: 'STIM_DEVICE_TOOL_TARGET',
-      remedy: expect.any(String),
-    });
+    expect(JSON.parse(toolEnded.stdout)).toMatchObject({ code: 'STIM_DEVICE_TOOL_TARGET', remedy: expect.any(String) });
     expect(stimCalls()).toEqual([]);
     const config = JSON.parse(readFileSync(join(root, 'home', 'config.json'), 'utf8'));
     expect(config.projects[selected].doctorRuns.ios.at).toEqual(expect.any(String));
@@ -2532,9 +2168,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
       );
       execFileSync('/usr/bin/git', ['init', '-q', selected]);
-      writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', {
-        mode: 0o755,
-      });
+      writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       writeFileSync(
         join(tools, 'git'),
         `#!/usr/bin/env node
@@ -2573,9 +2207,7 @@ if (delayed) {
         platform: stage === 'CMake safety' ? 'android' : 'ios',
       });
       assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
-      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), {
-        timeout: 4000,
-      });
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 4000 });
       const pid = Number(readFileSync(ready, 'utf8'));
       const processToken = captureProcessToken(pid);
       assert(processToken);
@@ -2584,11 +2216,9 @@ if (delayed) {
         result: { properties: expect.any(Object) },
       });
       expect(inspectProcessIdentity(record)).toBe('same');
-      expect(
-        await client.request('unsubscribe', {
-          subscription: subscribed.result.subscription,
-        }),
-      ).toHaveProperty('result');
+      expect(await client.request('unsubscribe', { subscription: subscribed.result.subscription })).toHaveProperty(
+        'result',
+      );
       expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
       expect(existsSync(join(target, 'CMakeCache.txt'))).toBe(true);
       expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
@@ -2615,9 +2245,7 @@ if (delayed) {
       'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
     );
     execFileSync('/usr/bin/git', ['init', '-q', selected]);
-    writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', {
-      mode: 0o755,
-    });
+    writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     await start({
       env: {
         HOME: root,
@@ -2653,14 +2281,10 @@ if (delayed) {
       assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
       await vi.waitFor(() => expect(deleting).toBe(true));
       if (timing === 'past cleanup budget') vi.useFakeTimers();
-      cancelled = client
-        .request('unsubscribe', {
-          subscription: subscribed.result.subscription,
-        })
-        .then((result) => {
-          acknowledged = true;
-          return result;
-        });
+      cancelled = client.request('unsubscribe', { subscription: subscribed.result.subscription }).then((result) => {
+        acknowledged = true;
+        return result;
+      });
       expect(await other.request('desktop.settings.schema')).toHaveProperty('result');
       expect(acknowledged).toBe(false);
       expect(
@@ -2722,28 +2346,16 @@ if (delayed) {
   it('applies the report byte quota to both get and pushed errors', async () => {
     await start({
       commandLimits: { maxOutputBytes: 1 },
-      env: {
-        HOME: root,
-        USERPROFILE: root,
-        PATH: dirname(process.execPath),
-        STIM_DAEMON: 'off',
-      },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
     const client = await desktop();
     expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
-      error: {
-        code: 'stim-failed',
-        message: 'stim gc printed more than 1 bytes.',
-      },
+      error: { code: 'stim-failed', message: 'stim gc printed more than 1 bytes.' },
     });
     await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',
-      snapshot: {
-        pending: false,
-        value: null,
-        error: 'stim gc printed more than 1 bytes.',
-      },
+      snapshot: { pending: false, value: null, error: 'stim gc printed more than 1 bytes.' },
     });
   });
 
@@ -2788,9 +2400,7 @@ const timer = setInterval(() => {
     const results = await replies;
     expect(results.every((reply) => 'result' in reply)).toBe(true);
     expect(new Set(results.map((reply) => ('result' in reply ? JSON.stringify(reply.result) : null))).size).toBe(1);
-    expect(results[0]).toMatchObject({
-      result: { pending: false, value: { project: workspace } },
-    });
+    expect(results[0]).toMatchObject({ result: { pending: false, value: { project: workspace } } });
   });
 
   it('answers interactive requests while reports wait, caps report waiters, and drains shared probes at shutdown', async () => {
@@ -2821,29 +2431,16 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     const second = await desktop();
     for (let id = 100; id < 117; id++)
       first.socket.send(
-        JSON.stringify({
-          id,
-          method: 'desktop.reports.get',
-          params: { report: 'doctor', cwd: workspace },
-        }),
+        JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
       );
     expect(await first.next()).toMatchObject({
       id: 116,
-      error: {
-        code: 'limit-exceeded',
-        message: 'A connection can wait for 16 reports at a time.',
-      },
+      error: { code: 'limit-exceeded', message: 'A connection can wait for 16 reports at a time.' },
     });
     await until(() => processes().length === 2);
     expect(await first.request('stats.get')).toHaveProperty('result');
-    await second.request('desktop.reports.subscribe', {
-      report: 'doctor',
-      cwd: workspace,
-    });
-    expect(await second.next()).toMatchObject({
-      event: 'desktop-report',
-      snapshot: { pending: true },
-    });
+    await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
+    expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
     await first.closed;
     expect(processes()).toHaveLength(2);
@@ -2866,44 +2463,26 @@ describe('setup approval', () => {
       new Date(Date.now() + 60_000).toISOString(),
     );
     const keyPair = generateNoiseKeyPair();
-    const first = await connect(port, '100.64.0.2', {
-      secret: ticket,
-      keyPair,
-      name: 'Laptop',
-    });
+    const first = await connect(port, '100.64.0.2', { secret: ticket, keyPair, name: 'Laptop' });
     expect(await first.request('hello', { client: CLIENT, access: 'build' })).toMatchObject({
       result: { capabilities: ['build'], actions: [] },
     });
     const journal = secretValues(Buffer.from(ticket, 'base64url')).journal;
     const key = keyPair.publicKey.toString('base64url');
     expect(readBuildClients()).toEqual([
-      expect.objectContaining({
-        name: 'Laptop',
-        publicKey: key,
-        capabilities: ['build'],
-        setupJournal: journal,
-      }),
+      expect.objectContaining({ name: 'Laptop', publicKey: key, capabilities: ['build'], setupJournal: journal }),
     ]);
     expect(readDeviceHostClients()).toEqual([
-      expect.objectContaining({
-        publicKey: key,
-        capabilities: ['device-host'],
-        setupJournal: journal,
-      }),
+      expect.objectContaining({ publicKey: key, capabilities: ['device-host'], setupJournal: journal }),
     ]);
     expect(readDevices()).toEqual([]);
     const secrets = readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8');
     expect(secrets).not.toContain(ticket);
     const other = await connect(port, '100.64.0.2', { secret: ticket });
-    expect(await other.closedWith).toEqual({
-      code: 4401,
-      reason: 'unknown-secret',
-    });
+    expect(await other.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
 
     const unpaired = await connect(port, '100.64.0.2', { keyPair });
-    expect(await unpaired.request('hello', { client: CLIENT })).toMatchObject({
-      error: { code: 'unauthorized' },
-    });
+    expect(await unpaired.request('hello', { client: CLIENT })).toMatchObject({ error: { code: 'unauthorized' } });
   });
 
   describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
@@ -2927,9 +2506,7 @@ describe('setup approval', () => {
         ...otherCapability,
       ];
       for (const [method, params] of refused) {
-        expect(await approved.request(method, params)).toMatchObject({
-          error: { code: 'forbidden' },
-        });
+        expect(await approved.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
       }
       const other = capability === 'build' ? 'device-host' : 'build';
       const wider = await connect(port, '100.64.0.2', { keyPair });
@@ -2938,10 +2515,7 @@ describe('setup approval', () => {
       });
 
       expect(revokeDevice(made[capability]!.id)).toBe(true);
-      expect(await approved.closedWith).toEqual({
-        code: 4401,
-        reason: 'unauthorized',
-      });
+      expect(await approved.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
     });
   });
 });
@@ -3176,10 +2750,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
       permission: 'deviceControl',
     });
     const end = await nextSetup(desktopClient, ended);
-    expect(end).toMatchObject({
-      exitCode: 1,
-      output: { granted: [{ capability: 'build' }] },
-    });
+    expect(end).toMatchObject({ exitCode: 1, output: { granted: [{ capability: 'build' }] } });
     expect(readBuildClients()).toEqual([
       expect.objectContaining({
         name: 'Laptop',
@@ -3226,9 +2797,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     const refused = await nextSetup(desktopClient, ended);
     expect(refused).toMatchObject({
       exitCode: 1,
-      output: {
-        warnings: expect.arrayContaining([expect.stringContaining('Another setup holds')]),
-      },
+      output: { warnings: expect.arrayContaining([expect.stringContaining('Another setup holds')]) },
     });
     expect(
       await desktopClient.request('desktop.setup.answer', {
@@ -3292,12 +2861,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
       programArguments: [],
     };
     let port = 0;
-    port = await start({
-      setupDeps: () => ({
-        ...setupDeps(),
-        installed: async () => ({ ...service, port }),
-      }),
-    });
+    port = await start({ setupDeps: () => ({ ...setupDeps(), installed: async () => ({ ...service, port }) }) });
     const desktopClient = await desktop();
     const asked = request();
     await desktopClient.request('desktop.setup.subscribe', asked.params);
@@ -3305,9 +2869,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     expect(end).toMatchObject({
       event: 'desktop-setup-ended',
       exitCode: 1,
-      output: {
-        warnings: expect.arrayContaining([expect.stringContaining('is installed on this machine')]),
-      },
+      output: { warnings: expect.arrayContaining([expect.stringContaining('is installed on this machine')]) },
     });
     expect(asked.stored()).toBe(false);
   });
@@ -3327,13 +2889,7 @@ describe('hosted device sessions', () => {
       ['device-host.reserve', { workspace: '/client/app', slot: 'default', platform: 'ios', attempt }],
       [
         'device-host.app.offer',
-        {
-          session,
-          attempt,
-          bundleId: 'dev.test.app',
-          mode: 'development',
-          manifest: { sha256: hash, size: 1 },
-        },
+        { session, attempt, bundleId: 'dev.test.app', mode: 'development', manifest: { sha256: hash, size: 1 } },
       ],
       ['device-host.app.chunk', { session, attempt, sha256: hash, offset: 0, data: 'YQ==' }],
       ['device-host.app.handoff', { session, attempt, build: { handoff: 'test', sha256: hash } }],
@@ -3341,10 +2897,7 @@ describe('hosted device sessions', () => {
     ];
     for (const [method, params] of requests)
       expect(await client.request(method, params)).toMatchObject({
-        error: {
-          code: 'device-busy',
-          message: expect.stringContaining('stim serve'),
-        },
+        error: { code: 'device-busy', message: expect.stringContaining('stim serve') },
       });
     expect(await client.request('device-host.attach', { session })).not.toMatchObject({
       error: { code: 'device-busy' },
@@ -3379,25 +2932,15 @@ describe('hosted device sessions', () => {
     `,
       );
       const pending = setupClient(['device-host'], 'Client');
-      const first = await connect(port, '100.64.0.2', {
-        keyPair: pending.keyPair,
-      });
-      const hello = await first.request('hello', {
-        client: CLIENT,
-        access: 'device-host',
-      });
+      const first = await connect(port, '100.64.0.2', { keyPair: pending.keyPair });
+      const hello = await first.request('hello', { client: CLIENT, access: 'device-host' });
       expect(hello).toHaveProperty('result.capabilities', ['device-host']);
       expect(await first.request('device-host.offer', { platform: 'ios' })).toHaveProperty(
         'result.choice.runtime',
         '27.1',
       );
       expect(readHostedSessions()).toEqual([]);
-      const params = {
-        workspace: '/client/app',
-        slot: 'default',
-        platform: 'ios',
-        attempt: 'socket-attempt',
-      };
+      const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'socket-attempt' };
       const reserved = await first.request('device-host.reserve', params);
       expect(reserved).toHaveProperty('result.state', 'preparing');
       const id = (reserved as { result: { id: string } }).result.id;
@@ -3410,12 +2953,10 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
-      expect(
-        await next.request('device-host.metro.open', {
-          session: id,
-          clientMetroPort: 0,
-        }),
-      ).toHaveProperty('error.code', 'bad-request');
+      expect(await next.request('device-host.metro.open', { session: id, clientMetroPort: 0 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
       const metro = { session: id };
       const opened = await next.request('device-host.metro.open', metro);
       const metroPort = (opened as { result: { port: number } }).result.port;
@@ -3435,9 +2976,7 @@ describe('hosted device sessions', () => {
       const device = connectNet(metroPort, '127.0.0.1');
       const answered = new Promise<string>((resolve) => device.once('data', (data) => resolve(data.toString())));
       device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
-      expect(await carrier.next()).toEqual({
-        event: 'device-host.metro.link.open',
-      });
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
       expect(((await carrier.next()) as unknown as { binary: Buffer }).binary.toString()).toBe(
         'GET /index.bundle HTTP/1.1\r\n\r\n',
       );
@@ -3453,12 +2992,7 @@ describe('hosted device sessions', () => {
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');
       const files = ['Info.plist', ...Array.from({ length: 700 }, (_, index) => `Assets/resource-${index}`)].map(
-        (path) => ({
-          path,
-          kind: 'file',
-          size: content.length,
-          sha256: digest,
-        }),
+        (path) => ({ path, kind: 'file', size: content.length, sha256: digest }),
       );
       const manifest = Buffer.from(JSON.stringify(files));
       expect(manifest.length).toBeGreaterThan(65536);
@@ -3467,10 +3001,7 @@ describe('hosted device sessions', () => {
         attempt: 'socket-app',
         bundleId: 'dev.stim.fixture',
         mode: 'development',
-        manifest: {
-          sha256: createHash('sha256').update(manifest).digest('hex'),
-          size: manifest.length,
-        },
+        manifest: { sha256: createHash('sha256').update(manifest).digest('hex'), size: manifest.length },
       };
       expect(await next.request('device-host.app.offer', app)).toHaveProperty(
         'result.missing.0.sha256',
@@ -3493,40 +3024,28 @@ describe('hosted device sessions', () => {
           ).toHaveProperty('result.offset', offset + data.length);
         }
       }
-      expect(
-        await next.request('device-host.app.launch', {
-          session: id,
-          attempt: app.attempt,
-        }),
-      ).toHaveProperty('result.state', 'installing');
+      expect(await next.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.state',
+        'installing',
+      );
       next.socket.close();
       const reattached = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       await vi.waitFor(async () =>
         expect(
-          await reattached.request('device-host.app.attach', {
-            session: id,
-            attempt: app.attempt,
-          }),
+          await reattached.request('device-host.app.attach', { session: id, attempt: app.attempt }),
         ).toHaveProperty('result.state', 'installed'),
       );
-      expect(
-        await reattached.request('device-host.app.launch', {
-          session: id,
-          attempt: app.attempt,
-        }),
-      ).toHaveProperty('result.launched', 'unverified');
-      expect(
-        await reattached.request('device-host.app.state', {
-          session: id,
-          attempt: app.attempt,
-        }),
-      ).toHaveProperty('result.state', 'stopped');
-      expect(
-        await reattached.request('device-host.app.state', {
-          session: id,
-          attempt: 'foreign',
-        }),
-      ).toHaveProperty('error');
+      expect(await reattached.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.launched',
+        'unverified',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.state',
+        'stopped',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: 'foreign' })).toHaveProperty(
+        'error',
+      );
       expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
       expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
       expect(await reattached.request('device-host.metro.close', { session: id })).toHaveProperty('result.port', null);
@@ -3557,31 +3076,19 @@ describe('hosted device sessions', () => {
     );
     const pending = setupClient(['device-host'], 'Client');
     const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
-    const params = {
-      workspace: '/client/app',
-      slot: 'default',
-      platform: 'ios',
-      attempt: 'metro-links',
-    };
+    const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'metro-links' };
     const reserved = await client.request('device-host.reserve', params);
     if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
     const id = (reserved.result as { id: string }).id;
     await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
-    const opened = await client.request('device-host.metro.open', {
-      session: id,
-    });
+    const opened = await client.request('device-host.metro.open', { session: id });
     if (!('result' in opened)) throw new Error(JSON.stringify(opened));
     const link = async () => {
       const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
       return carrier;
     };
-    return {
-      client,
-      id,
-      metroPort: (opened.result as { port: number }).port,
-      link,
-    };
+    return { client, id, metroPort: (opened.result as { port: number }).port, link };
   }
 
   test.skipIf(!fakeTailscale)(
@@ -3590,16 +3097,9 @@ describe('hosted device sessions', () => {
       const port = await start();
       const { client, id, metroPort, link } = await linkedSession(port);
       expect(
-        await client.request('device-host.metro.open', {
-          session: id,
-          gatewayPort: 65530,
-          secret: 'a'.repeat(64),
-        }),
+        await client.request('device-host.metro.open', { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) }),
       ).toMatchObject({
-        error: {
-          code: 'protocol-unsupported',
-          message: expect.stringContaining('Update stim on this machine'),
-        },
+        error: { code: 'protocol-unsupported', message: expect.stringContaining('Update stim on this machine') },
       });
       const other = setupClient(['device-host'], 'Other client');
       const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
@@ -3613,9 +3113,7 @@ describe('hosted device sessions', () => {
       device.pause();
       let received = 0;
       device.on('data', (chunk: Buffer) => (received += chunk.length));
-      expect(await carrier.next()).toEqual({
-        event: 'device-host.metro.link.open',
-      });
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
       const frame = Buffer.alloc(32 * 1024, 5);
       const total = 48 * 1024 * 1024;
       for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
@@ -3643,9 +3141,7 @@ describe('hosted device sessions', () => {
         setTimeout(() => device.resume(), 2);
       });
       const ended = new Promise<void>((resolve) => device.once('end', () => resolve()));
-      expect(await carrier.next()).toEqual({
-        event: 'device-host.metro.link.open',
-      });
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
       const frame = Buffer.alloc(32 * 1024, 6);
       const total = 4 * 1024 * 1024;
       for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
@@ -3660,9 +3156,7 @@ describe('hosted device sessions', () => {
       });
       const uploader = connectNet(metroPort, '127.0.0.1');
       uploader.on('error', () => {});
-      expect(await reader.next()).toEqual({
-        event: 'device-host.metro.link.open',
-      });
+      expect(await reader.next()).toEqual({ event: 'device-host.metro.link.open' });
       reader.socket.pause?.();
       const upload = 48 * 1024 * 1024;
       for (let sent = 0; sent < upload; sent += frame.length) uploader.write(frame);
@@ -3697,9 +3191,7 @@ describe('hosted device sessions', () => {
   test.skipIf(!fakeTailscale)(
     'drops a device-host connection whose peer stops answering pings and keeps one that answers',
     async () => {
-      const port = await start({
-        clientHeartbeat: { pingMs: 50, silentMs: 400 },
-      });
+      const port = await start({ clientHeartbeat: { pingMs: 50, silentMs: 400 } });
       const { client, link } = await linkedSession(port);
       const silent = await link();
       silent.socket.pause?.();
@@ -3722,12 +3214,8 @@ describe('hosted device sessions', () => {
       const deviceClosed = new Promise<void>((resolve) => device.once('close', () => resolve()));
       device.on('error', () => {});
       device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
-      expect(await carrier.next()).toEqual({
-        event: 'device-host.metro.link.open',
-      });
-      expect(await carrier.next()).toEqual({
-        binary: Buffer.from('GET /index.bundle HTTP/1.1\r\n\r\n'),
-      });
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(await carrier.next()).toEqual({ binary: Buffer.from('GET /index.bundle HTTP/1.1\r\n\r\n') });
       expect(await client.request('device-host.stop', { session: id })).toHaveProperty('result.state', 'stopping');
       expect(await idle.closed).toBe(1000);
       expect(await carrier.closed).toBe(1000);
@@ -3754,12 +3242,7 @@ describe('hosted device sessions', () => {
       );
       const pending = setupClient(['device-host'], 'Client');
       const approved = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
-      const params = {
-        workspace: '/client/app',
-        slot: 'default',
-        platform: 'ios',
-        attempt: 'person-stop',
-      };
+      const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'person-stop' };
       const reserved = await approved.request('device-host.reserve', params);
       if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
       const id = (reserved.result as { id: string }).id;
@@ -3770,10 +3253,7 @@ describe('hosted device sessions', () => {
           sessions: [
             {
               id,
-              client: {
-                id: pending.records['device-host']!.id,
-                name: 'Client',
-              },
+              client: { id: pending.records['device-host']!.id, name: 'Client' },
               platform: 'ios',
               device: 'iPhone (27.1)',
               app: null,
@@ -3787,17 +3267,14 @@ describe('hosted device sessions', () => {
       expect(await local.request('device-host.sessions', {})).toHaveProperty('result.sessions.0.id', id);
       expect(await local.request('device-host.sessions', { session: id })).toHaveProperty('error.code', 'bad-request');
       expect(await local.request('device-host.sessions.stop', {})).toHaveProperty('error.code', 'bad-request');
-      expect(
-        await local.request('device-host.sessions.stop', {
-          session: id,
-          extra: true,
-        }),
-      ).toHaveProperty('error.code', 'bad-request');
-      expect(
-        await local.request('device-host.sessions.stop', {
-          session: 'missing',
-        }),
-      ).toHaveProperty('error.code', 'unknown-session');
+      expect(await local.request('device-host.sessions.stop', { session: id, extra: true })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await local.request('device-host.sessions.stop', { session: 'missing' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
       const { keyPair: phoneKey } = await pair(port, '100.64.0.2', true);
       const phone = await returning(port, phoneKey, '100.64.0.2');
       for (const client of [approved, phone]) {
@@ -3806,10 +3283,7 @@ describe('hosted device sessions', () => {
           ['device-host.sessions.stop', { session: id }],
         ] as const) {
           expect(await client.request(method, requestParams)).toMatchObject({
-            error: {
-              code: 'forbidden',
-              message: expect.stringContaining('local Unix socket'),
-            },
+            error: { code: 'forbidden', message: expect.stringContaining('local Unix socket') },
           });
         }
       }
@@ -3828,10 +3302,7 @@ describe('hosted device sessions', () => {
         result: { id, state: 'stopped' },
       });
       expect(await local.request('device-host.sessions')).toHaveProperty('result.sessions', []);
-      const again = await approved.request('device-host.reserve', {
-        ...params,
-        attempt: 'client-stop',
-      });
+      const again = await approved.request('device-host.reserve', { ...params, attempt: 'client-stop' });
       if (!('result' in again)) throw new Error(JSON.stringify(again));
       const againId = (again.result as { id: string }).id;
       await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === againId)?.state).toBe('ready'));
@@ -3848,27 +3319,13 @@ describe('hosted device sessions', () => {
 
 test('build.start rejects escaping or oversized macOS resources before starting the worker', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'launch').mockResolvedValue({
-    error: { code: 'build-refused', message: 'launched' },
-  });
+  const toolchain = vi
+    .spyOn(host, 'launch')
+    .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
-  const base = {
-    repo: 'app-1',
-    project: '',
-    platform: 'macos',
-    fingerprint: 'digest',
-    stimBuild: 'b1',
-    compat: 3,
-  };
-  const macos = {
-    product: 'Sample',
-    infoPlist: 'Support/Info.plist',
-    bundleId: 'dev.sample.stim.test',
-  };
-  const validate = new Ajv2020({ strict: false }).compile({
-    ...protocolJsonSchema(),
-    $ref: '#/$defs/ClientRequest',
-  });
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1', compat: 3 };
+  const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
   try {
     session.sync({ repo: 'app-1', files: [], done: true });
     for (const options of [
@@ -3877,15 +3334,10 @@ test('build.start rejects escaping or oversized macOS resources before starting 
       { ...macos, resources: { icon: '../icon' } },
       { ...macos, resources: { icon: '/icon' } },
       { ...macos, resources: { icon: 7 } },
-      {
-        ...macos,
-        resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])),
-      },
+      { ...macos, resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])) },
       { ...macos, assetCatalog: '../Assets.xcassets' },
     ]) {
-      expect(await session.start({ ...base, macos: options })).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await session.start({ ...base, macos: options })).toMatchObject({ error: { code: 'bad-request' } });
     }
     expect(toolchain).not.toHaveBeenCalled();
     const valid = {
@@ -3897,24 +3349,10 @@ test('build.start rejects escaping or oversized macOS resources before starting 
       },
     };
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
-    expect(
-      validate({
-        id: 'request',
-        method: 'build.start',
-        params: { ...valid, jdk: '17' },
-      }),
-    ).toBe(true);
+    expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk: '17' } })).toBe(true);
     for (const jdk of ['17.0.1', '', '17; id', 17])
-      expect(
-        validate({
-          id: 'request',
-          method: 'build.start',
-          params: { ...valid, jdk },
-        }),
-      ).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'launched' },
-    });
+      expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk } })).toBe(false);
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
     expect(toolchain).toHaveBeenCalledOnce();
     expect(
       validate({
@@ -3950,22 +3388,11 @@ test('build.start needs the build compatibility version and passes it and the JD
     androidSdk: null,
   };
   const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(worker);
-  const launch = vi.spyOn(host, 'launch').mockResolvedValue({
-    error: { code: 'build-refused', message: 'launched' },
-  });
+  const launch = vi.spyOn(host, 'launch').mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const socket = { readyState: 1, OPEN: 1, bufferedAmount: 0, send: () => {} };
   const session = host.session('client', socket, () => {});
-  const base = {
-    repo: 'app-1',
-    project: '',
-    platform: 'macos',
-    fingerprint: 'digest',
-  };
-  const macos = {
-    product: 'Sample',
-    infoPlist: 'Support/Info.plist',
-    bundleId: 'dev.sample.stim.test',
-  };
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest' };
+  const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
   const message = async (params: Record<string, unknown>) => {
     const reply = await session.start({ ...base, macos, ...params });
     return 'error' in reply ? reply.error.message : null;
@@ -3973,10 +3400,7 @@ test('build.start needs the build compatibility version and passes it and the JD
   try {
     session.sync({ repo: 'app-1', files: [], done: true });
     expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('launched');
-    expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({
-      stimBuild: 'b2',
-      compat: 3,
-    });
+    expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ stimBuild: 'b2', compat: 3 });
     expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
     expect(await message({ stimBuild: 'b1' })).toBe('build.start needs params.compat.');
     expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
@@ -3990,17 +3414,11 @@ test('build.start needs the build compatibility version and passes it and the JD
 
 test('native Gradle requires declared source scope and a null artifact identity before worker admission', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'launch').mockResolvedValue({
-    error: { code: 'build-refused', message: 'launched' },
-  });
+  const toolchain = vi
+    .spyOn(host, 'launch')
+    .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
-  const android = {
-    variant: 'freeRelease',
-    abi: null,
-    gradleBuildCache: true,
-    pch: 'auto',
-    compilerCache: 'none',
-  };
+  const android = { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' };
   const inputs = { complete: true, ignored: [], outputs: ['app/build'] };
   const native = { provider: 'gradle', sourceDigest: 'a'.repeat(64), inputs };
   const valid = {
@@ -4025,39 +3443,22 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, native: undefined },
       { ...valid, fingerprint: 'fake-reusable-identity' },
       { ...valid, native: { ...native, sourceDigest: '' } },
-      {
-        ...valid,
-        native: { ...native, inputs: { ...inputs, complete: false } },
-      },
-      {
-        ...valid,
-        native: { ...native, inputs: { ...inputs, outputs: ['../outside'] } },
-      },
+      { ...valid, native: { ...native, inputs: { ...inputs, complete: false } } },
+      { ...valid, native: { ...native, inputs: { ...inputs, outputs: ['../outside'] } } },
       ...[null, {}, { read: false, write: true }, { read: 'false', write: true, remote: true }].map((cache) =>
         Object.assign({}, valid, { native: { ...native, cache } }),
       ),
       { ...valid, platform: 'ios', runtime: 'iOS-27-0' },
     ])
-      expect(await session.start(invalid)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await session.start(invalid)).toMatchObject({ error: { code: 'bad-request' } });
     expect(toolchain).not.toHaveBeenCalled();
-    const validate = new Ajv2020({ strict: false }).compile({
-      ...protocolJsonSchema(),
-      $ref: '#/$defs/ClientRequest',
-    });
+    const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
     expect(
       validate({
         id: 'request',
         method: 'build.start',
-        params: {
-          ...valid,
-          native: {
-            ...native,
-            cache: { read: false, write: true, remote: false },
-          },
-        },
+        params: { ...valid, native: { ...native, cache: { read: false, write: true, remote: false } } },
       }),
     ).toBe(true);
     for (const params of [
@@ -4065,9 +3466,7 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, fingerprint: 'fake-reusable-identity' },
     ])
       expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'launched' },
-    });
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
     expect(toolchain).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
@@ -4096,17 +3495,9 @@ console.log(JSON.stringify({ stimBuild: 'b1', xcode: 'Xcode 27.0', simulatorSdk:
         macosSdk: null,
         runtimes: ['iOS-27-0'],
       });
-      expect(await host.toolchain(context)).toMatchObject({
-        cocoapods: context ?? 'default',
-        macosSdk: '26.6',
-      });
-      expect(await host.toolchain(context, 'xcode')).toMatchObject({
-        cocoapods: null,
-        macosSdk: null,
-      });
-      expect(await host.toolchain(context)).toMatchObject({
-        cocoapods: context ?? 'default',
-      });
+      expect(await host.toolchain(context)).toMatchObject({ cocoapods: context ?? 'default', macosSdk: '26.6' });
+      expect(await host.toolchain(context, 'xcode')).toMatchObject({ cocoapods: null, macosSdk: null });
+      expect(await host.toolchain(context)).toMatchObject({ cocoapods: context ?? 'default' });
     }
     expect(
       readFileSync(toolchainCalls, 'utf8')
@@ -4143,17 +3534,10 @@ test('native build admission rejects invalid provider identity before toolchain 
     stimBuild: 'b1',
     compat: 3,
     native,
-    optimizations: {
-      compilationCache: true,
-      swiftCompilationCache: null,
-      prefixMapping: true,
-    },
+    optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
   };
   const empty = createHash('sha256').update('').digest('hex');
-  const validate = new Ajv2020({ strict: false }).compile({
-    ...protocolJsonSchema(),
-    $ref: '#/$defs/ClientRequest',
-  });
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
   try {
     expect(
       session.sync({
@@ -4188,21 +3572,11 @@ test('native build admission rejects invalid provider identity before toolchain 
       'error.code',
       'bad-request',
     );
-    expect(
-      validate({
-        id: 'request',
-        method: 'build.offer',
-        params: { repo: 'app-1', native: 'unsupported' },
-      }),
-    ).toBe(false);
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'unsupported' } })).toBe(
+      false,
+    );
     expect(toolchain).not.toHaveBeenCalled();
-    expect(
-      validate({
-        id: 'request',
-        method: 'build.offer',
-        params: { repo: 'app-1', native: 'xcode' },
-      }),
-    ).toBe(true);
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'xcode' } })).toBe(true);
     expect(await host.offer('client', { repo: 'app-1', native: 'xcode' })).toHaveProperty(
       'error.code',
       'build-refused',
@@ -4210,9 +3584,9 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(toolchain).toHaveBeenLastCalledWith(null, 'xcode');
     toolchain.mockClear();
     expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
-    const launch = vi.spyOn(host, 'launch').mockResolvedValue({
-      error: { code: 'build-refused', message: 'launched' },
-    });
+    const launch = vi
+      .spyOn(host, 'launch')
+      .mockResolvedValue({ error: { code: 'build-refused', message: 'launched' } });
     expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
     expect(toolchain).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledOnce();
@@ -4224,12 +3598,7 @@ test('native build admission rejects invalid provider identity before toolchain 
 
 describe('offloaded builds', () => {
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-  const file = (path: string, text: string) => ({
-    path,
-    kind: 'file',
-    size: text.length,
-    sha256: sha(text),
-  });
+  const file = (path: string, text: string) => ({ path, kind: 'file', size: text.length, sha256: sha(text) });
   const blob = (text: string) => Buffer.concat([Buffer.from(sha(text), 'hex'), Buffer.from(text)]);
   const START = {
     repo: 'app-1',
@@ -4244,11 +3613,7 @@ describe('offloaded builds', () => {
     fingerprintEnv: { set: {}, absent: [] },
     fingerprintNative: 'tracked',
     fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },
-    fingerprintRuntime: {
-      node: '22.22',
-      evaluator: '0'.repeat(64),
-      packages: {},
-    },
+    fingerprintRuntime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
     packageName: 'mobile',
     isExpo: true,
     optimizations: null,
@@ -4264,34 +3629,19 @@ describe('offloaded builds', () => {
   beforeEach(() => configure({ server: { maxLoadPerCore: 100_000 } }));
 
   const startJob = (client: Client) =>
-    client.request('job.start', {
-      kind: 'offload-build',
-      stim: '9.9.9',
-      build: stimBuildId(root),
-      repo: 'app-1',
-    });
+    client.request('job.start', { kind: 'offload-build', stim: '9.9.9', build: stimBuildId(root), repo: 'app-1' });
 
   async function buildClient(
     port: number,
     peer = '100.64.0.2',
     machine = setupClient(['build'], 'Laptop'),
     job = true,
-  ): Promise<{
-    client: Client;
-    id: string;
-    keyPair: NoiseKeyPair;
-    spliced: string;
-  }> {
+  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair; spliced: string }> {
     const client = await returning(port, machine.keyPair, peer, 'build');
     const started = job ? await startJob(client) : { result: { job: '' } };
     expect(started).toHaveProperty('result.job');
     const spliced = (started as { result: { job: string } }).result.job;
-    return {
-      client,
-      id: machine.records.build!.id,
-      keyPair: machine.keyPair,
-      spliced,
-    };
+    return { client, id: machine.records.build!.id, keyPair: machine.keyPair, spliced };
   }
 
   async function eventually(check: () => boolean): Promise<void> {
@@ -4313,19 +3663,9 @@ describe('offloaded builds', () => {
     async () => {
       const port = await start({ hostsDevices: false });
       const machine = setupClient(['build', 'device-host'], 'Host client');
-      const asking = await connect(port, '100.64.0.3', {
-        keyPair: machine.keyPair,
-      });
-      expect(
-        await asking.request('hello', {
-          client: CLIENT,
-          access: 'device-host',
-        }),
-      ).toMatchObject({
-        error: {
-          code: 'forbidden',
-          message: expect.stringContaining('needs a Mac'),
-        },
+      const asking = await connect(port, '100.64.0.3', { keyPair: machine.keyPair });
+      expect(await asking.request('hello', { client: CLIENT, access: 'device-host' })).toMatchObject({
+        error: { code: 'forbidden', message: expect.stringContaining('needs a Mac') },
       });
       const { client } = await buildClient(port, '100.64.0.3', machine);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
@@ -4341,11 +3681,7 @@ describe('offloaded builds', () => {
       const { client, id } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
-          toolchain: {
-            stimBuild: 'b1',
-            runtimes: ['iOS-27-0'],
-            macosSdk: '27.0',
-          },
+          toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'], macosSdk: '27.0' },
           capacity: { running: 0, max: 0 },
           warm: { checkout: false, dependencies: false, build: false },
         },
@@ -4356,18 +3692,14 @@ describe('offloaded builds', () => {
         files: [file('package.json', '{}'), file('apps/mobile/app.json', '{"a":1}')],
         done: false,
       });
-      expect(first).toMatchObject({
-        result: { missing: [sha('{}'), sha('{"a":1}')] },
-      });
+      expect(first).toMatchObject({ result: { missing: [sha('{}'), sha('{"a":1}')] } });
       const second = await client.request('build.sync', {
         repo: 'app-1',
         files: [file('apps/mobile/copy.json', '{}')],
         done: true,
       });
       expect(second).toMatchObject({ result: { missing: [] } });
-      expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await client.request('build.start', START)).toMatchObject({ error: { code: 'bad-request' } });
 
       client.socket.send(blob('{}'));
       client.socket.send(blob('{"a":1}'));
@@ -4376,10 +3708,7 @@ describe('offloaded builds', () => {
         { id: 'config', kind: 'config', hash: 'b'.repeat(64) },
       ];
       expect(
-        await client.request('build.start', {
-          ...START,
-          fingerprintSources: [{ id: 'ios', hash: '../x' }],
-        }),
+        await client.request('build.start', { ...START, fingerprintSources: [{ id: 'ios', hash: '../x' }] }),
       ).toMatchObject({ error: { code: 'bad-request' } });
       expect(await client.request('build.start', { ...START, fingerprintSchema: 1 })).toMatchObject({
         error: { code: 'bad-request' },
@@ -4405,21 +3734,13 @@ describe('offloaded builds', () => {
       const events = await progress(client);
       expect(events).toEqual([
         { event: 'build.progress', job, phase: 'build', msg: 'compiling' },
-        {
-          event: 'build.progress',
-          job,
-          record: { src: 'build', level: 'info', msg: 'CompileC' },
-        },
+        { event: 'build.progress', job, record: { src: 'build', level: 'info', msg: 'CompileC' } },
         {
           event: 'build.progress',
           job,
           outcome: expect.objectContaining({
             ok: true,
-            artifact: {
-              name: 'App.app',
-              size: 17,
-              sha256: sha('app archive bytes'),
-            },
+            artifact: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
             reused: true,
           }),
         },
@@ -4467,9 +3788,7 @@ describe('offloaded builds', () => {
       expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
 
       const viewer = await authed(port);
-      expect(await startJob(viewer)).toMatchObject({
-        error: { code: 'forbidden' },
-      });
+      expect(await startJob(viewer)).toMatchObject({ error: { code: 'forbidden' } });
       expect(await viewer.request('build.offer', { repo: 'app-1' })).toHaveProperty('error.code', 'unknown-method');
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
     },
@@ -4480,17 +3799,11 @@ describe('offloaded builds', () => {
     async () => {
       const port = await start();
       const { client, id, keyPair } = await buildClient(port);
-      const identity = {
-        fingerprint: 'f00d',
-        cacheKey: 'source-sdk27-arm64-target',
-      };
-      expect(
-        await client.request('build.sync', {
-          repo: 'app-1',
-          files: [],
-          done: true,
-        }),
-      ).toHaveProperty('result.missing', []);
+      const identity = { fingerprint: 'f00d', cacheKey: 'source-sdk27-arm64-target' };
+      expect(await client.request('build.sync', { repo: 'app-1', files: [], done: true })).toHaveProperty(
+        'result.missing',
+        [],
+      );
       const started = await client.request('build.start', {
         ...START,
         project: '',
@@ -4501,11 +3814,7 @@ describe('offloaded builds', () => {
           arch: 'arm64',
           parameters: { sdk: '27.0' },
         },
-        optimizations: {
-          compilationCache: true,
-          swiftCompilationCache: null,
-          prefixMapping: true,
-        },
+        optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
       });
       expect(started).toHaveProperty('result.job');
       await progress(client);
@@ -4515,24 +3824,17 @@ describe('offloaded builds', () => {
       rmSync(join(area, 'out'), { recursive: true, force: true });
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await startJob(again)).toHaveProperty('result.job');
-      expect(
-        await again.request('build.offer', {
-          repo: 'app-1',
-          native: 'xcode',
-          artifact: identity,
-        }),
-      ).toHaveProperty('result.artifact', {
-        ...identity,
-        name: 'App.app',
-        size: 17,
-        sha256: sha('app archive bytes'),
-      });
+      expect(await again.request('build.offer', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
+        'result.artifact',
+        {
+          ...identity,
+          name: 'App.app',
+          size: 17,
+          sha256: sha('app archive bytes'),
+        },
+      );
       again.socket.send(
-        JSON.stringify({
-          id: 99,
-          method: 'build.cached-artifact',
-          params: { repo: 'app-1', artifact: identity },
-        }),
+        JSON.stringify({ id: 99, method: 'build.cached-artifact', params: { repo: 'app-1', artifact: identity } }),
       );
       const frame = await again.next();
       if (!('binary' in frame) || !Buffer.isBuffer(frame.binary)) throw new Error('Expected an archive frame');
@@ -4566,26 +3868,15 @@ describe('offloaded builds', () => {
         },
       });
       expect(
-        await client.request('engine.update', {
-          packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }],
-        }),
-      ).toMatchObject({
-        error: {
-          code: 'forbidden',
-          message: expect.stringContaining('server.acceptClientBuilds'),
-        },
-      });
+        await client.request('engine.update', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
+      ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') } });
       expect(await client.request('engine.update', { version: 'latest' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       const host = await returning(port, setupClient(['device-host']).keyPair, '100.64.0.3', 'device-host');
-      expect(await host.request('engine.update.status')).toMatchObject({
-        result: { service: 'dev.stim.test' },
-      });
+      expect(await host.request('engine.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
       const viewer = await authed(port);
-      expect(await viewer.request('engine.update.status')).toMatchObject({
-        error: { code: 'forbidden' },
-      });
+      expect(await viewer.request('engine.update.status')).toMatchObject({ error: { code: 'forbidden' } });
       expect(await viewer.request('engine.update', { version: '1.15.0' })).toMatchObject({
         error: { code: 'forbidden' },
       });
@@ -4613,10 +3904,7 @@ describe('offloaded builds', () => {
           node: process.execPath,
           script,
           runsAsService: async () => true,
-          detached: (node, args) => ({
-            file: node,
-            args: [updater, ...args],
-          }),
+          detached: (node, args) => ({ file: node, args: [updater, ...args] }),
         },
       });
       const { client } = await buildClient(port, undefined, undefined, false);
@@ -4624,10 +3912,7 @@ describe('offloaded builds', () => {
         result: { state: 'installing' },
       });
       expect(await startJob(client)).toMatchObject({
-        error: {
-          code: 'build-busy',
-          message: 'stim-server is updating to release 1.15.0',
-        },
+        error: { code: 'build-busy', message: 'stim-server is updating to release 1.15.0' },
       });
       writeFileSync(release, '');
       await eventually(() => readAudit().some((record) => record.action === 'engine.update.ended'));
@@ -4651,9 +3936,7 @@ describe('offloaded builds', () => {
         message: 'updated by another run',
       };
       writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
-      expect(await client.request('engine.update.status')).toMatchObject({
-        result: { last: later },
-      });
+      expect(await client.request('engine.update.status')).toMatchObject({ result: { last: later } });
     } finally {
       process.env.STIM_ENGINE_ROOT = engineRoot;
       if (home === undefined) delete process.env.HOME;
@@ -4666,58 +3949,24 @@ describe('offloaded builds', () => {
     async () => {
       const port = await start();
       const { client, id } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
-      const android = {
-        variant: null,
-        abi: 'arm64-v8a',
-        gradleBuildCache: true,
-        pch: 'auto',
-        compilerCache: 'ccache',
-      };
+      const android = { variant: null, abi: 'arm64-v8a', gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' };
       const base = { ...START, platform: 'android', runtime: null };
-      expect(await client.request('build.start', base)).toMatchObject({
+      expect(await client.request('build.start', base)).toMatchObject({ error: { code: 'bad-request' } });
+      expect(await client.request('build.start', { ...base, android: { ...android, abi: '../x' } })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(
-        await client.request('build.start', {
-          ...base,
-          android: { ...android, abi: '../x' },
-        }),
-      ).toMatchObject({
+      expect(await client.request('build.start', { ...base, android: { ...android, module: 'app' } })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(
-        await client.request('build.start', {
-          ...base,
-          android: { ...android, module: 'app' },
-        }),
-      ).toMatchObject({
-        error: { code: 'bad-request' },
-      });
-      const layout = {
-        gradleRoot: '../..',
-        module: ':packages:rn-tester:android:app',
-      };
-      expect(
-        await client.request('build.start', {
-          ...base,
-          android: { ...android, ...layout },
-        }),
-      ).toMatchObject({
+      const layout = { gradleRoot: '../..', module: ':packages:rn-tester:android:app' };
+      expect(await client.request('build.start', { ...base, android: { ...android, ...layout } })).toMatchObject({
         result: { job: expect.any(String) },
       });
       await progress(client);
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
-      expect(ran.job).toMatchObject({
-        platform: 'android',
-        runtime: null,
-        android: { ...android, ...layout },
-      });
+      expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android: { ...android, ...layout } });
       expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'cache', 'gradle'));
     },
   );
@@ -4727,20 +3976,9 @@ describe('offloaded builds', () => {
     async () => {
       const port = await start();
       const { client, id } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('Package.swift', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
       client.socket.send(blob('x'));
-      const base = {
-        repo: 'app-1',
-        project: '',
-        platform: 'macos',
-        fingerprint: 'f00d',
-        stimBuild: 'b1',
-        compat: 3,
-      };
+      const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1', compat: 3 };
       const macos = {
         product: 'Sample',
         infoPlist: 'Support/Info.plist',
@@ -4786,11 +4024,7 @@ describe('offloaded builds', () => {
     repo = 'app-1',
   ) {
     const { client, id } = await buildClient(port, peer, machine);
-    const synced = await client.request('build.sync', {
-      repo,
-      files: [file('Package.swift', 'x')],
-      done: true,
-    });
+    const synced = await client.request('build.sync', { repo, files: [file('Package.swift', 'x')], done: true });
     if (JSON.stringify(synced).includes(sha('x'))) client.socket.send(blob('x'));
     const started = await client.request('build.start', {
       ...START,
@@ -4810,13 +4044,7 @@ describe('offloaded builds', () => {
               compilerCache: 'ccache',
             },
           }
-        : {
-            macos: {
-              product: 'Sample',
-              infoPlist: 'Support/Info.plist',
-              bundleId: 'dev.sample.stim.test',
-            },
-          }),
+        : { macos: { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' } }),
     });
     const job = (started as { result: { job: string } }).result.job;
     await progress(client);
@@ -4875,10 +4103,7 @@ describe('offloaded builds', () => {
       await vi.waitFor(async () =>
         expect(await hosting.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
       );
-      const entry = (path: string, kind: string, text: string) => ({
-        ...file(path, text),
-        kind,
-      });
+      const entry = (path: string, kind: string, text: string) => ({ ...file(path, text), kind });
       const files = [
         entry('Contents/Current', 'link', 'MacOS'),
         entry('Contents/Info.plist', 'file', 'plist bytes'),
@@ -4895,11 +4120,7 @@ describe('offloaded builds', () => {
         manifest: { sha256: sha(manifest), size: manifest.length },
       };
       const handoff = (build: { handoff: string; sha256: string }) =>
-        hosting.request('device-host.app.handoff', {
-          session,
-          attempt: 'app',
-          build,
-        });
+        hosting.request('device-host.app.handoff', { session, attempt: 'app', build });
       await hosting.request('device-host.app.offer', app);
       expect(await handoff(own.build)).toHaveProperty('error.message', expect.stringContaining('manifest'));
       await hosting.request('device-host.app.chunk', {
@@ -4912,10 +4133,7 @@ describe('offloaded builds', () => {
       expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing.length', 5);
 
       expect(await handoff(elsewhere.build)).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining('different keys'),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining('different keys') },
       });
       expect(existsSync(join(elsewhere.out, 'App.app'))).toBe(true);
       expect(revokeDevice(revoked.id)).toBe(true);
@@ -5003,18 +4221,11 @@ describe('offloaded builds', () => {
         return app;
       };
       const handoff = (build: { handoff: string; sha256: string }) =>
-        hosting.request('device-host.app.handoff', {
-          session,
-          attempt: 'app',
-          build,
-        });
+        hosting.request('device-host.app.handoff', { session, attempt: 'app', build });
       const app = await offer('app', [{ ...file('App.apk', 'APK bytes'), kind: 'file' }]);
       expect(await handoff(elsewhere.build)).toHaveProperty('error.message', expect.stringContaining('different keys'));
       expect(await handoff({ ...own.build, sha256: 'c'.repeat(64) })).toHaveProperty('error.code', 'action-failed');
-      expect(await handoff(own.build)).toHaveProperty('result', {
-        files: 1,
-        bytes: 9,
-      });
+      expect(await handoff(own.build)).toHaveProperty('result', { files: 1, bytes: 9 });
       expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing', []);
       expect(readFileSync(join(deviceHostArea(session), 'blobs', sha('APK bytes')), 'utf8')).toBe('APK bytes');
       expect(existsSync(own.out)).toBe(false);
@@ -5023,9 +4234,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
-    const port = await start({
-      buildLimits: { handoffMs: 50, daemonSweepMs: 50 },
-    });
+    const port = await start({ buildLimits: { handoffMs: 50, daemonSweepMs: 50 } });
     const { out } = await nativeBuild(port, '100.64.0.2');
     await eventually(() => !existsSync(out));
   });
@@ -5033,28 +4242,16 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'declines an offer and a start while its own native builds fill concurrency.maxBuilds',
     async () => {
-      configure({
-        concurrency: { maxBuilds: 1 },
-        server: { maxLoadPerCore: 100_000 },
-      });
+      configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
       const building = join(root, 'building');
       mkdirSync(building);
-      const attempt = tryAcquireClaim({
-        root: join(root, 'native-run'),
-        mode: 'exclusive',
-        label: 'native run',
-      });
+      const attempt = tryAcquireClaim({ root: join(root, 'native-run'), mode: 'exclusive', label: 'native run' });
       const claim = attempt.acquired!;
       mkdirSync(workspaceStateDir(building), { recursive: true });
       const writeActive = (phase: string) =>
         writeFileSync(
           join(workspaceStateDir(building), 'state.json'),
-          JSON.stringify({
-            activeBuild: {
-              phase,
-              claim: { root: claim.root, claimId: claim.claimId },
-            },
-          }),
+          JSON.stringify({ activeBuild: { phase, claim: { root: claim.root, claimId: claim.claimId } } }),
         );
       writeActive('install');
       const port = await start();
@@ -5074,20 +4271,9 @@ describe('offloaded builds', () => {
 
       writeActive('compile');
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: {
-          capacity: {
-            running: 0,
-            builds: 1,
-            maxBuilds: 1,
-            declined: 'all 1 build slots busy',
-          },
-        },
+        result: { capacity: { running: 0, builds: 1, maxBuilds: 1, declined: 'all 1 build slots busy' } },
       });
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
         error: {
@@ -5108,24 +4294,11 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'holds one of its build slots for the whole offloaded build, and refuses a start while local runs hold them all',
     async () => {
-      configure({
-        concurrency: { maxBuilds: 1 },
-        server: { maxLoadPerCore: 100_000 },
-      });
-      const local = tryAcquireBuildSlotClaim({
-        max: 1,
-        details: { projectRoot: root },
-      })!;
-      const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100 },
-      });
+      configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
+      const local = tryAcquireBuildSlotClaim({ max: 1, details: { projectRoot: root } })!;
+      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
         error: {
@@ -5143,21 +4316,9 @@ describe('offloaded builds', () => {
       await eventually(() => existsSync(join(root, 'job.json')));
       const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
       expect(await client.next()).toMatchObject({ phase: 'build' });
-      expect(await client.next()).toMatchObject({
-        record: { msg: 'CompileC' },
-      });
+      expect(await client.next()).toMatchObject({ record: { msg: 'CompileC' } });
       expect(readClaimSet(buildSlotPath(0)).live).toMatchObject([
-        {
-          details: {
-            offloaded: true,
-            client: id,
-            repo: 'app-1',
-            job,
-            index: 0,
-          },
-          childDeclared: true,
-          child: null,
-        },
+        { details: { offloaded: true, client: id, repo: 'app-1', job, index: 0 }, childDeclared: true, child: null },
       ]);
       expect(tryAcquireBuildSlotClaim({ max: 1, details: {} })).toBeNull();
       expect(machineCapacity().builds).toBe(1);
@@ -5165,10 +4326,7 @@ describe('offloaded builds', () => {
         result: { capacity: { running: 1, builds: 1, maxBuilds: 1 } },
       });
 
-      expect(await client.request('build.cancel', { job })).toEqual({
-        id: expect.anything(),
-        result: {},
-      });
+      expect(await client.request('build.cancel', { job })).toEqual({ id: expect.anything(), result: {} });
       await eventually(() => !alive(pid));
       const held = readClaimSet(buildSlotPath(0));
       expect(held.live.length + held.unresolved.length).toBeGreaterThan(0);
@@ -5181,17 +4339,9 @@ describe('offloaded builds', () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
       const { client, keyPair, spliced } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
-      const job = (
-        (await client.request('build.start', START)) as {
-          result: { job: string };
-        }
-      ).result.job;
+      const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
       expect(await client.next()).toMatchObject({ phase: 'build' });
       client.socket.terminate();
       expect(await client.closed).toBe(1006);
@@ -5203,23 +4353,14 @@ describe('offloaded builds', () => {
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
-      expect(await again.request('build.attach', { job })).toEqual({
-        id: 3,
-        result: { outcome: null },
-      });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       writeFileSync(gate, '');
-      expect((await progress(again)).at(-1)).toMatchObject({
-        job,
-        outcome: { ok: true },
-      });
+      expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
       again.socket.send(JSON.stringify({ id: 4, method: 'build.artifact', params: { job } }));
       expect(((await again.next()) as unknown as { binary: Buffer }).binary.subarray(32).toString()).toBe(
         'app archive bytes',
       );
-      expect(await again.next()).toMatchObject({
-        id: 4,
-        result: { name: 'App.app' },
-      });
+      expect(await again.next()).toMatchObject({ id: 4, result: { name: 'App.app' } });
     },
   );
 
@@ -5229,31 +4370,17 @@ describe('offloaded builds', () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
       const { client, keyPair, spliced } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
-      const job = (
-        (await client.request('build.start', START)) as {
-          result: { job: string };
-        }
-      ).result.job;
+      const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
-      expect(await again.request('build.attach', { job })).toEqual({
-        id: 3,
-        result: { outcome: null },
-      });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       client.socket.close(1000);
       expect(await client.closed).toBe(1000);
       writeFileSync(gate, '');
-      expect((await progress(again)).at(-1)).toMatchObject({
-        job,
-        outcome: { ok: true },
-      });
+      expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
     },
   );
 
@@ -5263,15 +4390,9 @@ describe('offloaded builds', () => {
       buildLimits: { killGraceMs: 100, detachGraceMs: 60_000 },
     });
     const { client, id } = await buildClient(port);
-    await client.request('build.sync', {
-      repo: 'app-1',
-      files: [file('a', 'x')],
-      done: true,
-    });
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
     client.socket.send(blob('x'));
-    expect(await client.request('build.start', START)).toMatchObject({
-      result: { job: expect.any(String) },
-    });
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
     await eventually(() => existsSync(join(root, 'job.json')));
     const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
     client.socket.terminate();
@@ -5285,10 +4406,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
     async () => {
-      configure({
-        server: { maxLoadPerCore: 100_000 },
-        concurrency: { maxBuilds: 2 },
-      });
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
       const port = await start({
         env: { FAKE_WORKER_HANG: '1' },
         buildLimits: { killGraceMs: 100, detachGraceMs: 1500 },
@@ -5301,15 +4419,9 @@ describe('offloaded builds', () => {
       };
       const run = async () => {
         const { client } = await buildClient(port);
-        await client.request('build.sync', {
-          repo: 'app-1',
-          files: [file('a', 'x')],
-          done: true,
-        });
+        await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
         client.socket.send(blob('x'));
-        expect(await client.request('build.start', START)).toMatchObject({
-          result: { job: expect.any(String) },
-        });
+        expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
         return { client, pid: await pidOf() };
       };
 
@@ -5334,11 +4446,7 @@ describe('offloaded builds', () => {
       const { client } = await buildClient(port);
       for (const path of ['../escape', '/abs', 'a/./b', '.GIT/config', 'a//b']) {
         expect(
-          await client.request('build.sync', {
-            repo: 'app-1',
-            files: [file(path, 'x')],
-            done: true,
-          }),
+          await client.request('build.sync', { repo: 'app-1', files: [file(path, 'x')], done: true }),
         ).toMatchObject({
           error: { code: 'bad-request' },
         });
@@ -5347,11 +4455,7 @@ describe('offloaded builds', () => {
       expect(await client.closed).toBe(4400);
 
       const { client: again } = await buildClient(port);
-      await again.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'right')],
-        done: true,
-      });
+      await again.request('build.sync', { repo: 'app-1', files: [file('a', 'right')], done: true });
       again.socket.send(Buffer.concat([Buffer.from(sha('right'), 'hex'), Buffer.from('wrong')]));
       expect(await again.closed).toBe(4400);
     },
@@ -5359,20 +4463,11 @@ describe('offloaded builds', () => {
 
   test.skipIf(!fakeTailscale)('declines an offloaded build past server.maxOffloadedBuilds', async () => {
     configure({ server: { maxLoadPerCore: 100_000, maxOffloadedBuilds: 1 } });
-    const port = await start({
-      env: { FAKE_WORKER_HANG: '1' },
-      buildLimits: { killGraceMs: 100 },
-    });
+    const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
     const { client } = await buildClient(port);
-    await client.request('build.sync', {
-      repo: 'app-1',
-      files: [file('a', 'x')],
-      done: true,
-    });
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
     client.socket.send(blob('x'));
-    expect(await client.request('build.start', START)).toMatchObject({
-      result: { job: expect.any(String) },
-    });
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
 
     const other = await buildClient(port, '100.64.0.3');
     expect(await other.client.request('build.offer', { repo: 'app-2' })).toMatchObject({
@@ -5391,24 +4486,12 @@ describe('offloaded builds', () => {
     { skip: !fakeTailscale },
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
-      configure({
-        server: { maxLoadPerCore: 100_000 },
-        concurrency: { maxBuilds: 2 },
-      });
-      const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100 },
-      });
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
+      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
-      expect(await client.request('build.start', START)).toMatchObject({
-        result: { job: expect.any(String) },
-      });
+      expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
       await eventually(() => existsSync(join(root, 'job.json')));
       const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
       const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
@@ -5464,25 +4547,10 @@ describe('offloaded builds', () => {
       return daemon;
     };
     const running = (daemon: ChildProcess) => daemon.exitCode === null && daemon.signalCode === null;
-    const android = {
-      variant: null,
-      abi: 'arm64-v8a',
-      gradleBuildCache: true,
-      pch: 'auto',
-      compilerCache: 'ccache',
-    };
-    const ANDROID_START = {
-      ...START,
-      platform: 'android',
-      runtime: null,
-      android,
-    };
+    const android = { variant: null, abi: 'arm64-v8a', gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' };
+    const ANDROID_START = { ...START, platform: 'android', runtime: null, android };
     const launch = async (client: Client) => {
-      await client.request('build.sync', {
-        repo: 'app-1',
-        files: [file('a', 'x')],
-        done: true,
-      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const started = await client.request('build.start', ANDROID_START);
       return (started as { result: { job: string } }).result.job;
@@ -5495,12 +4563,8 @@ describe('offloaded builds', () => {
     test.skipIf(!fakeTailscale)(
       'leaves daemon idle policy to Gradle, and stops an idle one once its client is revoked',
       async () => {
-        configure({
-          server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 },
-        });
-        const port = await start({
-          buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 },
-        });
+        configure({ server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
+        const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
         const { client, id } = await buildClient(port);
         await launch(client);
         await progress(client);
@@ -5524,10 +4588,7 @@ describe('offloaded builds', () => {
         const gate = join(root, 'gate');
         const port = await start({
           env: { FAKE_WORKER_GATE: gate },
-          buildLimits: {
-            daemonSweepMs: 50,
-            minFreeMemoryBytes: Number.MAX_SAFE_INTEGER,
-          },
+          buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
         });
         const { client, id } = await buildClient(port);
         const other = await buildClient(port, '100.64.0.3');
@@ -5540,9 +4601,7 @@ describe('offloaded builds', () => {
         await eventually(() => !running(revoked));
         expect(running(building) && running(idle)).toBe(true);
         writeFileSync(gate, '');
-        expect((await progress(client)).at(-1)).toMatchObject({
-          outcome: { ok: true },
-        });
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
         await eventually(() => !running(building) && !running(idle));
       },
     );
@@ -5551,10 +4610,7 @@ describe('offloaded builds', () => {
       'stops only the failed repository daemon after %s',
       { skip: !fakeTailscale },
       async (reason) => {
-        configure({
-          concurrency: { maxBuilds: 1 },
-          server: { maxLoadPerCore: 100_000 },
-        });
+        configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
         const gate = join(root, 'crash-gate');
         const port = await start({
           env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
@@ -5584,19 +4640,13 @@ describe('offloaded builds', () => {
           assert('result' in response);
           assert.deepStrictEqual(response.result, {});
         } else writeFileSync(gate, '');
-        expect((await progress(client)).at(-1)).toMatchObject({
-          outcome: { ok: false, code: 'cleanup-unresolved' },
-        });
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cleanup-unresolved' } });
         await eventually(() => !running(daemon));
         expect(running(priorNode)).toBe(false);
         assert(!settling || (settling.exitCode === 0 && settling.signalCode === null));
         expect(running(sibling)).toBe(true);
         if (reason === 'worker-crashed') {
-          await client.request('build.sync', {
-            repo: 'app-1',
-            files: [file('a', 'x')],
-            done: true,
-          });
+          await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
           const refused = await client.request('build.start', ANDROID_START);
           assert('error' in refused && refused.error.code === 'build-busy');
           const stimHome = process.env.STIM_HOME;
@@ -5613,10 +4663,7 @@ describe('offloaded builds', () => {
     test.skipIf(!fakeTailscale)(
       'retains the failed build claims when a Gradle daemon cannot be classified',
       async () => {
-        configure({
-          concurrency: { maxBuilds: 1 },
-          server: { maxLoadPerCore: 100_000 },
-        });
+        configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
         const port = await start({
           env: { FAKE_WORKER_CRASH: '1' },
           buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
@@ -5629,11 +4676,7 @@ describe('offloaded builds', () => {
         const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
         mkdirSync(logs, { recursive: true });
         writeFileSync(join(logs, `daemon-${unclassified.pid}.out.log`), '');
-        await client.request('build.sync', {
-          repo: 'app-1',
-          files: [file('a', 'x')],
-          done: true,
-        });
+        await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
         client.socket.send(blob('x'));
         assert('result' in (await client.request('build.start', ANDROID_START)));
         const outcome = (await progress(client)).at(-1)?.outcome;
@@ -5666,30 +4709,19 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
         { mode: 0o755 },
       );
       const port = await start({ host: { executable, name: 'Stim Host Dev' } });
-      const health = async () =>
-        (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as {
-          host: unknown;
-        };
-      const client = await connect(port, undefined, {
-        secret: createPairingToken().token,
-      });
+      const health = async () => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { host: unknown };
+      const client = await connect(port, undefined, { secret: createPairingToken().token });
       const [first, second, hello] = await Promise.all([
         health(),
         health(),
         client.request('hello', { client: CLIENT }),
       ]);
-      expect(first.host).toEqual({
-        name: 'Stim Host Dev',
-        screenRecording: false,
-        accessibility: true,
-      });
+      expect(first.host).toEqual({ name: 'Stim Host Dev', screenRecording: false, accessibility: true });
       expect(second.host).toEqual(first.host);
       expect(hello).toMatchObject({ result: { host: { app: first.host } } });
       const validator = new Ajv2020({ strict: false, validateFormats: false });
       validator.addSchema(protocolJsonSchema(), 'protocol');
-      const acceptsHello = validator.compile({
-        $ref: 'protocol#/$defs/HelloResult',
-      });
+      const acceptsHello = validator.compile({ $ref: 'protocol#/$defs/HelloResult' });
       if (!('result' in hello)) throw new Error(JSON.stringify(hello));
       expect(acceptsHello(hello.result)).toBe(true);
       expect(readFileSync(probes, 'utf8').trim().split('\n')).toHaveLength(1);
@@ -5698,11 +4730,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       const now = Date.now();
       const date = vi.spyOn(Date, 'now').mockReturnValue(now + 5001);
       try {
-        expect((await health()).host).toEqual({
-          name: 'Stim Host Dev',
-          screenRecording: true,
-          accessibility: true,
-        });
+        expect((await health()).host).toEqual({ name: 'Stim Host Dev', screenRecording: true, accessibility: true });
         expect(readFileSync(probes, 'utf8').trim().split('\n')).toHaveLength(2);
       } finally {
         date.mockRestore();
@@ -5711,9 +4739,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
   );
 
   it('reports unavailable grants when the host probe fails', async () => {
-    const port = await start({
-      host: { executable: join(root, 'missing'), name: 'Stim Host Dev' },
-    });
+    const port = await start({ host: { executable: join(root, 'missing'), name: 'Stim Host Dev' } });
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);
   });
 
@@ -5722,9 +4748,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     const local = await fetch(`http://127.0.0.1:${port}/health`);
     expect(local.status).toBe(200);
     expect(await local.json()).toMatchObject({ loopbackOnly: true });
-    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, {
-      headers: { 'x-forwarded-for': '100.64.0.2' },
-    });
+    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(403);
     await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 403');
     await expect(pair(port)).resolves.toHaveProperty('id');
@@ -5749,31 +4773,18 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       keepAwake: { setting: false, held: false, reason: 'off' },
       workerRoot: null,
     });
-    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, {
-      headers: { 'x-forwarded-for': '100.64.0.2' },
-    });
+    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
     expect(await forwarded.json()).toEqual({ version: '1.2.3' });
     const fromPage = await fetch(`http://127.0.0.1:${port}/health`, {
-      headers: {
-        'x-forwarded-for': '100.64.0.2',
-        origin: 'http://attacker.example',
-      },
+      headers: { 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' },
     });
     expect(fromPage.status).toBe(426);
     const rebound = await new Promise<number | undefined>((resolve, reject) => {
-      get(
-        {
-          host: '127.0.0.1',
-          port,
-          path: '/health',
-          headers: { host: `attacker.example:${port}` },
-        },
-        (response) => {
-          response.resume();
-          resolve(response.statusCode);
-        },
-      ).on('error', reject);
+      get({ host: '127.0.0.1', port, path: '/health', headers: { host: `attacker.example:${port}` } }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on('error', reject);
     });
     expect(rebound).toBe(426);
   });
@@ -5784,36 +4795,11 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       const port = await start();
       const session = '11111111-1111-4111-8111-111111111111';
       const agent = (headers: Record<string, string>) =>
-        fetch(`http://127.0.0.1:${port}/device-host/agent/${session}/rpc`, {
-          method: 'POST',
-          body: '{}',
-          headers,
-        });
+        fetch(`http://127.0.0.1:${port}/device-host/agent/${session}/rpc`, { method: 'POST', body: '{}', headers });
       expect((await agent({})).status).toBe(404);
-      expect(
-        (
-          await agent({
-            'x-forwarded-for': '100.64.0.2',
-            origin: 'http://attacker.example',
-          })
-        ).status,
-      ).toBe(403);
-      expect(
-        (
-          await agent({
-            'x-forwarded-for': '100.64.0.2',
-            'sec-fetch-site': 'cross-site',
-          })
-        ).status,
-      ).toBe(403);
-      expect(
-        (
-          await agent({
-            'x-forwarded-for': '100.64.0.2',
-            authorization: 'Bearer nothing',
-          })
-        ).status,
-      ).toBe(404);
+      expect((await agent({ 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' })).status).toBe(403);
+      expect((await agent({ 'x-forwarded-for': '100.64.0.2', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+      expect((await agent({ 'x-forwarded-for': '100.64.0.2', authorization: 'Bearer nothing' })).status).toBe(404);
       expect((await fetch(`http://127.0.0.1:${port}/device-host/agent/not-a-session/rpc`)).status).toBe(426);
     },
   );
@@ -5829,46 +4815,25 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       backoffMs: 10,
       maxMs: 20,
     });
-    const port = await start({
-      tailscaleState: initial.state,
-      tailscaleMonitor: monitor,
-    });
+    const port = await start({ tailscaleState: initial.state, tailscaleMonitor: monitor });
     const health = async () =>
-      (
-        (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as {
-          tailscale: unknown;
-        }
-      ).tailscale;
+      ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { tailscale: unknown }).tailscale;
     const eventually = async (done: () => boolean | Promise<boolean>) => {
       for (let attempt = 0; attempt < 200 && !(await done()); attempt++) await new Promise((r) => setTimeout(r, 10));
       expect(await done()).toBe(true);
     };
-    expect(await health()).toEqual({
-      state: 'unavailable',
-      reason: 'it timed out',
-    });
+    expect(await health()).toEqual({ state: 'unavailable', reason: 'it timed out' });
     expect(server!.addresses).toHaveLength(1);
-    next = {
-      state: 'running',
-      ips: ['::1'],
-      dnsName: 'mac.tail1.ts.net',
-      hostName: 'mac',
-    };
+    next = { state: 'running', ips: ['::1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
     await eventually(() => server!.addresses.length === 2);
     expect(server!.addresses[1]).toEqual({ host: '::1', port });
-    expect(await health()).toEqual({
-      state: 'running',
-      dnsName: 'mac.tail1.ts.net',
-    });
+    expect(await health()).toEqual({ state: 'running', dnsName: 'mac.tail1.ts.net' });
     const tailnetClient = await openRaw(`ws://[::1]:${port}`);
     const dropped = new Promise((resolve) => tailnetClient.once('close', resolve));
     next = { state: 'not-running', backendState: 'Stopped' };
     await eventually(() => server!.addresses.length === 1);
     await dropped;
-    expect(await health()).toEqual({
-      state: 'not-running',
-      backendState: 'Stopped',
-    });
+    expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
     monitor.stop();
   });
 
@@ -5898,10 +4863,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       return { spawned, spawnHolder };
     }
     function remoteTransport(initial: string[]) {
-      const state = {
-        addresses: initial,
-        listeners: new Set<(event: { addresses: string[] }) => void>(),
-      };
+      const state = { addresses: initial, listeners: new Set<(event: { addresses: string[] }) => void>() };
       const transport: Transport = {
         id: 'static',
         bindAddresses: () => state.addresses,
@@ -5942,30 +4904,18 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
         },
       });
       expect(spawned).toHaveLength(1);
-      expect(await keepAwakeHealth(port)).toEqual({
-        setting: true,
-        held: true,
-        pid: 7000,
-      });
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: true, pid: 7000 });
 
       remote.change([]);
       await eventually(() => spawned[0]?.stopped === true);
-      expect(await keepAwakeHealth(port)).toEqual({
-        setting: true,
-        held: false,
-        reason: 'not-listening',
-      });
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'not-listening' });
 
       remote.change(['::1']);
       await eventually(() => spawned.length === 2);
       setting.on = false;
       for (const listener of setting.listeners) listener();
       expect(spawned[1]?.stopped).toBe(true);
-      expect(await keepAwakeHealth(port)).toEqual({
-        setting: false,
-        held: false,
-        reason: 'off',
-      });
+      expect(await keepAwakeHealth(port)).toEqual({ setting: false, held: false, reason: 'off' });
     });
 
     it('releases the assertion when the server closes', async () => {
@@ -5987,21 +4937,12 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
         keepAwake: { setting: () => true, platform: 'darwin', spawnHolder },
       });
       expect(spawned).toEqual([]);
-      expect(await keepAwakeHealth(port)).toEqual({
-        setting: true,
-        held: false,
-        reason: 'loopback-only',
-      });
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'loopback-only' });
     });
   });
 
   it('reports Tailscale but never listens on its addresses when loopback only', async () => {
-    const running: TailscaleState = {
-      state: 'running',
-      ips: ['::1'],
-      dnsName: 'mac.tail1.ts.net',
-      hostName: 'mac',
-    };
+    const running: TailscaleState = { state: 'running', ips: ['::1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
     const monitor = watchTailscale({
       env: {},
       initial: { binary: 'tailscale', state: running },
@@ -6010,11 +4951,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       backoffMs: 10,
       maxMs: 20,
     });
-    const port = await start({
-      loopbackOnly: true,
-      tailscaleState: running,
-      tailscaleMonitor: monitor,
-    });
+    const port = await start({ loopbackOnly: true, tailscaleState: running, tailscaleMonitor: monitor });
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(server!.addresses).toEqual([{ host: '127.0.0.1', port }]);
     monitor.stop();
@@ -6030,11 +4967,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       backoffMs: 10,
       maxMs: 20,
     });
-    const port = await start({
-      tailscaleState: next,
-      tailscaleMonitor: monitor,
-      listenRetryMs: 20,
-    });
+    const port = await start({ tailscaleState: next, tailscaleMonitor: monitor, listenRetryMs: 20 });
     const blocker = createNetServer();
     await new Promise<void>((resolve) => blocker.listen(port, '::1', resolve));
     try {
@@ -6059,30 +4992,17 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     const serveStatus = join(root, 'serve.json');
     writeFileSync(serveStatus, '{}');
     const port = await start({
-      tailscaleState: {
-        state: 'running',
-        ips: [],
-        dnsName: 'mac.tail1.ts.net',
-        hostName: 'mac',
-      },
+      tailscaleState: { state: 'running', ips: [], dnsName: 'mac.tail1.ts.net', hostName: 'mac' },
       env: { FAKE_SERVE_STATUS: serveStatus },
     });
     const route = async () =>
-      (
-        (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as {
-          route: unknown;
-        }
-      ).route;
+      ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { route: unknown }).route;
     expect(await route()).toEqual({ state: 'missing', port: 7443 });
     writeFileSync(
       serveStatus,
       JSON.stringify({
         TCP: { '7443': { HTTPS: true } },
-        Web: {
-          'mac.tail1.ts.net:7443': {
-            Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } },
-          },
-        },
+        Web: { 'mac.tail1.ts.net:7443': { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } } },
       }),
     );
     expect(await route()).toEqual({ state: 'routed', port: 7443 });
@@ -6094,9 +5014,7 @@ describe('unauthenticated connections', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await connect(port, undefined, { keyPair });
-    expect(await client.request('machine.subscribe')).toMatchObject({
-      error: { code: 'unauthorized' },
-    });
+    expect(await client.request('machine.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
     expect(await client.closed).toBe(4401);
     expect(readdirSync(root)).not.toContain('pids');
   });
@@ -6106,10 +5024,7 @@ describe('unauthenticated connections', () => {
     const silent = await openPlain(port, '100.64.0.2');
     expect(await silent.closed).toBe(4408);
     const stranger = await connect(port, '100.64.0.2');
-    expect(await stranger.closedWith).toEqual({
-      code: 4401,
-      reason: 'unauthorized',
-    });
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
 
     await expect(openPlain(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
     const otherPeer = await openPlain(port, '100.64.0.3');
@@ -6215,10 +5130,7 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     Promise.race([closed.then(() => false), new Promise((resolve) => setTimeout(() => resolve(true), 300))]);
 
   it('holds a bounded number of unauthenticated connections per address, and an authenticated one stops counting', async () => {
-    const port = await start({
-      transports: lan(),
-      pendingConnections: { max: 8, perPeer: 2 },
-    });
+    const port = await start({ transports: lan(), pendingConnections: { max: 8, perPeer: 2 } });
     expect(server?.addresses.map((address) => address.host)).toContain(host);
     const first = await raw(port);
     const second = await raw(port);
@@ -6249,18 +5161,12 @@ describe.skipIf(!lanIp)('the local network listener', () => {
       id: 'both',
       bindAddresses: () => [host, other],
     };
-    const port = await start({
-      transports: [both],
-      pendingConnections: { max: 2, perPeer: 2 },
-    });
+    const port = await start({ transports: [both], pendingConnections: { max: 2, perPeer: 2 } });
     await raw(port);
     await raw(port);
     const refused = await raw(port);
     await refused.closed;
-    const elsewhere = await new Promise<{
-      socket: Socket;
-      closed: Promise<void>;
-    }>((resolve, reject) => {
+    const elsewhere = await new Promise<{ socket: Socket; closed: Promise<void> }>((resolve, reject) => {
       const socket = connectNet(port, other);
       sockets.push(socket);
       const closed = once(socket, 'close').then(() => undefined);
@@ -6296,10 +5202,7 @@ describe.skipIf(!lanIp)('the local network listener', () => {
   it('refuses a key it has no record for, and tells a peer only its version', async () => {
     const port = await start({ transports: lan() });
     const stranger = await noiseConnect(`ws://${host}:${port}`);
-    expect(await stranger.closedWith).toEqual({
-      code: 4401,
-      reason: 'unauthorized',
-    });
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
     const peer = await fetch(`http://${host}:${port}/health`);
     expect(await peer.json()).toEqual({ version: '1.2.3' });
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
@@ -6348,11 +5251,7 @@ describe('upgradeFromWebPage', () => {
     [
       'a same-origin browser fetch over the tailnet',
       'proxied',
-      {
-        host: 'mac.tail.ts.net:7443',
-        origin: 'https://mac.tail.ts.net:7443',
-        'sec-fetch-site': 'same-origin',
-      },
+      { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443', 'sec-fetch-site': 'same-origin' },
       true,
     ],
     ['the CLI on a local network address', 'direct', { host: '10.0.0.92:7787' }, false],
@@ -6413,10 +5312,7 @@ describe('status feed lifecycle', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const first = await returning(port, keyPair);
-    expect(await first.request('machine.subscribe')).toEqual({
-      id: 2,
-      result: { subscription: 's1' },
-    });
+    expect(await first.request('machine.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
     expect(await first.next()).toMatchObject({
       event: 'machine',
       subscription: 's1',
@@ -6440,9 +5336,7 @@ describe('status feed lifecycle', () => {
       seq: 0,
       machine: { capacity: { live: 1 } },
     });
-    expect(await second.request('machine.subscribe')).toMatchObject({
-      result: { subscription: 's2' },
-    });
+    expect(await second.request('machine.subscribe')).toMatchObject({ result: { subscription: 's2' } });
     expect(await second.next()).toMatchObject({
       event: 'machine',
       subscription: 's2',
@@ -6451,10 +5345,7 @@ describe('status feed lifecycle', () => {
     });
     expect(statusWorkers()).toHaveLength(1);
 
-    expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({
-      id: 3,
-      result: {},
-    });
+    expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
     expect(await first.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
@@ -6514,11 +5405,7 @@ describe('status feed lifecycle', () => {
         },
       ],
     };
-    const port = await start({
-      env: {
-        FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]),
-      },
-    });
+    const port = await start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]) } });
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
     await client.request('machine.subscribe');
@@ -6545,10 +5432,7 @@ describe('status feed lifecycle', () => {
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',
-      error: {
-        code: 'status-failed',
-        message: 'the status worker exited (code 3)',
-      },
+      error: { code: 'status-failed', message: 'the status worker exited (code 3)' },
     });
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
@@ -6557,12 +5441,7 @@ describe('status feed lifecycle', () => {
 });
 
 describe('status views', () => {
-  const machine = {
-    capacity: { live: 0 },
-    deviceLeases: [],
-    simctlAvailable: true,
-    machine: null,
-  };
+  const machine = { capacity: { live: 0 }, deviceLeases: [], simctlAvailable: true, machine: null };
   const app = (overrides: Record<string, unknown> = {}) => ({
     path: '/work/app',
     live: true,
@@ -6572,13 +5451,7 @@ describe('status views', () => {
     logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 0 },
     ...overrides,
   });
-  const other = {
-    path: '/work/other',
-    live: false,
-    warnings: [],
-    issues: [],
-    memoryMb: 0,
-  };
+  const other = { path: '/work/other', live: false, warnings: [], issues: [], memoryMb: 0 };
   const archive = (id: string, removedAt: string) => ({
     id,
     projectRoot: `/work/${id}`,
@@ -6603,48 +5476,23 @@ describe('status views', () => {
     environments,
     unprovisionedWorktrees: [{ path: '/work/loose', branch: 'loose', repository: '/work', git: null }],
     archived,
-    archivedUsage: {
-      count: 3,
-      bytes: 3,
-      byKind: { logs: 0, recordings: 0, agentActions: 0, record: 3 },
-    },
+    archivedUsage: { count: 3, bytes: 3, byKind: { logs: 0, recordings: 0, agentActions: 0, record: 3 } },
     ...extra,
   });
   const sequence = [
     payload([app(), other]),
-    payload([
-      app({
-        logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 },
-      }),
-      other,
-    ]),
-    payload([
-      app({
-        logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 },
-      }),
-    ]),
-    payload([
-      app({
-        logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 },
-      }),
-    ]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } }), other]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } })]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } })]),
   ];
   const startViews = () => start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify(sequence) } });
 
   it('sends the workspace list once, then only the workspaces that changed or went away', async () => {
     const client = await authed(await startViews());
-    expect(await client.request('status.subscribe')).toMatchObject({
-      error: { code: 'unknown-method' },
-    });
-    expect(await client.request('workspaces.subscribe')).toMatchObject({
-      result: { subscription: 's1' },
-    });
+    expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unknown-method' } });
+    expect(await client.request('workspaces.subscribe')).toMatchObject({ result: { subscription: 's1' } });
     const first = (await client.next()) as WorkspacesEvent;
-    expect(first).toMatchObject({
-      event: 'workspaces',
-      subscription: 's1',
-      seq: 0,
-    });
+    expect(first).toMatchObject({ event: 'workspaces', subscription: 's1', seq: 0 });
     const snapshot = first.snapshot;
     assert(snapshot);
     expect(snapshot.workspaces.map((summary) => summary.path)).toEqual(['/work/app', '/work/other']);
@@ -6666,12 +5514,7 @@ describe('status views', () => {
       subscription: 's1',
       seq: 1,
       workspaces: {
-        upsert: [
-          expect.objectContaining({
-            path: '/work/app',
-            logs: { errorsSinceMarker: 2 },
-          }),
-        ],
+        upsert: [expect.objectContaining({ path: '/work/app', logs: { errorsSinceMarker: 2 } })],
         remove: [],
       },
     });
@@ -6688,21 +5531,9 @@ describe('status views', () => {
   it('sends one workspace whole, again only when it changes, and null once it is gone', async () => {
     const client = await authed(await startViews());
     await client.request('workspace.subscribe', { workspace: '/work/other' });
-    expect(await client.next()).toEqual({
-      event: 'workspace',
-      subscription: 's1',
-      seq: 0,
-      environment: other,
-    });
-    expect(await client.next()).toEqual({
-      event: 'workspace',
-      subscription: 's1',
-      seq: 1,
-      environment: null,
-    });
-    expect(await client.request('workspace.subscribe', {})).toMatchObject({
-      error: { code: 'bad-request' },
-    });
+    expect(await client.next()).toEqual({ event: 'workspace', subscription: 's1', seq: 0, environment: other });
+    expect(await client.next()).toEqual({ event: 'workspace', subscription: 's1', seq: 1, environment: null });
+    expect(await client.request('workspace.subscribe', {})).toMatchObject({ error: { code: 'bad-request' } });
   });
 
   it('sends the machine view without the workspaces', async () => {
@@ -6717,34 +5548,19 @@ describe('status views', () => {
   });
 
   it('reads build history, archives a page at a time, worktrees and maintenance on request', async () => {
-    const builds = {
-      ios: [
-        {
-          platform: 'ios',
-          status: 'ok',
-          startedAt: '2026-10-01T00:00:00.000Z',
-        },
-      ],
-    };
+    const builds = { ios: [{ platform: 'ios', status: 'ok', startedAt: '2026-10-01T00:00:00.000Z' }] };
     const port = await start({
-      env: {
-        FAKE_STIM_PAYLOADS: JSON.stringify([payload([app({ builds })], { maintenance: { mode: 'off' } })]),
-      },
+      env: { FAKE_STIM_PAYLOADS: JSON.stringify([payload([app({ builds })], { maintenance: { mode: 'off' } })]) },
     });
     const client = await authed(port);
     expect(await client.request('builds.history', { workspace: '/work/app' })).toMatchObject({ result: { builds } });
     expect(await client.request('builds.history', { workspace: '/work/nope' })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
-    const first = (await client.request('archived.list', { limit: 2 })) as {
-      result: ArchivedListResult;
-    };
+    const first = (await client.request('archived.list', { limit: 2 })) as { result: ArchivedListResult };
     expect(first.result.archived.map((each) => each.id)).toEqual(['b', 'c']);
     expect(first.result.usage).toMatchObject({ count: 3 });
-    const second = (await client.request('archived.list', {
-      limit: 2,
-      before: first.result.next,
-    })) as {
+    const second = (await client.request('archived.list', { limit: 2, before: first.result.next })) as {
       result: ArchivedListResult;
     };
     expect(second.result.archived.map((each) => each.id)).toEqual(['a']);
@@ -6752,9 +5568,7 @@ describe('status views', () => {
     expect(await client.request('worktrees.list')).toMatchObject({
       result: { worktrees: [{ path: '/work/loose', git: null }] },
     });
-    expect(await client.request('maintenance.get')).toMatchObject({
-      result: { maintenance: { mode: 'off' } },
-    });
+    expect(await client.request('maintenance.get')).toMatchObject({ result: { maintenance: { mode: 'off' } } });
   });
 });
 
@@ -6772,10 +5586,7 @@ describe('push.register', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    expect(await client.request('push.register', PUSH)).toEqual({
-      id: 2,
-      result: {},
-    });
+    expect(await client.request('push.register', PUSH)).toEqual({ id: 2, result: {} });
     expect(readDevices()[0]!.push).toMatchObject(PUSH);
     await until(() => statusWorkers().length === 1);
 
@@ -6784,10 +5595,7 @@ describe('push.register', () => {
     expect(statusWorkers()).toHaveLength(1);
 
     const again = await returning(port, keyPair);
-    expect(await again.request('push.unregister')).toEqual({
-      id: 2,
-      result: {},
-    });
+    expect(await again.request('push.unregister')).toEqual({ id: 2, result: {} });
     expect(readDevices().every((device) => !device.push)).toBe(true);
     await until(() => statusWorkers().length === 0, 1000);
   });
@@ -6829,9 +5637,7 @@ describe('push.register', () => {
       { ...PUSH, levels: { offline: 'alert' } },
       { ...PUSH, levels: ['silent'] },
     ]) {
-      expect(await client.request('push.register', params)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await client.request('push.register', params)).toMatchObject({ error: { code: 'bad-request' } });
     }
     expect(readDevices()[0]!.push).toBeUndefined();
   });
@@ -6842,42 +5648,20 @@ describe('workspace diff reads', () => {
     execFileSync('git', ['init', '-q', workspace]);
     writeFileSync(join(workspace, 'new.txt'), 'new text\n');
     const client = await authed(await start());
-    expect(
-      await client.request('workspace.files', {
-        workspace,
-        group: 'untracked',
-      }),
-    ).toMatchObject({
-      result: {
-        files: [{ path: 'new.txt', untracked: true }],
-        truncated: false,
-      },
+    expect(await client.request('workspace.files', { workspace, group: 'untracked' })).toMatchObject({
+      result: { files: [{ path: 'new.txt', untracked: true }], truncated: false },
     });
     expect(await client.request('workspace.diff', { workspace, path: 'new.txt' })).toMatchObject({
-      result: {
-        path: 'new.txt',
-        patches: [{ section: 'untracked', kind: 'text', text: 'new text\n' }],
-      },
+      result: { path: 'new.txt', patches: [{ section: 'untracked', kind: 'text', text: 'new text\n' }] },
     });
-    expect(
-      await client.request('workspace.files', {
-        workspace: root,
-        group: 'changed',
-      }),
-    ).toMatchObject({
+    expect(await client.request('workspace.files', { workspace: root, group: 'changed' })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
     expect(await client.request('workspace.diff', { workspace, path: '../secret' })).toMatchObject({
       error: { code: 'stim-failed' },
     });
     expect(await client.request('workspace.files', { workspace })).toMatchObject({ error: { code: 'bad-request' } });
-    expect(
-      await client.request('workspace.diff', {
-        workspace,
-        path: 'new.txt',
-        command: 'add',
-      }),
-    ).toMatchObject({
+    expect(await client.request('workspace.diff', { workspace, path: 'new.txt', command: 'add' })).toMatchObject({
       error: { code: 'bad-request' },
     });
     expect(stimCalls()).toEqual([]);
@@ -6908,13 +5692,7 @@ describe('logs.query', () => {
       { ts: 1, src: 'device', marker: true, platform: 'ios', slot: 'tablet' },
       { ts: 2, src: 'metro', level: 'error', msg: '-render failure' },
       { ts: 3, src: 'client', level: 'warn', msg: '-render warning' },
-      {
-        ts: 4,
-        src: 'client',
-        level: 'error',
-        msg: '-render error',
-        slot: 'tablet',
-      },
+      { ts: 4, src: 'client', level: 'error', msg: '-render error', slot: 'tablet' },
     ]);
     const port = await start();
     const client = await authed(port);
@@ -6932,13 +5710,7 @@ describe('logs.query', () => {
       result: {
         records: [
           { ts: 2, src: 'metro', level: 'error', msg: '-render failure' },
-          {
-            ts: 4,
-            src: 'client',
-            level: 'error',
-            msg: '-render error',
-            slot: 'tablet',
-          },
+          { ts: 4, src: 'client', level: 'error', msg: '-render error', slot: 'tablet' },
         ],
       },
     });
@@ -6972,9 +5744,7 @@ describe('logs.query', () => {
         });
       }
     }
-    expect(await client.request('logs.query', { workspace })).toMatchObject({
-      result: { records: RECORDS },
-    });
+    expect(await client.request('logs.query', { workspace })).toMatchObject({ result: { records: RECORDS } });
     expect(await client.request('logs.subscribe', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
@@ -6992,14 +5762,7 @@ function archiveFixture(logged: unknown[] = []): { id: string; dir: string } {
     projectRoot: workspace,
     project: 'app',
     workspace: workspaceName(workspace),
-    worktree: {
-      repository: null,
-      branch: null,
-      head: null,
-      subject: null,
-      merged: null,
-      pullRequest: null,
-    },
+    worktree: { repository: null, branch: null, head: null, subject: null, merged: null, pullRequest: null },
     removedAt,
     removedBy: 'worktree-remove',
     lastUsedAt: null,
@@ -7087,11 +5850,7 @@ describe('archive.detail', () => {
         android: [{ ...succeeded, finishedAt: '2026-10-01T11:00:03.000Z' }],
       },
       recordings: [
-        {
-          platform: 'android',
-          slot: 'fold',
-          spans: [{ start: 10000, end: 11000 }],
-        },
+        { platform: 'android', slot: 'fold', spans: [{ start: 10000, end: 11000 }] },
         {
           platform: 'ios',
           slot: 'default',
@@ -7100,16 +5859,8 @@ describe('archive.detail', () => {
             { start: 6000, end: 7000 },
           ],
         },
-        {
-          platform: 'ios',
-          slot: 'tablet',
-          spans: [{ start: 4000, end: 5000 }],
-        },
-        {
-          platform: 'web',
-          slot: 'desktop',
-          spans: [{ start: 12000, end: 13000 }],
-        },
+        { platform: 'ios', slot: 'tablet', spans: [{ start: 4000, end: 5000 }] },
+        { platform: 'web', slot: 'desktop', spans: [{ start: 12000, end: 13000 }] },
       ],
     };
     const reply = await client.request('archive.detail', { archive: id });
@@ -7151,9 +5902,7 @@ describe('archive.detail', () => {
       { archive: '' },
       { archive: 1 },
     ]) {
-      expect(await client.request('archive.detail', params)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await client.request('archive.detail', params)).toMatchObject({ error: { code: 'bad-request' } });
     }
   });
 
@@ -7176,17 +5925,7 @@ describe('archive.detail', () => {
     rmSync(join(dir, 'state.json'));
     writeFileSync(
       join(root, 'state.json'),
-      JSON.stringify({
-        buildHistory: {
-          ios: [
-            {
-              platform: 'ios',
-              status: 'ok',
-              startedAt: '2026-10-01T11:00:00Z',
-            },
-          ],
-        },
-      }),
+      JSON.stringify({ buildHistory: { ios: [{ platform: 'ios', status: 'ok', startedAt: '2026-10-01T11:00:00Z' }] } }),
     );
     symlinkSync(join(root, 'state.json'), join(dir, 'state.json'));
     expect(await client.request('archive.detail', { archive: id })).toMatchObject({
@@ -7208,10 +5947,7 @@ describe('archived reads', () => {
     archivedFootage(dir, Date.parse('2026-09-13T01:56:00Z'), 10, 'android');
     rmSync(workspace, { recursive: true });
     const client = await authed(await start());
-    const queried = await client.request('logs.query', {
-      archive: id,
-      sources: ['agent'],
-    });
+    const queried = await client.request('logs.query', { archive: id, sources: ['agent'] });
     expect(queried).toMatchObject({
       result: {
         records: expect.arrayContaining([
@@ -7235,11 +5971,7 @@ describe('archived reads', () => {
               y: 542,
             },
           },
-          expect.objectContaining({
-            platform: 'android',
-            event: 'agent_failed',
-            msg: 'Failed open: DEVICE_NOT_FOUND',
-          }),
+          expect.objectContaining({ platform: 'android', event: 'agent_failed', msg: 'Failed open: DEVICE_NOT_FOUND' }),
         ]),
       },
     });
@@ -7247,20 +5979,12 @@ describe('archived reads', () => {
       result: (queried as { result: unknown }).result,
     });
     await client.request('logs.subscribe', { archive: id, sources: ['agent'] });
-    expect(await client.next()).toMatchObject({
-      event: 'logs',
-      ...(queried as { result: object }).result,
-    });
+    expect(await client.next()).toMatchObject({ event: 'logs', ...(queried as { result: object }).result });
     expect(await client.next()).toMatchObject({ event: 'logs-ended' });
     expect(await client.request('replay.range', { archive: id, platform: 'ios' })).toMatchObject({
       result: {
         markers: expect.arrayContaining([
-          {
-            at: Date.parse('2026-09-25T12:15:57.453Z'),
-            kind: 'action',
-            command: 'press',
-            label: 'Tapped (201, 542)',
-          },
+          { at: Date.parse('2026-09-25T12:15:57.453Z'), kind: 'action', command: 'press', label: 'Tapped (201, 542)' },
           {
             at: Date.parse('2026-09-25T12:16:03.541Z'),
             kind: 'action',
@@ -7270,12 +5994,7 @@ describe('archived reads', () => {
         ]),
       },
     });
-    expect(
-      await client.request('replay.range', {
-        archive: id,
-        platform: 'android',
-      }),
-    ).toMatchObject({
+    expect(await client.request('replay.range', { archive: id, platform: 'android' })).toMatchObject({
       result: {
         markers: expect.arrayContaining([
           {
@@ -7284,12 +6003,7 @@ describe('archived reads', () => {
             command: 'open',
             label: 'Failed open: DEVICE_NOT_FOUND',
           },
-          {
-            at: Date.parse('2026-09-13T01:58:25.718Z'),
-            kind: 'action',
-            command: 'press',
-            label: 'Tapped (541, 2265)',
-          },
+          { at: Date.parse('2026-09-13T01:58:25.718Z'), kind: 'action', command: 'press', label: 'Tapped (541, 2265)' },
         ]),
       },
     });
@@ -7321,45 +6035,17 @@ describe('archived reads', () => {
           (reply as { error: { message: string } }).error.message === 'A connection can run 32 requests at a time.',
       ),
     );
-    expect(await client.request('frames.subscribe', params)).toMatchObject({
-      result: { video: 'h264' },
-    });
-    expect(await client.request('logs.query', { archive: id })).toMatchObject({
-      result: { records: [] },
-    });
+    expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
+    expect(await client.request('logs.query', { archive: id })).toMatchObject({ result: { records: [] } });
   });
 
   it('queries real archived logs with the same JSON filters and context as the CLI', async () => {
     const { id, dir } = archiveFixture([
       { ts: 2, src: 'client', level: 'error', msg: 'previous error' },
-      {
-        ts: 5,
-        src: 'build',
-        level: 'info',
-        marker: true,
-        platform: 'ios',
-        slot: 'tablet',
-        msg: 'launched',
-      },
+      { ts: 5, src: 'build', level: 'info', marker: true, platform: 'ios', slot: 'tablet', msg: 'launched' },
       { ts: 8, src: 'client', level: 'error', msg: 'current error' },
-      {
-        ts: 9,
-        src: 'device',
-        level: 'fatal',
-        event: 'native_crash',
-        platform: 'ios',
-        slot: 'tablet',
-        msg: 'crash',
-      },
-      {
-        ts: 11,
-        src: 'agent',
-        level: 'info',
-        platform: 'ios',
-        slot: 'tablet',
-        event: 'agent_action',
-        msg: 'press',
-      },
+      { ts: 9, src: 'device', level: 'fatal', event: 'native_crash', platform: 'ios', slot: 'tablet', msg: 'crash' },
+      { ts: 11, src: 'agent', level: 'info', platform: 'ios', slot: 'tablet', event: 'agent_action', msg: 'press' },
     ]);
     writeFileSync(
       join(dir, 'logs', 'metro.ndjson.1'),
@@ -7368,29 +6054,9 @@ describe('archived reads', () => {
     writeFileSync(
       join(dir, 'logs', 'metro.ndjson'),
       [
-        {
-          ts: 6,
-          src: 'metro',
-          level: 'info',
-          marker: true,
-          msg: 'iOS Bundled',
-        },
-        {
-          ts: 7,
-          src: 'metro',
-          level: 'error',
-          raw: true,
-          event: 'metro_stderr',
-          msg: 'Unable to resolve module',
-        },
-        {
-          ts: 10,
-          src: 'metro',
-          level: 'info',
-          raw: true,
-          event: 'metro_stderr',
-          msg: 'Code: app.ts',
-        },
+        { ts: 6, src: 'metro', level: 'info', marker: true, msg: 'iOS Bundled' },
+        { ts: 7, src: 'metro', level: 'error', raw: true, event: 'metro_stderr', msg: 'Unable to resolve module' },
+        { ts: 10, src: 'metro', level: 'info', raw: true, event: 'metro_stderr', msg: 'Code: app.ts' },
       ]
         .map((record) => JSON.stringify(record))
         .join('\n') + '\n',
@@ -7402,23 +6068,12 @@ describe('archived reads', () => {
     const cases = [
       { filter: {}, args: [] },
       {
-        filter: {
-          sources: ['metro'],
-          level: 'warn',
-          grep: 'rotated|resolve',
-          tail: 2,
-        },
+        filter: { sources: ['metro'], level: 'warn', grep: 'rotated|resolve', tail: 2 },
         args: ['--source=metro', '--level=warn', '--grep=rotated|resolve', '--tail=2'],
       },
       { filter: { errors: true, tail: 3 }, args: ['--errors', '--tail=3'] },
-      {
-        filter: { slot: 'tablet', errors: true },
-        args: ['--slot=tablet', '--errors'],
-      },
-      {
-        filter: { sources: ['agent'], slot: 'tablet' },
-        args: ['--source=agent', '--slot=tablet'],
-      },
+      { filter: { slot: 'tablet', errors: true }, args: ['--slot=tablet', '--errors'] },
+      { filter: { sources: ['agent'], slot: 'tablet' }, args: ['--source=agent', '--slot=tablet'] },
     ];
     const client = await authed(await start());
     const queried: unknown[][] = [];
@@ -7447,39 +6102,20 @@ describe('archived reads', () => {
   });
 
   it('batches archived records, ends once, and releases even empty subscriptions', async () => {
-    const logged = Array.from({ length: 501 }, (_, ts) => ({
-      ts,
-      src: 'client',
-      level: 'info',
-      msg: `record ${ts}`,
-    }));
+    const logged = Array.from({ length: 501 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: `record ${ts}` }));
     const { id, dir } = archiveFixture(logged);
     rmSync(workspace, { recursive: true });
     const client = await authed(await start());
     expect(await client.request('logs.subscribe', { archive: id })).toMatchObject({ result: { subscription: 's1' } });
-    expect(await client.next()).toEqual({
-      event: 'logs',
-      subscription: 's1',
-      records: logged.slice(0, 500),
-    });
-    expect(await client.next()).toEqual({
-      event: 'logs',
-      subscription: 's1',
-      records: logged.slice(500),
-    });
-    expect(await client.next()).toEqual({
-      event: 'logs-ended',
-      subscription: 's1',
-    });
+    expect(await client.next()).toEqual({ event: 'logs', subscription: 's1', records: logged.slice(0, 500) });
+    expect(await client.next()).toEqual({ event: 'logs', subscription: 's1', records: logged.slice(500) });
+    expect(await client.next()).toEqual({ event: 'logs-ended', subscription: 's1' });
     for (let i = 1; i < 33; i++) {
       const subscription = `s${i + 1}`;
       expect(await client.request('logs.subscribe', { archive: id, grep: 'absent' })).toMatchObject({
         result: { subscription },
       });
-      expect(await client.next()).toEqual({
-        event: 'logs-ended',
-        subscription,
-      });
+      expect(await client.next()).toEqual({ event: 'logs-ended', subscription });
     }
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
@@ -7490,20 +6126,11 @@ describe('archived reads', () => {
 
   it('reports overflow instead of successful completion', async () => {
     const { id } = archiveFixture(
-      Array.from({ length: 3 }, (_, ts) => ({
-        ts,
-        src: 'client',
-        level: 'info',
-        msg: 'record',
-      })),
+      Array.from({ length: 3 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'record' })),
     );
     const client = await authed(await start({ logLimits: { maxPendingRecords: 2 } }));
     await client.request('logs.subscribe', { archive: id });
-    expect(await client.next()).toMatchObject({
-      event: 'error',
-      subscription: 's1',
-      error: { code: 'slow-client' },
-    });
+    expect(await client.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'slow-client' } });
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
@@ -7533,10 +6160,7 @@ describe('archived reads', () => {
       }
       for (const archive of ['missing', link, 'broken']) {
         expect(await client.request(method, { ...rest, archive })).toMatchObject({
-          error: {
-            code: 'unknown-workspace',
-            message: expect.stringContaining(archive),
-          },
+          error: { code: 'unknown-workspace', message: expect.stringContaining(archive) },
         });
       }
     }
@@ -7565,12 +6189,7 @@ describe('archived reads', () => {
         command: 'press',
         msg: 'other',
       },
-      {
-        ts: base + 30_500,
-        src: 'build',
-        level: 'error',
-        msg: 'Compile failed',
-      },
+      { ts: base + 30_500, src: 'build', level: 'error', msg: 'Compile failed' },
     ]);
     archivedFootage(dir, base, 10);
     archivedFootage(dir, base + 30_000, 10);
@@ -7584,24 +6203,13 @@ describe('archived reads', () => {
           { start: base + 30_000, end: base + 30_900 },
         ],
         markers: [
-          {
-            at: base + 200,
-            kind: 'action',
-            command: 'press',
-            label: 'press @e3',
-          },
+          { at: base + 200, kind: 'action', command: 'press', label: 'press @e3' },
           { at: base + 30_500, kind: 'error', label: 'Compile failed' },
         ],
       },
     });
     rmSync(workspace, { recursive: true });
-    expect(
-      await client.request('replay.keyframe', {
-        archive: id,
-        platform: 'ios',
-        at: base + 850,
-      }),
-    ).toMatchObject({
+    expect(await client.request('replay.keyframe', { archive: id, platform: 'ios', at: base + 850 })).toMatchObject({
       result: {
         start: base,
         end: base + 900,
@@ -7621,16 +6229,8 @@ describe('archived reads', () => {
     rmSync(workspace, { recursive: true });
     const client = await authed(await start());
     const target = { archive: id, platform: 'ios', video: ['h264'] };
-    expect(await client.request('frames.subscribe', target)).toMatchObject({
-      error: { code: 'bad-request' },
-    });
-    expect(
-      await client.request('frames.subscribe', {
-        ...target,
-        at: base,
-        physical: true,
-      }),
-    ).toMatchObject({
+    expect(await client.request('frames.subscribe', target)).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await client.request('frames.subscribe', { ...target, at: base, physical: true })).toMatchObject({
       error: { code: 'bad-request' },
     });
     expect(await client.request('frames.subscribe', { ...target, at: base + 230 })).toMatchObject({
@@ -7644,13 +6244,7 @@ describe('archived reads', () => {
     expect(await capturedAt()).toBe(base);
     expect(await capturedAt()).toBe(base + 100);
     expect(await capturedAt()).toBe(base + 200);
-    expect(
-      await client.request('frames.seek', {
-        subscription: 's1',
-        at: base + 730,
-        rate: 0,
-      }),
-    ).toMatchObject({
+    expect(await client.request('frames.seek', { subscription: 's1', at: base + 730, rate: 0 })).toMatchObject({
       result: { at: base + 700 },
     });
     expect(await capturedAt()).toBe(base + 500);
@@ -7659,21 +6253,11 @@ describe('archived reads', () => {
     expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
       error: { code: 'frames-failed', message: expect.stringContaining(id) },
     });
-    expect(
-      await client.request('frames.seek', {
-        subscription: 's1',
-        at: base + 900,
-        rate: 2,
-      }),
-    ).toMatchObject({
+    expect(await client.request('frames.seek', { subscription: 's1', at: base + 900, rate: 2 })).toMatchObject({
       result: { at: base + 900 },
     });
     for (const offset of [500, 600, 700, 800, 900]) expect(await capturedAt()).toBe(base + offset);
-    expect(await client.next()).toEqual({
-      event: 'replay-ended',
-      subscription: 's1',
-      at: base + 900,
-    });
+    expect(await client.next()).toEqual({ event: 'replay-ended', subscription: 's1', at: base + 900 });
     expect(stimCalls()).toEqual([]);
   });
 
@@ -7686,22 +6270,11 @@ describe('archived reads', () => {
     expect(await client.request('replay.range', { archive: id, platform: 'ios' })).toMatchObject({
       result: { enabled: false, recording: false, spans: [], markers: [] },
     });
-    expect(
-      await client.request('replay.keyframe', {
-        archive: id,
-        platform: 'ios',
-        at: 1000,
-      }),
-    ).toMatchObject({
+    expect(await client.request('replay.keyframe', { archive: id, platform: 'ios', at: 1000 })).toMatchObject({
       error: { code: 'no-recording' },
     });
     expect(
-      await client.request('frames.subscribe', {
-        archive: id,
-        platform: 'ios',
-        video: ['h264'],
-        at: 1000,
-      }),
+      await client.request('frames.subscribe', { archive: id, platform: 'ios', video: ['h264'], at: 1000 }),
     ).toMatchObject({ error: { code: 'no-recording' } });
     expect(existsSync(join(device, '1000.part'))).toBe(true);
     expect(stimCalls()).toEqual([]);
@@ -7718,9 +6291,7 @@ describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
       ...(index % 2 ? { slot: 'second', platform: 'ios' } : {}),
     }));
     const path = liveLogFixture(retained);
-    const port = await start({
-      logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 },
-    });
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
     const remote = await authed(port, true);
     expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
       error: { code: 'forbidden' },
@@ -7778,12 +6349,7 @@ describe('logs.subscribe', () => {
       await vi.waitFor(() => expect(firstAppend).resolves.toEqual([appended]));
       await vi.waitFor(() => expect(secondAppend).resolves.toEqual([appended]));
       expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
-      const later = {
-        ts: 5,
-        src: 'client',
-        level: 'info',
-        msg: 'after unsubscribe',
-      };
+      const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
       const secondLater = records(second, 1);
       appendFileSync(path, JSON.stringify(later) + '\n');
       await vi.advanceTimersByTimeAsync(10100);
@@ -7798,12 +6364,7 @@ describe('logs.subscribe', () => {
 
   it('times out an unfinished backfill and keeps another socket responsive', async () => {
     liveLogFixture(
-      Array.from({ length: 100_000 }, (_, ts) => ({
-        ts,
-        src: 'client',
-        level: 'info',
-        msg: 'x'.repeat(300),
-      })),
+      Array.from({ length: 100_000 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'x'.repeat(300) })),
     );
     const port = await start({ commandLimits: { timeoutMs: 5 } });
     const slow = await authed(port);
@@ -7813,10 +6374,7 @@ describe('logs.subscribe', () => {
     expect(await slow.next()).toMatchObject({
       event: 'error',
       subscription: 's1',
-      error: {
-        code: 'logs-failed',
-        message: expect.stringContaining('did not finish'),
-      },
+      error: { code: 'logs-failed', message: expect.stringContaining('did not finish') },
     });
     expect(await slow.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
@@ -7824,38 +6382,18 @@ describe('logs.subscribe', () => {
   });
 
   it('drops a backfill exceeding the pending limit and releases its subscription', async () => {
-    liveLogFixture(
-      Array.from({ length: 500 }, (_, ts) => ({
-        ts,
-        src: 'client',
-        level: 'info',
-        msg: 'line',
-      })),
-    );
-    const port = await start({
-      logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 },
-    });
+    liveLogFixture(Array.from({ length: 500 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'line' })));
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
     const client = await authed(port);
     await client.request('logs.subscribe', { workspace });
-    expect(await client.next()).toMatchObject({
-      event: 'error',
-      subscription: 's1',
-      error: { code: 'slow-client' },
-    });
+    expect(await client.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'slow-client' } });
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
   });
 
   it('stops an in-flight backfill when its last subscriber leaves or the server closes', async () => {
-    liveLogFixture(
-      Array.from({ length: 100_000 }, (_, ts) => ({
-        ts,
-        src: 'client',
-        level: 'info',
-        msg: 'line',
-      })),
-    );
+    liveLogFixture(Array.from({ length: 100_000 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'line' })));
     const port = await start();
     const client = await authed(port);
     await client.request('logs.subscribe', { workspace });
@@ -7913,10 +6451,7 @@ describe('machine.details', () => {
     const first = await authed(port);
     const second = await authed(port);
     const expected = {
-      gc: expect.objectContaining({
-        mode: 'dry-run',
-        sections: expect.any(Object),
-      }),
+      gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
       stats: readStatsReport(null, Date.now()).report,
       buildMachines: [],
       buildClients: [],
@@ -7936,9 +6471,7 @@ describe('machine.details', () => {
     const other = join(root, 'other');
     mkdirSync(other);
     for (const project of [workspace, other]) writeFileSync(join(project, 'package.json'), '{"private":true}');
-    const ran = (at: string) => ({
-      doctorRuns: { ios: { at, version: '1.0.0' } },
-    });
+    const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
     writeFileSync(
       join(process.env.STIM_HOME!, 'config.json'),
       JSON.stringify({
@@ -7961,9 +6494,7 @@ describe('machine.details', () => {
     });
     const client = await authed(port);
     const first = await client.request('machine.details');
-    expect(first).toMatchObject({
-      result: { buildMachines: null, buildMachinesPending: true },
-    });
+    expect(first).toMatchObject({ result: { buildMachines: null, buildMachinesPending: true } });
 
     let reply: unknown;
     for (let i = 0; i < 50; i++) {
@@ -8045,19 +6576,10 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     const committed = join(selected, '.stim.json');
     writeFileSync(
       committed,
-      JSON.stringify({
-        optimizations: { buildCache: false },
-        android: { keystorePassword: 'env:STIM_3484_SECRET' },
-      }),
+      JSON.stringify({ optimizations: { buildCache: false }, android: { keystorePassword: 'env:STIM_3484_SECRET' } }),
     );
     const config = join(root, 'home', 'config.json');
-    writeFileSync(
-      config,
-      JSON.stringify({
-        ...JSON.parse(readFileSync(config, 'utf8')),
-        archive: { maxCount: 7 },
-      }),
-    );
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
     const port = await start({ env: { STIM_TMPDIR: join(root, 'fast') } });
     const before = readFileSync(config, 'utf8');
     const remote = await authed(port);
@@ -8074,20 +6596,13 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     for (const params of [undefined, null, {}, { cwd: 'relative' }, { cwd: selected, workspace: selected }]) {
       expect(await client.request('desktop.settings.get', params)).toHaveProperty('error.code', 'bad-request');
     }
-    const result = await client.request('desktop.settings.get', {
-      cwd: selected,
-    });
+    const result = await client.request('desktop.settings.get', { cwd: selected });
     expect(result).toMatchObject({
       result: {
         project: selected,
         files: { machine: config, committed },
         settings: expect.arrayContaining([
-          {
-            key: 'optimizations.buildCache',
-            value: false,
-            origin: 'committed',
-            layers: { committed: false },
-          },
+          { key: 'optimizations.buildCache', value: false, origin: 'committed', layers: { committed: false } },
           {
             key: 'android.keystorePassword',
             value: '********',
@@ -8095,11 +6610,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
             layers: { committed: '********' },
             sensitive: true,
           },
-          expect.objectContaining({
-            key: 'tempDir',
-            value: join(root, 'fast'),
-            origin: 'env',
-          }),
+          expect.objectContaining({ key: 'tempDir', value: join(root, 'fast'), origin: 'env' }),
         ]),
       },
     });
@@ -8108,12 +6619,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     expect(await client.request('desktop.settings.get', { cwd: selected })).toMatchObject({
       result: {
         settings: expect.arrayContaining([
-          {
-            key: 'optimizations.buildCache',
-            value: true,
-            origin: 'committed',
-            layers: { committed: true },
-          },
+          { key: 'optimizations.buildCache', value: true, origin: 'committed', layers: { committed: true } },
         ]),
       },
     });
@@ -8121,12 +6627,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
       result: {
         project: null,
         settings: expect.arrayContaining([
-          {
-            key: 'archive.maxCount',
-            value: 7,
-            origin: 'machine',
-            layers: { machine: 7 },
-          },
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
         ]),
       },
     });
@@ -8138,13 +6639,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
 describe('stats.get and settings.get', () => {
   it('read stats and settings without running the CLI, settings in the home directory by default', async () => {
     const config = join(root, 'home', 'config.json');
-    writeFileSync(
-      config,
-      JSON.stringify({
-        ...JSON.parse(readFileSync(config, 'utf8')),
-        archive: { maxCount: 7 },
-      }),
-    );
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
     const port = await start();
     const client = await authed(port);
     expect(await client.request('stats.get', { workspace })).toEqual({
@@ -8157,12 +6652,7 @@ describe('stats.get and settings.get', () => {
         project: null,
         files: { machine: config },
         settings: expect.arrayContaining([
-          {
-            key: 'archive.maxCount',
-            value: 7,
-            origin: 'machine',
-            layers: { machine: 7 },
-          },
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
         ]),
       },
     });
@@ -8199,19 +6689,13 @@ describe('stats.get and settings.get', () => {
     expect(await client.request('stats.get', { workspace })).toMatchObject({
       result: {
         version: 1,
-        project: {
-          key: projectKey,
-          ios: null,
-          android: { runs: 1, lastColdBuildMs: 1234 },
-        },
+        project: { key: projectKey, ios: null, android: { runs: 1, lastColdBuildMs: 1234 } },
         machine: { ios: { runs: 3, hits: 2 }, android: null },
       },
     });
     expect(readFileSync(file, 'utf8')).toBe(content);
     for (const invalid of [null, [], 'workspace']) {
-      expect(await client.request('stats.get', invalid)).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+      expect(await client.request('stats.get', invalid)).toMatchObject({ error: { code: 'bad-request' } });
     }
     expect(await client.request('stats.get', { workspace: root })).toMatchObject({
       error: { code: 'unknown-workspace' },
@@ -8236,15 +6720,10 @@ describe('stats.get and settings.get', () => {
     const port = await start({ commandLimits: { maxOutputBytes: 1024 } });
     const client = await authed(port);
     expect(await client.request('stats.get')).toMatchObject({
-      error: {
-        code: 'stim-failed',
-        message: 'stim stats printed more than 1024 bytes.',
-      },
+      error: { code: 'stim-failed', message: 'stim stats printed more than 1024 bytes.' },
     });
     rmSync(file);
-    expect(await client.request('stats.get')).toMatchObject({
-      result: { version: 1 },
-    });
+    expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
   });
 
   it('serves both stats consumers when the CLI entry is unavailable', async () => {
@@ -8258,15 +6737,10 @@ describe('stats.get and settings.get', () => {
     });
     rmSync(join(root, 'fake-stim.mjs'));
     const client = await authed(port);
-    expect(await client.request('stats.get')).toMatchObject({
-      result: { version: 1 },
-    });
+    expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
     expect(await client.request('machine.details')).toMatchObject({
       result: {
-        gc: expect.objectContaining({
-          mode: 'dry-run',
-          sections: expect.any(Object),
-        }),
+        gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
         stats: { version: 1 },
       },
     });
@@ -8305,10 +6779,7 @@ while (true) {}
     }
   });
 
-  function slowGit(): {
-    env: Record<string, string>;
-    processes: (command?: string) => number[];
-  } {
+  function slowGit(): { env: Record<string, string>; processes: (command?: string) => number[] } {
     const bin = join(root, 'bin');
     const jobs = join(root, 'git-jobs');
     mkdirSync(bin);
@@ -8339,16 +6810,10 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       async (mode) => {
         const slow = slowGit();
         writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
-        const port = await start({
-          env: slow.env,
-          commandLimits: { timeoutMs: mode === 'timeout' ? 1000 : 10000 },
-        });
+        const port = await start({ env: slow.env, commandLimits: { timeoutMs: mode === 'timeout' ? 1000 : 10000 } });
         const client = await authed(port),
           other = await authed(port);
-        const reply = client.request('build.plan', {
-          workspace,
-          platform: 'ios',
-        });
+        const reply = client.request('build.plan', { workspace, platform: 'ios' });
         await until(() => slow.processes().length > 0);
         expect(await other.request('machine.history')).toHaveProperty('result');
         if (mode === 'disconnect') client.socket.terminate();
@@ -8360,12 +6825,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         const response = mode === 'timeout' ? await reply : null;
         const failure = response && 'error' in response ? response.error : null;
         expect(failure).toEqual(
-          mode === 'timeout'
-            ? {
-                code: 'stim-failed',
-                message: 'stim ios did not finish within 1 s.',
-              }
-            : null,
+          mode === 'timeout' ? { code: 'stim-failed', message: 'stim ios did not finish within 1 s.' } : null,
         );
         await until(() => slow.processes().every((pid) => !alive(pid)));
         expect(stimCalls()).toEqual([]);
@@ -8377,27 +6837,18 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
     async () => {
       const slow = slowGit();
-      const port = await start({
-        env: slow.env,
-        requestLimits: { connection: 4 },
-      });
+      const port = await start({ env: slow.env, requestLimits: { connection: 4 } });
       const first = await authed(port);
       const second = await authed(port);
       for (let id = 10; id < 14; id++)
         first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
       await until(() => slow.processes().length >= 4);
-      expect(await second.request('machine.history')).toMatchObject({
-        result: expect.anything(),
-      });
-      expect(await first.request('settings.get')).toMatchObject({
-        error: { code: 'limit-exceeded' },
-      });
+      expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
       const owned = slow.processes();
       first.socket.terminate();
       await until(() => owned.every((pid) => !alive(pid)));
-      expect(await second.request('stats.get')).toMatchObject({
-        result: { version: 1 },
-      });
+      expect(await second.request('stats.get')).toMatchObject({ result: { version: 1 } });
     },
   );
 
@@ -8414,10 +6865,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
       await until(() => slow.processes().length >= 2);
       expect(await second.request('stats.get', { workspace })).toMatchObject({
-        error: {
-          code: 'limit-exceeded',
-          message: 'A remote device can run 2 requests at a time.',
-        },
+        error: { code: 'limit-exceeded', message: 'A remote device can run 2 requests at a time.' },
       });
       const owned = slow.processes();
       first.socket.terminate();
@@ -8431,18 +6879,12 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'cancels a slow stats read and its Git child at timeout and server shutdown',
     async () => {
       const slow = slowGit();
-      const port = await start({
-        env: slow.env,
-        commandLimits: { timeoutMs: 1000 },
-      });
+      const port = await start({ env: slow.env, commandLimits: { timeoutMs: 1000 } });
       const client = await authed(port);
       const reply = client.request('stats.get', { workspace });
       await until(() => slow.processes().length === 2);
       expect(await reply).toMatchObject({
-        error: {
-          code: 'stim-failed',
-          message: 'stim stats did not finish within 1 s.',
-        },
+        error: { code: 'stim-failed', message: 'stim stats did not finish within 1 s.' },
       });
       await until(() => slow.processes().every((pid) => !alive(pid)));
       client.socket.send(JSON.stringify({ id: 10, method: 'stats.get', params: { workspace } }));
@@ -8458,32 +6900,18 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     async () => {
       const slow = slowGit();
       const gits = slow.processes;
-      const port = await start({
-        env: slow.env,
-        commandLimits: { timeoutMs: 1000 },
-      });
+      const port = await start({ env: slow.env, commandLimits: { timeoutMs: 1000 } });
       const first = await authed(port);
       const second = await authed(port);
       const reply = first.request('settings.get', { workspace });
       await until(() => gits().length > 0);
-      expect(await second.request('machine.history')).toMatchObject({
-        result: expect.anything(),
-      });
+      expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
       expect(await reply).toMatchObject({
-        error: {
-          code: 'stim-failed',
-          message: 'stim settings did not finish within 1 s.',
-        },
+        error: { code: 'stim-failed', message: 'stim settings did not finish within 1 s.' },
       });
       await until(() => gits().every((pid) => !alive(pid)));
       const timedOut = gits().length;
-      first.socket.send(
-        JSON.stringify({
-          id: 20,
-          method: 'settings.get',
-          params: { workspace },
-        }),
-      );
+      first.socket.send(JSON.stringify({ id: 20, method: 'settings.get', params: { workspace } }));
       await until(() => gits().length > timedOut);
       first.socket.terminate();
       await until(() => gits().every((pid) => !alive(pid)));
@@ -8508,9 +6936,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         await first.closed;
         expect(slow.processes().every(alive)).toBe(true);
         second.socket.send(JSON.stringify({ id: 20, method: 'machine.details' }));
-        expect(await second.request('machine.history')).toMatchObject({
-          result: expect.anything(),
-        });
+        expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
         await server!.close();
         server = null;
         expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
@@ -8541,13 +6967,7 @@ describe('build.plan', () => {
           const stop = () => {
             cancelled += 1;
             void cleanup.then(
-              () =>
-                reject(
-                  new stim.StimError({
-                    code: 'STIM_CANCELLED',
-                    message: 'Cancelled.',
-                  }),
-                ),
+              () => reject(new stim.StimError({ code: 'STIM_CANCELLED', message: 'Cancelled.' })),
               reject,
             );
           };
@@ -8611,22 +7031,12 @@ describe('build.plan', () => {
           await start();
           const client = await desktop(),
             other = await desktop();
-          void client
-            .request('desktop.plan.get', {
-              cwd: workspace,
-              platform: 'ios',
-              request: 'own',
-            })
-            .catch(() => {});
+          void client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'own' }).catch(() => {});
           await until(() => fixture.calls.length === 1);
           expect(await other.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
             result: { cancelled: false },
           });
-          const queued = other.request('desktop.plan.get', {
-            cwd: workspace,
-            platform: 'android',
-            request: 'own',
-          });
+          const queued = other.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'own' });
           let ended = false;
           const cancellation = client.request('desktop.plan.cancel', { request: 'own' }).then((result) => {
             ended = true;
@@ -8634,15 +7044,11 @@ describe('build.plan', () => {
           });
           await until(() => fixture.cancelled === 1);
           expect(ended).toBe(false);
-          expect(await client.request('machine.history')).toMatchObject({
-            result: expect.anything(),
-          });
+          expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
           expect(ended).toBe(false);
           expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
           finishCleanup();
-          expect(await cancellation).toMatchObject({
-            result: { cancelled: true, ...(retained ? { refusal } : {}) },
-          });
+          expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });
           await until(() => fixture.calls.length === 2);
           fixture.calls[1]?.finish();
           expect(await queued).toHaveProperty('result.platform', 'android');
@@ -8684,11 +7090,7 @@ describe('build.plan', () => {
           result: { cancelled: false },
         });
         expect(
-          await client.request('desktop.plan.get', {
-            cwd: workspace,
-            platform: 'ios',
-            request: 'next',
-          }),
+          await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'next' }),
         ).toHaveProperty('error.code', 'limit-exceeded');
         expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
           result: { cancelled: true, refusal },
@@ -8696,11 +7098,7 @@ describe('build.plan', () => {
         expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
           result: { cancelled: false },
         });
-        const next = client.request('desktop.plan.get', {
-          cwd: workspace,
-          platform: 'android',
-          request: 'next',
-        });
+        const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
         await until(() => fixture.calls.length === 5);
         fixture.calls[4]?.finish();
         expect(await next).toHaveProperty('result.platform', 'android');
@@ -8729,35 +7127,19 @@ describe('build.plan', () => {
       });
       const fixture = gatedPlans(cleanup);
       try {
-        await start({
-          commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 },
-        });
+        await start({ commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 } });
         const client = await desktop();
-        const response = client.request('desktop.plan.get', {
-          cwd: workspace,
-          platform: 'ios',
-          request: 'timeout',
-        });
+        const response = client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'timeout' });
         await until(() => fixture.calls.length === 1);
         expect(await response).toHaveProperty('error.code', 'stim-failed');
-        const cancellation = client.request('desktop.plan.cancel', {
-          request: 'timeout',
-        });
-        expect(await client.request('machine.history')).toMatchObject({
-          result: expect.anything(),
-        });
+        const cancellation = client.request('desktop.plan.cancel', { request: 'timeout' });
+        expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
         failCleanup();
-        expect(await cancellation).toMatchObject({
-          result: { cancelled: true, refusal },
-        });
+        expect(await cancellation).toMatchObject({ result: { cancelled: true, refusal } });
         expect(await client.request('desktop.plan.cancel', { request: 'timeout' })).toMatchObject({
           result: { cancelled: false },
         });
-        const next = client.request('desktop.plan.get', {
-          cwd: workspace,
-          platform: 'android',
-          request: 'next',
-        });
+        const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
         await until(() => fixture.calls.length === 2);
         fixture.calls[1]?.finish();
         expect(await next).toHaveProperty('result.platform', 'android');
@@ -8774,21 +7156,11 @@ describe('build.plan', () => {
       const port = await start();
       const client = await authed(port);
       rmSync(join(root, 'fake-stim.mjs'));
-      const response = client.request('build.plan', {
-        workspace,
-        platform: 'android',
-        slot: 'tablet',
-      });
+      const response = client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' });
       await until(() => fixture.calls.length === 1);
-      expect(fixture.calls[0]).toMatchObject({
-        cwd: workspace,
-        platform: 'android',
-        slot: 'tablet',
-      });
+      expect(fixture.calls[0]).toMatchObject({ cwd: workspace, platform: 'android', slot: 'tablet' });
       fixture.calls[0]?.finish();
-      expect(await response).toMatchObject({
-        result: { platform: 'android', slot: 'tablet' },
-      });
+      expect(await response).toMatchObject({ result: { platform: 'android', slot: 'tablet' } });
       expect(stimCalls()).toEqual([]);
     } finally {
       fixture.close();
@@ -8804,21 +7176,10 @@ describe('build.plan', () => {
         error: { code: 'bad-request' },
       });
       for (const slot of ['', '--device', 'a\u0000b'])
-        expect(
-          await client.request('build.plan', {
-            workspace,
-            platform: 'ios',
-            slot,
-          }),
-        ).toMatchObject({
+        expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
           error: { code: 'bad-request' },
         });
-      expect(
-        await client.request('build.plan', {
-          workspace: '/nowhere',
-          platform: 'ios',
-        }),
-      ).toMatchObject({
+      expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
         error: { code: 'unknown-workspace' },
       });
       expect(fixture.calls).toEqual([]);
@@ -8835,10 +7196,7 @@ describe('build.plan', () => {
         second = await authed(port);
       const ios = first.request('build.plan', { workspace, platform: 'ios' });
       await until(() => fixture.calls.length === 1);
-      const android = second.request('build.plan', {
-        workspace,
-        platform: 'android',
-      });
+      const android = second.request('build.plan', { workspace, platform: 'android' });
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
       fixture.calls[0]?.finish();
@@ -8860,11 +7218,7 @@ describe('build.plan', () => {
       void closing.request('build.plan', { workspace, platform: 'ios' });
       void closing.request('build.plan', { workspace, platform: 'android' });
       await until(() => fixture.calls.length === 1);
-      const response = staying.request('build.plan', {
-        workspace,
-        platform: 'ios',
-        slot: 'tablet',
-      });
+      const response = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
       closing.socket.close();
       await until(() => fixture.calls.length === 2);
       expect(fixture.calls.map((call) => [call.platform, call.slot])).toEqual([
@@ -8890,10 +7244,7 @@ describe('build.plan', () => {
         second = await authed(port);
       const ios = first.request('build.plan', { workspace, platform: 'ios' });
       await until(() => fixture.calls.length === 1);
-      const android = second.request('build.plan', {
-        workspace,
-        platform: 'android',
-      });
+      const android = second.request('build.plan', { workspace, platform: 'android' });
       expect(await ios).toHaveProperty('error.code', 'stim-failed');
       expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
       release();
@@ -8914,16 +7265,9 @@ describe('build.plan', () => {
         closing = await authed(port);
       const ios = staying.request('build.plan', { workspace, platform: 'ios' });
       await until(() => fixture.calls.length === 1);
-      void closing.request('build.plan', {
-        workspace,
-        platform: 'ios',
-        slot: 'tablet',
-      });
+      void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
       await new Promise((resolve) => setTimeout(resolve, 100));
-      const android = staying.request('build.plan', {
-        workspace,
-        platform: 'android',
-      });
+      const android = staying.request('build.plan', { workspace, platform: 'android' });
       await new Promise((resolve) => setTimeout(resolve, 100));
       closing.socket.close();
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -8947,12 +7291,10 @@ describe('build.plan', () => {
       const plain = await localConnect(server);
       await plain.request('hello', { client: CLIENT });
       for (const client of [phone, plain])
-        expect(
-          await client.request('desktop.plan.get', {
-            cwd: workspace,
-            platform: 'ios',
-          }),
-        ).toHaveProperty('error.code', 'forbidden');
+        expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+          'error.code',
+          'forbidden',
+        );
       const client = await desktop();
       for (const params of [
         {},
@@ -8966,12 +7308,7 @@ describe('build.plan', () => {
         expect(await client.request('desktop.plan.get', params)).toHaveProperty('error.code', 'bad-request');
       writeFileSync(join(workspace, 'package.json'), '{}');
       rmSync(join(root, 'fake-stim.mjs'));
-      expect(
-        await client.request('desktop.plan.get', {
-          cwd: workspace,
-          platform: 'ios',
-        }),
-      ).toMatchObject({
+      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
         result: {
           code: 'STIM_NO_PROJECT',
           message: expect.stringContaining(join(workspace, 'package.json')),
@@ -8993,19 +7330,12 @@ describe('build.plan', () => {
       );
       writeFileSync(
         join(selected, '.stim.json'),
-        JSON.stringify({
-          macos: { product: 'Fixture', infoPlist: 'Info.plist' },
-        }),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist' } }),
       );
       await start({ env: { STIM_REMOTE_BUILD: 'local' } });
       const client = await desktop();
       rmSync(join(root, 'fake-stim.mjs'));
-      expect(
-        await client.request('desktop.plan.get', {
-          cwd: selected,
-          platform: 'macos',
-        }),
-      ).toMatchObject({
+      expect(await client.request('desktop.plan.get', { cwd: selected, platform: 'macos' })).toMatchObject({
         result: {
           platform: 'macos',
           product: 'Fixture',
@@ -9025,10 +7355,7 @@ describe('build.plan', () => {
     const client = await authed(port);
     rmSync(join(root, 'fake-stim.mjs'));
     expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
-      error: {
-        code: 'stim-failed',
-        message: expect.stringContaining('STIM_NO_PROJECT:'),
-      },
+      error: { code: 'stim-failed', message: expect.stringContaining('STIM_NO_PROJECT:') },
     });
     expect(stimCalls()).toEqual([]);
   });
@@ -9049,10 +7376,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
         scope: 'workspace',
       }),
     ).toMatchObject({
-      result: {
-        changed: true,
-        setting: { value: '26.4', origin: 'workspace' },
-      },
+      result: { changed: true, setting: { value: '26.4', origin: 'workspace' } },
     });
     const secret = 'private-setting-value';
     const written = await client.request('desktop.settings.write', {
@@ -9062,11 +7386,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
       value: secret,
       scope: 'workspace',
     });
-    expect(written).toMatchObject({
-      result: {
-        setting: { value: '********', layers: { workspace: '********' } },
-      },
-    });
+    expect(written).toMatchObject({ result: { setting: { value: '********', layers: { workspace: '********' } } } });
     expect(JSON.stringify(written)).not.toContain(secret);
     expect(
       await client.request('desktop.settings.write', {
@@ -9078,16 +7398,9 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     ).toMatchObject({
       result: { changed: true, setting: { layers: {} } },
     });
-    expect(loadConfig()?.projects[workspace]?.settings).toEqual({
-      android: { keystorePassword: secret },
-    });
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
     expect(readAudit()).toContainEqual(
-      expect.objectContaining({
-        action: 'settings.set',
-        setting: 'android.keystorePassword',
-        workspace,
-        ok: true,
-      }),
+      expect.objectContaining({ action: 'settings.set', setting: 'android.keystorePassword', workspace, ok: true }),
     );
     expect(JSON.stringify(readAudit())).not.toContain(secret);
     expect(stimCalls()).toEqual([]);
@@ -9099,12 +7412,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     assert(server);
     const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
-    const request = {
-      cwd: workspace,
-      action: 'set',
-      key: 'concurrency.maxBuilds',
-      value: '3',
-    };
+    const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
       expect(await client.request('desktop.settings.write', request)).toHaveProperty('error.code', 'forbidden');
     }
@@ -9144,9 +7452,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
         value: '26.4',
         scope: 'workspace',
       }),
-    ).toMatchObject({
-      result: { code: 'STIM_NO_PROJECT', remedy: expect.any(String) },
-    });
+    ).toMatchObject({ result: { code: 'STIM_NO_PROJECT', remedy: expect.any(String) } });
     expect(
       await client.request('desktop.settings.write', {
         cwd: root,
@@ -9154,41 +7460,26 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
         key: 'concurrency.maxBuilds',
         value: 'many',
       }),
-    ).toMatchObject({
-      result: { code: 'STIM_BAD_ARG', message: expect.any(String) },
-    });
+    ).toMatchObject({ result: { code: 'STIM_BAD_ARG', message: expect.any(String) } });
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
   });
   it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
     await start({ actionLimits: { timeoutMs: 1000 } });
     const client = await desktop();
-    const lock = tryAcquireClaim({
-      root: join(root, 'home', 'config.lock.claims'),
-      mode: 'exclusive',
-    }).acquired;
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
     assert(lock);
     const alias = join(root, 'alias');
     symlinkSync(workspace, alias, 'dir');
-    const request = {
-      cwd: alias,
-      action: 'set',
-      key: 'concurrency.maxBuilds',
-      value: '3',
-    };
+    const request = { cwd: alias, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     try {
       const pending = client.request('desktop.settings.write', request);
       expect(await client.request('machine.history')).toHaveProperty('result');
-      expect(
-        await client.request('desktop.settings.write', {
-          ...request,
-          cwd: workspace,
-        }),
-      ).toHaveProperty('error.code', 'action-busy');
+      expect(await client.request('desktop.settings.write', { ...request, cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
       expect(await pending).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining('did not finish within'),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining('did not finish within') },
       });
       await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
       expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
@@ -9202,10 +7493,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
   it('cancels a pending write on disconnect without changing its setting', async () => {
     await start();
     const client = await desktop();
-    const lock = tryAcquireClaim({
-      root: join(root, 'home', 'config.lock.claims'),
-      mode: 'exclusive',
-    }).acquired;
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
     assert(lock);
     try {
       void client.request('desktop.settings.write', {
@@ -9245,9 +7533,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
         scope: 'workspace',
       }),
     ).toHaveProperty('error.code', 'action-failed');
-    expect(loadConfig()?.projects[workspace]?.settings).toEqual({
-      android: { keystorePassword: secret },
-    });
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
     expect(
       await client.request('desktop.settings.write', {
         cwd: workspace,
@@ -9255,12 +7541,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
         key: 'concurrency.maxBuilds',
         value: 'invalid-value'.repeat(100),
       }),
-    ).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: 'Settings write exceeded its output limit.',
-      },
-    });
+    ).toMatchObject({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
     expect(JSON.stringify(readAudit())).not.toContain(secret);
   });
 
@@ -9355,10 +7636,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     const state = join(workspaceStateDir(workspace), 'state.json');
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ launches: {} }));
-    const lock = tryAcquireClaim({
-      root: join(root, 'home', 'config.lock.claims'),
-      mode: 'exclusive',
-    }).acquired;
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
     assert(lock);
     return lock;
   }
@@ -9373,18 +7651,12 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     await start();
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
-    const reply = await client.request('desktop.stop.subscribe', {
-      cwd: selected,
-    });
-    expect(reply).toMatchObject({
-      result: { subscription: expect.any(String) },
-    });
+    const reply = await client.request('desktop.stop.subscribe', { cwd: selected });
+    expect(reply).toMatchObject({ result: { subscription: expect.any(String) } });
     const { progress, done } = await stopped(client);
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
-    const acceptsEvent = validator.compile({
-      $ref: 'protocol#/$defs/ServerEvent',
-    });
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
     expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
     expect(progress).toContainEqual(
       expect.objectContaining({
@@ -9394,10 +7666,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
       }),
     );
     expect(done.exitCode).toBe(0);
-    expect(JSON.parse(done.stdout)).toMatchObject({
-      root: workspace,
-      ok: true,
-    });
+    expect(JSON.parse(done.stdout)).toMatchObject({ root: workspace, ok: true });
     expect(done.message).toContain('Stopped');
     expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
     expect(stimCalls()).toEqual([]);
@@ -9435,9 +7704,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     writeFileSync(
       join(root, 'home', 'config.json'),
       JSON.stringify({
-        projects: {
-          [workspace]: { metroPort: 31337, deviceSlots: { tablet: {} } },
-        },
+        projects: { [workspace]: { metroPort: 31337, deviceSlots: { tablet: {} } } },
       }),
     );
     const launch = {
@@ -9452,10 +7719,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     writeFileSync(state, JSON.stringify({ launches: { ios: launch, 'ios:tablet': launch } }));
     await start();
     const client = await desktop();
-    await client.request('desktop.stop.subscribe', {
-      cwd: workspace,
-      slot: 'tablet',
-    });
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'tablet' });
     const { done } = await stopped(client);
     expect(done.exitCode).toBe(0);
     expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: launch });
@@ -9474,15 +7738,10 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     writeFileSync(state, JSON.stringify({ launches: { ios: { appId: 'dev.fixture' } } }));
     await start();
     const client = await desktop();
-    await client.request('desktop.stop.subscribe', {
-      cwd: workspace,
-      slot: 'web',
-    });
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'web' });
     const { done } = await stopped(client);
     expect(done.exitCode).toBe(0);
-    expect(readWorkspaceState(workspace)?.launches).toEqual({
-      ios: { appId: 'dev.fixture' },
-    });
+    expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: { appId: 'dev.fixture' } });
     expect(loadConfig()?.projects?.[workspace]?.metroPort).toBe(31337);
     expect(stimCalls()).toEqual([]);
   });
@@ -9498,10 +7757,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
       await client.request('desktop.stop.subscribe', { cwd: workspace });
       await until(() => readWorkspaceState(workspace)?.launches === undefined);
       const { done } = await stopped(client);
-      expect(done).toMatchObject({
-        exitCode: 1,
-        message: 'stim stop did not finish within 0.5 s.',
-      });
+      expect(done).toMatchObject({ exitCode: 1, message: 'stim stop did not finish within 0.5 s.' });
       expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty(
         'error.code',
         'action-busy',
@@ -9529,16 +7785,12 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
       const other = await authed(port, true);
       const lock = heldConfig();
       try {
-        const reply = await client.request('desktop.stop.subscribe', {
-          cwd: workspace,
-        });
+        const reply = await client.request('desktop.stop.subscribe', { cwd: workspace });
         const result: unknown = 'result' in reply ? reply.result : undefined;
         assert(isJsonObject(result) && typeof result.subscription === 'string');
         await until(() => readWorkspaceState(workspace)?.launches === undefined);
         if (mode === 'unsubscribe') {
-          await client.request('unsubscribe', {
-            subscription: result.subscription,
-          });
+          await client.request('unsubscribe', { subscription: result.subscription });
         } else {
           client.socket.close();
           await client.closed;
@@ -9564,21 +7816,14 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     await client.request('desktop.stop.subscribe', { cwd: workspace });
     const { progress, done } = await stopped(client);
     expect(progress).toEqual([]);
-    expect(done).toMatchObject({
-      exitCode: 1,
-      stdout: '',
-      message: 'stim stop printed more than 1 bytes.',
-    });
+    expect(done).toMatchObject({ exitCode: 1, stdout: '', message: 'stim stop printed more than 1 bytes.' });
     assert(server);
     await server.close();
     server = null;
     expect(readAudit()).toContainEqual(
       expect.objectContaining({
         action: 'stop',
-        error: {
-          code: 'action-failed',
-          message: 'stim stop printed more than 1 bytes.',
-        },
+        error: { code: 'action-failed', message: 'stim stop printed more than 1 bytes.' },
       }),
     );
     expect(stimCalls()).toEqual([]);
@@ -9614,21 +7859,12 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       const client = first === 'action-stop' ? await authed(port, true) : await desktop();
       const other = await desktop();
       let controlStop: Promise<ServerMessage> | undefined;
-      const claim = tryAcquireClaim({
-        root: join(root, 'home', 'config.lock.claims'),
-        mode: 'exclusive',
-      });
+      const claim = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' });
       assert(claim.acquired);
       try {
-        if (first === 'action-stop')
-          controlStop = client.request('action', {
-            action: 'stop',
-            workspace: selected,
-          });
+        if (first === 'action-stop') controlStop = client.request('action', { action: 'stop', workspace: selected });
         else {
-          const reply = await client.request(`desktop.${first}.subscribe`, {
-            cwd: selected,
-          });
+          const reply = await client.request(`desktop.${first}.subscribe`, { cwd: selected });
           assert('result' in reply);
         }
         const lock = join(workspaceStateDir(workspace), first === 'start' ? 'metro-start.lock' : 'native-run.lock');
@@ -9645,10 +7881,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
           const event = await other.next();
           if ('event' in event && event.event === `desktop-${second}-ended`) terminal = event;
         }
-        expect(terminal).toMatchObject({
-          exitCode: 1,
-          message: expect.stringContaining('STIM_ACTION_BUSY'),
-        });
+        expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
       } finally {
         releaseClaim(claim.acquired);
         await controlStop;
@@ -9659,15 +7892,10 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
   it.each(['unsubscribe', 'deadline', 'retained-unsubscribe'] as const)(
     'waits for startup cleanup before acknowledging %s',
     async (mode) => {
-      const claim = tryAcquireClaim({
-        root: join(root, 'draining-start'),
-        mode: 'exclusive',
-      });
+      const claim = tryAcquireClaim({ root: join(root, 'draining-start'), mode: 'exclusive' });
       assert(claim.acquired);
       const heldClaim = claim.acquired;
-      await start({
-        actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 },
-      });
+      await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
       let markCancelled = () => {};
       const cancelled = new Promise<void>((resolve) => {
         markCancelled = resolve;
@@ -9684,10 +7912,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
           assert(signal);
           await new Promise<void>((resolve) => {
             if (signal.aborted) resolve();
-            else
-              signal.addEventListener('abort', () => resolve(), {
-                once: true,
-              });
+            else signal.addEventListener('abort', () => resolve(), { once: true });
           });
           markCancelled();
           await gate;
@@ -9697,32 +7922,21 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
                   code: 'STIM_CLAIM_UNAVAILABLE',
                   message: 'Fixture cleanup is unresolved.',
                   remedy: `Recover ${heldClaim.path}`,
-                  details: {
-                    cause: { retainedClaimRoots: [heldClaim.root] },
-                  },
+                  details: { cause: { retainedClaimRoots: [heldClaim.root] } },
                 }
-              : {
-                  code: 'STIM_CANCELLED',
-                  message: 'Fixture startup cancelled.',
-                },
+              : { code: 'STIM_CANCELLED', message: 'Fixture startup cancelled.' },
           );
         },
       }));
       try {
         const client = await desktop();
         const other = await desktop();
-        const reply = await client.request('desktop.start.subscribe', {
-          cwd: workspace,
-        });
+        const reply = await client.request('desktop.start.subscribe', { cwd: workspace });
         const result: unknown = 'result' in reply ? reply.result : undefined;
         assert(isJsonObject(result));
         let acknowledged = false;
         const response =
-          mode === 'deadline'
-            ? started(client)
-            : client.request('unsubscribe', {
-                subscription: result.subscription,
-              });
+          mode === 'deadline' ? started(client) : client.request('unsubscribe', { subscription: result.subscription });
         void response.then(() => {
           acknowledged = true;
           return undefined;
@@ -9739,10 +7953,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         const recoveryMessage = expect.stringContaining(`Recover ${heldClaim.path}`);
         const expected =
           mode === 'deadline'
-            ? {
-                code: 'STIM_CLAIM_UNAVAILABLE',
-                remedy: `Recover ${heldClaim.path}`,
-              }
+            ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${heldClaim.path}` }
             : mode === 'retained-unsubscribe'
               ? { error: { code: 'action-failed', message: recoveryMessage } }
               : { result: {} };
@@ -9773,17 +7984,11 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       );
     }
     const claims = roots.map((_cwd, index) => {
-      const attempt = tryAcquireClaim({
-        root: join(root, `retained-${index}`),
-        mode: 'exclusive',
-      });
+      const attempt = tryAcquireClaim({ root: join(root, `retained-${index}`), mode: 'exclusive' });
       assert(attempt.acquired);
       return attempt.acquired;
     });
-    const second = tryAcquireClaim({
-      root: join(root, 'retained-second'),
-      mode: 'exclusive',
-    });
+    const second = tryAcquireClaim({ root: join(root, 'retained-second'), mode: 'exclusive' });
     assert(second.acquired);
     const secondClaim = second.acquired;
     const firstClaim = claims[0];
@@ -9805,14 +8010,9 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
               throw new stim.StimError({
                 code: 'STIM_CLAIM_UNAVAILABLE',
                 message: 'Fixture child cleanup could not be confirmed.',
-                details: {
-                  retainedClaimRoots: retained.map((claim) => claim.root),
-                },
+                details: { retainedClaimRoots: retained.map((claim) => claim.root) },
               });
-            throw new stim.StimError({
-              code: 'STIM_BAD_ARG',
-              message: 'Recovered startup reached the API.',
-            });
+            throw new stim.StimError({ code: 'STIM_BAD_ARG', message: 'Recovered startup reached the API.' });
           },
         }),
     }));
@@ -9821,9 +8021,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       const other = await desktop();
       for (const cwd of roots) {
         expect(await client.request('desktop.start.subscribe', { cwd })).toHaveProperty('result.subscription');
-        expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({
-          code: 'STIM_CLAIM_UNAVAILABLE',
-        });
+        expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
       }
       await until(() => readAudit().filter((entry) => entry.action === 'start').length === 4);
       expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty(
@@ -9835,21 +8033,15 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         'error.code',
         'action-busy',
       );
-      expect(
-        await other.request('desktop.stop.subscribe', {
-          cwd: sibling,
-          slot: 'web',
-        }),
-      ).toHaveProperty('result.subscription');
+      expect(await other.request('desktop.stop.subscribe', { cwd: sibling, slot: 'web' })).toHaveProperty(
+        'result.subscription',
+      );
       let terminal: ServerMessage | undefined;
       while (!terminal) {
         const event = await other.next();
         if ('event' in event && event.event === 'desktop-stop-ended') terminal = event;
       }
-      expect(terminal).toMatchObject({
-        exitCode: 1,
-        message: expect.stringContaining('STIM_ACTION_BUSY'),
-      });
+      expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
       releaseClaim(second.acquired);
       expect(
         await other.request('desktop.settings.write', {
@@ -9861,9 +8053,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         }),
       ).toHaveProperty('result');
       expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty('result.subscription');
-      expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({
-        code: 'STIM_BAD_ARG',
-      });
+      expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_BAD_ARG' });
     } finally {
       api.mockRestore();
       for (const claim of [...claims, second.acquired]) releaseClaim(claim);
@@ -9879,9 +8069,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     await new Promise<void>((resolve) => listener.close(() => resolve()));
     writeFileSync(
       join(root, 'home', 'config.json'),
-      JSON.stringify({
-        projects: { [workspace]: { metroPort: address.port } },
-      }),
+      JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
     );
     const tools = join(root, 'tools');
     mkdirSync(tools);
@@ -9891,23 +8079,14 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
     writeFileSync(
       join(workspace, '.stim.json'),
-      JSON.stringify({
-        metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' },
-      }),
+      JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
     );
-    await start({
-      env: { PATH: [tools, process.env.PATH ?? ''].join(delimiter) },
-    });
+    await start({ env: { PATH: [tools, process.env.PATH ?? ''].join(delimiter) } });
     const client = await desktop();
-    await client.request('desktop.start.subscribe', {
-      cwd: workspace,
-      waitSeconds: 5,
-    });
+    await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
     const { progress, done } = await started(client);
     expect(done.exitCode).toBe(1);
-    expect(JSON.parse(done.stdout)).toMatchObject({
-      code: 'STIM_SUPERVISOR_EXITED',
-    });
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_SUPERVISOR_EXITED' });
     expect(progress).toContainEqual(
       expect.objectContaining({
         event: 'desktop-start-progress',
@@ -9939,9 +8118,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         projects: {
           [workspace]: {
             metroPort: address.port,
-            settings: {
-              metro: { command: [process.execPath, script, '{port}'] },
-            },
+            settings: { metro: { command: [process.execPath, script, '{port}'] } },
           },
         },
         repos: {},
@@ -9951,21 +8128,14 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
     try {
-      expect(
-        await client.request('desktop.start.subscribe', {
-          cwd: workspace,
-          waitSeconds: 10,
-        }),
-      ).toHaveProperty('result.subscription');
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 10 })).toHaveProperty(
+        'result.subscription',
+      );
       const first = await started(client);
       expect(first.done.exitCode).toBe(0);
       const facts: unknown = JSON.parse(first.done.stdout);
       assert(isJsonObject(facts));
-      expect(facts).toMatchObject({
-        port: address.port,
-        alreadyRunning: false,
-        supervisorPid: expect.any(Number),
-      });
+      expect(facts).toMatchObject({ port: address.port, alreadyRunning: false, supervisorPid: expect.any(Number) });
       const record = readWorkspaceState(workspace)?.supervisor;
       expect(record?.pid).toBe(facts.supervisorPid);
       expect(inspectProcessIdentity(record)).toBe('same');
@@ -9979,9 +8149,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       });
       const validator = new Ajv2020({ strict: false, validateFormats: false });
       validator.addSchema(protocolJsonSchema(), 'protocol');
-      const acceptsEvent = validator.compile({
-        $ref: 'protocol#/$defs/ServerEvent',
-      });
+      const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
       expect(
         [...first.progress, first.done, ...reused.progress, reused.done].every((message) => acceptsEvent(message)),
       ).toBe(true);
@@ -10037,9 +8205,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       });
       assert(attempt.acquired);
       try {
-        const reply = await client.request('desktop.start.subscribe', {
-          cwd: nested,
-        });
+        const reply = await client.request('desktop.start.subscribe', { cwd: nested });
         const result: unknown = 'result' in reply ? reply.result : undefined;
         assert(isJsonObject(result) && typeof result.subscription === 'string');
         for (const [method, params] of [
@@ -10047,21 +8213,12 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
           ['desktop.reload.subscribe', { cwd: workspace }],
           [
             'desktop.settings.write',
-            {
-              cwd: workspace,
-              action: 'set',
-              key: 'recording.enabled',
-              value: 'false',
-              scope: 'workspace',
-            },
+            { cwd: workspace, action: 'set', key: 'recording.enabled', value: 'false', scope: 'workspace' },
           ],
         ] as const)
           expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
         expect(await other.request('machine.history')).toHaveProperty('result');
-        if (mode === 'unsubscribe')
-          await client.request('unsubscribe', {
-            subscription: result.subscription,
-          });
+        if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
         else if (mode === 'disconnect') {
           client.socket.close();
           await client.closed;
@@ -10075,9 +8232,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         expect(readAudit().find((entry) => entry.action === 'start')).toMatchObject({
           workspace,
           ok: false,
-          error: {
-            message: mode === 'deadline' ? 'STIM_METRO_TIMEOUT' : 'STIM_CANCELLED',
-          },
+          error: { message: mode === 'deadline' ? 'STIM_METRO_TIMEOUT' : 'STIM_CANCELLED' },
         });
         expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
         expect(stimCalls()).toEqual([]);
@@ -10090,10 +8245,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     await start({ actionLimits: { maxOutputBytes: 1 } });
     const client = await desktop();
     await client.request('desktop.start.subscribe', { cwd: workspace });
-    expect((await started(client)).done).toMatchObject({
-      exitCode: 1,
-      stdout: '',
-    });
+    expect((await started(client)).done).toMatchObject({ exitCode: 1, stdout: '' });
     await until(() => readAudit().some((entry) => entry.action === 'start'));
     expect(readAudit().find((entry) => entry.action === 'start')?.error?.message).toBe('STIM_OUTPUT_LIMIT');
     expect(stimCalls()).toEqual([]);
@@ -10155,25 +8307,16 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     await start();
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
-    expect(
-      await client.request('desktop.reload.subscribe', {
-        cwd: workspace,
-        platform: 'web',
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' })).toHaveProperty(
+      'result.subscription',
+    );
     const { progress, done } = await reloaded(client);
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
-    const acceptsEvent = validator.compile({
-      $ref: 'protocol#/$defs/ServerEvent',
-    });
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
     expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
     expect(done.exitCode).toBe(0);
-    expect(JSON.parse(done.stdout)).toMatchObject({
-      platform: 'web',
-      appId: browser.url,
-      strategy: 'cdp',
-    });
+    expect(JSON.parse(done.stdout)).toMatchObject({ platform: 'web', appId: browser.url, strategy: 'cdp' });
     expect(done.message).toContain('Completion is not observed');
     expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
     expect(stimCalls()).toEqual([]);
@@ -10215,23 +8358,14 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     const client = await desktop();
     const other = await desktop();
     const phone = await authed(port, true);
-    await client.request('desktop.reload.subscribe', {
-      cwd: nested,
-      platform: 'web',
-    });
+    await client.request('desktop.reload.subscribe', { cwd: nested, platform: 'web' });
     await browser.attaching;
     for (const [method, params] of [
       ['desktop.stop.subscribe', { cwd: workspace }],
       ['desktop.reload.subscribe', { cwd: workspace }],
       [
         'desktop.settings.write',
-        {
-          cwd: workspace,
-          action: 'set',
-          key: 'ios.runtime',
-          value: '26.4',
-          scope: 'workspace',
-        },
+        { cwd: workspace, action: 'set', key: 'ios.runtime', value: '26.4', scope: 'workspace' },
       ],
     ] as const)
       expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
@@ -10247,17 +8381,11 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     const browser = await reloadBrowser(workspace, true);
     await start();
     const client = await desktop();
-    const reply = await client.request('desktop.reload.subscribe', {
-      cwd: workspace,
-      platform: 'web',
-    });
+    const reply = await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
     const result: unknown = 'result' in reply ? reply.result : undefined;
     assert(isJsonObject(result) && typeof result.subscription === 'string');
     await browser.attaching;
-    if (mode === 'unsubscribe')
-      await client.request('unsubscribe', {
-        subscription: result.subscription,
-      });
+    if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
     else {
       client.socket.close();
       await client.closed;
@@ -10290,26 +8418,17 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
     await start();
     const client = await desktop();
-    await client.request('desktop.reload.subscribe', {
-      cwd: workspace,
-      platform: 'ios',
-    });
+    await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'ios' });
     const { done } = await reloaded(client);
     expect(done.exitCode).toBe(1);
-    expect(JSON.parse(done.stdout)).toMatchObject({
-      code: 'STIM_RELOAD_STOPPED',
-      remedy: 'Run `stim ios` first.',
-    });
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim ios` first.' });
     assert(server);
     await server.close();
     server = null;
     const browser = await reloadBrowser();
     await start({ actionLimits: { maxOutputBytes: 1 } });
     const limited = await desktop();
-    await limited.request('desktop.reload.subscribe', {
-      cwd: workspace,
-      platform: 'web',
-    });
+    await limited.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
     expect((await reloaded(limited)).done).toMatchObject({
       exitCode: 1,
       stdout: '',
@@ -10323,37 +8442,27 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     for (const cwd of roots.slice(1)) mkdirSync(cwd);
     writeFileSync(
       join(root, 'home', 'config.json'),
-      JSON.stringify({
-        projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])),
-      }),
+      JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
     );
     const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
     await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const subscriptions: string[] = [];
     for (const cwd of roots.slice(0, 4)) {
-      const reply = await client.request('desktop.reload.subscribe', {
-        cwd,
-        platform: 'web',
-      });
+      const reply = await client.request('desktop.reload.subscribe', { cwd, platform: 'web' });
       const result: unknown = 'result' in reply ? reply.result : undefined;
       assert(isJsonObject(result) && typeof result.subscription === 'string');
       subscriptions.push(result.subscription);
     }
     await Promise.all(browsers.slice(0, 4).map((browser) => browser.attaching));
-    expect(
-      await client.request('desktop.reload.subscribe', {
-        cwd: roots[4],
-        platform: 'web',
-      }),
-    ).toHaveProperty('error.code', 'limit-exceeded');
+    expect(await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' })).toHaveProperty(
+      'error.code',
+      'limit-exceeded',
+    );
     for (const subscription of subscriptions) await client.request('unsubscribe', { subscription });
     await Promise.all(browsers.slice(0, 4).map((browser) => browser.closed));
     await until(() => readAudit().filter((entry) => entry.action === 'reload').length === 4);
-    await client.request('desktop.reload.subscribe', {
-      cwd: roots[4],
-      platform: 'web',
-    });
+    await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' });
     expect((await reloaded(client)).done.exitCode).toBe(0);
     for (const browser of browsers.slice(0, 4)) expect(browser.methods).not.toContain('Page.reload');
   });
@@ -10377,18 +8486,10 @@ describe('action', () => {
         { cwd: workspace, env: process.env, encoding: 'utf8' },
       ),
     );
-    expect(reply).toEqual({
-      id: expect.any(Number),
-      result: { action: 'stop', workspace, output },
-    });
+    expect(reply).toEqual({ id: expect.any(Number), result: { action: 'stop', workspace, output } });
     expect(stimCalls()).toEqual([]);
     expect(readAudit()).toEqual([
-      expect.objectContaining({
-        action: 'stop',
-        workspace,
-        ok: true,
-        durationMs: expect.any(Number),
-      }),
+      expect.objectContaining({ action: 'stop', workspace, ok: true, durationMs: expect.any(Number) }),
     ]);
   });
 
@@ -10396,10 +8497,7 @@ describe('action', () => {
     const state = join(workspaceStateDir(workspace), 'state.json');
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ launches: {} }));
-    const lock = tryAcquireClaim({
-      root: join(root, 'home', 'config.lock.claims'),
-      mode: 'exclusive',
-    }).acquired;
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
     assert(lock);
     return lock;
   }
@@ -10442,11 +8540,7 @@ const timer = setInterval(() => {
       writeFileSync(
         join(root, 'home', 'config.json'),
         JSON.stringify({
-          projects: {
-            [workspace]: {
-              platforms: { android: { avdName: avd, owned: true } },
-            },
-          },
+          projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
         }),
       );
       writeFileSync(
@@ -10454,11 +8548,7 @@ const timer = setInterval(() => {
         JSON.stringify({ version: 1, ios: [], android: [avd], web: [] }),
       );
       const port = await start({
-        env: {
-          ANDROID_HOME: sdk,
-          ANDROID_AVD_HOME: avds,
-          PATH: `${bin}:${process.env.PATH}`,
-        },
+        env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
       });
       const client = await authed(port, true);
       const other = await authed(port, true);
@@ -10466,14 +8556,10 @@ const timer = setInterval(() => {
       const stopping = client.request('action', { action: 'stop', workspace });
       try {
         await until(() => existsSync(entered));
-        expect(await other.request('machine.history')).toMatchObject({
-          result: expect.anything(),
-        });
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
         expect(existsSync(finished)).toBe(false);
         writeFileSync(released, '');
-        expect(await stopping).toMatchObject({
-          result: { action: 'stop', output: { ok: true } },
-        });
+        expect(await stopping).toMatchObject({ result: { action: 'stop', output: { ok: true } } });
         expect(stimCalls()).toEqual([]);
       } finally {
         writeFileSync(released, '');
@@ -10485,20 +8571,12 @@ const timer = setInterval(() => {
 
   it('retains an unverifiable supervisor and reports a failed stop without running a CLI', async () => {
     const config = join(root, 'home', 'config.json');
-    writeFileSync(
-      config,
-      JSON.stringify({
-        projects: { [workspace]: { supervisor: { pid: process.pid } } },
-      }),
-    );
+    writeFileSync(config, JSON.stringify({ projects: { [workspace]: { supervisor: { pid: process.pid } } } }));
     const port = await start();
     const client = await authed(port, true);
     rmSync(join(root, 'fake-stim.mjs'));
     expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('unverified'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('unverified') },
     });
     expect(JSON.parse(readFileSync(config, 'utf8')).projects[workspace].supervisor.pid).toBe(process.pid);
     expect(stimCalls()).toEqual([]);
@@ -10517,10 +8595,7 @@ const timer = setInterval(() => {
       chmodSync(home, 0o500);
       try {
         expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
-          error: {
-            code: 'action-failed',
-            message: expect.stringContaining('EACCES'),
-          },
+          error: { code: 'action-failed', message: expect.stringContaining('EACCES') },
         });
         expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[workspace]).toBeDefined();
         expect(stimCalls()).toEqual([]);
@@ -10535,10 +8610,7 @@ const timer = setInterval(() => {
     const port = await start({ actionLimits: { maxOutputBytes: 8 } });
     const client = await authed(port, true);
     expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: 'stim stop printed more than 8 bytes.',
-      },
+      error: { code: 'action-failed', message: 'stim stop printed more than 8 bytes.' },
     });
     expect(stimCalls()).toEqual([]);
   });
@@ -10565,10 +8637,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
         join(root, 'home', 'config.json'),
         JSON.stringify({ projects: { [workspace]: { metroPort: 8083 } } }),
       );
-      const port = await start({
-        env: { PATH: `${bin}:${process.env.PATH}` },
-        actionLimits: { timeoutMs: 500 },
-      });
+      const port = await start({ env: { PATH: `${bin}:${process.env.PATH}` }, actionLimits: { timeoutMs: 500 } });
       const client = await authed(port, true);
       const other = await authed(port, true);
       const stopping = client.request('action', { action: 'stop', workspace });
@@ -10578,12 +8647,8 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
         const processToken = captureProcessToken(pid);
         assert(processToken);
         owned = { pid, processToken };
-        expect(await stopping).toMatchObject({
-          error: { code: 'action-failed' },
-        });
-        expect(await other.request('machine.history')).toMatchObject({
-          result: expect.anything(),
-        });
+        expect(await stopping).toMatchObject({ error: { code: 'action-failed' } });
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
         assert(server);
         await server.close();
         server = null;
@@ -10617,9 +8682,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       assert(address && typeof address === 'object');
       writeFileSync(
         join(root, 'home', 'config.json'),
-        JSON.stringify({
-          projects: { [workspace]: { metroPort: address.port } },
-        }),
+        JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
       );
       const port = await start({ actionLimits: { timeoutMs: 500 } });
       const client = await authed(port, true);
@@ -10648,10 +8711,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       const reply = client.request('action', { action: 'stop', workspace });
       await until(() => readWorkspaceState(workspace)?.launches === undefined);
       expect(await reply).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: 'stim stop did not finish within 1 s.',
-        },
+        error: { code: 'action-failed', message: 'stim stop did not finish within 1 s.' },
       });
       expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
         error: { code: 'action-busy' },
@@ -10669,10 +8729,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     } finally {
       clearTimeout(release);
       releaseClaim(lock);
-      await createStim({
-        projectRoot: workspace,
-        home: join(root, 'home'),
-      }).stop();
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
     }
   });
 
@@ -10682,29 +8739,18 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const other = await authed(port, true);
     const lock = holdConfigDuringStop();
     try {
-      client.socket.send(
-        JSON.stringify({
-          id: 10,
-          method: 'action',
-          params: { action: 'stop', workspace },
-        }),
-      );
+      client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
       await until(() => readWorkspaceState(workspace)?.launches === undefined);
       client.socket.terminate();
       await client.closed;
-      expect(await other.request('machine.history')).toMatchObject({
-        result: expect.anything(),
-      });
+      expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
       expect(readAudit()).toEqual([]);
       releaseClaim(lock);
       await until(() => readAudit().some((record) => record.action === 'stop' && record.ok));
       expect(stimCalls()).toEqual([]);
     } finally {
       releaseClaim(lock);
-      await createStim({
-        projectRoot: workspace,
-        home: join(root, 'home'),
-      }).stop();
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
     }
   });
 
@@ -10712,10 +8758,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const port = await start();
     const client = await authed(port);
     expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
-      error: {
-        code: 'forbidden',
-        message: expect.stringContaining('--control'),
-      },
+      error: { code: 'forbidden', message: expect.stringContaining('--control') },
     });
     expect(stimCalls()).toEqual([]);
     expect(readAudit()).toEqual([
@@ -10734,10 +8777,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const { id, keyPair } = await pair(port, undefined, true);
     const client = await connect(port, undefined, { keyPair });
     expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: {
-        capabilities: ['read', 'control'],
-        actions: ['reload', 'stop'],
-      },
+      result: { capabilities: ['read', 'control'], actions: ['reload', 'stop'] },
     });
     expect(grantDevice(id, capabilitiesFor(false))).toBe('granted');
     expect(await client.request('action', { action: 'reload', workspace })).toMatchObject({
@@ -10762,17 +8802,12 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       [{ action: 'stop', workspace: `${workspace}/../app` }, 'unknown-workspace'],
     ] as const;
     for (const [params, code] of refusals) {
-      expect(await client.request('action', params)).toMatchObject({
-        error: { code },
-      });
+      expect(await client.request('action', params)).toMatchObject({ error: { code } });
     }
     expect(stimCalls()).toEqual([]);
     expect(readAudit().map((record) => record.error?.code)).toEqual(refusals.map(([, code]) => code));
 
-    await client.request('action', {
-      action: 'x'.repeat(10_000),
-      workspace: 'y'.repeat(10_000),
-    });
+    await client.request('action', { action: 'x'.repeat(10_000), workspace: 'y'.repeat(10_000) });
     const long = readAudit().at(-1)!;
     expect([long.action!.length, long.workspace!.length, long.error!.message.length]).toEqual([256, 256, 256]);
   });
@@ -10785,10 +8820,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const client = await authed(port, true);
     for (let i = 0; i < 2; i++) {
       expect(await client.request('action', { action: 'stop', workspace: file })).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining('could not start'),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining('could not start') },
       });
     }
   });
@@ -10812,13 +8844,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const port = await start();
     const client = await authed(port, true);
     rmSync(join(root, 'fake-stim.mjs'));
-    expect(
-      await client.request('action', {
-        action: 'reload',
-        workspace,
-        platform: 'web',
-      }),
-    ).toEqual({
+    expect(await client.request('action', { action: 'reload', workspace, platform: 'web' })).toEqual({
       id: 2,
       result: {
         action: 'reload',
@@ -10865,37 +8891,23 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       },
     });
     expect(readAudit()).toEqual([
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({ code: 'action-failed' }),
-      }),
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'action-failed' }) }),
     ]);
   });
 
   it('runs one action per workspace at a time and ends one that runs past its timeout', async () => {
     const browser = await reloadBrowser(workspace, true);
-    const port = await start({
-      actionLimits: { timeoutMs: process.platform === 'win32' ? 5000 : 500 },
-    });
+    const port = await start({ actionLimits: { timeoutMs: process.platform === 'win32' ? 5000 : 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
-    client.socket.send(
-      JSON.stringify({
-        id: 10,
-        method: 'action',
-        params: { action: 'reload', workspace },
-      }),
-    );
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await browser.attaching;
     expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
       error: { code: 'action-busy' },
     });
     expect(await client.next()).toMatchObject({
       id: 10,
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('did not finish'),
-      },
+      error: { code: 'action-failed', message: expect.stringContaining('did not finish') },
     });
     await browser.closed;
     expect(browser.methods).not.toContain('Page.reload');
@@ -10907,13 +8919,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     const port = await start();
     const client = await authed(port, true);
     const other = await authed(port, true);
-    client.socket.send(
-      JSON.stringify({
-        id: 10,
-        method: 'action',
-        params: { action: 'reload', workspace },
-      }),
-    );
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await browser.attaching;
     client.socket.terminate();
     await client.closed;
@@ -11093,12 +9099,7 @@ setInterval(() => {
 function statusPayload(devices: Record<string, unknown>): unknown {
   return {
     environments: [{ path: workspace, live: true, memoryMb: 0, warnings: [], ...devices }],
-    capacity: {
-      liveCount: 1,
-      committedMb: 0,
-      totalMemoryMb: 1,
-      overCapacity: false,
-    },
+    capacity: { liveCount: 1, committedMb: 0, totalMemoryMb: 1, overCapacity: false },
     deviceLeases: [],
     unprovisionedWorktrees: [],
     simctlAvailable: true,
@@ -11109,12 +9110,7 @@ function statusWith(devices: Record<string, unknown>): string {
   return JSON.stringify([statusPayload(devices)]);
 }
 
-const OWNED_SIM = {
-  name: 'stim-app (iPhone 17 27.0)',
-  udid: 'SIM-1',
-  owned: true,
-  state: 'Booted',
-};
+const OWNED_SIM = { name: 'stim-app (iPhone 17 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
 
 const OWNED_WEB = {
   browser: 'chrome',
@@ -11147,13 +9143,7 @@ describe('frames.subscribe', () => {
     const target = { workspace, platform: 'android' as const };
     const payload = (name: string) =>
       statusPayload({
-        android: {
-          name,
-          owned: true,
-          physical: false,
-          serial: null,
-          state: 'unknown',
-        },
+        android: { name, owned: true, physical: false, serial: null, state: 'unknown' },
       }) as StatusPayload;
     expect(ownedDevice(payload('stim-app'), target, 'android:emulator-5554')).toEqual({
       platform: 'android',
@@ -11212,13 +9202,7 @@ describe('frames.subscribe', () => {
         FAKE_FRAMES: JSON.stringify([a, a, b].map((bytes) => bytes.toString('base64'))),
       });
       const first = await authed(port);
-      expect(
-        await first.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          slot: 'default',
-        }),
-      ).toEqual({
+      expect(await first.request('frames.subscribe', { workspace, platform: 'ios', slot: 'default' })).toEqual({
         id: 2,
         result: { subscription: 's1' },
       });
@@ -11235,19 +9219,10 @@ describe('frames.subscribe', () => {
       });
       const second = await authed(port);
       await second.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await second.next()).toMatchObject({
-        event: 'frame',
-        data: a.toString('base64'),
-      });
+      expect(await second.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
       expect(readViewedDevices()).toEqual([{ platform: 'ios', id: 'SIM-1' }]);
-      expect(await first.next()).toMatchObject({
-        event: 'frame',
-        data: b.toString('base64'),
-      });
-      expect(await second.next()).toMatchObject({
-        event: 'frame',
-        data: b.toString('base64'),
-      });
+      expect(await first.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
+      expect(await second.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
       expect(toolRuns()[0]).toEqual({
         tool: 'xcrun',
         args: [
@@ -11280,63 +9255,32 @@ describe('frames.subscribe', () => {
         FAKE_FRAMES: JSON.stringify([jpeg(390, 844, 'A').toString('base64')]),
       });
       const viewer = await authed(port);
-      await viewer.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        presence: true,
-      });
+      await viewer.request('frames.subscribe', { workspace, platform: 'ios', presence: true });
       const presence = async () => {
         for (;;) {
           const message = await viewer.next();
           if ('event' in message && message.event === 'presence') return message;
         }
       };
-      expect(await presence()).toEqual({
-        event: 'presence',
-        subscription: 's1',
-        participants: [],
-      });
+      expect(await presence()).toEqual({ event: 'presence', subscription: 's1', participants: [] });
       const gesture = {
         kind: 'tap',
         from: { x: 0.5, y: 0.3 },
         durationMs: 0,
         target: { x: 0.25, y: 0.25, width: 0.5, height: 0.1 },
       };
-      const publish = {
-        workspace,
-        platform: 'ios',
-        command: 'press',
-        phase: 'end',
-        gesture,
-      };
+      const publish = { workspace, platform: 'ios', command: 'press', phase: 'end', gesture };
       const remote = await authed(port, true);
-      expect(await remote.request('presence.publish', publish)).toMatchObject({
-        error: { code: 'forbidden' },
-      });
+      expect(await remote.request('presence.publish', publish)).toMatchObject({ error: { code: 'forbidden' } });
       const local = await desktop();
-      expect(
-        await local.request('presence.publish', {
-          ...publish,
-          gesture: { kind: 'drag' },
-        }),
-      ).toMatchObject({
+      expect(await local.request('presence.publish', { ...publish, gesture: { kind: 'drag' } })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(await local.request('presence.publish', publish)).toMatchObject({
-        result: {},
-      });
+      expect(await local.request('presence.publish', publish)).toMatchObject({ result: {} });
       expect(await presence()).toEqual({
         event: 'presence',
         subscription: 's1',
-        participants: [
-          {
-            id: 'a1',
-            kind: 'agent',
-            name: 'Agent \u00b7 press',
-            color: 1,
-            gesture,
-          },
-        ],
+        participants: [{ id: 'a1', kind: 'agent', name: 'Agent \u00b7 press', color: 1, gesture }],
       });
     },
   );
@@ -11345,20 +9289,8 @@ describe('frames.subscribe', () => {
     const port = await startWithTools({
       FAKE_STIM_PAYLOADS: statusWith({
         ios: { ...OWNED_SIM, state: 'Shutdown' },
-        android: {
-          name: 'Pixel',
-          owned: false,
-          physical: false,
-          serial: 'emulator-5556',
-          state: 'detected',
-        },
-        slots: [
-          {
-            slot: 'tablet',
-            ios: { ...OWNED_SIM, owned: false },
-            android: null,
-          },
-        ],
+        android: { name: 'Pixel', owned: false, physical: false, serial: 'emulator-5556', state: 'detected' },
+        slots: [{ slot: 'tablet', ios: { ...OWNED_SIM, owned: false }, android: null }],
       }),
       FAKE_FRAMES: '[]',
     });
@@ -11369,29 +9301,20 @@ describe('frames.subscribe', () => {
       [{ platform: 'android' }, 'No emulator Stim owns'],
     ] as const;
     for (const [target, message] of refusals) {
-      const reply = await client.request('frames.subscribe', {
-        workspace,
-        ...target,
-      });
+      const reply = await client.request('frames.subscribe', { workspace, ...target });
       if (!('result' in reply)) throw new Error(JSON.stringify(reply));
       const { subscription } = reply.result as { subscription: string };
       expect(await client.next()).toEqual({
         event: 'error',
         subscription,
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining(message),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining(message) },
       });
     }
     for (const [target, message] of [
       [{ platform: 'web' }, 'No Stim-owned Chrome runs'],
       [{ platform: 'web', slot: 'tablet' }, 'in the default slot'],
     ] as const) {
-      const reply = await client.request('frames.subscribe', {
-        workspace,
-        ...target,
-      });
+      const reply = await client.request('frames.subscribe', { workspace, ...target });
       if (!('result' in reply)) throw new Error(JSON.stringify(reply));
       expect(await client.next()).toMatchObject({
         event: 'error',
@@ -11401,12 +9324,9 @@ describe('frames.subscribe', () => {
     expect(await client.request('frames.subscribe', { workspace, platform: 'tv' })).toMatchObject({
       error: { code: 'bad-request' },
     });
-    expect(
-      await client.request('frames.subscribe', {
-        workspace: join(root, 'other'),
-        platform: 'ios',
-      }),
-    ).toMatchObject({ error: { code: 'unknown-workspace' } });
+    expect(await client.request('frames.subscribe', { workspace: join(root, 'other'), platform: 'ios' })).toMatchObject(
+      { error: { code: 'unknown-workspace' } },
+    );
     expect(toolRuns()).toEqual([]);
   });
 
@@ -11419,20 +9339,13 @@ describe('frames.subscribe', () => {
     });
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      width: 10,
-      height: 20,
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
     writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } })));
     renameSync(`${statusFile}.next`, statusFile);
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',
-      error: {
-        code: 'frames-failed',
-        message: expect.stringContaining('is Shutdown, not booted'),
-      },
+      error: { code: 'frames-failed', message: expect.stringContaining('is Shutdown, not booted') },
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
     const settled = toolRuns().length;
@@ -11444,21 +9357,14 @@ describe('frames.subscribe', () => {
     const cover = jpeg(1398, 2034, 'cover');
     const inner = jpeg(2853, 2007, 'inner');
     const port = await startWithTools({
-      FAKE_STIM_PAYLOADS: statusWith({
-        ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' },
-      }),
+      FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
       FAKE_FRAMES: JSON.stringify(
         [cover, jpeg(2034, 1398, 'BLACK'), inner, jpeg(2853, 2007, 'inner 2')].map((bytes) => bytes.toString('base64')),
       ),
     });
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      width: 1398,
-      height: 2034,
-      posture: 'folded',
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 1398, height: 2034, posture: 'folded' });
     expect(await client.next()).toMatchObject({
       event: 'frame',
       width: 2853,
@@ -11466,10 +9372,7 @@ describe('frames.subscribe', () => {
       data: inner.toString('base64'),
       posture: 'unfolded',
     });
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      posture: 'unfolded',
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', posture: 'unfolded' });
     const displays = toolRuns()
       .filter((run) => run.tool === 'xcrun')
       .map((run) => run.args.find((arg) => arg.startsWith('--display=')));
@@ -11484,10 +9387,7 @@ describe('frames.subscribe', () => {
     const before = toolRuns().length;
     const again = await authed(port);
     await again.request('frames.subscribe', { workspace, platform: 'ios' });
-    expect(await again.next()).toMatchObject({
-      event: 'frame',
-      posture: 'unfolded',
-    });
+    expect(await again.next()).toMatchObject({ event: 'frame', posture: 'unfolded' });
     expect(toolRuns()[before]?.args).toContain('--display=primary-1');
   });
 
@@ -11499,11 +9399,7 @@ describe('frames.subscribe', () => {
     });
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      width: 10,
-      height: 20,
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
     expect(toolRuns()[1]?.args).not.toContain('--display=primary');
   });
 
@@ -11518,10 +9414,7 @@ describe('frames.subscribe', () => {
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',
-      error: {
-        code: 'frames-failed',
-        message: expect.stringContaining('simctl failed on purpose'),
-      },
+      error: { code: 'frames-failed', message: expect.stringContaining('simctl failed on purpose') },
     });
   });
 
@@ -11545,49 +9438,24 @@ describe('frames.subscribe', () => {
           FAKE_XCRUN_DELAY_COUNTER: join(root, 'xcrun-delay-counter'),
           FAKE_XCRUN_GATE: gate,
         },
-        {
-          toolTimeoutMs: 400,
-          slowCaptureMs: 150,
-          failureBackoffMs: 100,
-          maxConsecutiveFailures: 3,
-        },
+        { toolTimeoutMs: 400, slowCaptureMs: 150, failureBackoffMs: 100, maxConsecutiveFailures: 3 },
       );
       const client = await authed(port);
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       try {
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-        });
+        await client.request('frames.subscribe', { workspace, platform: 'ios' });
         await ready(0);
         await vi.advanceTimersByTimeAsync(200);
         writeFileSync(`${gate}.0.release`, '');
-        expect(await client.next()).toEqual({
-          event: 'frame-delayed',
-          subscription: 's1',
-          delayed: true,
-        });
-        expect(await client.next()).toMatchObject({
-          event: 'frame',
-          data: a.toString('base64'),
-        });
+        expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
+        expect(await client.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
         await vi.advanceTimersByTimeAsync(200);
         await ready(1);
         await vi.advanceTimersByTimeAsync(400);
         const retained = await authed(port);
-        await retained.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-        });
-        expect(await retained.next()).toMatchObject({
-          event: 'frame',
-          data: a.toString('base64'),
-        });
-        expect(await retained.next()).toEqual({
-          event: 'frame-delayed',
-          subscription: 's1',
-          delayed: true,
-        });
+        await retained.request('frames.subscribe', { workspace, platform: 'ios' });
+        expect(await retained.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+        expect(await retained.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
         await vi.advanceTimersByTimeAsync(100);
         await ready(2);
         await vi.advanceTimersByTimeAsync(20);
@@ -11597,17 +9465,10 @@ describe('frames.subscribe', () => {
         while (!recovered || !changed) {
           const message = await client.next();
           if ('event' in message && message.event === 'frame-delayed') {
-            expect(message).toEqual({
-              event: 'frame-delayed',
-              subscription: 's1',
-              delayed: false,
-            });
+            expect(message).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
             recovered = true;
           } else {
-            expect(message).toMatchObject({
-              event: 'frame',
-              data: b.toString('base64'),
-            });
+            expect(message).toMatchObject({ event: 'frame', data: b.toString('base64') });
             changed = true;
           }
         }
@@ -11629,27 +9490,15 @@ describe('frames.subscribe', () => {
           FAKE_XCRUN_DELAYS: JSON.stringify([300, 300]),
           FAKE_XCRUN_DELAY_COUNTER: join(root, 'xcrun-delay-counter'),
         },
-        {
-          toolTimeoutMs: 100,
-          slowCaptureMs: 50,
-          failureBackoffMs: 20,
-          maxConsecutiveFailures: 2,
-        },
+        { toolTimeoutMs: 100, slowCaptureMs: 50, failureBackoffMs: 20, maxConsecutiveFailures: 2 },
       );
       const client = await authed(port);
       await client.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await client.next()).toEqual({
-        event: 'frame-delayed',
-        subscription: 's1',
-        delayed: true,
-      });
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
       expect(await client.next()).toEqual({
         event: 'error',
         subscription: 's1',
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining('did not finish within'),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining('did not finish within') },
       });
     },
     10_000,
@@ -11662,11 +9511,7 @@ describe('frames.subscribe', () => {
     return helper;
   }
 
-  type HelperRun = {
-    args: string[];
-    pid: number;
-    configs: Record<string, unknown>[];
-  };
+  type HelperRun = { args: string[]; pid: number; configs: Record<string, unknown>[] };
 
   function helperRuns(): HelperRun[] {
     return toolRuns()
@@ -11677,17 +9522,10 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'routes composed Duo images and their pose together without replacing raw subscribers',
     async () => {
-      const pose = {
-        revision: '16ef79a2-5cef-4cdb-b5e9-ab09ef0722d2',
-        screenID: 10,
-        angle: 76,
-        orientation: 3,
-      };
+      const pose = { revision: '16ef79a2-5cef-4cdb-b5e9-ab09ef0722d2', screenID: 10, angle: 76, orientation: 3 };
       const port = await startWithTools(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' } }),
           FAKE_FRAMES: '[]',
           FAKE_HELPER_DUO: JSON.stringify({ width: 800, height: 600, ...pose }),
         },
@@ -11697,46 +9535,24 @@ describe('frames.subscribe', () => {
       );
       const plain = await authed(port);
       await plain.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await plain.next()).toMatchObject({
-        event: 'frame',
-        width: 390,
-        height: 844,
-      });
+      expect(await plain.next()).toMatchObject({ event: 'frame', width: 390, height: 844 });
       const composed = await authed(port);
       expect(
-        await composed.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          duoFrame: true,
-          video: ['h264'],
-        }),
+        await composed.request('frames.subscribe', { workspace, platform: 'ios', duoFrame: true, video: ['h264'] }),
       ).toMatchObject({ result: { subscription: 's1' } });
       let shown = await composed.next();
       while ('event' in shown && shown.event === 'frame' && !shown.duo) shown = await composed.next();
-      expect(shown).toMatchObject({
-        event: 'frame',
-        width: 800,
-        height: 600,
-        duo: pose,
-      });
+      expect(shown).toMatchObject({ event: 'frame', width: 800, height: 600, duo: pose });
       expect(Buffer.from((shown as { data: string }).data, 'base64').toString()).toMatch(/^composed /);
       const raw = await plain.next();
       expect(raw).toMatchObject({ event: 'frame', width: 390, height: 844 });
       expect(raw).not.toHaveProperty('duo');
       expect(Buffer.from((raw as { data: string }).data, 'base64').toString()).toMatch(/^frame /);
       const cached = await authed(port);
-      await cached.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        duoFrame: true,
-      });
+      await cached.request('frames.subscribe', { workspace, platform: 'ios', duoFrame: true });
       expect(await cached.next()).toMatchObject({ event: 'frame', duo: pose });
       expect(
-        await cached.request('frames.subscribe', {
-          workspace,
-          platform: 'android',
-          duoFrame: true,
-        }),
+        await cached.request('frames.subscribe', { workspace, platform: 'android', duoFrame: true }),
       ).toMatchObject({ error: { code: 'bad-request' } });
       for (const client of [plain, composed, cached]) client.socket.close();
     },
@@ -11764,66 +9580,26 @@ describe('frames.subscribe', () => {
         fakeHelper(),
       );
       const framed = await authed(port);
-      await framed.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        deviceFrame: true,
-      });
-      expect(await framed.next()).toMatchObject({
-        event: 'device-frame',
-        artwork: null,
-      });
-      expect(await framed.next()).toMatchObject({
-        event: 'device-frame',
-        artwork,
-      });
+      await framed.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true });
+      expect(await framed.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await framed.next()).toMatchObject({ event: 'device-frame', artwork });
       const captured = await framed.next();
-      expect(captured).toMatchObject({
-        event: 'frame',
-        width: 390,
-        height: 844,
-        artworkTurns: 2,
-      });
+      expect(captured).toMatchObject({ event: 'frame', width: 390, height: 844, artworkTurns: 2 });
       expect(Buffer.from((captured as { data: string }).data, 'base64').toString()).toMatch(/^frame /);
       const plain = await authed(port);
       await plain.request('frames.subscribe', { workspace, platform: 'ios' });
       expect(await plain.next()).toMatchObject({ event: 'frame' });
       const again = await authed(port);
-      await again.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        deviceFrame: true,
-      });
-      expect(await again.next()).toMatchObject({
-        event: 'device-frame',
-        artwork: null,
-      });
-      expect(await again.next()).toMatchObject({
-        event: 'device-frame',
-        artwork,
-      });
+      await again.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true });
+      expect(await again.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await again.next()).toMatchObject({ event: 'device-frame', artwork });
       expect(
-        await again.request('frames.subscribe', {
-          workspace: '/not-registered',
-          platform: 'ios',
-          deviceFrame: true,
-        }),
+        await again.request('frames.subscribe', { workspace: '/not-registered', platform: 'ios', deviceFrame: true }),
       ).toMatchObject({ error: { code: 'unknown-workspace' } });
       const video = await authed(port);
-      await video.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        deviceFrame: true,
-        video: ['h264'],
-      });
-      expect(await video.next()).toMatchObject({
-        event: 'device-frame',
-        artwork: null,
-      });
-      expect(await video.next()).toMatchObject({
-        event: 'device-frame',
-        artwork,
-      });
+      await video.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true, video: ['h264'] });
+      expect(await video.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await video.next()).toMatchObject({ event: 'device-frame', artwork });
       const packet = ((await video.next()) as unknown as { binary: Buffer }).binary;
       expect(packet[1]! & 56).toBe(32 | (2 << 3));
       expect(packet.subarray(packet.readUInt16BE(2), packet.readUInt16BE(2) + 4)).toEqual(Buffer.from([0, 0, 0, 1]));
@@ -11885,11 +9661,7 @@ describe('frames.subscribe', () => {
         const appStart = processStartMicros(appProcess.pid!);
         const processToken = captureProcessToken(appProcess.pid!);
         if (appStart.status !== 'running' || !processToken) throw new Error('Cannot identify fake macOS app');
-        const identity = {
-          pid: appProcess.pid!,
-          processToken,
-          startedAtMicros: appStart.startedAtMicros,
-        };
+        const identity = { pid: appProcess.pid!, processToken, startedAtMicros: appStart.startedAtMicros };
         const bundleId = 'dev.stim.fixture.hosted1';
         writeFileSync(
           join(state, 'state.json'),
@@ -11924,28 +9696,20 @@ describe('frames.subscribe', () => {
         const stored = JSON.parse(readFileSync(journal, 'utf8'));
         stored.sessions[0].appAttempt = appAttempt;
         writeFileSync(journal, JSON.stringify(stored));
-        expect(
-          await client.request('device-host.frames.subscribe', {
-            session,
-            at: 1,
-          }),
-        ).toHaveProperty('error.code', 'bad-request');
+        expect(await client.request('device-host.frames.subscribe', { session, at: 1 })).toHaveProperty(
+          'error.code',
+          'bad-request',
+        );
         expect(await client.request('device-host.frames.subscribe', { session })).toHaveProperty(
           'result.subscription',
           's1',
         );
-        expect(await client.next()).toMatchObject({
-          event: 'frame',
-          subscription: 's1',
-          platform: 'macos',
-        });
+        expect(await client.next()).toMatchObject({ event: 'frame', subscription: 's1', platform: 'macos' });
         expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty(
           'nativeViewerOpened',
           false,
         );
-        const begun = await client.request('device-host.control.begin', {
-          session,
-        });
+        const begun = await client.request('device-host.control.begin', { session });
         if (!('result' in begun)) throw new Error(JSON.stringify(begun));
         const controlSession = (begun.result as { session: string }).session;
         expect(
@@ -11958,29 +9722,16 @@ describe('frames.subscribe', () => {
           }),
         ).toHaveProperty('result');
         expect(
-          await client.request('device-host.input.key', {
-            session: controlSession,
-            key: 'a',
-            modifiers: ['command'],
-          }),
+          await client.request('device-host.input.key', { session: controlSession, key: 'a', modifiers: ['command'] }),
+        ).toHaveProperty('result');
+        expect(await client.request('device-host.input.window', { session: controlSession, window: 7 })).toHaveProperty(
+          'result',
+        );
+        expect(
+          await client.request('device-host.input.window', { session: controlSession, window: null }),
         ).toHaveProperty('result');
         expect(
-          await client.request('device-host.input.window', {
-            session: controlSession,
-            window: 7,
-          }),
-        ).toHaveProperty('result');
-        expect(
-          await client.request('device-host.input.window', {
-            session: controlSession,
-            window: null,
-          }),
-        ).toHaveProperty('result');
-        expect(
-          await client.request('device-host.input.key', {
-            session: controlSession,
-            key: 'invalid',
-          }),
+          await client.request('device-host.input.key', { session: controlSession, key: 'invalid' }),
         ).toHaveProperty('error.code', 'bad-request');
         expect(
           await client.request('device-host.input.scroll', {
@@ -11995,34 +9746,15 @@ describe('frames.subscribe', () => {
           const configs = helperRuns().flatMap((run) => run.configs);
           expect(configs).toEqual(
             expect.arrayContaining([
-              expect.objectContaining({
-                input: 'scroll',
-                deltaX: -5,
-                deltaY: 10,
-              }),
-              expect.objectContaining({
-                input: 'key',
-                key: 'a',
-                modifiers: ['command'],
-              }),
-              expect.objectContaining({
-                input: 'window',
-                window: 7,
-                controlSession: expect.any(String),
-              }),
-              expect.objectContaining({
-                input: 'window',
-                window: null,
-                controlSession: expect.any(String),
-              }),
+              expect.objectContaining({ input: 'scroll', deltaX: -5, deltaY: 10 }),
+              expect.objectContaining({ input: 'key', key: 'a', modifiers: ['command'] }),
+              expect.objectContaining({ input: 'window', window: 7, controlSession: expect.any(String) }),
+              expect.objectContaining({ input: 'window', window: null, controlSession: expect.any(String) }),
             ]),
           );
           const args = helperRuns()[0]!.args;
           expect(args[0]).toBe('macos');
-          expect(JSON.parse(args[1]!)).toMatchObject({
-            bundleId,
-            app: { pid: appProcess.pid },
-          });
+          expect(JSON.parse(args[1]!)).toMatchObject({ bundleId, app: { pid: appProcess.pid } });
         });
         expect(await client.request('device-host.stop', { session })).toHaveProperty('result.state', 'stopping');
         await vi.waitFor(async () =>
@@ -12098,43 +9830,22 @@ describe('frames.subscribe', () => {
         'error.code',
         'bad-request',
       );
-      expect(
-        await first.request('device-host.frames.subscribe', {
-          session,
-          fps: 5,
-        }),
-      ).toHaveProperty('result.subscription', 's1');
-      expect(await first.next()).toMatchObject({
-        event: 'frame',
-        subscription: 's1',
-        platform: 'ios',
-        slot: 'phone',
-      });
-      expect(
-        await first.request('device-host.frames.subscribe', {
-          session,
-          video: ['h264'],
-        }),
-      ).toMatchObject({
+      expect(await first.request('device-host.frames.subscribe', { session, fps: 5 })).toHaveProperty(
+        'result.subscription',
+        's1',
+      );
+      expect(await first.next()).toMatchObject({ event: 'frame', subscription: 's1', platform: 'ios', slot: 'phone' });
+      expect(await first.request('device-host.frames.subscribe', { session, video: ['h264'] })).toMatchObject({
         result: { subscription: 's2', video: 'h264' },
       });
       let streamed = await first.next();
       while (!('binary' in streamed)) streamed = await first.next();
-      expect(
-        await first.request('device-host.frames.keyframe', {
-          subscription: 's2',
-        }),
-      ).toHaveProperty('result');
-      expect(
-        await first.request('device-host.frames.congested', {
-          subscription: 's1',
-        }),
-      ).toHaveProperty('error.code', 'unknown-subscription');
-      expect(
-        await first.request('device-host.frames.congested', {
-          subscription: 's2',
-        }),
-      ).toHaveProperty('result');
+      expect(await first.request('device-host.frames.keyframe', { subscription: 's2' })).toHaveProperty('result');
+      expect(await first.request('device-host.frames.congested', { subscription: 's1' })).toHaveProperty(
+        'error.code',
+        'unknown-subscription',
+      );
+      expect(await first.request('device-host.frames.congested', { subscription: 's2' })).toHaveProperty('result');
       await vi.waitFor(() =>
         expect(helperRuns().flatMap((run) => run.configs)).toContainEqual(
           expect.objectContaining({ video: true, bitrate: 1_500_000 }),
@@ -12145,49 +9856,26 @@ describe('frames.subscribe', () => {
       const helper = readClaimSet(claimRoot).live[0]!.child;
       expect(helper).not.toBeNull();
       expect(alive(helper!.pid)).toBe(true);
-      const began = await first.request('device-host.control.begin', {
-        session,
-      });
+      const began = await first.request('device-host.control.begin', { session });
       if (!('result' in began)) throw new Error(JSON.stringify(began));
       const controlSession = (began.result as { session: string }).session;
       expect(began).toHaveProperty('result.lease', null);
       expect(
-        await first.request('device-host.input.touch', {
-          session: controlSession,
-          phase: 'down',
-          x: 0,
-          y: 1,
-        }),
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 0, y: 1 }),
       ).toHaveProperty('result');
       expect(
-        await first.request('device-host.input.touch', {
-          session: controlSession,
-          phase: 'up',
-          x: 0,
-          y: 1,
-        }),
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'up', x: 0, y: 1 }),
       ).toHaveProperty('result');
       const sameClient = await open();
-      const joined = await sameClient.request('device-host.control.begin', {
-        session,
-      });
+      const joined = await sameClient.request('device-host.control.begin', { session });
       assert(
         'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
       const joinedSession = joined.result.session;
       expect(joinedSession).not.toBe(controlSession);
+      expect(await sameClient.request('device-host.control.end', { session: joinedSession })).toHaveProperty('result');
       expect(
-        await sameClient.request('device-host.control.end', {
-          session: joinedSession,
-        }),
-      ).toHaveProperty('result');
-      expect(
-        await sameClient.request('device-host.input.touch', {
-          session: controlSession,
-          phase: 'down',
-          x: 1,
-          y: 0,
-        }),
+        await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
       ).toHaveProperty('error.code', 'unknown-session');
       const other = setupClient(['device-host'], 'Other client');
       const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
@@ -12198,12 +9886,7 @@ describe('frames.subscribe', () => {
       revokeDevice(observerIdentity.id);
       await observer.closed;
       expect(
-        await first.request('device-host.input.touch', {
-          session: controlSession,
-          phase: 'move',
-          x: 0.5,
-          y: 0.5,
-        }),
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'move', x: 0.5, y: 0.5 }),
       ).toHaveProperty('result');
       first.socket.close();
       await first.closed;
@@ -12213,11 +9896,7 @@ describe('frames.subscribe', () => {
         'result.subscription',
         's1',
       );
-      expect(await sameClient.next()).toMatchObject({
-        event: 'frame',
-        subscription: 's1',
-        slot: 'phone',
-      });
+      expect(await sameClient.next()).toMatchObject({ event: 'frame', subscription: 's1', slot: 'phone' });
       const replacement = readClaimSet(claimRoot).live[0]!.child;
       expect(replacement!.pid).not.toBe(helper!.pid);
       expect(await sameClient.request('device-host.stop', { session })).toHaveProperty('result.state', 'stopping');
@@ -12247,34 +9926,15 @@ describe('frames.subscribe', () => {
     'streams helper frames at the rate each subscriber asks for and stops the helper with the last one',
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_INTERVAL_MS: '10',
-        },
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
         undefined,
         fakeHelper(),
       );
       const slow = await authed(port);
       const fast = await authed(port);
-      await slow.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        fps: 2,
-        maxEdge: 480,
-      });
-      await fast.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        fps: 20,
-        maxEdge: 960,
-      });
-      expect(await fast.next()).toMatchObject({
-        event: 'frame',
-        platform: 'ios',
-        mime: 'image/jpeg',
-        width: 390,
-      });
+      await slow.request('frames.subscribe', { workspace, platform: 'ios', fps: 2, maxEdge: 480 });
+      await fast.request('frames.subscribe', { workspace, platform: 'ios', fps: 20, maxEdge: 960 });
+      expect(await fast.next()).toMatchObject({ event: 'frame', platform: 'ios', mime: 'image/jpeg', width: 390 });
       const counted = { slow: 0, fast: 0 };
       slow.socket.on('message', () => counted.slow++);
       fast.socket.on('message', () => counted.fast++);
@@ -12306,22 +9966,13 @@ describe('frames.subscribe', () => {
     'streams the owned Chrome page through the helper with its verified DevTools target',
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_INTERVAL_MS: '10',
-        },
+        { FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
         undefined,
         fakeHelper(),
       );
       const client = await authed(port);
       expect(
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'web',
-          fps: 60,
-          video: ['h264'],
-        }),
+        await client.request('frames.subscribe', { workspace, platform: 'web', fps: 60, video: ['h264'] }),
       ).toMatchObject({
         result: { video: 'h264' },
       });
@@ -12338,31 +9989,16 @@ describe('frames.subscribe', () => {
     { skip: !fakeTailscale, timeout: 10_000 },
     async (pinned) => {
       const windows = [
-        {
-          id: 12,
-          title: 'MyApp',
-          frame: { x: -100, y: 20, width: 800, height: 600 },
-        },
-        {
-          id: 13,
-          title: '',
-          frame: { x: 100, y: -20, width: 400, height: 300 },
-        },
+        { id: 12, title: 'MyApp', frame: { x: -100, y: 20, width: 800, height: 600 } },
+        { id: 13, title: '', frame: { x: 100, y: -20, width: 400, height: 300 } },
       ];
-      const macosWindows = {
-        current: windows[0],
-        windows,
-        pinned: pinned ?? false,
-      };
+      const macosWindows = { current: windows[0], windows, pinned: pinned ?? false };
       const port = await startWithTools(
         {
           FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
           FAKE_FRAMES: '[]',
           FAKE_HELPER_INTERVAL_MS: '10',
-          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify({
-            ...macosWindows,
-            pinned,
-          }),
+          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify({ ...macosWindows, pinned }),
           FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify(
             pinned === undefined
               ? { current: null, windows: [{ id: -1 }] }
@@ -12373,59 +10009,26 @@ describe('frames.subscribe', () => {
         fakeHelper(),
       );
       const client = await authed(port);
-      expect(
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'macos',
-          video: ['h264'],
-        }),
-      ).toMatchObject({ result: { video: 'h264' } });
+      expect(await client.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject(
+        { result: { video: 'h264' } },
+      );
       const event = await client.next();
-      expect(event).toEqual({
-        event: 'macos-windows',
-        subscription: 's1',
-        ...macosWindows,
-      });
+      expect(event).toEqual({ event: 'macos-windows', subscription: 's1', ...macosWindows });
       const validator = new Ajv2020({ strict: false, validateFormats: false });
       validator.addSchema(protocolJsonSchema(), 'protocol');
-      const acceptsEvent = validator.compile({
-        $ref: 'protocol#/$defs/ServerEvent',
-      });
+      const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
       expect(acceptsEvent(event)).toBe(true);
       expect(
-        acceptsEvent({
-          event: 'macos-windows',
-          subscription: 's1',
-          current: null,
-          windows: [],
-          pinned: false,
-        }),
+        acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [], pinned: false }),
       ).toBe(true);
-      expect(
-        acceptsEvent({
-          event: 'macos-windows',
-          subscription: 's1',
-          current: null,
-          windows: [],
-        }),
-      ).toBe(false);
+      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(false);
       expect(acceptsEvent({ ...event, pinned: 'yes' })).toBe(false);
       expect(await client.next()).toHaveProperty('binary');
       const again = await authed(port);
-      expect(
-        await again.request('frames.subscribe', {
-          workspace,
-          platform: 'macos',
-          video: ['h264'],
-        }),
-      ).toMatchObject({
+      expect(await again.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject({
         result: { subscription: 's1', video: 'h264' },
       });
-      expect(await again.next()).toEqual({
-        event: 'macos-windows',
-        subscription: 's1',
-        ...macosWindows,
-      });
+      expect(await again.next()).toEqual({ event: 'macos-windows', subscription: 's1', ...macosWindows });
       expect(await again.next()).toHaveProperty('binary');
       expect(await client.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
         error: { code: 'forbidden' },
@@ -12464,11 +10067,7 @@ describe('frames.subscribe', () => {
             macos: OWNED_MACOS,
             android: {
               ...OWNED_EMULATOR,
-              activity: {
-                state: 'driven',
-                driver: { tool: 'agent-device', pid: 42, since: null },
-                basis: [],
-              },
+              activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
             },
           }),
           FAKE_HELPER_INTERVAL_MS: '10',
@@ -12479,97 +10078,41 @@ describe('frames.subscribe', () => {
       const client = await authed(port, true);
       const observerIdentity = await pair(port);
       const observer = await returning(port, observerIdentity.keyPair);
-      const viewed = await observer.request('frames.subscribe', {
-        workspace,
-        platform: 'macos',
-      });
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'macos',
-      });
-      expect(begun).toMatchObject({
-        result: { platform: 'macos', lease: null, postures: [] },
-      });
+      const viewed = await observer.request('frames.subscribe', { workspace, platform: 'macos' });
+      const begun = await client.request('control.begin', { workspace, platform: 'macos' });
+      expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
       const { session } = (begun as { result: { session: string } }).result;
       const other = await authed(port, true);
-      const joined = await other.request('control.begin', {
-        workspace,
-        platform: 'macos',
-      });
+      const joined = await other.request('control.begin', { workspace, platform: 'macos' });
       assert(
         'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
       expect(joined).toHaveProperty('result.platform', 'macos');
       const joinedSession = joined.result.session;
       expect(await other.request('control.end', { session: joinedSession })).toHaveProperty('result');
-      expect(
-        await other.request('input.text', {
-          session,
-          text: 'wrong connection',
-        }),
-      ).toHaveProperty('error.code', 'unknown-session');
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.5,
-          y: 0.5,
-        }),
-      ).toHaveProperty('result');
+      expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toHaveProperty('result');
       expect(await client.request('input.text', { session, text: 'native' })).toHaveProperty('result');
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: -30 })).toHaveProperty(
+        'result',
+      );
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: 1001 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
       expect(
-        await client.request('input.scroll', {
-          session,
-          x: 0.5,
-          y: 0.5,
-          deltaX: 0,
-          deltaY: -30,
-        }),
-      ).toHaveProperty('result');
-      expect(
-        await client.request('input.scroll', {
-          session,
-          x: 0.5,
-          y: 0.5,
-          deltaX: 0,
-          deltaY: 1001,
-        }),
+        await client.request('input.key', { session, key: 'a', modifiers: ['command', 'command'] }),
       ).toHaveProperty('error.code', 'bad-request');
-      expect(
-        await client.request('input.key', {
-          session,
-          key: 'a',
-          modifiers: ['command', 'command'],
-        }),
-      ).toHaveProperty('error.code', 'bad-request');
-      expect(
-        await client.request('input.key', {
-          session,
-          key: 'space',
-          modifiers: ['command'],
-        }),
-      ).toHaveProperty('error.code', 'bad-request');
-      expect(
-        await client.request('input.key', {
-          session,
-          key: 'q',
-          modifiers: ['command'],
-        }),
-      ).toHaveProperty('result');
-      expect(
-        await client.request('input.key', {
-          session,
-          key: '7',
-          modifiers: ['shift'],
-        }),
-      ).toHaveProperty('result');
-      expect(
-        await client.request('input.key', {
-          session,
-          key: 'a',
-          modifiers: ['command'],
-        }),
-      ).toHaveProperty('result');
+      expect(await client.request('input.key', { session, key: 'space', modifiers: ['command'] })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty('result');
+      expect(await client.request('input.key', { session, key: '7', modifiers: ['shift'] })).toHaveProperty('result');
+      expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
       expect(await client.request('input.window', { session, window: 12 })).toHaveProperty('result');
       expect(await client.request('input.window', { session, window: null })).toHaveProperty('result');
       for (const window of [undefined, -1, 0x100000000, 1.5, '12'])
@@ -12579,28 +10122,21 @@ describe('frames.subscribe', () => {
         ['input.button', { button: 'home' }],
         ['input.simulator', { action: 'shake' }],
       ]) {
-        expect(
-          await client.request(method as string, {
-            session,
-            ...(params as object),
-          }),
-        ).toHaveProperty('error.code', 'bad-request');
+        expect(await client.request(method as string, { session, ...(params as object) })).toHaveProperty(
+          'error.code',
+          'bad-request',
+        );
       }
       const ended = client.next();
       expect(await client.request('input.key', { session, key: 'escape' })).toHaveProperty('result');
-      expect(await ended).toMatchObject({
-        reason: 'failed',
-        message: expect.stringContaining('Accessibility'),
-      });
+      expect(await ended).toMatchObject({ reason: 'failed', message: expect.stringContaining('Accessibility') });
       expect(await client.request('input.text', { session, text: 'after refusal' })).toHaveProperty(
         'error.code',
         'unknown-session',
       );
       expect(
         await new Promise((resolve) => observer.socket.once('message', (raw) => resolve(JSON.parse(raw.toString())))),
-      ).toMatchObject({
-        subscription: (viewed as { result: { subscription: string } }).result.subscription,
-      });
+      ).toMatchObject({ subscription: (viewed as { result: { subscription: string } }).result.subscription });
       expect(lockCalls()).toEqual([]);
       const sent = helperRuns().at(-1)!.configs;
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
@@ -12612,24 +10148,14 @@ describe('frames.subscribe', () => {
         { input: 'window', window: 12, controlSession: active.session },
         { input: 'window', window: null, controlSession: active.session },
       ]);
-      const resumed = await client.request('control.begin', {
-        workspace,
-        platform: 'macos',
-      });
+      const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
       const next = (resumed as { result: { session: string } }).result.session;
-      expect(
-        await client.request('input.key', {
-          session: next,
-          key: 'a',
-          modifiers: ['command'],
-        }),
-      ).toHaveProperty('result');
+      expect(await client.request('input.key', { session: next, key: 'a', modifiers: ['command'] })).toHaveProperty(
+        'result',
+      );
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(
-        await client.request('input.text', {
-          session: next,
-          text: 'new controller survives old notice',
-        }),
+        await client.request('input.text', { session: next, text: 'new controller survives old notice' }),
       ).toHaveProperty('result');
       other.socket.close();
       observer.socket.close();
@@ -12653,16 +10179,10 @@ describe('frames.subscribe', () => {
       const before = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
       expect(before).toHaveProperty('nativeViewerOpened', false);
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'macos',
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
       expect(await client.next()).toMatchObject({
         event: 'error',
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining('Screen Recording access is unavailable'),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining('Screen Recording access is unavailable') },
       });
       const after = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
       expect(after).toHaveProperty('nativeViewerOpened', true);
@@ -12676,26 +10196,15 @@ describe('frames.subscribe', () => {
     async (extra) => {
       if (!fakeTailscale) return;
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: statusWith({
-            macos: { ...OWNED_MACOS, ...extra },
-          }),
-          FAKE_FRAMES: '[]',
-        },
+        { FAKE_STIM_PAYLOADS: statusWith({ macos: { ...OWNED_MACOS, ...extra } }), FAKE_FRAMES: '[]' },
         undefined,
         fakeHelper(),
       );
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'macos',
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
       expect(await client.next()).toMatchObject({
         event: 'error',
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining('No verified owned macOS app'),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining('No verified owned macOS app') },
       });
       expect(helperRuns()).toEqual([]);
       expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('nativeViewerOpened', false);
@@ -12703,47 +10212,15 @@ describe('frames.subscribe', () => {
   );
 
   function leasedPhonePayload(deviceName: string | null = 'Old iPhone'): string {
-    const lease = {
-      platform: 'ios',
-      deviceName: null,
-      grantedAt: null,
-      expiresAt: null,
-      mine: false,
-      parsed: true,
-    };
+    const lease = { platform: 'ios', deviceName: null, grantedAt: null, expiresAt: null, mine: false, parsed: true };
     return JSON.stringify([
       {
         ...(statusPayload({ ios: OWNED_SIM }) as object),
         deviceLeases: [
-          {
-            ...lease,
-            path: '/locks/other',
-            id: 'PHONE-OTHER',
-            holder: '/elsewhere',
-            expired: false,
-          },
-          {
-            ...lease,
-            path: '/locks/old',
-            id: 'PHONE-OLD',
-            holder: workspace,
-            expired: true,
-          },
-          {
-            ...lease,
-            path: '/locks/sim',
-            id: 'SIM-1',
-            holder: workspace,
-            expired: false,
-          },
-          {
-            ...lease,
-            path: '/locks/slot',
-            id: 'PHONE-SLOT',
-            slot: 'tablet',
-            holder: workspace,
-            expired: false,
-          },
+          { ...lease, path: '/locks/other', id: 'PHONE-OTHER', holder: '/elsewhere', expired: false },
+          { ...lease, path: '/locks/old', id: 'PHONE-OLD', holder: workspace, expired: true },
+          { ...lease, path: '/locks/sim', id: 'SIM-1', holder: workspace, expired: false },
+          { ...lease, path: '/locks/slot', id: 'PHONE-SLOT', slot: 'tablet', holder: workspace, expired: false },
           {
             ...lease,
             path: '/locks/phone',
@@ -12773,35 +10250,14 @@ describe('frames.subscribe', () => {
         fakeHelper(),
       );
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        physical: true,
-      });
-      const stalled = {
-        event: 'frame-delayed',
-        subscription: 's1',
-        delayed: true,
-        reason: locked,
-      };
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      const stalled = { event: 'frame-delayed', subscription: 's1', delayed: true, reason: locked };
       expect(await client.next()).toEqual(stalled);
       const late = await authed(port);
-      await late.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        physical: true,
-      });
+      await late.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
       expect(await late.next()).toEqual(stalled);
-      expect(await client.next()).toEqual({
-        event: 'frame-delayed',
-        subscription: 's1',
-        delayed: false,
-      });
-      expect(await late.next()).toEqual({
-        event: 'frame-delayed',
-        subscription: 's1',
-        delayed: false,
-      });
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+      expect(await late.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
       expect(readViewedDevices()).toEqual([]);
       client.socket.close();
       late.socket.close();
@@ -12815,26 +10271,15 @@ describe('frames.subscribe', () => {
     'ends a physical iPhone subscription when the helper fails, without falling back to simctl',
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: leasedPhonePayload(null),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_FAIL: 'not cabled on purpose',
-        },
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(null), FAKE_FRAMES: '[]', FAKE_HELPER_FAIL: 'not cabled on purpose' },
         undefined,
         fakeHelper(),
       );
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        physical: true,
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
       expect(await client.next()).toMatchObject({
         event: 'error',
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining('not cabled on purpose'),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining('not cabled on purpose') },
       });
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
       expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);
@@ -12846,11 +10291,7 @@ describe('frames.subscribe', () => {
     "never replays a slot's simulator footage for a physical iPhone",
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: leasedPhonePayload(),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_INTERVAL_MS: '100000',
-        },
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '100000' },
         undefined,
         fakeHelper(),
       );
@@ -12865,35 +10306,17 @@ describe('frames.subscribe', () => {
       unit.writeUInt16BE(720, 15);
       writeFileSync(join(recordings, `${at}-${at}.seg`), Buffer.concat([unit, Buffer.from([0, 0, 0, 1, 0])]));
       const sim = await authed(port);
-      expect(
-        await sim.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          video: ['h264'],
-          at,
-        }),
-      ).toMatchObject({
+      expect(await sim.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], at })).toMatchObject({
         result: { subscription: 's1' },
       });
       sim.socket.close();
       const client = await authed(port);
-      const target = {
-        workspace,
-        platform: 'ios',
-        physical: true,
-        video: ['h264'],
-      };
+      const target = { workspace, platform: 'ios', physical: true, video: ['h264'] };
       expect(await client.request('frames.subscribe', { ...target, at })).toMatchObject({
         error: { code: 'no-recording' },
       });
       await client.request('frames.subscribe', target);
-      expect(
-        await client.request('frames.seek', {
-          subscription: 's1',
-          at,
-          rate: 0,
-        }),
-      ).toMatchObject({
+      expect(await client.request('frames.seek', { subscription: 's1', at, rate: 0 })).toMatchObject({
         error: { code: 'no-recording' },
       });
     },
@@ -12902,25 +10325,15 @@ describe('frames.subscribe', () => {
 
   test.skipIf(!fakeTailscale)('refuses a physical iPhone the workspace holds no lease on', async () => {
     const port = await startWithTools(
-      {
-        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
-        FAKE_FRAMES: '[]',
-      },
+      { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' },
       undefined,
       fakeHelper(),
     );
     const client = await authed(port);
-    await client.request('frames.subscribe', {
-      workspace,
-      platform: 'ios',
-      physical: true,
-    });
+    await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
     expect(await client.next()).toMatchObject({
       event: 'error',
-      error: {
-        code: 'frames-failed',
-        message: expect.stringContaining('leases no physical iPhone'),
-      },
+      error: { code: 'frames-failed', message: expect.stringContaining('leases no physical iPhone') },
     });
     expect(helperRuns()).toEqual([]);
   });
@@ -12928,11 +10341,7 @@ describe('frames.subscribe', () => {
   async function fakeChrome(browserPid: number): Promise<{ endpoint: string; close: () => Promise<void> }> {
     const http = createHttpServer((_, response) => {
       const { port } = http.address() as { port: number };
-      response.end(
-        JSON.stringify({
-          webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/B`,
-        }),
-      );
+      response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/B` }));
     });
     const sockets = new WebSocketServer({ server: http });
     let shot = 0;
@@ -12971,11 +10380,7 @@ describe('frames.subscribe', () => {
     const chrome = await fakeChrome(browserPid);
     try {
       const port = await startWithTools({
-        FAKE_STIM_PAYLOADS: JSON.stringify([
-          statusPayload({
-            web: { ...OWNED_WEB, cdpEndpoint: chrome.endpoint },
-          }),
-        ]),
+        FAKE_STIM_PAYLOADS: JSON.stringify([statusPayload({ web: { ...OWNED_WEB, cdpEndpoint: chrome.endpoint } })]),
         FAKE_FRAMES: '[]',
       });
       const client = await authed(port);
@@ -13000,10 +10405,7 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)('refuses a DevTools port that another Chrome serves', async () => {
     expect(await subscribeToFakeChrome(999)).toMatchObject({
       event: 'error',
-      error: {
-        code: 'frames-failed',
-        message: expect.stringContaining('not the owned Chrome 4242'),
-      },
+      error: { code: 'frames-failed', message: expect.stringContaining('not the owned Chrome 4242') },
     });
   });
 
@@ -13011,21 +10413,13 @@ describe('frames.subscribe', () => {
     'keeps the helper for a client that comes back within the linger time, and stops it after',
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_INTERVAL_MS: '10',
-        },
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
         { lingerMs: 600 },
         fakeHelper(),
       );
       const client = await authed(port);
       const oneFrame = async () => {
-        const reply = await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          maxEdge: 640,
-        });
+        const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', maxEdge: 640 });
         const { subscription } = (reply as { result: { subscription: string } }).result;
         const frame = await client.next();
         expect(frame).toMatchObject({ event: 'frame', subscription });
@@ -13056,22 +10450,13 @@ describe('frames.subscribe', () => {
     'streams H.264 as binary messages to a client that decodes it, and a keyframe on request',
     async () => {
       const port = await startWithTools(
-        {
-          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
-          FAKE_FRAMES: '[]',
-          FAKE_HELPER_INTERVAL_MS: '10',
-        },
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
         undefined,
         fakeHelper(),
       );
       const client = await authed(port);
       expect(
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          fps: 60,
-          video: ['vp9', 'h264'],
-        }),
+        await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['vp9', 'h264'] }),
       ).toMatchObject({ result: { subscription: 's1', video: 'h264' } });
       const packet = (await client.next()) as unknown as { binary: Buffer };
       expect(packet.binary.readUInt8(1)).toBe(1);
@@ -13091,13 +10476,7 @@ describe('frames.subscribe', () => {
       client.socket.close();
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs.slice(0, 2)).toEqual([
-        {
-          fps: 60,
-          maxEdge: 1280,
-          jpeg: false,
-          video: true,
-          bitrate: 3_000_000,
-        },
+        { fps: 60, maxEdge: 1280, jpeg: false, video: true, bitrate: 3_000_000 },
         { keyframe: true },
       ]);
       expect(helperRuns()[0]!.configs.filter((line) => 'keyframe' in line)).toHaveLength(2);
@@ -13110,9 +10489,7 @@ describe('frames.subscribe', () => {
     async () => {
       const port = await startWithTools(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
           FAKE_FRAMES: '[]',
           FAKE_HELPER_INTERVAL_MS: '10',
           FAKE_HELPER_DISPLAYS: JSON.stringify([0, ...Array(29).fill(null), 1]),
@@ -13123,18 +10500,9 @@ describe('frames.subscribe', () => {
       const viewer = await authed(port);
       const tile = await authed(port);
       expect(
-        await viewer.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          fps: 60,
-          video: ['h264'],
-        }),
+        await viewer.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['h264'] }),
       ).toMatchObject({ result: { video: 'h264' } });
-      await tile.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        fps: 30,
-      });
+      await tile.request('frames.subscribe', { workspace, platform: 'ios', fps: 30 });
       const flags: number[] = [];
       while (!((flags.at(-1) ?? 0) & 4))
         flags.push(((await viewer.next()) as unknown as { binary: Buffer }).binary[1]!);
@@ -13156,36 +10524,16 @@ describe('frames.subscribe', () => {
     });
     const client = await authed(port);
     expect(
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        fps: 61,
-        video: ['h264'],
-      }),
+      await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 61, video: ['h264'] }),
     ).toMatchObject({ error: { code: 'bad-request' } });
-    const reply = await client.request('frames.subscribe', {
-      workspace,
-      platform: 'ios',
-      fps: 60,
-      video: ['h264'],
-    });
+    const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['h264'] });
     expect(reply).toMatchObject({ result: { subscription: 's1' } });
     expect(reply).not.toHaveProperty('result.video');
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      width: 10,
-      height: 20,
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
     expect(await client.request('frames.keyframe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
-    expect(
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        video: 'h264',
-      }),
-    ).toMatchObject({
+    expect(await client.request('frames.subscribe', { workspace, platform: 'ios', video: 'h264' })).toMatchObject({
       error: { code: 'bad-request' },
     });
   });
@@ -13202,11 +10550,7 @@ describe('frames.subscribe', () => {
     );
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
-    expect(await client.next()).toMatchObject({
-      event: 'frame',
-      width: 10,
-      height: 20,
-    });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
     expect(helperRuns()).toHaveLength(1);
     expect(toolRuns().some((run) => run.tool === 'xcrun')).toBe(true);
   });
@@ -13224,31 +10568,18 @@ describe('frames.subscribe', () => {
       fakeHelper(),
     );
     const client = await authed(port);
-    await client.request('frames.subscribe', {
-      workspace,
-      platform: 'ios',
-      fps: 30,
-    });
+    await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 30 });
     let message = await client.next();
     while ('event' in message && message.event === 'frame') message = await client.next();
     expect(message).toEqual({
       event: 'error',
       subscription: 's1',
-      error: {
-        code: 'frames-failed',
-        message: expect.stringContaining('The simulator went away.'),
-      },
+      error: { code: 'frames-failed', message: expect.stringContaining('The simulator went away.') },
     });
     expect(toolRuns().some((run) => run.tool === 'xcrun')).toBe(false);
   });
 
-  const OWNED_EMULATOR = {
-    name: 'stim-app',
-    owned: true,
-    physical: false,
-    serial: 'emulator-5554',
-    state: 'detected',
-  };
+  const OWNED_EMULATOR = { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' };
 
   async function startControl(
     env: Record<string, string> = {},
@@ -13275,10 +10606,7 @@ describe('frames.subscribe', () => {
         FAKE_TOOL_CALLS: toolCalls,
         FAKE_FRAME_COUNTER: join(root, 'frame-counter'),
         FAKE_FRAMES: '[]',
-        FAKE_STIM_PAYLOADS: statusWith({
-          ios: OWNED_SIM,
-          android: OWNED_EMULATOR,
-        }),
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, android: OWNED_EMULATOR }),
         ...env,
       },
       frameHelper: fakeHelper(),
@@ -13321,11 +10649,7 @@ describe('frames.subscribe', () => {
         ...state,
         deviceLeases: {
           ...(isJsonObject(state.deviceLeases) ? state.deviceLeases : {}),
-          [slot === 'default' ? platform : `${platform}:${slot}`]: {
-            id,
-            token,
-            kind: 'declared',
-          },
+          [slot === 'default' ? platform : `${platform}:${slot}`]: { id, token, kind: 'declared' },
         },
       }),
     );
@@ -13337,43 +10661,25 @@ describe('frames.subscribe', () => {
     async () => {
       const inputs = join(root, 'duo-inputs.ndjson');
       const port = await startControl({
-        FAKE_STIM_PAYLOADS: statusWith({
-          ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' },
-        }),
+        FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' } }),
         FAKE_HELPER_INPUTS: inputs,
       });
       const viewer = await authed(port);
       await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
       await viewer.next();
       const driver = await authed(port, true);
-      const begun = await driver.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await driver.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session } = begun.result as { session: string };
       const revision = '16ef79a2-5cef-4cdb-b5e9-ab09ef0722d2';
-      const touch = {
-        session,
-        phase: 'down',
-        x: 0.25,
-        y: 0.75,
-        duoRevision: revision,
-      };
-      expect(
-        await driver.request('input.touch', {
-          ...touch,
-          duoRevision: 'unbound',
-        }),
-      ).toMatchObject({
+      const touch = { session, phase: 'down', x: 0.25, y: 0.75, duoRevision: revision };
+      expect(await driver.request('input.touch', { ...touch, duoRevision: 'unbound' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       expect(await driver.request('input.touch', { ...touch, display: 0 })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(await driver.request('input.touch', touch)).toMatchObject({
-        result: {},
-      });
+      expect(await driver.request('input.touch', touch)).toMatchObject({ result: {} });
       driver.socket.close();
       await driver.closed;
       const commands = () =>
@@ -13385,20 +10691,8 @@ describe('frames.subscribe', () => {
           : [];
       await until(() => commands().some((command) => command.input === 'duo-release'));
       expect(commands()).toEqual([
-        {
-          input: 'touch',
-          phase: 'down',
-          x: 0.25,
-          y: 0.75,
-          duoRevision: revision,
-        },
-        {
-          input: 'touch',
-          phase: 'up',
-          x: 0.25,
-          y: 0.75,
-          duoRevision: revision,
-        },
+        { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, duoRevision: revision },
         { input: 'duo-release' },
       ]);
       expect(alive(await readPid(`${toolCalls}.started`))).toBe(true);
@@ -13411,25 +10705,13 @@ describe('frames.subscribe', () => {
     const inputs = join(root, 'two-finger-inputs.ndjson');
     const port = await startControl({ FAKE_HELPER_INPUTS: inputs });
     const driver = await authed(port, true);
-    const begun = await driver.request('control.begin', {
-      workspace,
-      platform: 'ios',
-    });
+    const begun = await driver.request('control.begin', { workspace, platform: 'ios' });
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     const result: unknown = begun.result;
     assert(isJsonObject(result) && typeof result.session === 'string');
     const { session } = result;
-    const touch = {
-      session,
-      phase: 'down',
-      x: 0.25,
-      y: 0.5,
-      x2: 0.75,
-      y2: 0.5,
-    };
-    expect(await driver.request('input.touch', touch)).toMatchObject({
-      result: {},
-    });
+    const touch = { session, phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 };
+    expect(await driver.request('input.touch', touch)).toMatchObject({ result: {} });
     expect(await driver.request('input.touch', { ...touch, y2: undefined })).toMatchObject({
       error: { code: 'bad-request' },
     });
@@ -13444,24 +10726,8 @@ describe('frames.subscribe', () => {
         : [];
     await until(() => commands().length === 2);
     expect(commands()).toEqual([
-      {
-        input: 'touch',
-        phase: 'down',
-        x: 0.25,
-        y: 0.5,
-        x2: 0.75,
-        y2: 0.5,
-        display: 0,
-      },
-      {
-        input: 'touch',
-        phase: 'up',
-        x: 0.25,
-        y: 0.5,
-        x2: 0.75,
-        y2: 0.5,
-        display: 0,
-      },
+      { input: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5, display: 0 },
+      { input: 'touch', phase: 'up', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5, display: 0 },
     ]);
     driver.socket.close();
     await driver.closed;
@@ -13471,44 +10737,21 @@ describe('frames.subscribe', () => {
     'changes only advertised simulator options under the current control session',
     async () => {
       const port = await startControl({
-        FAKE_SIMULATOR_OPTIONS: JSON.stringify({
-          canShake: true,
-          slowAnimations: false,
-        }),
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
       });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
-      const { session, simulator } = begun.result as {
-        session: string;
-        simulator: unknown;
-      };
+      const { session, simulator } = begun.result as { session: string; simulator: unknown };
       expect(simulator).toEqual({ canShake: true, slowAnimations: false });
       expect(
-        await client.request('input.simulator', {
-          session,
-          action: 'slow-animations',
-          enabled: true,
-        }),
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
       ).toMatchObject({ result: { canShake: true, slowAnimations: true } });
-      expect(
-        await client.request('input.simulator', {
-          session,
-          action: 'shake',
-          enabled: true,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.simulator', { session, action: 'shake', enabled: true })).toMatchObject({
         error: { code: 'bad-request' },
       });
       expect(
-        await client.request('input.simulator', {
-          session,
-          action: 'slow-animations',
-          enabled: 'true',
-        }),
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: 'true' }),
       ).toMatchObject({ error: { code: 'bad-request' } });
       expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
         result: { canShake: true },
@@ -13529,27 +10772,17 @@ describe('frames.subscribe', () => {
     'hides unavailable simulator controls and refuses a mutation without capability',
     async () => {
       const port = await startControl({
-        FAKE_SIMULATOR_OPTIONS: JSON.stringify({
-          canShake: false,
-          slowAnimations: null,
-        }),
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: false, slowAnimations: null }),
       });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session } = begun.result as { session: string };
       expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       expect(
-        await client.request('input.simulator', {
-          session,
-          action: 'slow-animations',
-          enabled: true,
-        }),
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
       ).toMatchObject({ error: { code: 'bad-request' } });
       expect(toolRuns().filter((run) => run.args[0] === 'simulator-options')).toHaveLength(1);
     },
@@ -13557,33 +10790,21 @@ describe('frames.subscribe', () => {
 
   test.skipIf(!fakeTailscale)('stops a pending simulator option when its control session ends', async () => {
     const port = await startControl({
-      FAKE_SIMULATOR_OPTIONS: JSON.stringify({
-        canShake: true,
-        slowAnimations: false,
-      }),
+      FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
       FAKE_SIMULATOR_WAIT: '1',
     });
     const client = await authed(port, true);
-    const begun = await client.request('control.begin', {
-      workspace,
-      platform: 'ios',
-    });
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     const { session } = begun.result as { session: string };
-    const pending = client.request('input.simulator', {
-      session,
-      action: 'slow-animations',
-      enabled: true,
-    });
+    const pending = client.request('input.simulator', { session, action: 'slow-animations', enabled: true });
     let pid = 0;
     await until(() => {
       if (!existsSync(`${toolCalls}.option-started`)) return false;
       pid = Number(readFileSync(`${toolCalls}.option-started`, 'utf8'));
       return Number.isSafeInteger(pid) && pid > 0;
     });
-    expect(await client.request('control.end', { session })).toMatchObject({
-      result: {},
-    });
+    expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
     expect(await pending).toMatchObject({ error: { code: 'action-failed' } });
     expect(() => process.kill(pid, 0)).toThrow('ESRCH');
   });
@@ -13594,14 +10815,7 @@ describe('frames.subscribe', () => {
     expect(await client.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
       error: { code: 'forbidden' },
     });
-    expect(
-      await client.request('input.touch', {
-        session: 'c1',
-        phase: 'down',
-        x: 0.5,
-        y: 0.5,
-      }),
-    ).toMatchObject({
+    expect(await client.request('input.touch', { session: 'c1', phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
       error: { code: 'unknown-session' },
     });
     expect(readAudit()).toEqual([expect.objectContaining({ action: 'control.begin', ok: false })]);
@@ -13611,17 +10825,8 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)('refuses control of a physical iPhone, which is view only', async () => {
     const port = await startControl();
     const client = await authed(port, true);
-    expect(
-      await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-        physical: true,
-      }),
-    ).toMatchObject({
-      error: {
-        code: 'action-failed',
-        message: expect.stringContaining('view only'),
-      },
+    expect(await client.request('control.begin', { workspace, platform: 'ios', physical: true })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('view only') },
     });
     expect(lockCalls()).toEqual([]);
   });
@@ -13635,10 +10840,7 @@ describe('frames.subscribe', () => {
       const foreign = controlLease(join(root, 'other'), 'FOREIGN');
       const port = await startControl({}, { shapeChangesPerSecond: 1 });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session, lease, postures } = begun.result as {
         session: string;
@@ -13648,24 +10850,14 @@ describe('frames.subscribe', () => {
       expect(lease.expiresAt).toEqual(expect.any(String));
       expect(postures).toEqual([]);
       await until(() => existsSync(`${toolCalls}.started`));
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.25,
-          y: 0.75,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.25, y: 0.75 })).toMatchObject({
         result: {},
       });
       expect(await client.request('input.text', { session, text: 'Hi!\n' })).toMatchObject({ result: {} });
       expect(await client.request('input.button', { session, button: 'home' })).toMatchObject({ result: {} });
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({ result: {} });
       expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({
-        error: {
-          code: 'limit-exceeded',
-          message: expect.stringContaining('rotate or fold'),
-        },
+        error: { code: 'limit-exceeded', message: expect.stringContaining('rotate or fold') },
       });
       expect(await client.request('input.window', { session, window: null })).toMatchObject({
         error: { code: 'bad-request' },
@@ -13676,26 +10868,13 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.posture', { session, posture: 'folded' })).toMatchObject({
         error: { code: 'bad-request', message: 'This device has no hinge.' },
       });
-      expect(
-        await client.request('input.text', {
-          session,
-          text: `caf${String.fromCharCode(233)}`,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.text', { session, text: `caf${String.fromCharCode(233)}` })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(await client.request('control.end', { session })).toMatchObject({
-        result: {},
-      });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs).toEqual([
-        {
-          fps: 0,
-          maxEdge: 240,
-          jpeg: false,
-          video: false,
-          bitrate: expect.any(Number),
-        },
+        { fps: 0, maxEdge: 240, jpeg: false, video: false, bitrate: expect.any(Number) },
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 0 },
         { input: 'text', text: 'Hi!\n' },
         { input: 'button', button: 'home' },
@@ -13706,9 +10885,7 @@ describe('frames.subscribe', () => {
       expect(existsSync(samePlatform.path)).toBe(false);
       expect(existsSync(otherPlatform.path)).toBe(true);
       expect(existsSync(foreign.path)).toBe(true);
-      expect(readWorkspaceState(workspace)?.deviceLeases).toMatchObject({
-        android: { id: 'EMULATOR' },
-      });
+      expect(readWorkspaceState(workspace)?.deviceLeases).toMatchObject({ android: { id: 'EMULATOR' } });
       expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json']);
       expect(readAudit().map((record) => record.action)).toEqual(['control.begin', 'control.end']);
     },
@@ -13753,12 +10930,7 @@ describe('frames.subscribe', () => {
                   result = { capabilities: ['device-host'], peer: PEER };
                 } else if (request.method === 'device-host.control.begin') {
                   if (request.params.session !== session) return socket.close();
-                  result = {
-                    session: 'c1',
-                    platform: 'macos',
-                    lease: null,
-                    postures: [],
-                  };
+                  result = { session: 'c1', platform: 'macos', lease: null, postures: [] };
                 } else if (request.params.session !== 'c1') return socket.close();
                 socket.send(JSON.stringify({ id: request.id, result }));
               });
@@ -13787,9 +10959,7 @@ describe('frames.subscribe', () => {
         }
         writeFileSync(
           join(process.env.STIM_HOME!, 'config.json'),
-          JSON.stringify({
-            projects: { [workspace]: {}, [paths[0]!]: {}, [paths[1]!]: {} },
-          }),
+          JSON.stringify({ projects: { [workspace]: {}, [paths[0]!]: {}, [paths[1]!]: {} } }),
         );
         writeFileSync(
           join(process.env.STIM_HOME!, 'device-host-machines.json'),
@@ -13832,21 +11002,13 @@ describe('frames.subscribe', () => {
         const client = await authed(port, true);
         const ids: string[] = [];
         for (const path of [...paths, workspace]) {
-          const reply = await client.request('control.begin', {
-            workspace: path,
-            platform: 'macos',
-          });
+          const reply = await client.request('control.begin', { workspace: path, platform: 'macos' });
           expect(reply).toHaveProperty('result.session');
           ids.push((reply as { result: { session: string } }).result.session);
         }
         expect(ids).toEqual(['h1', 'h2', 'c1']);
         for (const [index, session] of ids.entries()) {
-          expect(
-            await client.request('input.text', {
-              session,
-              text: `target-${index}`,
-            }),
-          ).toMatchObject({
+          expect(await client.request('input.text', { session, text: `target-${index}` })).toMatchObject({
             result: {},
           });
           expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
@@ -13885,27 +11047,19 @@ describe('frames.subscribe', () => {
     const watcher = await authed(port, true);
     await watcher.request('machine.subscribe');
     expect(((await watcher.next()) as MachineEvent).ownLeases).toBeUndefined();
-    const begun = await client.request('control.begin', {
-      workspace,
-      platform: 'ios',
-    });
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     await until(() => lockCalls().length === 1);
     await watcher.request('machine.subscribe');
     const event = (await watcher.next()) as MachineEvent;
     expect(event.ownLeases).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\dT/)]);
-    await client.request('control.end', {
-      session: (begun.result as { session: string }).session,
-    });
+    await client.request('control.end', { session: (begun.result as { session: string }).session });
   });
 
   test.skipIf(!fakeTailscale)('types and presses buttons on an emulator with adb', async () => {
     const port = await startControl();
     const client = await authed(port, true);
-    const begun = await client.request('control.begin', {
-      workspace,
-      platform: 'android',
-    });
+    const begun = await client.request('control.begin', { workspace, platform: 'android' });
     const { session } = (begun as { result: { session: string } }).result;
     expect(await client.request('input.text', { session, text: "it's ok\b" })).toMatchObject({ result: {} });
     expect(await client.request('input.button', { session, button: 'app-switch' })).toMatchObject({ result: {} });
@@ -13925,17 +11079,12 @@ describe('frames.subscribe', () => {
     async () => {
       const port = await startControl({ FAKE_HELPER_KEYBOARD: 'yes' });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'android',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'android' });
       const { session } = (begun as { result: { session: string } }).result;
       await until(() => existsSync(`${toolCalls}.started`));
       expect(await client.request('input.text', { session, text: "it's ok\b" })).toMatchObject({ result: {} });
       expect(await client.request('input.button', { session, button: 'app-switch' })).toMatchObject({ result: {} });
-      expect(await client.request('control.end', { session })).toMatchObject({
-        result: {},
-      });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs.slice(1)).toEqual([
         { input: 'text', text: "it's ok\b" },
@@ -13949,27 +11098,13 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'drives the owned Chrome page through the helper without a device lease',
     async () => {
-      const port = await startControl({
-        FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }),
-      });
+      const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }) });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'web',
-      });
-      expect(begun).toMatchObject({
-        result: { platform: 'web', lease: null, postures: [] },
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'web' });
+      expect(begun).toMatchObject({ result: { platform: 'web', lease: null, postures: [] } });
       const { session } = (begun as { result: { session: string } }).result;
       await until(() => existsSync(`${toolCalls}.started`));
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.5,
-          y: 0.5,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
         result: {},
       });
       expect(await client.request('input.text', { session, text: 'hi\n' })).toMatchObject({ result: {} });
@@ -13978,14 +11113,9 @@ describe('frames.subscribe', () => {
         error: { code: 'bad-request' },
       });
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({
-        error: {
-          code: 'bad-request',
-          message: 'A web page does not rotate or fold.',
-        },
+        error: { code: 'bad-request', message: 'A web page does not rotate or fold.' },
       });
-      expect(await client.request('control.end', { session })).toMatchObject({
-        result: {},
-      });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.args).toEqual(['web', 'http://127.0.0.1:8900', '4242', 'PAGE-1']);
       expect(helperRuns()[0]!.configs.slice(1)).toEqual([
@@ -14002,15 +11132,9 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)('controls a page that another DevTools client drives', async () => {
     const driven = {
       ...OWNED_WEB,
-      activity: {
-        state: 'driven',
-        driver: { tool: 'playwright', pid: 77, since: null },
-        basis: ['cdp-client'],
-      },
+      activity: { state: 'driven', driver: { tool: 'playwright', pid: 77, since: null }, basis: ['cdp-client'] },
     };
-    const port = await startControl({
-      FAKE_STIM_PAYLOADS: statusWith({ web: driven }),
-    });
+    const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: driven }) });
     const client = await authed(port, true);
     expect(await client.request('control.begin', { workspace, platform: 'web' })).toMatchObject({
       result: { platform: 'web' },
@@ -14022,18 +11146,13 @@ describe('frames.subscribe', () => {
     async () => {
       const port = await startControl(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
           FAKE_HELPER_DISPLAYS: '[0]',
         },
         { shapeChangesPerSecond: 100 },
       );
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
       expect(postures).toEqual(['folded', 'unfolded']);
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({
@@ -14044,52 +11163,24 @@ describe('frames.subscribe', () => {
       });
       const viewer = await authed(port);
       await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await viewer.next()).toMatchObject({
-        event: 'frame',
-        posture: 'folded',
-      });
+      expect(await viewer.next()).toMatchObject({ event: 'frame', posture: 'folded' });
       expect(await client.request('input.posture', { session, posture: 'folded' })).toMatchObject({ result: {} });
-      expect(
-        await client.request('input.posture', {
-          session,
-          posture: 'half-open',
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.posture', { session, posture: 'half-open' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       const spawns = () => toolRuns().filter((run) => run.args[1] === 'spawn');
       expect(spawns()).toEqual([]);
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
-      expect(spawns()).toEqual([
-        {
-          tool: 'xcrun',
-          args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')],
-        },
-      ]);
+      expect(spawns()).toEqual([{ tool: 'xcrun', args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')] }]);
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
       expect(spawns()).toHaveLength(1);
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.25,
-          y: 0.75,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.25, y: 0.75 })).toMatchObject({
         result: {},
       });
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'up',
-          x: 0.25,
-          y: 0.75,
-          display: 0,
-        }),
-      ).toMatchObject({ result: {} });
-      expect(await client.request('control.end', { session })).toMatchObject({
-        result: {},
-      });
+      expect(await client.request('input.touch', { session, phase: 'up', x: 0.25, y: 0.75, display: 0 })).toMatchObject(
+        { result: {} },
+      );
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       viewer.socket.close();
       await until(() => helperRuns().length > 0);
       expect(helperRuns().flatMap((run) => run.configs.filter((line) => 'input' in line))).toEqual([
@@ -14108,37 +11199,21 @@ describe('frames.subscribe', () => {
       const grandchild = join(root, 'grandchild.pid');
       const port = await startControl(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
           FAKE_HELPER_DISPLAYS: '[0]',
           FAKE_FOLD_GRANDCHILD: grandchild,
         },
         { shapeChangesPerSecond: 100, foldTimeoutMs: 500 },
       );
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
       const viewer = await authed(port);
       await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await viewer.next()).toMatchObject({
-        event: 'frame',
-        posture: 'folded',
-      });
+      expect(await viewer.next()).toMatchObject({ event: 'frame', posture: 'folded' });
       try {
-        expect(
-          await client.request('input.posture', {
-            session,
-            posture: 'unfolded',
-          }),
-        ).toMatchObject({
-          error: {
-            code: 'action-failed',
-            message: 'sim-fold did not finish within 0.5 s.',
-          },
+        expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
+          error: { code: 'action-failed', message: 'sim-fold did not finish within 0.5 s.' },
         });
         await until(() => existsSync(grandchild));
         const grandchildPid = await readPid(grandchild);
@@ -14177,23 +11252,13 @@ describe('frames.subscribe', () => {
           `port.serial=5554\ngrpc.port=${(grpc.address() as { port: number }).port}\n`,
         );
         const client = await authed(port, true);
-        const begun = await client.request('control.begin', {
-          workspace,
-          platform: 'android',
-        });
+        const begun = await client.request('control.begin', { workspace, platform: 'android' });
         const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
         expect(postures).toEqual(['folded', 'half-open', 'unfolded']);
         await until(() => existsSync(`${toolCalls}.started`));
-        expect(
-          await client.request('input.posture', {
-            session,
-            posture: 'half-open',
-          }),
-        ).toMatchObject({ result: {} });
+        expect(await client.request('input.posture', { session, posture: 'half-open' })).toMatchObject({ result: {} });
         expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({ result: {} });
-        expect(await client.request('control.end', { session })).toMatchObject({
-          result: {},
-        });
+        expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
         await until(() => helperRuns().length === 1);
         expect(helperRuns()[0]!.configs.slice(1)).toEqual([
           { input: 'posture', posture: 'half-open' },
@@ -14217,20 +11282,13 @@ describe('frames.subscribe', () => {
         FAKE_STIM_PAYLOADS: statusWith({
           ios: {
             ...OWNED_SIM,
-            activity: {
-              state: 'driven',
-              driver: { tool: 'agent-device', pid: 42, since },
-              basis: [],
-            },
+            activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since }, basis: [] },
           },
         }),
         FAKE_STIM_LOCK_GRANTED: since,
       });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
       await client.request('control.end', { session });
       await until(() => readAudit().length === 2);
@@ -14251,13 +11309,7 @@ describe('frames.subscribe', () => {
       const kept = controlLease(workspace, 'SIM-1');
       const port = await startControl({
         FAKE_STIM_PAYLOADS: statusWith({
-          slots: [
-            {
-              slot: 'tablet',
-              ios: { ...OWNED_SIM, udid: 'SIM-2' },
-              android: null,
-            },
-          ],
+          slots: [{ slot: 'tablet', ios: { ...OWNED_SIM, udid: 'SIM-2' }, android: null }],
         }),
       });
       const first = await authed(port, true);
@@ -14292,15 +11344,10 @@ describe('frames.subscribe', () => {
       const first = await authed(port, true);
       const second = await authed(port, true);
       const target = { workspace, platform: 'ios' };
-      expect(await first.request('control.begin', target)).toMatchObject({
-        error: { code: 'device-busy' },
-      });
+      expect(await first.request('control.begin', target)).toMatchObject({ error: { code: 'device-busy' } });
       expect(await first.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.lease', null);
       expect(await second.request('control.begin', target)).toMatchObject({
-        error: {
-          code: 'device-busy',
-          message: expect.stringContaining('Another workspace leases this device'),
-        },
+        error: { code: 'device-busy', message: expect.stringContaining('Another workspace leases this device') },
       });
       expect(await second.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.session');
     },
@@ -14317,11 +11364,7 @@ describe('frames.subscribe', () => {
           const messages = request.url?.endsWith('/send') ? (JSON.parse(text) as typeof bodies) : [];
           bodies.push(...messages);
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(
-            JSON.stringify({
-              data: messages.map(() => ({ status: 'ok', id: 't' })),
-            }),
-          );
+          response.end(JSON.stringify({ data: messages.map(() => ({ status: 'ok', id: 't' })) }));
         });
       });
       await new Promise<void>((resolve) => expo.listen(0, '127.0.0.1', resolve));
@@ -14337,24 +11380,14 @@ describe('frames.subscribe', () => {
         const first = await authed(port, true);
         const second = await authed(port, true);
         const token = 'ExponentPushToken[first]';
-        await first.request('push.register', {
-          token,
-          events: ['control'],
-          ref: 'mac-1',
-        });
+        await first.request('push.register', { token, events: ['control'], ref: 'mac-1' });
         const listed = await first.request('notifications.list');
-        expect(listed).toMatchObject({
-          result: { cursor: 0, notifications: [] },
-        });
+        expect(listed).toMatchObject({ result: { cursor: 0, notifications: [] } });
         await second.request('notifications.list', { since: 0 });
         await first.request('control.begin', { workspace, platform: 'ios' });
         const driven = {
           ...OWNED_SIM,
-          activity: {
-            state: 'driven',
-            driver: { tool: 'agent-device', pid: 42, since: null },
-            basis: [],
-          },
+          activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
         };
         writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: driven })));
         renameSync(`${statusFile}.next`, statusFile);
@@ -14377,12 +11410,7 @@ describe('frames.subscribe', () => {
           id: `control:${workspace}:ios:default`,
           category: 'control',
           body,
-          target: {
-            kind: 'device',
-            path: workspace,
-            platform: 'ios',
-            slot: 'default',
-          },
+          target: { kind: 'device', path: workspace, platform: 'ios', slot: 'default' },
         };
         const controls = (reply: unknown) => {
           assert(isJsonObject(reply) && isJsonObject(reply.result) && Array.isArray(reply.result.notifications));
@@ -14408,39 +11436,21 @@ describe('frames.subscribe', () => {
     const lease = controlLease(workspace, 'SIM-1');
     const port = await startControl({}, { idleMs: 700, inputPerSecond: 3, textCharsPerSecond: 1 });
     const client = await authed(port, true);
-    const begun = await client.request('control.begin', {
-      workspace,
-      platform: 'ios',
-    });
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     const { session } = (begun as { result: { session: string } }).result;
     const replies = [];
     for (let i = 0; i < 5; i++)
-      replies.push(
-        await client.request('input.touch', {
-          session,
-          phase: 'move',
-          x: 0,
-          y: 0,
-        }),
-      );
+      replies.push(await client.request('input.touch', { session, phase: 'move', x: 0, y: 0 }));
     expect(replies.filter((reply) => 'error' in reply)).toEqual([
-      expect.objectContaining({
-        error: expect.objectContaining({ code: 'limit-exceeded' }),
-      }),
-      expect.objectContaining({
-        error: expect.objectContaining({ code: 'limit-exceeded' }),
-      }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
     ]);
     await new Promise((resolve) => setTimeout(resolve, 350));
     expect(await client.request('input.text', { session, text: 'x'.repeat(200) })).toMatchObject({ result: {} });
     expect(await client.request('input.text', { session, text: 'x'.repeat(100) })).toMatchObject({
       error: { code: 'limit-exceeded' },
     });
-    expect(await client.next()).toMatchObject({
-      event: 'control-ended',
-      session,
-      reason: 'idle',
-    });
+    expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
     await until(() => !existsSync(lease.path));
   });
 
@@ -14448,10 +11458,7 @@ describe('frames.subscribe', () => {
     controlLease(workspace, 'SIM-1');
     const port = await startControl({}, { inputPerSecond: 3 });
     const client = await authed(port, true);
-    const begun = await client.request('control.begin', {
-      workspace,
-      platform: 'ios',
-    });
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     assert('result' in begun && begun.result && 'session' in begun.result && typeof begun.result.session === 'string');
     const { session } = begun.result;
     const touch = (phase: string) => client.request('input.touch', { session, phase, x: 0, y: 0 });
@@ -14475,10 +11482,7 @@ describe('frames.subscribe', () => {
       const { id, keyPair } = await pair(port, undefined, true);
       const client = await returning(port, keyPair);
       const reader = await authed(port);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'ios',
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
       let entered = () => {};
       const locked = new Promise<void>((resolve) => (entered = resolve));
@@ -14493,14 +11497,8 @@ describe('frames.subscribe', () => {
         await locked;
         await until(() => existsSync(`${toolCalls}.started`));
         grantDevice(id, capabilitiesFor(false));
-        expect(await client.next()).toMatchObject({
-          event: 'control-ended',
-          session,
-          reason: 'forbidden',
-        });
-        expect(await reader.request('machine.get')).toMatchObject({
-          result: expect.any(Object),
-        });
+        expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+        expect(await reader.request('machine.get')).toMatchObject({ result: expect.any(Object) });
         expect(existsSync(lease.path)).toBe(true);
         let closed = false;
         closing = server!.close().then(() => {
@@ -14515,11 +11513,7 @@ describe('frames.subscribe', () => {
         await closing;
         server = null;
         expect(existsSync(lease.path)).toBe(false);
-        expect(readClaimSet(`${lease.lock}.claims`)).toMatchObject({
-          live: [],
-          unresolved: [],
-          orphans: [],
-        });
+        expect(readClaimSet(`${lease.lock}.claims`)).toMatchObject({ live: [], unresolved: [], orphans: [] });
         expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
       } finally {
         release();
@@ -14542,14 +11536,7 @@ describe('frames.subscribe', () => {
     };
     const payload = statusPayload({ android: OWNED_EMULATOR }) as Record<string, unknown>;
     return JSON.stringify([
-      {
-        ...payload,
-        deviceLeases: leases.map((entry) => ({
-          ...lease,
-          holder: workspace,
-          ...entry,
-        })),
-      },
+      { ...payload, deviceLeases: leases.map((entry) => ({ ...lease, holder: workspace, ...entry })) },
     ]);
   }
 
@@ -14565,28 +11552,14 @@ describe('frames.subscribe', () => {
         ]),
       });
       const client = await authed(port);
-      const subscribed = await client.request('frames.subscribe', {
-        workspace,
-        platform: 'android',
-        physical: true,
-      });
-      expect(subscribed).toMatchObject({
-        result: { subscription: expect.any(String) },
-      });
+      const subscribed = await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
+      expect(subscribed).toMatchObject({ result: { subscription: expect.any(String) } });
       await until(() => existsSync(`${toolCalls}.started`));
       for (const slot of ['tablet', 'old']) {
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'android',
-          physical: true,
-          slot,
-        });
+        await client.request('frames.subscribe', { workspace, platform: 'android', physical: true, slot });
         expect(await client.next()).toMatchObject({
           event: 'error',
-          error: {
-            code: 'frames-failed',
-            message: expect.stringContaining('leases no physical Android device'),
-          },
+          error: { code: 'frames-failed', message: expect.stringContaining('leases no physical Android device') },
         });
       }
       await server!.close();
@@ -14611,45 +11584,26 @@ describe('frames.subscribe', () => {
         deviceName: null,
         holder: workspace,
       };
-      const payload = statusPayload({
-        ios: OWNED_SIM,
-        android: OWNED_EMULATOR,
-      }) as Record<string, unknown>;
+      const payload = statusPayload({ ios: OWNED_SIM, android: OWNED_EMULATOR }) as Record<string, unknown>;
       const port = await startControl({
         STIM_SERVER_TEST_ADB_EMULATORS: '1',
         FAKE_STIM_PAYLOADS: JSON.stringify([
           {
             ...payload,
             deviceLeases: [
-              {
-                ...lease,
-                path: '/locks/emu',
-                platform: 'android',
-                id: 'emulator-5554',
-              },
+              { ...lease, path: '/locks/emu', platform: 'android', id: 'emulator-5554' },
               { ...lease, path: '/locks/sim', platform: 'ios', id: 'SIM-1' },
             ],
           },
         ]),
       });
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        physical: true,
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
       expect(await client.next()).toMatchObject({
         event: 'error',
-        error: {
-          code: 'frames-failed',
-          message: expect.stringContaining('leases no physical iPhone'),
-        },
+        error: { code: 'frames-failed', message: expect.stringContaining('leases no physical iPhone') },
       });
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'android',
-        physical: true,
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
       await until(() => existsSync(`${toolCalls}.started`));
       await server!.close();
       server = null;
@@ -14675,17 +11629,10 @@ describe('frames.subscribe', () => {
             takeOver,
           }),
         ).toMatchObject({
-          error: {
-            code: 'action-failed',
-            message: expect.stringContaining('leases no physical Android device'),
-          },
+          error: { code: 'action-failed', message: expect.stringContaining('leases no physical Android device') },
         });
       }
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'android',
-        physical: true,
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session, lease, postures } = begun.result as {
         session: string;
@@ -14695,14 +11642,7 @@ describe('frames.subscribe', () => {
       expect(lease.expiresAt).toEqual(expect.any(String));
       expect(postures).toEqual([]);
       await until(() => existsSync(`${toolCalls}.started`));
-      expect(
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.5,
-          y: 0.5,
-        }),
-      ).toMatchObject({
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
         result: {},
       });
       expect(await client.request('input.text', { session, text: 'hi\n' })).toMatchObject({ result: {} });
@@ -14711,15 +11651,10 @@ describe('frames.subscribe', () => {
         ['input.posture', { posture: 'folded' }],
       ] as const) {
         expect(await client.request(method, { session, ...params })).toMatchObject({
-          error: {
-            code: 'bad-request',
-            message: 'A physical device rotates and folds only in hand.',
-          },
+          error: { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' },
         });
       }
-      expect(await client.request('control.end', { session })).toMatchObject({
-        result: {},
-      });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       await server!.close();
       server = null;
       expect(lockCalls()).toEqual([]);
@@ -14737,41 +11672,21 @@ describe('frames.subscribe', () => {
     'ends control of a phone once its lease expires, without another status update',
     async () => {
       const port = await startControl({
-        FAKE_STIM_PAYLOADS: leasedPhone([
-          {
-            id: 'R58M1234ABC',
-            expiresAt: new Date(Date.now() + 4000).toISOString(),
-          },
-        ]),
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC', expiresAt: new Date(Date.now() + 4000).toISOString() }]),
       });
       const client = await authed(port, true);
-      const begun = await client.request('control.begin', {
-        workspace,
-        platform: 'android',
-        physical: true,
-      });
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session } = begun.result as { session: string };
       await new Promise((resolve) => setTimeout(resolve, 4100));
       const replies = [
-        await client.request('input.touch', {
-          session,
-          phase: 'down',
-          x: 0.5,
-          y: 0.5,
-        }),
+        await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 }),
         await client.next(),
       ];
       expect(replies).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({
-            event: 'control-ended',
-            session,
-            reason: 'device-gone',
-          }),
-          expect.objectContaining({
-            error: expect.objectContaining({ code: 'unknown-session' }),
-          }),
+          expect.objectContaining({ event: 'control-ended', session, reason: 'device-gone' }),
+          expect.objectContaining({ error: expect.objectContaining({ code: 'unknown-session' }) }),
         ]),
       );
     },
@@ -14779,19 +11694,10 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
-    const port = await startWithTools({
-      FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
-      FAKE_FRAMES: '[]',
-    });
+    const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
     const client = await authed(port);
     for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
-      expect(
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          ...params,
-        }),
-      ).toMatchObject({
+      expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
         error: { code: 'bad-request' },
       });
     }
@@ -14799,43 +11705,15 @@ describe('frames.subscribe', () => {
 
   describe.skipIf(!fakeTailscale)('emulator screenshots over gRPC', () => {
     test.each([
-      {
-        device: 'a phone',
-        posture: 0,
-        folded: false,
-        refused: false,
-        reported: undefined,
-      },
-      {
-        device: 'a folded foldable',
-        posture: 1,
-        folded: true,
-        refused: false,
-        reported: 'folded',
-      },
-      {
-        device: 'an unfolded foldable',
-        posture: 3,
-        folded: false,
-        refused: false,
-        reported: 'unfolded',
-      },
-      {
-        device: 'an emulator that refuses POSTURE',
-        posture: 3,
-        folded: false,
-        refused: true,
-        reported: undefined,
-      },
+      { device: 'a phone', posture: 0, folded: false, refused: false, reported: undefined },
+      { device: 'a folded foldable', posture: 1, folded: true, refused: false, reported: 'folded' },
+      { device: 'an unfolded foldable', posture: 3, folded: false, refused: false, reported: 'unfolded' },
+      { device: 'an emulator that refuses POSTURE', posture: 3, folded: false, refused: true, reported: undefined },
     ])(
       'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG: $device',
       async ({ posture, folded, refused, reported }) => {
         const png = Buffer.from('not really a png');
-        const requests: {
-          path: string;
-          authorization: string | undefined;
-          body: Buffer;
-        }[] = [];
+        const requests: { path: string; authorization: string | undefined; body: Buffer }[] = [];
         const grpc = createHttp2Server();
         grpc.on('stream', (stream: ServerHttp2Stream, headers) => {
           const chunks: Buffer[] = [];
@@ -14864,11 +11742,7 @@ describe('frames.subscribe', () => {
             const frameHeader = Buffer.alloc(5);
             frameHeader.writeUInt32BE(message.length, 1);
             stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
-            stream.on('wantTrailers', () =>
-              stream.sendTrailers({
-                'grpc-status': physical && refused ? '12' : '0',
-              }),
-            );
+            stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': physical && refused ? '12' : '0' }));
             stream.end(Buffer.concat([frameHeader, message]));
           });
         });
@@ -14887,32 +11761,17 @@ describe('frames.subscribe', () => {
             HOME: home,
             FAKE_STIM_PAYLOADS: JSON.stringify([
               statusPayload({
-                android: {
-                  name: 'stim-app',
-                  owned: true,
-                  physical: false,
-                  serial: 'emulator-5554',
-                  state: 'detected',
-                },
+                android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
               }),
               statusPayload({
-                android: {
-                  name: 'stim-app',
-                  owned: true,
-                  physical: false,
-                  serial: null,
-                  state: 'unknown',
-                },
+                android: { name: 'stim-app', owned: true, physical: false, serial: null, state: 'unknown' },
               }),
             ]),
             FAKE_FRAMES: '[]',
             FAKE_SIPS_JPEG: converted.toString('base64'),
           });
           const client = await authed(port);
-          await client.request('frames.subscribe', {
-            workspace,
-            platform: 'android',
-          });
+          await client.request('frames.subscribe', { workspace, platform: 'android' });
           const frame = await client.next();
           expect(frame).toMatchObject({
             event: 'frame',
@@ -14954,11 +11813,7 @@ describe('frames.subscribe', () => {
   });
 
   describe('recording', () => {
-    const DRIVEN = {
-      state: 'driven',
-      driver: { tool: 'agent-device', pid: 1, since: null },
-      basis: [],
-    };
+    const DRIVEN = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: null }, basis: [] };
     const RECORDING = { record: true, recordLimits: { segmentMs: 100 } };
 
     function deviceDir(): string {
@@ -14970,10 +11825,7 @@ describe('frames.subscribe', () => {
       writeFileSync(join(workspaceStateDir(workspace), 'workspace.json'), JSON.stringify({ projectRoot: workspace }));
     }
 
-    function segments(): {
-      name: string;
-      units: { keyframe: boolean; at: number }[];
-    }[] {
+    function segments(): { name: string; units: { keyframe: boolean; at: number }[] }[] {
       if (!existsSync(deviceDir())) return [];
       return readdirSync(deviceDir())
         .toSorted()
@@ -14981,10 +11833,7 @@ describe('frames.subscribe', () => {
           const bytes = readFileSync(join(deviceDir(), name));
           const units = [];
           for (let at = 0; at + 4 <= bytes.length; at += 4 + bytes.readUInt32BE(at)) {
-            units.push({
-              keyframe: (bytes[at + 4]! & 1) !== 0,
-              at: bytes.readDoubleBE(at + 5),
-            });
+            units.push({ keyframe: (bytes[at + 4]! & 1) !== 0, at: bytes.readDoubleBE(at + 5) });
           }
           return { name, units };
         });
@@ -14998,10 +11847,7 @@ describe('frames.subscribe', () => {
         registerWorkspaceDir();
         await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: { ...OWNED_SIM, activity: DRIVEN },
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
             FAKE_HELPER_INTERVAL_MS: '10',
           },
           undefined,
@@ -15036,10 +11882,7 @@ describe('frames.subscribe', () => {
       registerWorkspaceDir();
       const port = await startWithTools(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: OWNED_SIM,
-            recording: { enabled: true },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
           FAKE_HELPER_INTERVAL_MS: '10',
         },
         undefined,
@@ -15049,12 +11892,7 @@ describe('frames.subscribe', () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(existsSync(deviceDir())).toBe(false);
       const client = await authed(port);
-      await client.request('frames.subscribe', {
-        workspace,
-        platform: 'ios',
-        video: ['h264'],
-        fps: 30,
-      });
+      await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
       await until(() => closed().length >= 1);
       client.socket.close();
       await until(() => segments().length > 0 && segments().every(({ name }) => name.endsWith('.seg')));
@@ -15063,11 +11901,7 @@ describe('frames.subscribe', () => {
       expect(segments()).toHaveLength(count);
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs).toContainEqual(
-        expect.objectContaining({
-          fps: 30,
-          video: true,
-          record: { maxEdge: 720, fps: 10, bitrate: 1_000_000 },
-        }),
+        expect.objectContaining({ fps: 30, video: true, record: { maxEdge: 720, fps: 10, bitrate: 1_000_000 } }),
       );
     });
 
@@ -15075,14 +11909,8 @@ describe('frames.subscribe', () => {
       'stops capturing and deletes the recordings once status shows recording off',
       async () => {
         registerWorkspaceDir();
-        const on = statusPayload({
-          ios: { ...OWNED_SIM, activity: DRIVEN },
-          recording: { enabled: true },
-        });
-        const off = statusPayload({
-          ios: { ...OWNED_SIM, activity: DRIVEN },
-          recording: { enabled: false },
-        });
+        const on = statusPayload({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } });
+        const off = statusPayload({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: false } });
         await startWithTools(
           {
             FAKE_STIM_PAYLOADS: JSON.stringify([...Array.from({ length: 60 }, () => on), off]),
@@ -15106,18 +11934,12 @@ describe('frames.subscribe', () => {
       const started = Date.now();
       await startWithTools(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, activity: DRIVEN },
-            recording: { enabled: true },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
           FAKE_HELPER_INTERVAL_MS: '10',
         },
         undefined,
         fakeHelper(),
-        {
-          record: true,
-          recordLimits: { segmentMs: 50, footageMs: 300, pruneMs: 100 },
-        },
+        { record: true, recordLimits: { segmentMs: 50, footageMs: 300, pruneMs: 100 } },
       );
       await new Promise((resolve) => setTimeout(resolve, 1500));
       const kept = closed().map(({ name }) => name.replace('.seg', '').split('-').map(Number) as [number, number]);
@@ -15132,10 +11954,7 @@ describe('frames.subscribe', () => {
         registerWorkspaceDir();
         await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: { ...OWNED_SIM, activity: DRIVEN },
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
             FAKE_HELPER_INTERVAL_MS: '10',
             FAKE_HELPER_STATIC: '1',
           },
@@ -15159,10 +11978,7 @@ describe('frames.subscribe', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: { ...OWNED_SIM, activity: DRIVEN },
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
             FAKE_HELPER_INTERVAL_MS: '10',
           },
           undefined,
@@ -15216,24 +12032,14 @@ describe('frames.subscribe', () => {
           footage(BASE, 20);
           footage(BASE + 30_000, 5);
           const port = await startWithTools(
-            {
-              FAKE_STIM_PAYLOADS: statusWith({
-                ios: STOPPED_SIM,
-                recording: { enabled: true },
-              }),
-            },
+            { FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }) },
             undefined,
             fakeHelper(),
             { record: true },
           );
           const client = await authed(port);
           expect(
-            await client.request('frames.subscribe', {
-              workspace,
-              platform: 'ios',
-              video: ['h264'],
-              at: BASE + 730,
-            }),
+            await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], at: BASE + 730 }),
           ).toMatchObject({ result: { subscription: 's1', video: 'h264' } });
           const shown = await untilMessage(
             client,
@@ -15242,29 +12048,18 @@ describe('frames.subscribe', () => {
           expect(shown.map(packetAt)).toEqual([BASE + 500, BASE + 600, BASE + 700]);
 
           client.socket.send(
-            JSON.stringify({
-              id: 50,
-              method: 'frames.seek',
-              params: { subscription: 's1', at: BASE + 1500, rate: 2 },
-            }),
+            JSON.stringify({ id: 50, method: 'frames.seek', params: { subscription: 's1', at: BASE + 1500, rate: 2 } }),
           );
           const played = await untilMessage(
             client,
             (message) => 'event' in message && message.event === 'replay-ended',
           );
-          expect(played).toContainEqual({
-            id: 50,
-            result: { at: BASE + 1500 },
-          });
+          expect(played).toContainEqual({ id: 50, result: { at: BASE + 1500 } });
           expect(played.filter((message) => 'binary' in message).map(packetAt)).toEqual([
             ...[1500, 1600, 1700, 1800, 1900].map((offset) => BASE + offset),
             ...[0, 100, 200, 300, 400].map((offset) => BASE + 30_000 + offset),
           ]);
-          expect(played.at(-1)).toEqual({
-            event: 'replay-ended',
-            subscription: 's1',
-            at: BASE + 30_400,
-          });
+          expect(played.at(-1)).toEqual({ event: 'replay-ended', subscription: 's1', at: BASE + 30_400 });
 
           client.socket.send(
             JSON.stringify({
@@ -15280,10 +12075,7 @@ describe('frames.subscribe', () => {
           ]);
 
           expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
-            error: {
-              code: 'frames-failed',
-              message: expect.stringContaining('not booted'),
-            },
+            error: { code: 'frames-failed', message: expect.stringContaining('not booted') },
           });
           client.socket.send(
             JSON.stringify({
@@ -15293,10 +12085,7 @@ describe('frames.subscribe', () => {
             }),
           );
           const past = await untilMessage(client, (message) => 'id' in message && message.id === 70);
-          expect(past.at(-1)).toEqual({
-            id: 70,
-            result: { at: BASE + 30_400 },
-          });
+          expect(past.at(-1)).toEqual({ id: 70, result: { at: BASE + 30_400 } });
           expect(
             await client.request('frames.subscribe', {
               workspace,
@@ -15316,10 +12105,7 @@ describe('frames.subscribe', () => {
         footage(BASE, 10);
         const port = await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: OWNED_SIM,
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
             FAKE_HELPER_INTERVAL_MS: '10',
           },
           undefined,
@@ -15327,19 +12113,10 @@ describe('frames.subscribe', () => {
           { record: true },
         );
         const client = await authed(port);
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          video: ['h264'],
-          fps: 30,
-        });
+        await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
         await untilMessage(client, (message) => 'binary' in message);
         client.socket.send(
-          JSON.stringify({
-            id: 60,
-            method: 'frames.seek',
-            params: { subscription: 's1', at: BASE + 200, rate: 0 },
-          }),
+          JSON.stringify({ id: 60, method: 'frames.seek', params: { subscription: 's1', at: BASE + 200, rate: 0 } }),
         );
         const seeked = await untilMessage(client, (message) => 'id' in message && message.id === 60);
         expect(seeked.at(-1)).toEqual({ id: 60, result: { at: BASE + 200 } });
@@ -15349,13 +12126,7 @@ describe('frames.subscribe', () => {
             .map(packetAt)
             .slice(-3),
         ).toEqual([BASE, BASE + 100, BASE + 200]);
-        client.socket.send(
-          JSON.stringify({
-            id: 61,
-            method: 'frames.live',
-            params: { subscription: 's1' },
-          }),
-        );
+        client.socket.send(JSON.stringify({ id: 61, method: 'frames.live', params: { subscription: 's1' } }));
         expect((await untilMessage(client, (message) => 'id' in message && message.id === 61)).at(-1)).toEqual({
           id: 61,
           result: {},
@@ -15369,10 +12140,7 @@ describe('frames.subscribe', () => {
         registerWorkspaceDir();
         const port = await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: OWNED_SIM,
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
             FAKE_HELPER_INTERVAL_MS: '10',
           },
           undefined,
@@ -15380,25 +12148,13 @@ describe('frames.subscribe', () => {
           { record: false },
         );
         const client = await authed(port);
-        await client.request('frames.subscribe', {
-          workspace,
-          platform: 'ios',
-          video: ['h264'],
-          fps: 30,
-        });
+        await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
         await untilMessage(client, (message) => 'binary' in message);
         client.socket.send(
-          JSON.stringify({
-            id: 80,
-            method: 'frames.seek',
-            params: { subscription: 's1', at: BASE, rate: 0 },
-          }),
+          JSON.stringify({ id: 80, method: 'frames.seek', params: { subscription: 's1', at: BASE, rate: 0 } }),
         );
         const refused = await untilMessage(client, (message) => 'id' in message && message.id === 80);
-        expect(refused.at(-1)).toMatchObject({
-          id: 80,
-          error: { code: 'no-recording' },
-        });
+        expect(refused.at(-1)).toMatchObject({ id: 80, error: { code: 'no-recording' } });
         const next = await untilMessage(client, (message) => 'binary' in message);
         expect(packetAt(next.at(-1)!)).toBeLessThan(1_760_000_000_000);
       });
@@ -15410,12 +12166,7 @@ describe('frames.subscribe', () => {
           footage(BASE, 10);
           footage(BASE + 30_000, 10);
           const port = await startWithTools(
-            {
-              FAKE_STIM_PAYLOADS: statusWith({
-                ios: STOPPED_SIM,
-                recording: { enabled: true },
-              }),
-            },
+            { FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }) },
             undefined,
             fakeHelper(),
             { record: true },
@@ -15434,26 +12185,16 @@ describe('frames.subscribe', () => {
               data: Buffer.from([0, 0, 0, 1, 0]).toString('base64'),
             },
           });
-          expect(await keyframe(BASE + 10_000)).toMatchObject({
-            result: { start: BASE + 30_000, at: BASE + 30_000 },
-          });
-          expect(await keyframe(BASE, 'android')).toMatchObject({
-            error: { code: 'no-recording' },
-          });
-          expect(await keyframe('soon')).toMatchObject({
-            error: { code: 'bad-request' },
-          });
+          expect(await keyframe(BASE + 10_000)).toMatchObject({ result: { start: BASE + 30_000, at: BASE + 30_000 } });
+          expect(await keyframe(BASE, 'android')).toMatchObject({ error: { code: 'no-recording' } });
+          expect(await keyframe('soon')).toMatchObject({ error: { code: 'bad-request' } });
 
           const burst = Array.from({ length: 20 }, () => keyframe(BASE));
           const answers = await Promise.all(burst);
           const limited = answers.filter((answer) => 'error' in answer);
           expect(limited.length).toBeGreaterThan(0);
           expect(limited).toEqual(
-            limited.map(() =>
-              expect.objectContaining({
-                error: expect.objectContaining({ code: 'limit-exceeded' }),
-              }),
-            ),
+            limited.map(() => expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) })),
           );
           expect(await keyframe(BASE)).toMatchObject({ result: { at: BASE } });
         },
@@ -15464,36 +12205,14 @@ describe('frames.subscribe', () => {
         footage(BASE, 10);
         footage(BASE + 30_000, 10);
         const logged = [
-          {
-            ts: BASE + 300,
-            src: 'agent',
-            event: 'agent_action',
-            platform: 'ios',
-            command: 'press',
-            msg: 'press @e3',
-          },
-          {
-            ts: BASE + 400,
-            src: 'agent',
-            event: 'agent_action',
-            platform: 'android',
-            command: 'press',
-            msg: 'other',
-          },
-          {
-            ts: BASE + 30_500,
-            src: 'build',
-            level: 'error',
-            msg: 'Compile failed',
-          },
+          { ts: BASE + 300, src: 'agent', event: 'agent_action', platform: 'ios', command: 'press', msg: 'press @e3' },
+          { ts: BASE + 400, src: 'agent', event: 'agent_action', platform: 'android', command: 'press', msg: 'other' },
+          { ts: BASE + 30_500, src: 'build', level: 'error', msg: 'Compile failed' },
         ];
         liveLogFixture(logged);
         const port = await startWithTools(
           {
-            FAKE_STIM_PAYLOADS: statusWith({
-              ios: STOPPED_SIM,
-              recording: { enabled: true },
-            }),
+            FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }),
             FAKE_STIM_RECORDS: JSON.stringify(logged),
             FAKE_STIM_BY_SOURCE: '1',
           },
@@ -15503,12 +12222,7 @@ describe('frames.subscribe', () => {
         );
         const client = await authed(port);
         await new Promise((resolve) => setTimeout(resolve, 200));
-        expect(
-          await client.request('replay.range', {
-            workspace,
-            platform: 'ios',
-          }),
-        ).toEqual({
+        expect(await client.request('replay.range', { workspace, platform: 'ios' })).toEqual({
           id: 2,
           result: {
             enabled: true,
@@ -15518,12 +12232,7 @@ describe('frames.subscribe', () => {
               { start: BASE + 30_000, end: BASE + 30_900 },
             ],
             markers: [
-              {
-                at: BASE + 300,
-                kind: 'action',
-                command: 'press',
-                label: 'press @e3',
-              },
+              { at: BASE + 300, kind: 'action', command: 'press', label: 'press @e3' },
               { at: BASE + 30_500, kind: 'error', label: 'Compile failed' },
             ],
           },
@@ -15532,12 +12241,7 @@ describe('frames.subscribe', () => {
           .split('\n')
           .filter((line) => line.includes('"logs'));
         expect(logs).toEqual([]);
-        expect(
-          await client.request('replay.range', {
-            workspace,
-            platform: 'android',
-          }),
-        ).toMatchObject({
+        expect(await client.request('replay.range', { workspace, platform: 'android' })).toMatchObject({
           result: { spans: [], markers: [] },
         });
       });
@@ -15614,12 +12318,8 @@ describe('frames.subscribe', () => {
         expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
         expect(existsSync(recordings)).toBe(true);
         deletion.release();
-        expect(await off).toMatchObject({
-          result: { enabled: false, recordingsDeleted: [workspace] },
-        });
-        expect(await on).toMatchObject({
-          result: { enabled: true, recordingsDeleted: [] },
-        });
+        expect(await off).toMatchObject({ result: { enabled: false, recordingsDeleted: [workspace] } });
+        expect(await on).toMatchObject({ result: { enabled: true, recordingsDeleted: [] } });
         expect(loadConfig()).toMatchObject({ recording: { enabled: true } });
         expect(existsSync(recordings)).toBe(false);
         expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
@@ -15650,30 +12350,15 @@ describe('frames.subscribe', () => {
       const deletion = holdRecordingDeletion(recordings);
       let closing: Promise<void> | undefined;
       try {
-        first.socket.send(
-          JSON.stringify({
-            id: 90,
-            method: 'recording.set',
-            params: { enabled: false },
-          }),
-        );
+        first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
         await deletion.started;
-        second.socket.send(
-          JSON.stringify({
-            id: 91,
-            method: 'recording.set',
-            params: { enabled: true },
-          }),
-        );
+        second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
         await second.request('settings.get');
         const timedOut = first.next();
         await vi.advanceTimersByTimeAsync(1000);
         expect(await timedOut).toMatchObject({
           id: 90,
-          error: {
-            code: 'action-failed',
-            message: 'stim settings did not finish within 1 s.',
-          },
+          error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
         });
         expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
         let serverClosed = false;
@@ -15692,10 +12377,7 @@ describe('frames.subscribe', () => {
         expect(readAudit().filter((entry) => entry.action === 'recording.set')).toEqual([
           expect.objectContaining({
             ok: false,
-            error: {
-              code: 'action-failed',
-              message: 'stim settings did not finish within 1 s.',
-            },
+            error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
           }),
         ]);
       } finally {
@@ -15709,10 +12391,7 @@ describe('frames.subscribe', () => {
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
       await startWithTools(
         {
-          FAKE_STIM_PAYLOADS: statusWith({
-            ios: { ...OWNED_SIM, activity: DRIVEN },
-            recording: { enabled: true },
-          }),
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
           FAKE_HELPER_INTERVAL_MS: '10',
         },
         undefined,
@@ -15729,22 +12408,13 @@ describe('frames.subscribe', () => {
 describe('request log', () => {
   it('writes a failed request to the service log with the client and its run id, and nothing else', async () => {
     const lines: string[] = [];
-    const port = await start({
-      requestLog: createRequestLog({
-        service: (line) => lines.push(line),
-        debug: off,
-      }),
-    });
+    const port = await start({ requestLog: createRequestLog({ service: (line) => lines.push(line), debug: off }) });
     const { id, keyPair } = await pair(port);
     const client = await connect(port, undefined, { keyPair });
-    await client.request('hello', {
-      client: { ...CLIENT, runId: 'desktop-run.7' },
-    });
+    await client.request('hello', { client: { ...CLIENT, runId: 'desktop-run.7' } });
     await client.request('machine.get');
     const token = 'request-param-text';
-    expect(await client.request('no.such.method', { token })).toMatchObject({
-      error: { code: 'unknown-method' },
-    });
+    expect(await client.request('no.such.method', { token })).toMatchObject({ error: { code: 'unknown-method' } });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
       new RegExp(
@@ -15818,10 +12488,7 @@ describe.skipIf(process.platform === 'win32')('Desktop web output', () => {
     }));
     try {
       const client = await desktop();
-      await client.request('desktop.run.subscribe', {
-        cwd: workspace,
-        options: { platform: 'web' },
-      });
+      await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'web' } });
       const observed = await platformEnded(client);
       expect(observed.done.exitCode).toBe(0);
       expect(JSON.parse(observed.done.stdout)).toEqual(result);
@@ -15850,12 +12517,7 @@ describe.skipIf(process.platform === 'win32')('Desktop platform build result', (
         cacheSkipped: false,
         buildMachine: 'local',
         builtOn: null,
-        ccache: {
-          status: 'not-run',
-          hits: null,
-          misses: null,
-          hitRatePercent: null,
-        },
+        ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
         durationMs: 1,
         logs: { dir: join(workspace, 'logs') },
         links: { workspace: 'https://stim.appandflow.com/open' },
@@ -15872,14 +12534,8 @@ describe.skipIf(process.platform === 'win32')('Desktop platform build result', (
           buildCache: false,
           remoteBuild: 'local',
         });
-        options.onProgress?.({
-          stream: 'stderr',
-          message: 'Cache lookup\n',
-        });
-        options.onProgress?.({
-          stream: 'stdout',
-          message: 'Artifact ready\n',
-        });
+        options.onProgress?.({ stream: 'stderr', message: 'Cache lookup\n' });
+        options.onProgress?.({ stream: 'stdout', message: 'Artifact ready\n' });
         return result;
       }),
       run: async (): Promise<never> => {
@@ -15902,30 +12558,13 @@ describe.skipIf(process.platform === 'win32')('Desktop platform build result', (
       ).toHaveProperty('result.subscription');
       const observed = await platformEnded(client);
       expect(observed.progress).toMatchObject([
-        {
-          event: 'desktop-build-progress',
-          stream: 'stderr',
-          message: 'Cache lookup\n',
-        },
-        {
-          event: 'desktop-build-progress',
-          stream: 'stdout',
-          message: 'Artifact ready\n',
-        },
+        { event: 'desktop-build-progress', stream: 'stderr', message: 'Cache lookup\n' },
+        { event: 'desktop-build-progress', stream: 'stdout', message: 'Artifact ready\n' },
       ]);
-      expect(observed.done).toMatchObject({
-        event: 'desktop-build-ended',
-        exitCode: 0,
-      });
+      expect(observed.done).toMatchObject({ event: 'desktop-build-ended', exitCode: 0 });
       expect(JSON.parse(observed.done.stdout)).toEqual(result);
       expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
-      expect(readAudit()).toContainEqual(
-        expect.objectContaining({
-          action: 'build',
-          platform: 'android',
-          ok: true,
-        }),
-      );
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'build', platform: 'android', ok: true }));
       expect(stimCalls()).toEqual([]);
     } finally {
       api.mockRestore();
@@ -15944,10 +12583,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote]) {
       expect(
-        await client.request(`desktop.${kind}.subscribe`, {
-          cwd: workspace,
-          options: { platform: 'ios' },
-        }),
+        await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
       ).toHaveProperty('error.code', 'forbidden');
     }
     const client = await desktop();
@@ -15958,10 +12594,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
       { cwd: workspace, options: { platform: 'other' } },
       { cwd: workspace, options: { platform: 'web', remote: 'mini' } },
       { cwd: workspace, options: { platform: 'ios', variant: 'debug' } },
-      {
-        cwd: workspace,
-        options: { platform: 'android', simulatorApp: 'stim-desktop' },
-      },
+      { cwd: workspace, options: { platform: 'android', simulatorApp: 'stim-desktop' } },
       { cwd: workspace, options: { platform: 'ios', device: 7 } },
       { cwd: workspace, options: { platform: 'ios', wait: {} } },
       { cwd: workspace, options: { platform: 'ios', slot: 'bad\0slot' } },
@@ -15990,12 +12623,10 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
           ]
         : [];
     for (const options of buildOnlyRefusals)
-      expect(
-        await client.request(`desktop.${kind}.subscribe`, {
-          cwd: workspace,
-          options,
-        }),
-      ).toHaveProperty('error.code', 'bad-request');
+      expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
     expect(stimCalls()).toEqual([]);
   });
 
@@ -16006,32 +12637,20 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
     await start();
     const client = await desktop();
-    expect(
-      await client.request(`desktop.${kind}.subscribe`, {
-        cwd: workspace,
-        options,
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+      'result.subscription',
+    );
     const result = await platformEnded(client);
     expect(result.done.exitCode).toBe(1);
     expect(JSON.parse(result.done.stdout)).toMatchObject({
       code: options.platform === 'macos' ? 'STIM_BAD_ARG' : 'STIM_NO_PROJECT',
     });
     expect(readAudit()).toContainEqual(
-      expect.objectContaining({
-        action: kind,
-        platform: options.platform,
-        ok: false,
-      }),
+      expect.objectContaining({ action: kind, platform: options.platform, ok: false }),
     );
-    const validator = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    });
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
-    const accepts = validator.compile({
-      $ref: 'protocol#/$defs/ServerEvent',
-    });
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
     expect([...result.progress, result.done].every((message) => accepts(message))).toBe(true);
     expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
     expect(stimCalls()).toEqual([]);
@@ -16040,10 +12659,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   it('bounds real API output without sending an oversized progress event', async () => {
     await start({ actionLimits: { maxOutputBytes: 1 } });
     const client = await desktop();
-    await client.request(`desktop.${kind}.subscribe`, {
-      cwd: workspace,
-      options: { platform: 'ios' },
-    });
+    await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } });
     const result = await platformEnded(client);
     expect(result.progress).toEqual([]);
     expect(result.done).toMatchObject({
@@ -16057,15 +12673,10 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   it.each(['unsubscribe', 'deadline', 'unknown-claims'] as const)(
     'drains cleanup before %s and retains unresolved admission',
     async (mode) => {
-      const claim = tryAcquireClaim({
-        root: join(root, `draining-${kind}`),
-        mode: 'exclusive',
-      });
+      const claim = tryAcquireClaim({ root: join(root, `draining-${kind}`), mode: 'exclusive' });
       assert(claim.acquired);
       const held = claim.acquired;
-      await start({
-        actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 },
-      });
+      await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
       let cancelObserved = () => {};
       const cancelled = new Promise<void>((resolve) => {
         cancelObserved = resolve;
@@ -16082,10 +12693,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
           assert(signal);
           await new Promise<void>((resolve) => {
             if (signal.aborted) resolve();
-            else
-              signal.addEventListener('abort', () => resolve(), {
-                once: true,
-              });
+            else signal.addEventListener('abort', () => resolve(), { once: true });
           });
           cancelObserved();
           await gate;
@@ -16110,9 +12718,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
         const response =
           mode === 'deadline'
             ? platformEnded(client)
-            : client.request('unsubscribe', {
-                subscription: result.subscription,
-              });
+            : client.request('unsubscribe', { subscription: result.subscription });
         void response.then(() => {
           acknowledged = true;
           return undefined;
@@ -16129,10 +12735,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
         const recoveryMessage = expect.stringContaining(`Recover ${held.path}`);
         expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(
           mode === 'deadline'
-            ? {
-                code: 'STIM_CLAIM_UNAVAILABLE',
-                remedy: `Recover ${held.path}`,
-              }
+            ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${held.path}` }
             : { error: { code: 'action-failed', message: recoveryMessage } },
         );
         expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
@@ -16140,9 +12743,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
           'action-busy',
         );
         releaseClaim(held);
-        const recovered = await other.request('desktop.stop.subscribe', {
-          cwd: workspace,
-        });
+        const recovered = await other.request('desktop.stop.subscribe', { cwd: workspace });
         const subscription = expect.any(String);
         expect(recovered).toMatchObject(
           mode === 'unknown-claims' ? { error: { code: 'action-busy' } } : { result: { subscription } },
@@ -16170,10 +12771,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
   function warmingFixture() {
     const linked = join(root, 'warm-linked');
     const git = (...args: string[]) =>
-      execFileSync('git', ['-C', workspace, ...args], {
-        encoding: 'utf8',
-        timeout: 15_000,
-      });
+      execFileSync('git', ['-C', workspace, ...args], { encoding: 'utf8', timeout: 15_000 });
     git('init', '-q');
     writeFileSync(join(workspace, '.gitignore'), '.env\n');
     writeFileSync(join(workspace, 'package.json'), '{"dependencies":{"react-native":"0.88.0"}}');
@@ -16196,30 +12794,21 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
 
   it('copies real ignored state and streams its result without running the CLI', async () => {
     const linked = warmingFixture();
-    await start({
-      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
-    });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
-    expect(
-      await client.request('desktop.worktree.warm.subscribe', {
-        cwd: linked,
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
     const { progress, done } = await ended(client);
     expect(done.exitCode).toBe(0);
     expect(JSON.parse(done.stdout)).toEqual({ exitCode: 0 });
     expect(progress).toContainEqual(
-      expect.objectContaining({
-        event: 'desktop-worktree-warm-progress',
-        stream: 'stderr',
-      }),
+      expect.objectContaining({ event: 'desktop-worktree-warm-progress', stream: 'stderr' }),
     );
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
-    const accepts = validator.compile({
-      $ref: 'protocol#/$defs/ServerEvent',
-    });
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
     expect([...progress, done].every((message) => accepts(message))).toBe(true);
     expect(readFileSync(join(linked, '.env'), 'utf8')).toBe('PRIVATE_FIXTURE=only');
     expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-warm', ok: true }));
@@ -16231,16 +12820,13 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     assert(server);
     const client =
       mode === 'phone control'
-        ? await connect(port, undefined, {
-            keyPair: (await pair(port, undefined, true)).keyPair,
-          })
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server);
     await client.request('hello', { client: CLIENT });
-    expect(
-      await client.request('desktop.worktree.warm.subscribe', {
-        cwd: workspace,
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     expect(stimCalls()).toEqual([]);
   });
 
@@ -16287,11 +12873,9 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
       }));
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
-        expect(
-          await client.request('desktop.worktree.warm.subscribe', {
-            cwd: workspace,
-          }),
-        ).toHaveProperty('result.subscription');
+        expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+          'result.subscription',
+        );
         await started;
         await vi.advanceTimersByTimeAsync(180_000);
         expect(signal?.aborted).toBe(shortDeadline);
@@ -16311,16 +12895,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
 
   it('bounds warming progress before sending an oversized event', async () => {
     const linked = warmingFixture();
-    await start({
-      actionLimits: { maxOutputBytes: 1 },
-      env: { HOME: root, USERPROFILE: root },
-    });
+    await start({ actionLimits: { maxOutputBytes: 1 }, env: { HOME: root, USERPROFILE: root } });
     const client = await desktop();
-    expect(
-      await client.request('desktop.worktree.warm.subscribe', {
-        cwd: linked,
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
     const result = await ended(client);
     expect(result.progress).toEqual([]);
     expect(result.done).toMatchObject({
@@ -16339,10 +12918,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     assert(home);
     writeFileSync(
       join(home, 'config.json'),
-      JSON.stringify({
-        version: 2,
-        projects: { [nested]: { metroPort: null } },
-      }),
+      JSON.stringify({ version: 2, projects: { [nested]: { metroPort: null } } }),
     );
     let admitted = () => {};
     const ready = new Promise<void>((resolve) => {
@@ -16363,9 +12939,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
           }),
       };
     });
-    await start({
-      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
-    });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const claim = tryAcquireClaim({
       root: join(home, 'warm-locks', `${workspaceName(workspace)}.lock`),
       mode: 'exclusive',
@@ -16374,9 +12948,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     try {
       const client = await desktop();
       const other = await desktop();
-      const reply = await client.request('desktop.worktree.warm.subscribe', {
-        cwd: linked,
-      });
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: linked });
       const result: unknown = 'result' in reply ? reply.result : undefined;
       assert(isJsonObject(result));
       await ready;
@@ -16384,21 +12956,13 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
         'error.code',
         'action-busy',
       );
-      expect(
-        await client.request('unsubscribe', {
-          subscription: result.subscription,
-        }),
-      ).toHaveProperty('result');
+      expect(await client.request('unsubscribe', { subscription: result.subscription })).toHaveProperty('result');
       expect(existsSync(join(linked, '.env'))).toBe(false);
-      const stopping = await other.request('desktop.stop.subscribe', {
-        cwd: nested,
-      });
+      const stopping = await other.request('desktop.stop.subscribe', { cwd: nested });
       expect(stopping).toHaveProperty('result.subscription');
       const stopped: unknown = 'result' in stopping ? stopping.result : undefined;
       assert(isJsonObject(stopped));
-      await other.request('unsubscribe', {
-        subscription: stopped.subscription,
-      });
+      await other.request('unsubscribe', { subscription: stopped.subscription });
       expect(stimCalls()).toEqual([]);
     } finally {
       releaseClaim(claim.acquired);
@@ -16407,10 +12971,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
   });
 
   it('waits for cancelled warming cleanup and retains admission until exact claims are released', async () => {
-    const claim = tryAcquireClaim({
-      root: join(root, 'warm-draining'),
-      mode: 'exclusive',
-    });
+    const claim = tryAcquireClaim({ root: join(root, 'warm-draining'), mode: 'exclusive' });
     assert(claim.acquired);
     const held = claim.acquired;
     let cancelled = () => {};
@@ -16429,10 +12990,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
         assert(signal);
         await new Promise<void>((resolve) => {
           if (signal.aborted) resolve();
-          else
-            signal.addEventListener('abort', () => resolve(), {
-              once: true,
-            });
+          else signal.addEventListener('abort', () => resolve(), { once: true });
         });
         cancelled();
         await gate;
@@ -16447,15 +13005,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
       await start();
       const client = await desktop();
       const other = await desktop();
-      const reply = await client.request('desktop.worktree.warm.subscribe', {
-        cwd: workspace,
-      });
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: workspace });
       const result: unknown = 'result' in reply ? reply.result : undefined;
       assert(isJsonObject(result));
       let acknowledged = false;
-      const response = client.request('unsubscribe', {
-        subscription: result.subscription,
-      });
+      const response = client.request('unsubscribe', { subscription: result.subscription });
       void response.then(() => {
         acknowledged = true;
         return undefined;
@@ -16469,10 +13023,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
       );
       release();
       expect(await response).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining(held.path),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining(held.path) },
       });
       expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
         'error.code',
@@ -16493,11 +13044,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     const linked = join(root, 'linked');
     const env = { ...process.env, HOME: root, USERPROFILE: root };
     const git = (...args: string[]) =>
-      execFileSync('git', ['-C', workspace, ...args], {
-        env,
-        encoding: 'utf8',
-        timeout: 15_000,
-      }).trim();
+      execFileSync('git', ['-C', workspace, ...args], { env, encoding: 'utf8', timeout: 15_000 }).trim();
     git('init', '-q');
     writeFileSync(join(workspace, 'package.json'), '{"private":true}');
     git('add', 'package.json');
@@ -16529,11 +13076,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
         },
       }),
     );
-    return {
-      linked,
-      git,
-      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
-    };
+    return { linked, git, env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } };
   }
 
   async function remove(client: Client, params: unknown) {
@@ -16552,32 +13095,16 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     await start({ env: fixture.env });
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
-    const refused = await remove(client, {
-      cwd: workspace,
-      target: fixture.linked,
-    });
+    const refused = await remove(client, { cwd: workspace, target: fixture.linked });
     expect(refused.exitCode).toBe(1);
-    expect(JSON.parse(refused.stdout)).toEqual({
-      removed: false,
-      exitCode: 1,
-    });
+    expect(JSON.parse(refused.stdout)).toEqual({ removed: false, exitCode: 1 });
     expect(existsSync(unsaved)).toBe(true);
-    const removed = await remove(client, {
-      cwd: workspace,
-      target: fixture.linked,
-      force: true,
-    });
+    const removed = await remove(client, { cwd: workspace, target: fixture.linked, force: true });
     expect(removed.exitCode).toBe(0);
-    expect(JSON.parse(removed.stdout)).toEqual({
-      removed: true,
-      exitCode: 0,
-    });
+    expect(JSON.parse(removed.stdout)).toEqual({ removed: true, exitCode: 0 });
     expect(existsSync(fixture.linked)).toBe(false);
     const source = await remove(client, { cwd: workspace });
-    expect(JSON.parse(source.stdout)).toEqual({
-      removed: false,
-      exitCode: 0,
-    });
+    expect(JSON.parse(source.stdout)).toEqual({ removed: false, exitCode: 0 });
     expect(existsSync(join(workspace, '.git'))).toBe(true);
     expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-remove', ok: true }));
     expect(stimCalls()).toEqual([]);
@@ -16634,24 +13161,16 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
         await admitted;
         for (const method of ['desktop.stop.subscribe', 'desktop.reload.subscribe'])
           expect(await other.request(method, { cwd: busy })).toHaveProperty('error.code', 'action-busy');
-        await client.request('unsubscribe', {
-          subscription: removal.subscription,
-        });
+        await client.request('unsubscribe', { subscription: removal.subscription });
         expect(existsSync(fixture.linked)).toBe(true);
-        const stopping = await other.request('desktop.stop.subscribe', {
-          cwd: busy,
-        });
+        const stopping = await other.request('desktop.stop.subscribe', { cwd: busy });
         const stop: unknown = 'result' in stopping ? stopping.result : undefined;
         assert(isJsonObject(stop));
         const refused = await remove(client, { cwd: workspace, target });
         expect(refused.exitCode).toBe(1);
-        expect(JSON.parse(refused.stdout)).toMatchObject({
-          code: 'STIM_ACTION_BUSY',
-        });
+        expect(JSON.parse(refused.stdout)).toMatchObject({ code: 'STIM_ACTION_BUSY' });
         expect(existsSync(fixture.linked)).toBe(true);
-        await other.request('unsubscribe', {
-          subscription: stop.subscription,
-        });
+        await other.request('unsubscribe', { subscription: stop.subscription });
         expect(stimCalls()).toEqual([]);
       } finally {
         releaseClaim(lock.acquired);
@@ -16667,26 +13186,14 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     writeFileSync(lock, 'held');
     await start({ env: fixture.env });
     const client = await desktop();
-    const partial = await remove(client, {
-      cwd: workspace,
-      target: fixture.linked,
-    });
+    const partial = await remove(client, { cwd: workspace, target: fixture.linked });
     expect(partial.exitCode).toBe(1);
-    expect(JSON.parse(partial.stdout)).toEqual({
-      removed: true,
-      exitCode: 1,
-    });
+    expect(JSON.parse(partial.stdout)).toEqual({ removed: true, exitCode: 1 });
     expect(existsSync(fixture.linked)).toBe(false);
     rmSync(lock);
-    const retried = await remove(client, {
-      cwd: workspace,
-      target: fixture.linked,
-    });
+    const retried = await remove(client, { cwd: workspace, target: fixture.linked });
     expect(retried.exitCode).toBe(0);
-    expect(JSON.parse(retried.stdout)).toEqual({
-      removed: false,
-      exitCode: 0,
-    });
+    expect(JSON.parse(retried.stdout)).toEqual({ removed: false, exitCode: 0 });
     expect(fixture.git('branch', '--list', 'rpc-owned')).toBe('');
     expect(stimCalls()).toEqual([]);
   });
@@ -16697,16 +13204,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     assert(server);
     const client =
       mode === 'phone control'
-        ? await connect(port, undefined, {
-            keyPair: (await pair(port, undefined, true)).keyPair,
-          })
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(
-      await client.request('desktop.worktree.remove.subscribe', {
-        cwd: workspace,
-        target: fixture.linked,
-      }),
+      await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
     ).toHaveProperty('error.code', 'forbidden');
     expect(existsSync(fixture.linked)).toBe(true);
     expect(stimCalls()).toEqual([]);
@@ -16751,12 +13253,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
         caches: [{ name: 'rpc-fixture', dir: cache, prune: 'entries' }],
       }),
     );
-    return {
-      home,
-      cache,
-      artifact,
-      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
-    };
+    return { home, cache, artifact, env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } };
   }
 
   async function ended(client: Client) {
@@ -16771,19 +13268,12 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     const fixture = cacheFixture();
     await start({ env: fixture.env });
     const client = await desktop();
-    const before = await client.request('desktop.reports.get', {
-      report: 'gc',
-    });
+    const before = await client.request('desktop.reports.get', { report: 'gc' });
     expect(before).toMatchObject({
       result: {
         value: {
           sections: {
-            caches: expect.arrayContaining([
-              expect.objectContaining({
-                name: 'rpc-fixture',
-                dir: fixture.cache,
-              }),
-            ]),
+            caches: expect.arrayContaining([expect.objectContaining({ name: 'rpc-fixture', dir: fixture.cache })]),
           },
         },
       },
@@ -16818,12 +13308,10 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     await plain.request('hello', { client: CLIENT });
     await peer.request('hello', { client: CLIENT });
     for (const client of [plain, peer]) {
-      expect(
-        await client.request('desktop.gc.subscribe', {
-          cwd: workspace,
-          dryRun: false,
-        }),
-      ).toHaveProperty('error.code', 'forbidden');
+      expect(await client.request('desktop.gc.subscribe', { cwd: workspace, dryRun: false })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
       expect(
         await client.request('desktop.gc.item.subscribe', {
           cwd: workspace,
@@ -16880,10 +13368,7 @@ setInterval(() => {}, 1000);
       let record: { pid: number; processToken: string } | undefined;
       try {
         await start({
-          env: {
-            ...fixture.env,
-            PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
-          },
+          env: { ...fixture.env, PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter) },
           ...(ending === 'timeout' ? { actionLimits: { timeoutMs: 1500 } } : {}),
         });
         const client = await desktop();
@@ -16911,9 +13396,7 @@ setInterval(() => {}, 1000);
         expect(await other.request('desktop.settings.get', { cwd: workspace })).toHaveProperty('result');
         let completion: unknown = {};
         if (ending === 'unsubscribe')
-          completion = await client.request('unsubscribe', {
-            subscription: reply.result.subscription,
-          });
+          completion = await client.request('unsubscribe', { subscription: reply.result.subscription });
         else if (ending === 'disconnect') client.socket.close();
         else if (ending === 'shutdown') {
           assert(server);
@@ -16921,10 +13404,7 @@ setInterval(() => {}, 1000);
           server = null;
         } else completion = await ended(client);
         const unsubscribed = { result: expect.any(Object) };
-        const timedOut = {
-          exitCode: 1,
-          message: expect.stringContaining('did not finish'),
-        };
+        const timedOut = { exitCode: 1, message: expect.stringContaining('did not finish') };
         expect(completion).toMatchObject(
           ending === 'unsubscribe' ? unsubscribed : ending === 'timeout' ? timedOut : {},
         );
@@ -16961,11 +13441,7 @@ setInterval(() => {}, 1000);
       await start({ env: fixture.env });
       const client = await desktop();
       expect(
-        await client.request('desktop.gc.subscribe', {
-          cwd: workspace,
-          cache: 'rpc-fixture',
-          delete: true,
-        }),
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
       ).toHaveProperty('result.subscription');
       const done = await ended(client);
       expect(done.exitCode).toBe(1);
@@ -16973,11 +13449,7 @@ setInterval(() => {}, 1000);
         mode: 'delete',
         cacheScope: 'rpc-fixture',
         results: expect.arrayContaining([
-          expect.objectContaining({
-            kind: 'cache',
-            status: 'failed',
-            id: fixture.cache,
-          }),
+          expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
         ]),
       });
       expect(existsSync(fixture.artifact)).toBe(true);
@@ -16993,12 +13465,9 @@ setInterval(() => {}, 1000);
     const fixture = cacheFixture();
     await start({ env: fixture.env, actionLimits: { maxOutputBytes: 128 } });
     const client = await desktop();
-    expect(
-      await client.request('desktop.gc.subscribe', {
-        cwd: workspace,
-        cache: 'rpc-fixture',
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture' })).toHaveProperty(
+      'result.subscription',
+    );
     expect(await ended(client)).toMatchObject({
       exitCode: 1,
       message: expect.stringContaining('printed more than 128 bytes'),
@@ -17011,18 +13480,13 @@ setInterval(() => {}, 1000);
 describe.skipIf(process.platform === 'win32')('Desktop machine access requests', () => {
   it('returns an in-process setup report without exposing its ticket or running the CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
-    await start({
-      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
-    });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
     const ticket = 'a'.repeat(42) + 'A';
-    expect(
-      await client.request('desktop.machine-access.subscribe', {
-        cwd: workspace,
-        ticket,
-      }),
-    ).toHaveProperty('result.subscription');
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace, ticket })).toHaveProperty(
+      'result.subscription',
+    );
     let terminal: ServerMessage;
     for (;;) {
       terminal = await client.next();
@@ -17030,10 +13494,7 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     }
     assert('event' in terminal && terminal.event === 'desktop-machine-access-ended');
     expect(terminal).toMatchObject({ exitCode: 0 });
-    expect(JSON.parse(terminal.stdout)).toMatchObject({
-      project: workspace,
-      platform: 'ios',
-    });
+    expect(JSON.parse(terminal.stdout)).toMatchObject({ project: workspace, platform: 'ios' });
     expect(JSON.stringify(terminal)).not.toContain(ticket);
     expect(JSON.stringify(readAudit())).not.toContain(ticket);
     expect(stimCalls()).toEqual([]);
@@ -17044,16 +13505,13 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     assert(server);
     const client =
       mode === 'phone control'
-        ? await connect(port, undefined, {
-            keyPair: (await pair(port, undefined, true)).keyPair,
-          })
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server);
     await client.request('hello', { client: CLIENT });
-    expect(
-      await client.request('desktop.machine-access.subscribe', {
-        cwd: workspace,
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
     expect(stimCalls()).toEqual([]);
   });
 
@@ -17066,10 +13524,7 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
       { cwd: workspace, fix: true },
       { cwd: workspace, ticket: 'private-invalid-ticket' },
       { cwd: workspace, ticket: 'B'.repeat(43) },
-      {
-        cwd: workspace,
-        extraEnvironment: { STIM_ACCESS_TICKET: 'private-invalid-ticket' },
-      },
+      { cwd: workspace, extraEnvironment: { STIM_ACCESS_TICKET: 'private-invalid-ticket' } },
     ]) {
       const reply = await client.request('desktop.machine-access.subscribe', params);
       expect(reply).toHaveProperty('error.code', 'bad-request');
@@ -17096,54 +13551,39 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
         assert(signal);
         await new Promise<void>((resolve) => {
           if (signal.aborted) resolve();
-          else
-            signal.addEventListener('abort', () => resolve(), {
-              once: true,
-            });
+          else signal.addEventListener('abort', () => resolve(), { once: true });
         });
         cancelled();
         await gate;
-        throw new stim.StimError({
-          code: 'STIM_CLAIM_UNAVAILABLE',
-          message: 'Access request cleanup is unresolved.',
-        });
+        throw new stim.StimError({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'Access request cleanup is unresolved.' });
       },
     }));
     try {
       await start();
       const client = await desktop();
       const other = await desktop();
-      const reply = await client.request('desktop.machine-access.subscribe', {
-        cwd: workspace,
-      });
+      const reply = await client.request('desktop.machine-access.subscribe', { cwd: workspace });
       assert('result' in reply && isJsonObject(reply.result) && 'subscription' in reply.result);
       let acknowledged = false;
-      const response = client.request('unsubscribe', {
-        subscription: reply.result.subscription,
-      });
+      const response = client.request('unsubscribe', { subscription: reply.result.subscription });
       void response.then(() => {
         acknowledged = true;
         return undefined;
       });
       await observed;
       expect(acknowledged).toBe(false);
-      expect(
-        await other.request('desktop.machine-access.subscribe', {
-          cwd: workspace,
-        }),
-      ).toHaveProperty('error.code', 'action-busy');
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
       release();
       expect(await response).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: 'STIM_CLAIM_UNAVAILABLE: Access request cleanup is unresolved.',
-        },
+        error: { code: 'action-failed', message: 'STIM_CLAIM_UNAVAILABLE: Access request cleanup is unresolved.' },
       });
-      expect(
-        await other.request('desktop.machine-access.subscribe', {
-          cwd: workspace,
-        }),
-      ).toHaveProperty('error.code', 'action-busy');
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
     } finally {
       release();
       api.mockRestore();
@@ -17169,11 +13609,7 @@ describe('the web share listener of a server', () => {
       join(String(process.env.STIM_HOME), 'config.json'),
       JSON.stringify({
         projects: { [workspace]: {} },
-        share: {
-          exposure: 'proxy',
-          publicUrl: 'https://demo.example.com',
-          port,
-        },
+        share: { exposure: 'proxy', publicUrl: 'https://demo.example.com', port },
       }),
     );
     return port;
@@ -17231,10 +13667,7 @@ describe('attached Desktop admission', () => {
     ];
     for (const method of methods)
       expect(await client.request(method, { cwd: root })).toMatchObject({
-        error: {
-          code: 'action-failed',
-          message: expect.stringContaining('stim serve'),
-        },
+        error: { code: 'action-failed', message: expect.stringContaining('stim serve') },
       });
     expect(api).not.toHaveBeenCalled();
     api.mockRestore();
@@ -17252,10 +13685,9 @@ describe('attached Desktop admission', () => {
     const startWork = vi.fn<() => Promise<never>>(async () => {
       throw new Error('fixture start');
     });
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
-      ...original(options),
-      start: startWork,
-    }));
+    const api = vi
+      .spyOn(stimSelf, 'createStim')
+      .mockImplementation((options) => ({ ...original(options), start: startWork }));
     try {
       expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');
       await until(() => startWork.mock.calls.length > 0);

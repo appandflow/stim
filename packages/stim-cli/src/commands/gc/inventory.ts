@@ -159,11 +159,7 @@ function buildInventory({
   sims: readonly IosSimRecord[];
   avds: readonly AvdRecord[];
   runtimes: readonly SimRuntimeRecord[];
-  systemImages: readonly {
-    pkg: string;
-    directory: string;
-    stimInstalled: boolean;
-  }[];
+  systemImages: readonly { pkg: string; directory: string; stimInstalled: boolean }[];
   config: Config | null;
   deadProjects?: readonly string[];
   env: NodeJS.ProcessEnv;
@@ -390,11 +386,7 @@ export async function collectInventory(
     try {
       canonical = realpathSync(directory);
     } catch {}
-    return {
-      pkg: image.pkg,
-      directory,
-      stimInstalled: installedByStim.has(canonical),
-    };
+    return { pkg: image.pkg, directory, stimInstalled: installedByStim.has(canonical) };
   });
   return {
     ...buildInventory({

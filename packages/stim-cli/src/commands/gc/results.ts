@@ -48,11 +48,7 @@ interface GcResults {
     kind: GcResultKind,
     status: GcResultStatus,
     label: string,
-    options?: {
-      id?: string | null;
-      bytes?: number | null;
-      detail?: string | null;
-    },
+    options?: { id?: string | null; bytes?: number | null; detail?: string | null },
   ): void;
   take(): GcResult[];
 }
@@ -68,11 +64,7 @@ export function createGcResults(observe?: (result: GcResult) => void): GcResults
         id = null,
         bytes = null,
         detail = null,
-      }: {
-        id?: string | null;
-        bytes?: number | null;
-        detail?: string | null;
-      } = {},
+      }: { id?: string | null; bytes?: number | null; detail?: string | null } = {},
     ): void {
       const result = { kind, status, label, id, bytes, detail };
       results.push(result);

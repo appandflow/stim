@@ -82,11 +82,7 @@ export async function planSweep({
       skips.push({ target: root, reason: entry.keptReason, workspace: root });
     if (root === null || !entry.willClear || root === protectedRoot) continue;
     if (pinned(root)) {
-      skips.push({
-        target: root,
-        reason: 'pinned by maintenance.keep',
-        workspace: root,
-      });
+      skips.push({ target: root, reason: 'pinned by maintenance.keep', workspace: root });
       continue;
     }
     const size = sizes.find((candidate) => candidate.workspace === root && candidate.category === 'workspace-outputs');
@@ -171,12 +167,7 @@ export async function planSweep({
   skips.push(...prune.skips);
   blocked.push(...prune.blocked);
   const records = await planRecords({ devices, background, operation });
-  actions.push(
-    ...records.actions.map((action) => ({
-      ...action,
-      check: 'sweep' as const,
-    })),
-  );
+  actions.push(...records.actions.map((action) => ({ ...action, check: 'sweep' as const })));
   skips.push(...records.skips);
   blocked.push(...records.blocked);
   const runtimes = devices ? await planRuntimes(operation) : { actions: [], skips: [], blocked: [] };
@@ -200,10 +191,7 @@ async function planGradleDaemonStop(
 ): Promise<{ pids?: number[]; kept?: string }> {
   const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
   const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
-  if (skipped)
-    return {
-      kept: `the running Gradle processes could not be checked: ${skipped}`,
-    };
+  if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
   const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
   for (const pid of blockers) {
     const plan = plans.get(pid);
@@ -230,13 +218,7 @@ export async function planRung6(
     everyGradleVersion = false,
     now = Date.now(),
     operation,
-  }: {
-    disk?: boolean;
-    memory?: boolean;
-    everyGradleVersion?: boolean;
-    now?: number;
-    operation?: StimContext;
-  } = {},
+  }: { disk?: boolean; memory?: boolean; everyGradleVersion?: boolean; now?: number; operation?: StimContext } = {},
 ): Promise<MaintenancePlan> {
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -250,11 +232,7 @@ export async function planRung6(
   if (building) skips.push({ target: 'Gradle daemons', reason: building });
   if (!scoped) {
     const report = await collectMemoryReport(
-      {
-        watchman: true,
-        gradle: !building,
-        watchmanMinBytes: watchmanStopBytes(memory),
-      },
+      { watchman: true, gradle: !building, watchmanMinBytes: watchmanStopBytes(memory) },
       false,
       operation,
     );
@@ -278,10 +256,7 @@ export async function planRung6(
         reason: `the shared watchman daemon holds ${formatBytes(daemon.bytes)} and nothing uses it`,
       });
     else if (daemon && decision && !decision.stop)
-      skips.push({
-        target: `watchman pid ${daemon.pid}`,
-        reason: decision.reason,
-      });
+      skips.push({ target: `watchman pid ${daemon.pid}`, reason: decision.reason });
   }
   if (!disk) return { actions, blocked: [], skips };
   if (!scoped && settings.gradleVersionIdleDays > 0) {
@@ -323,12 +298,7 @@ export async function planRung6(
         });
     }
   }
-  const leftovers = await collectTempLeftovers({
-    now,
-    env: operation?.env,
-    signal: operation?.signal,
-    operation,
-  });
+  const leftovers = await collectTempLeftovers({ now, env: operation?.env, signal: operation?.signal, operation });
   const deletable = leftovers?.entries.filter((entry) => entry.willDelete) ?? [];
   if (leftovers && deletable.length)
     actions.push({
