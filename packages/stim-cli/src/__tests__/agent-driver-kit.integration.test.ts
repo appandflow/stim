@@ -247,9 +247,9 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     const waiting = use('processes.stop', await use('processes.capture', stubborn.pid), {
       group: false,
       steps: [['SIGCONT', 20_000]],
-    });
+    }).catch((error: unknown) => error);
     await worker.terminate();
-    await expect(waiting).rejects.toThrow('the worker exited');
+    expect(await waiting).toMatchObject({ message: expect.stringContaining('the worker exited') });
     await child.exited;
     expect(worker.failures).toEqual([]);
     expect(readClaimSet(claims).live).toEqual([]);
