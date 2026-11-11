@@ -5,6 +5,7 @@ import {
   machServiceLabels,
   nextLogOffset,
   parseLaunchdLine,
+  sharedBuild,
 } from '../stimd/logs/ios-slim.ts';
 
 const SPAWN =
@@ -134,4 +135,30 @@ test.each([
   ['the file was replaced by a rotation', { ino: 6, size: 900 }, { offset: 0, restarted: true }],
 ])('reads the log from the right place when %s', (_case, file, expected) => {
   expect(nextLogOffset({ ino: 5, offset: 400 }, file)).toEqual(expected);
+});
+
+test('a caller whose shared build failed because its starter aborted rebuilds once under its own signal', async () => {
+  const cache = new Map<string, Promise<string>>();
+  const starter = new AbortController();
+  let rejectFirst: (error: Error) => void = () => {};
+  const signals: AbortSignal[] = [];
+  const build = (signal: AbortSignal) => {
+    signals.push(signal);
+    return signals.length === 1
+      ? new Promise<string>((_resolve, reject) => {
+          rejectFirst = reject;
+        })
+      : Promise.resolve('map');
+  };
+  const first = sharedBuild(cache, 'build', build, starter.signal);
+  const own = new AbortController();
+  const second = sharedBuild(cache, 'build', build, own.signal);
+  starter.abort();
+  rejectFirst(new Error('aborted'));
+
+  await expect(first).rejects.toThrow('aborted');
+  await expect(second).resolves.toBe('map');
+  expect(signals).toEqual([starter.signal, own.signal]);
+  await expect(sharedBuild(cache, 'build', build, own.signal)).resolves.toBe('map');
+  expect(signals).toHaveLength(2);
 });

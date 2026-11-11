@@ -189,22 +189,50 @@ async function readRuntimePlists(root: string, signal: AbortSignal): Promise<unk
   return plists;
 }
 
+/**
+ * The cached build under `key`, or a new one under `signal`. A shared build started by another caller that rejects
+ * while this caller's own signal is live (that caller was aborted) is rebuilt once under this caller's signal.
+ */
+export async function sharedBuild<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+  build: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  const start = (): Promise<T> => {
+    const promise = build(signal);
+    cache.set(key, promise);
+    promise.catch(() => {
+      if (cache.get(key) === promise) cache.delete(key);
+    });
+    return promise;
+  };
+  const shared = cache.get(key);
+  if (!shared) return start();
+  try {
+    return await shared;
+  } catch (error) {
+    if (signal.aborted) throw error;
+    const current = cache.get(key);
+    return current && current !== shared ? current : start();
+  }
+}
+
 async function slimServiceMap(udid: string, signal: AbortSignal): Promise<Map<string, string>> {
   const runtime = await runtimeOf(udid, signal);
-  let map = serviceMaps.get(runtime.build);
-  if (!map) {
-    map = readRuntimePlists(runtime.root, signal).then((plists) => machServiceLabels(plists, SIM_SLIM_MANAGED));
-    serviceMaps.set(runtime.build, map);
-    map.catch(() => serviceMaps.delete(runtime.build));
-  }
-  return map;
+  return sharedBuild(
+    serviceMaps,
+    runtime.build,
+    async (buildSignal) => machServiceLabels(await readRuntimePlists(runtime.root, buildSignal), SIM_SLIM_MANAGED),
+    signal,
+  );
 }
 
 function holdPending(pending: LaunchdEvent[], event: LaunchdEvent): void {
   if (pending.length >= PENDING_LIMIT) {
     const oldestLookup = pending.findIndex((held) => held.kind === 'lookup');
     if (event.kind === 'lookup' && oldestLookup === -1) return;
-    if (oldestLookup !== -1) pending.splice(oldestLookup, 1);
+    pending.splice(Math.max(oldestLookup, 0), 1);
   }
   pending.push(event);
 }
@@ -261,7 +289,10 @@ export function watchSlimDenials({
     stopped = true;
     clearInterval(timer);
     pending.length = 0;
-    if (error !== undefined && !signal.aborted) stderr(`slim service report off for ${udid}: ${describe(error)}`);
+    if (error === undefined || signal.aborted) return;
+    try {
+      stderr(`slim service report off for ${udid}: ${describe(error)}`);
+    } catch {}
   };
   const report = (event: LaunchdEvent) => {
     if (stopped) return;
