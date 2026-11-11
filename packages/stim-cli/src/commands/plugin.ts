@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { BUILTIN_PLUGINS, builtinPlugin } from '../plugin-builtins.ts';
 import { readSettingsContext } from '../workspace/settings-payload.ts';
@@ -82,12 +82,19 @@ async function declaredKinds(reference: string, cwd: string): Promise<Record<str
     throw new Refusal(
       'STIM_BAD_ARG',
       `${reference} does not resolve from ${cwd}: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
-      'Name a path that starts with ./ or /, a package installed here, or builtin:<name>.',
+      'Name a plugin directory or module path, a package installed here, or builtin:<name>.',
     );
   }
 }
 
-async function testPlugin(reference: string, cwd: string): Promise<PluginTestPayload> {
+/** A relative path such as `plugins/acme` names that directory when it exists, before a package of that name. */
+function moduleReference(given: string, cwd: string): string {
+  if (given.startsWith('builtin:') || given.startsWith('.') || isAbsolute(given)) return given;
+  return existsSync(join(cwd, given)) ? `./${given}` : given;
+}
+
+async function testPlugin(given: string, cwd: string): Promise<PluginTestPayload> {
+  const reference = moduleReference(given, cwd);
   const kinds = await declaredKinds(reference, cwd);
   const skipped = Object.keys(kinds)
     .filter((kind) => !TESTED_KINDS.has(kind))
@@ -131,7 +138,7 @@ async function testPlugin(reference: string, cwd: string): Promise<PluginTestPay
       rmSync(scratch, { recursive: true, force: true });
     }
   }
-  return { reference, kinds, skipped, checks, passed: checks.every((check) => check.passed) };
+  return { reference: given, kinds, skipped, checks, passed: checks.every((check) => check.passed) };
 }
 
 const list = defineOp({

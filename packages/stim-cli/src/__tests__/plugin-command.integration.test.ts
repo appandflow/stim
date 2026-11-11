@@ -41,7 +41,7 @@ async function stim(args: string[], dir: string): Promise<{ payload: unknown; ex
 }
 
 test('plugin test passes a fixture, fails its stim-importing twin, and refuses a kind it does not run', async () => {
-  const passing = await stim(['test', '.', '--json'], join(fixtures, 'transport-fixture'));
+  const passing = await stim(['test', 'transport-fixture', '--json'], fixtures);
   expect(passing).toMatchObject({ exitCode: 0, payload: { kinds: { transport: 1 }, passed: true } });
 
   const twin = await stim(['test', '.', '--json'], join(fixtures, 'driver-fixture-imports-stim'));
