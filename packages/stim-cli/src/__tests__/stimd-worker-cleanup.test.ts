@@ -1,9 +1,9 @@
 import { createPassesLane, type ThreadTable } from '../stimd/threads.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
-test('a worker cleanup refusal that stimd does not contain stays visible after the lane settles', async () => {
+test('a worker cleanup refusal stays visible after the lane settles', async () => {
   const failure = new WorkspaceProcessCleanupError([], 'worker child is unverified', 'Inspect worker child.');
-  const reported = vi.fn<(error: unknown) => boolean>(() => false);
+  const reported = vi.fn<(error: unknown) => void>();
   const threads: ThreadTable = {
     run: async () => {
       throw failure;

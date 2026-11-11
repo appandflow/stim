@@ -55,7 +55,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { reportChildOf } from '../engine/workspace-process-error.ts';
+import { reportChildOf, WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -501,10 +501,10 @@ function childKey(error: unknown): string | null {
 }
 
 /**
- * The children whose cleanup a tick, a slow pass, the dependency scan or a Metro or tunnel stop could not verify. Each
- * keeps stimd up until a later tick finds it stopped, which releases the claims its failure retained once no other
- * unverified child holds them. Only a refusal that names one child and how to check it is contained, each child once
- * and at most `MAX_CONTAINED_CLEANUPS` of them; any other unverified cleanup ends stimd.
+ * The children whose cleanup a tick or a Metro or tunnel stop could not verify. Each keeps stimd up until a later tick
+ * finds it stopped, which releases the claims its failure retained once no other unverified child holds them. Only a
+ * refusal that names one child and how to check it is contained, each child once and at most `MAX_CONTAINED_CLEANUPS`
+ * of them; any other unverified cleanup ends stimd.
  */
 function createCleanupWatch(log: (level: Level, event: string, msg: string) => void) {
   let unsettled: { error: ClaimUnavailableError; settled: () => boolean; claims: readonly ClaimHandle[] }[] = [];
@@ -516,8 +516,11 @@ function createCleanupWatch(log: (level: Level, event: string, msg: string) => v
       if (!key || !settled) return false;
       if (unsettled.some((entry) => childKey(entry.error) === key)) return true;
       if (unsettled.length >= MAX_CONTAINED_CLEANUPS) return false;
-      const held: unknown = Reflect.get(error, 'claims');
-      unsettled.push({ error, settled, claims: Array.isArray(held) ? held.filter(isClaimHandle) : [] });
+      unsettled.push({
+        error,
+        settled,
+        claims: error instanceof WorkspaceProcessCleanupError ? error.claims : [],
+      });
       log(
         'error',
         'daemon_cleanup_unverified',
@@ -545,9 +548,6 @@ function createCleanupWatch(log: (level: Level, event: string, msg: string) => v
     errors: () => unsettled.map((entry) => entry.error),
   };
 }
-
-const isClaimHandle = (value: unknown): value is ClaimHandle =>
-  isJsonObject(value) && typeof value.path === 'string' && typeof value.claimId === 'string';
 
 /** How a later tick learns that a child whose cleanup was not verified has stopped, or null when nothing can tell. */
 function cleanupCheck(error: object): (() => boolean) | null {
@@ -898,9 +898,7 @@ async function runStimdInner(
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const lane = createPassesLane(threads, log, (error) => {
-    if (cleanups.contain(error, endingNow())) return true;
     failBackground(error, 'background cleanup could not be verified');
-    return false;
   });
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
@@ -1636,8 +1634,9 @@ async function runStimdInner(
           .then(() => undefined)
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
-            if (isUnverifiedCleanup(error) && !cleanups.contain(error, endingNow()))
+            if (isUnverifiedCleanup(error)) {
               failBackground(error, 'dependency cleanup could not be verified');
+            }
             if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
           })
           .finally(() => {

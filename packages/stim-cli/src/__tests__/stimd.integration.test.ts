@@ -931,7 +931,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   }, 60_000);
 
   test.each(['passes', 'measure'])(
-    'a %s thread cleanup refusal that names its child keeps stimd running and releases the claims it held once the child stops',
+    'a %s thread refusal ends stimd even when it names one child, so a claim another child still needs is never released when that one exits',
     async (worker) => {
       const before = new Set(process.listeners('SIGTERM'));
       const sleeper = spawnChild('sleep', ['30'], { detached: true, stdio: 'ignore' });
@@ -965,23 +965,13 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       try {
         running = runStimd({ mode: 'on', tickMs: 60_000 });
         await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
-        await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_unverified'), {
-          timeout: 10_000,
-          interval: 20,
-        });
-        expect(daemonEvents()).not.toContain('daemon_exited');
-        expect(readClaimSet(retained.root).live).toHaveLength(1);
+        void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+        await running;
+        expect(daemonEvents()).toContain('daemon_exited');
+        expect(daemonEvents()).not.toContain('daemon_cleanup_unverified');
         sleeper.kill('SIGKILL');
         await exited;
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
-        await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_settled'), {
-          timeout: 10_000,
-          interval: 20,
-        });
-        expect(readClaimSet(retained.root).live).toEqual([]);
-        stopInProcess(before);
-        await running;
+        expect(readClaimSet(retained.root).live).toHaveLength(1);
       } finally {
         stopInProcess(before);
         await running?.catch(() => {});
