@@ -289,6 +289,20 @@ default, level info unless noted. They show in a plain \`logs\` and in
     100 reports of at most 1 MiB each, copies at most 8 MiB per run, and keeps
     at most 40 in the directory.
 
+SLIM SIMULATOR SERVICE RECORDS
+While the device log stream of an owned iOS simulator that Stim slimmed runs,
+Stim follows that simulator's launchd log. When the launched app's process
+asks for a system service slimming turned off, it writes one record per
+feature (or service label) per app launch: src device, platform ios, level
+warn, event slim_service_denied, with service (the Mach service name), label
+(the disabled launchd label), features (feature ids, empty when the label
+names none), slimCategory (the profile category id), proc and pid. msg names
+the feature and the remedy. They show in a plain \`logs\`, in
+\`--source device\` and \`--level warn\`, and never in \`--errors\`:
+  stim logs --source device --grep "slimming turned off"
+Services the simulator runtime never has are not reported; only services of
+labels Stim disabled on that simulator are.
+
 Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance
 Add --errors to --source maintenance to show only maintenance_failure events;
