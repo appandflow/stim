@@ -169,18 +169,19 @@ WHO RUNS IT
   it takes the first that applies:
 
     1. metro.command is set: command-child.
-    2. rock.config.* (mjs, js, cjs or ts) exists: repack-child when its text
-       names @rock-js/plugin-repack, otherwise bare-inproc, because Rock then
-       runs Metro.
-    3. react-native.config.js (or .cjs, .mjs) registers
-       @callstack/repack/commands: repack-child.
+    2. rock.config.* (mjs, js, cjs or ts) imports or requires
+       @rock-js/plugin-repack: repack-child.
+    3. Without a rock.config.*, react-native.config.js (or .cjs, .mjs)
+       requires @callstack/repack/commands: repack-child.
     4. expo is used (app.json expo key, an app.config naming expo, or a
        resolvable expo dependency): expo-child.
     5. Otherwise: bare-inproc.
 
-  Stim reads those config files as text and never runs them. An app that
-  installs expo only for Expo modules but bundles with Re.Pack gets
-  repack-child. \`start\` names the file that decided, as in
+  Stim reads those config files as text and never runs them. Only an import,
+  require or dynamic import of the package counts; a comment or a string that
+  mentions it does not. An app that installs expo only for Expo modules but
+  bundles with Re.Pack gets repack-child. Any other app, including a Rock app
+  on Metro, gets the mode it would get without Re.Pack support. \`start\` names the file that decided, as in
   "starting on port 8082 (repack-child from rock.config.mjs)".
 
     bare-inproc  bare React Native: Stim's Metro host runs Metro from the
@@ -200,17 +201,21 @@ WHO RUNS IT
                  requests are dropped. Re.Pack's compile events become
                  bundle_build_started and _done progress records. Other
                  lines, including the compile errors Re.Pack prints as text,
-                 arrive as repack_stdout and repack_stderr records. In
-                 development Re.Pack serves a bundle that compiled with
-                 errors, so a launch can report true while the app shows a
-                 redbox; read \`stim logs --source metro\` for the errors.
-                 Re.Pack 5 or later is required; Re.Pack 4 needs
-                 metro.command. Re.Pack keeps its
-                 own host, localhost by default, because it also writes that
-                 host into the bundle's publicPath: a simulator and an
-                 emulator or Android phone (through adb reverse) reach it, a
-                 physical iPhone on the LAN does not, so \`ios --device\`
-                 needs metro.command with the project's own --host. If the
+                 arrive as repack_stdout and repack_stderr records; an
+                 error-level line printed after a compile carries that
+                 compile's platform. In development Re.Pack serves a bundle
+                 that compiled with errors, so a launch whose bundle came
+                 from a compile that logged an error reports
+                 launched: "unverified", not true; read \`stim logs --source
+                 metro\` for the errors. Re.Pack 5 or later is required;
+                 Re.Pack 4 needs metro.command. Stim starts Re.Pack on its
+                 own host, localhost, and Re.Pack writes that host into the
+                 bundle's asset and chunk URLs. A simulator, an emulator and
+                 an Android phone (through adb reverse) reach it. A run that
+                 cannot refuses before it builds, with a metro.command
+                 remedy: \`ios --device\` with STIM_LAN_METRO_UNREACHABLE,
+                 and a --remote, tunnel or hosted run with
+                 STIM_REMOTE_METRO_UNREACHABLE. If the
                  reserved port is taken by the time Rock starts, Rock may wait
                  for an answer it cannot get or exit, and \`start\` reports
                  the dev server as not ready. Re.Pack's own adb reverse, which

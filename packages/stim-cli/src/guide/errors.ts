@@ -727,7 +727,10 @@ fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
   What this gate CANNOT prove is that the phone can reach the origin: macOS
   routes a host connection to its own address over loopback, so the gate passes
   through a firewall that will block the phone. That evidence only ever arrives
-  from the phone's own bundle request, which is what \`launched\` reports.`,
+  from the phone's own bundle request, which is what \`launched\` reports.
+  A Re.Pack app (repack-child, \`guide metro\`) refuses with this code before
+  any dev server starts, because Stim runs Re.Pack on localhost: set
+  metro.command to the project's start command with its own --host.`,
     },
     unverified: {
       summary: 'launched: "unverified" with the Local Network path reason, and the routed recovery',
@@ -1171,7 +1174,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   A remote start could not create its selected managed tunnel, or the device
   could not be told where Metro is. Follows the same remedy as
   STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
-  metro.publicUrl for an existing endpoint.`,
+  metro.publicUrl for an existing endpoint. A Re.Pack app (repack-child,
+  \`guide metro\`) refuses with this code on a --remote, tunnel or hosted run,
+  because Re.Pack writes its localhost origin into the bundle's asset and chunk
+  URLs: run it on a local simulator or emulator, or set metro.command.`,
     },
     STIM_RELOAD_AMBIGUOUS: {
       summary: 'more than one owned app or the owned Chrome is live; name the platform',
@@ -1345,12 +1351,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   node_modules/.bin/expo does not exist. Install the project's dependencies.`,
     },
     STIM_REPACK_BIN: {
-      summary: 'rock.config or react-native.config names Re.Pack, but rock or @callstack/repack is missing',
+      summary: 'rock.config or react-native.config imports Re.Pack, but rock or @callstack/repack 5 is missing',
       body: () => `STIM_REPACK_BIN  (Re.Pack)
-  The project's rock.config.* names @rock-js/plugin-repack, or its
-  react-native.config.js registers @callstack/repack's commands, but the
+  The project's rock.config.* imports @rock-js/plugin-repack, or its
+  react-native.config.js requires @callstack/repack's commands, but the
   \`rock\` or \`react-native\` bin or @callstack/repack 5 or later is not
-  resolvable from the app. Install the project's dependencies, or set
+  resolvable from the app; the message names the version it found. Install the project's dependencies, or set
   metro.command to the command that starts its dev server (Re.Pack 4 needs
   that, because its start command lacks the flags Stim passes).`,
     },
