@@ -826,7 +826,8 @@ with its own `./exact.mjs ios --no-install` (plus `--release` for
 `--configuration Release`), with `EXACT_SIM` naming the
 workspace's owned simulator, started only once Stim has booted that simulator,
 so Exact never boots or shuts it down; build-only runs are refused. A build
-worker runs the same command with no `EXACT_SIM`, and only for an app whose
+worker, and a run whose simulator is hosted on another Mac, run the same
+command with no `EXACT_SIM`, and only for an app whose
 `app.json` declares no native modules, because Exact may run code on a
 simulator during the build to read an app's native modules.
 
