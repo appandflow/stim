@@ -426,7 +426,12 @@ function gcItemAction(
     'STIM_GC_TIMEOUT',
     async (client, signal) => {
       const { results, exitCode } = await client.deleteGarbageItem({ item, signal });
-      const stdout = JSON.stringify({ mode: 'delete', item, failures: results.filter((r) => r.status === 'failed').length, results });
+      const stdout = JSON.stringify({
+        mode: 'delete',
+        item,
+        failures: results.filter((r) => r.status === 'failed').length,
+        results,
+      });
       return exitCode === 0
         ? { ok: true, stdout, summary: 'Cleanup completed.' }
         : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Cleanup reported failures.' };

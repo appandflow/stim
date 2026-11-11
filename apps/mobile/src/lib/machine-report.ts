@@ -620,9 +620,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     .map((recording) => ({
       id: recording.dir,
       title: recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : t`A removed workspace`,
-      detail: recording.withWorkspace
-        ? t`Its workspace was removed; stim gc deletes it with the workspace data`
-        : null,
+      detail: recording.withWorkspace ? t`Its workspace was removed; stim gc deletes it with the workspace data` : null,
       bytes: recording.bytes,
     }))
     .sort(

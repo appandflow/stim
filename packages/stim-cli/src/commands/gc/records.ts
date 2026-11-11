@@ -41,7 +41,12 @@ import {
   type EasGcDependencies,
   type EasSessionSweep,
 } from './eas-sessions.ts';
-import { findStaleAndroidLedgerEntries, findStaleLedgerEntries, staleBrowserProfiles, type StaleLedgerEntry } from './ledger.ts';
+import {
+  findStaleAndroidLedgerEntries,
+  findStaleLedgerEntries,
+  staleBrowserProfiles,
+  type StaleLedgerEntry,
+} from './ledger.ts';
 import { ownedDeviceDisk, type OwnedDeviceDisk } from './finished-devices.ts';
 
 export type RecordDependencies = EasGcDependencies & GcDeviceDependencies & OtherHomesDependencies;

@@ -1,38 +1,38 @@
 type GcResultKind =
-  | "archive"
-  | "device"
-  | "parkedDevice"
-  | "parkedHostedDevice"
-  | "idleDevice"
-  | "deviceRecord"
-  | "workspaceOutputs"
-  | "worktreeDependencies"
-  | "recording"
-  | "workspaceDirectory"
-  | "project"
-  | "buildLock"
-  | "buildSlot"
-  | "deviceLease"
-  | "easSession"
-  | "worktree"
-  | "cache"
-  | "statusCache"
-  | "tempLeftover"
-  | "trash"
-  | "watchmanRoot"
-  | "watchman"
-  | "gradleDaemon"
-  | "gradleVersion"
-  | "kotlinDaemon"
-  | "devServer"
-  | "workspaceLogs"
-  | "ledgerEntry"
-  | "easLedgerEntry"
-  | "homeEntry"
-  | "runtime"
-  | "toolCache";
+  | 'archive'
+  | 'device'
+  | 'parkedDevice'
+  | 'parkedHostedDevice'
+  | 'idleDevice'
+  | 'deviceRecord'
+  | 'workspaceOutputs'
+  | 'worktreeDependencies'
+  | 'recording'
+  | 'workspaceDirectory'
+  | 'project'
+  | 'buildLock'
+  | 'buildSlot'
+  | 'deviceLease'
+  | 'easSession'
+  | 'worktree'
+  | 'cache'
+  | 'statusCache'
+  | 'tempLeftover'
+  | 'trash'
+  | 'watchmanRoot'
+  | 'watchman'
+  | 'gradleDaemon'
+  | 'gradleVersion'
+  | 'kotlinDaemon'
+  | 'devServer'
+  | 'workspaceLogs'
+  | 'ledgerEntry'
+  | 'easLedgerEntry'
+  | 'homeEntry'
+  | 'runtime'
+  | 'toolCache';
 
-type GcResultStatus = "done" | "kept" | "failed";
+type GcResultStatus = 'done' | 'kept' | 'failed';
 
 export interface GcResult {
   kind: GcResultKind;
@@ -57,9 +57,7 @@ interface GcResults {
   take(): GcResult[];
 }
 
-export function createGcResults(
-  observe?: (result: GcResult) => void,
-): GcResults {
+export function createGcResults(observe?: (result: GcResult) => void): GcResults {
   const results: GcResult[] = [];
   return {
     record(
@@ -87,8 +85,8 @@ export function createGcResults(
 }
 
 const detachedResults = createGcResults();
-export const recordGcResult: GcResults["record"] = detachedResults.record;
-export const takeGcResults: GcResults["take"] = detachedResults.take;
+export const recordGcResult: GcResults['record'] = detachedResults.record;
+export const takeGcResults: GcResults['take'] = detachedResults.take;
 
 /** Where `stim gc`'s helpers print each line, record each result and report a failure; the budget passes its own. */
 export interface GcOutput {

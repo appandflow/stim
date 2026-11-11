@@ -36,10 +36,14 @@ const isCleanupError = (error: unknown) =>
   error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error);
 
 async function goneWorkspaceDirs(dead: readonly string[], operation?: StimContext): Promise<string[]> {
-  const { orphaned } = await collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes(), {
-    measure: false,
-    operation,
-  });
+  const { orphaned } = await collectOrphanedWorkspaces(
+    Object.keys(loadConfig()?.projects ?? {}),
+    listMountedVolumes(),
+    {
+      measure: false,
+      operation,
+    },
+  );
   return [...orphaned.map((entry) => entry.dir), ...dead.map(workspaceDir)];
 }
 
@@ -83,7 +87,12 @@ export async function planRecords({
   const cfg = loadConfig();
   const { deadProjects, invalidProjects, skipped } = collectProjectRecords(cfg);
   for (const path of deadProjects)
-    actions.push({ kind: 'would-prune-project', target: path, bytes: 0, reason: 'its project folder no longer exists' });
+    actions.push({
+      kind: 'would-prune-project',
+      target: path,
+      bytes: 0,
+      reason: 'its project folder no longer exists',
+    });
   for (const path of invalidProjects)
     actions.push({ kind: 'would-prune-project', target: path, bytes: 0, reason: 'its registry entry is invalid' });
   for (const entry of skipped) skips.push({ target: entry.dir, reason: entry.reason });
@@ -164,11 +173,7 @@ export async function planRecords({
 /** At critical: every device recording, and the logs, recordings and agent actions of every archive. */
 export async function planHistory(operation?: StimContext): Promise<MaintenanceAction[]> {
   const actions: MaintenanceAction[] = [];
-  const recordings = await collectRecordings(
-    { whole: false, olderThan: 0, now: Date.now() },
-    [],
-    operation?.signal,
-  );
+  const recordings = await collectRecordings({ whole: false, olderThan: 0, now: Date.now() }, [], operation?.signal);
   const bytes = recordings.filter((entry) => entry.willDelete).reduce((sum, entry) => sum + entry.deleteBytes, 0);
   if (bytes > 0)
     actions.push({
@@ -226,7 +231,13 @@ export async function executeRecordAction(
           ? null
           : await collectDeviceRecords(loadConfig(), collectProjectRecords().deadProjects, { operation });
         let failures = await forgetStaleLedgerEntries(records?.staleLedgerEntries ?? [], GC_OUTPUT, signal);
-        failures += await forgetStaleEasLedgerEntries(findStaleEasLedgerEntries(mounted), mounted, {}, GC_OUTPUT, signal);
+        failures += await forgetStaleEasLedgerEntries(
+          findStaleEasLedgerEntries(mounted),
+          mounted,
+          {},
+          GC_OUTPUT,
+          signal,
+        );
         failures += forgetGoneHomes(records?.otherHomes?.homes ?? [], mounted, {}, GC_OUTPUT);
         failures += clearStaleClaims(collectStaleClaims(), GC_OUTPUT, signal);
         return failures;
@@ -250,7 +261,11 @@ export async function executeRecordAction(
       });
     case 'would-delete-archives':
       return run(async () =>
-        deleteArchives(await collectArchives({ kind: action.target as ArchiveKind, id: null }, signal), GC_OUTPUT, signal),
+        deleteArchives(
+          await collectArchives({ kind: action.target as ArchiveKind, id: null }, signal),
+          GC_OUTPUT,
+          signal,
+        ),
       );
     default:
       return { failures: 0, results: [] };

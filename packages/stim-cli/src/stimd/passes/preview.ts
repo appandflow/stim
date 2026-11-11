@@ -170,7 +170,16 @@ export async function plannedMaintenance(
   if (sweep)
     merge(
       'sweep',
-      await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, background, operation }),
+      await planSweep({
+        settings,
+        sizes,
+        protectedRoot: root,
+        pinned,
+        now: Date.now(),
+        devices,
+        background,
+        operation,
+      }),
     );
   if (worktrees) {
     const planned = await planWorktrees({

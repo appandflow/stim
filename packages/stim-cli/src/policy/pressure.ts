@@ -1,37 +1,32 @@
-import type { DaemonPressure, MaintenanceAction } from "@stim-cli/core/state";
+import type { DaemonPressure, MaintenanceAction } from '@stim-cli/core/state';
 
 const DAY_MS = 86_400_000;
 
-export type Cause = "disk" | "memory";
+export type Cause = 'disk' | 'memory';
 
 export type Rung = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 const LADDER: readonly { rung: Rung; relieves: readonly Cause[] }[] = [
-  { rung: 0, relieves: ["memory"] },
-  { rung: 1, relieves: ["disk"] },
-  { rung: 2, relieves: ["disk"] },
-  { rung: 3, relieves: ["disk"] },
-  { rung: 4, relieves: ["disk"] },
-  { rung: 5, relieves: ["disk"] },
-  { rung: 6, relieves: ["disk", "memory"] },
-  { rung: 7, relieves: ["disk"] },
-  { rung: 8, relieves: ["disk"] },
-  { rung: 9, relieves: ["disk"] },
+  { rung: 0, relieves: ['memory'] },
+  { rung: 1, relieves: ['disk'] },
+  { rung: 2, relieves: ['disk'] },
+  { rung: 3, relieves: ['disk'] },
+  { rung: 4, relieves: ['disk'] },
+  { rung: 5, relieves: ['disk'] },
+  { rung: 6, relieves: ['disk', 'memory'] },
+  { rung: 7, relieves: ['disk'] },
+  { rung: 8, relieves: ['disk'] },
+  { rung: 9, relieves: ['disk'] },
 ];
 
 /** The ladder's rungs from `fromRung`, in the order they run, each with the causes it relieves. */
-export function rungsFrom(
-  fromRung = 0,
-): readonly { rung: Rung; relieves: readonly Cause[] }[] {
+export function rungsFrom(fromRung = 0): readonly { rung: Rung; relieves: readonly Cause[] }[] {
   return LADDER.filter(({ rung }) => rung >= fromRung);
 }
 
 /** The causes a rung relieves that are above normal in this measurement. */
-export function causesOf(
-  pressure: DaemonPressure,
-  relieves: readonly Cause[],
-): Cause[] {
-  return relieves.filter((cause) => pressure[cause] !== "normal");
+export function causesOf(pressure: DaemonPressure, relieves: readonly Cause[]): Cause[] {
+  return relieves.filter((cause) => pressure[cause] !== 'normal');
 }
 
 /**
@@ -41,15 +36,13 @@ export function causesOf(
 export function rungDecision(
   pressure: DaemonPressure,
   relieves: readonly Cause[],
-): "stop" | "skip" | { causes: Cause[]; level: "high" | "critical" } {
-  if (pressure.level === "normal") return "stop";
+): 'stop' | 'skip' | { causes: Cause[]; level: 'high' | 'critical' } {
+  if (pressure.level === 'normal') return 'stop';
   const causes = causesOf(pressure, relieves);
-  if (!causes.length) return "skip";
+  if (!causes.length) return 'skip';
   return {
     causes,
-    level: causes.some((cause) => pressure[cause] === "critical")
-      ? "critical"
-      : "high",
+    level: causes.some((cause) => pressure[cause] === 'critical') ? 'critical' : 'high',
   };
 }
 
@@ -58,20 +51,14 @@ export function longestIdleFirst<T extends { idleMs: number | null }>(
   readings: readonly T[],
 ): (T & { idleMs: number })[] {
   return readings
-    .filter(
-      (reading): reading is T & { idleMs: number } => reading.idleMs !== null,
-    )
+    .filter((reading): reading is T & { idleMs: number } => reading.idleMs !== null)
     .toSorted((a, b) => b.idleMs - a.idleMs);
 }
 
 /** The dormant stage's plan action for a workspace idle `thresholdMs`; `executeAction` carries it out. */
-export function dormantAction(
-  path: string,
-  thresholdMs: number,
-  why: string,
-): MaintenanceAction {
+export function dormantAction(path: string, thresholdMs: number, why: string): MaintenanceAction {
   return {
-    kind: "would-dormant-stage",
+    kind: 'would-dormant-stage',
     target: path,
     workspace: path,
     bytes: 0,
@@ -81,10 +68,6 @@ export function dormantAction(
 }
 
 /** The idle threshold in milliseconds that a dormant-stage action carries; null when it carries none. */
-export function dormantThresholdMs(
-  action: Pick<MaintenanceAction, "olderThanDays">,
-): number | null {
-  return action.olderThanDays === undefined
-    ? null
-    : Math.round(action.olderThanDays * DAY_MS);
+export function dormantThresholdMs(action: Pick<MaintenanceAction, 'olderThanDays'>): number | null {
+  return action.olderThanDays === undefined ? null : Math.round(action.olderThanDays * DAY_MS);
 }

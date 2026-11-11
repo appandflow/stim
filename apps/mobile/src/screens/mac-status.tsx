@@ -327,7 +327,9 @@ export function MacStatus({ id }: { id: string }) {
           trailing={<SizeText size={sum(report.caches)} />}
           note={
             <Text variant="footnote" tone="tertiary" style={styles.note}>
-              <Trans>Shared caches builds refill. Stim Desktop empties one; stim gc --pressure critical empties them all.</Trans>
+              <Trans>
+                Shared caches builds refill. Stim Desktop empties one; stim gc --pressure critical empties them all.
+              </Trans>
             </Text>
           }
           empty={t`No shared cache was found.`}

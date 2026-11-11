@@ -436,7 +436,7 @@ export function planWorkspaceOutputs(
                 : idleDays === null
                   ? ['last-use-unknown', 'its last use is unknown']
                   : idleDays < olderThan
-                    ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
+                    ? ['recently-used', `used ${idleDays}d ago, within ${olderThan} days`]
                     : [null, null];
     return { dir, projectRoot, inTreeDirs, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
   });

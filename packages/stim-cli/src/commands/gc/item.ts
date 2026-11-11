@@ -67,10 +67,15 @@ export async function deleteGcItem(item: GcItem, operation?: StimContext): Promi
       break;
     }
     case 'workspace-outputs': {
-      const report = await collectWorkspaceOutputs({ olderThan: null, now: Date.now(), signal, operation, lighten: true });
-      failures = (
-        await clearWorkspaceOutputs(report, { olderThan: null, signal, operation, lighten: true }, output)
-      ).failures;
+      const report = await collectWorkspaceOutputs({
+        olderThan: null,
+        now: Date.now(),
+        signal,
+        operation,
+        lighten: true,
+      });
+      failures = (await clearWorkspaceOutputs(report, { olderThan: null, signal, operation, lighten: true }, output))
+        .failures;
       break;
     }
     case 'archive': {

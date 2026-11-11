@@ -453,7 +453,8 @@ export function createLocalStim(options: StimOptions): StimClient {
           new StimError({
             code: 'STIM_BAD_ARG',
             message: 'item names no cleanup item.',
-            remedy: 'Pass a cache dir, workspace-outputs, an archive id with an optional part, watchman or gradle-daemons.',
+            remedy:
+              'Pass a cache dir, workspace-outputs, an archive id with an optional part, watchman or gradle-daemons.',
           }),
         );
       const operation = beginReport('deleteGarbageItem', signal);

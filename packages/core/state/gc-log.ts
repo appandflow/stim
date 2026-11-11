@@ -11,13 +11,6 @@ export interface GcLogOptions {
   level?: PressureLevel;
   /** Whether `--pressure` chose the level instead of the measured one. */
   pressure?: boolean;
-  /** Written by the removed `--delete`, `--worktrees`, `--older-than` and `--cache` flags; older records keep them. */
-  delete?: boolean;
-  worktrees?: boolean;
-  olderThan?: number;
-  cache?: string;
-  /** Written by `stim gc --idle`, which no longer exists; older records keep it. */
-  idleMs?: number;
 }
 
 export interface GcLogRecord extends NdjsonRecord {

@@ -1,61 +1,30 @@
-import { existsSync } from "node:fs";
-import { dirname, sep } from "node:path";
-import {
-  buildCacheRoot,
-  metroCacheRoot,
-  type StimContext,
-} from "@stim-cli/core";
-import {
-  sharedCompilationCache,
-  type MaintenanceAction,
-} from "@stim-cli/core/state";
-import { cacheLabel } from "./budget.ts";
-import { unregister, readManifest } from "../../cache/cache-manifest.ts";
-import {
-  discoverCachesAsync,
-  pruneCache,
-  type CacheDescriptor,
-} from "../../cache/caches.ts";
-import { emptyCaches, planCacheEmptying } from "../../commands/gc/caches.ts";
-import { canonicalPath } from "../../commands/gc/paths.ts";
-import {
-  deleteGradleVersion,
-  waitForGradleExit,
-} from "../../commands/gc/gradle-versions.ts";
-import {
-  stopIdleGradleDaemons,
-  stopUnusedWatchman,
-} from "../../commands/gc/memory.ts";
-import { deleteTempLeftovers } from "../../commands/gc/temp-leftovers.ts";
-import { deleteTrash } from "../../commands/gc/trash.ts";
-import {
-  collectStaleStatusCachesAsync,
-  deleteStaleStatusCaches,
-} from "../../commands/gc/status-caches.ts";
-import {
-  archivesPastRetention,
-  enforceArchiveRetention,
-} from "../../archive.ts";
-import { enterDormantStage } from "../../daemon/stages.ts";
-import { removeExpiredLeaseAsync } from "../../engine/device-lease.ts";
-import { pruneEmptyProcessLockDirs } from "../../engine/tunnel.ts";
-import { plural } from "../../command-output.ts";
-import {
-  takeGcResults,
-  GC_OUTPUT,
-  type GcResult,
-  type GcOutput,
-} from "../../commands/gc/results.ts";
+import { existsSync } from 'node:fs';
+import { dirname, sep } from 'node:path';
+import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
+import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
+import { cacheLabel } from './budget.ts';
+import { unregister, readManifest } from '../../cache/cache-manifest.ts';
+import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
+import { emptyCaches, planCacheEmptying } from '../../commands/gc/caches.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { deleteGradleVersion, waitForGradleExit } from '../../commands/gc/gradle-versions.ts';
+import { stopIdleGradleDaemons, stopUnusedWatchman } from '../../commands/gc/memory.ts';
+import { deleteTempLeftovers } from '../../commands/gc/temp-leftovers.ts';
+import { deleteTrash } from '../../commands/gc/trash.ts';
+import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../../commands/gc/status-caches.ts';
+import { archivesPastRetention, enforceArchiveRetention } from '../../archive.ts';
+import { enterDormantStage } from '../../daemon/stages.ts';
+import { removeExpiredLeaseAsync } from '../../engine/device-lease.ts';
+import { pruneEmptyProcessLockDirs } from '../../engine/tunnel.ts';
+import { plural } from '../../command-output.ts';
+import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../../commands/gc/results.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
   collectWorkspaceOutputs,
   deleteOrphanedWorkspaces,
-} from "../../commands/gc/workspaces.ts";
-import {
-  removeWorktrees,
-  type WorktreeSweep,
-} from "../../commands/gc/worktrees.ts";
+} from '../../commands/gc/workspaces.ts';
+import { removeWorktrees, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import {
   DEVICE_LIST_TIMEOUT_MS,
   collectDeviceLeases,
@@ -66,47 +35,38 @@ import {
   deleteProjectDevices,
   deviceSweepIsScoped,
   findStaleProjectDevices,
-} from "../../commands/gc/devices.ts";
-import { listAvdsAsync } from "../../devices/android.ts";
-import { WorkspaceProcessCleanupError } from "../../engine/workspace-process-lock.ts";
-import { projectDeviceSlots } from "../../devices/device-slots.ts";
-import { listAllIosSimsAsync } from "../../devices/ios.ts";
-import { liveShareKeepReason } from "../../local-server.ts";
-import { withIdleWorkspace } from "../../workspace/in-use.ts";
-import { isOnMountedVolume, listMountedVolumes } from "../../fs-util.ts";
-import { loadConfig } from "../../workspace/config.ts";
-import {
-  cacheBlocked,
-  lowestFree,
-  measureDisk,
-  measureDiskAsync,
-} from "./measure.ts";
+} from '../../commands/gc/devices.ts';
+import { listAvdsAsync } from '../../devices/android.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { listAllIosSimsAsync } from '../../devices/ios.ts';
+import { liveShareKeepReason } from '../../local-server.ts';
+import { withIdleWorkspace } from '../../workspace/in-use.ts';
+import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
 import {
   cacheEntryProtectionFor,
   maintenancePinned,
   maintenancePinnedAsync,
   maintenancePinnedReader,
   recentUse,
-} from "./protect.ts";
-import {
-  artifactWorktreesFor,
-  clearArtifact,
-  type ArtifactWorktree,
-} from "./artifacts.ts";
+} from './protect.ts';
+import { artifactWorktreesFor, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
 import {
   cachedDeviceActivity,
   cachedDeviceActivityAsync,
   workspaceActiveReason,
   workspaceActiveReasonAsync,
-} from "./activity.ts";
-import { stopIdleWorkspace } from "./idle-stop.ts";
-import { archiveExpiryReason, leaseKeepReason } from "./prune.ts";
-import type { MaintenanceSettings } from "./settings.ts";
-import { executeRecordAction } from "./records.ts";
-import { deleteRuntimeAction, deleteUnavailableSimAction } from "./runtimes.ts";
+} from './activity.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
+import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
+import type { MaintenanceSettings } from './settings.ts';
+import { executeRecordAction } from './records.ts';
+import { deleteRuntimeAction, deleteUnavailableSimAction } from './runtimes.ts';
 
 export interface ActionOutcome {
-  status: "done" | "kept" | "failed";
+  status: 'done' | 'kept' | 'failed';
   bytes: number;
   detail: string;
   shortfall?: string;
@@ -125,19 +85,16 @@ export interface ActContext {
   operation?: StimContext;
 }
 
-const protectWindowMs = (
-  settings: Pick<MaintenanceSettings, "protectRecentHours">,
-) => settings.protectRecentHours * 3_600_000;
+const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
+  settings.protectRecentHours * 3_600_000;
 
 function freedSince(beforeMb: number, disk = measureDisk()): number {
   const freed = lowestFree(disk) - beforeMb;
-  return Number.isFinite(freed) && freed > 0
-    ? Math.round(freed * 1024 * 1024)
-    : 0;
+  return Number.isFinite(freed) && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
 }
 
 const kept = (detail: string): ActionOutcome => ({
-  status: "kept",
+  status: 'kept',
   bytes: 0,
   detail,
 });
@@ -145,17 +102,13 @@ const kept = (detail: string): ActionOutcome => ({
 let quietTurn: Promise<unknown> = Promise.resolve();
 
 /** One runs at a time per process: the gc result buffer, the console and the exit code it swaps are process-wide. */
-function quietly<T>(
-  run: () => Promise<T> | T,
-): Promise<{ value: T; results: GcResult[] }> {
+function quietly<T>(run: () => Promise<T> | T): Promise<{ value: T; results: GcResult[] }> {
   const turn = quietTurn.then(() => quietlyNow(run));
   quietTurn = turn.catch(() => {});
   return turn;
 }
 
-async function quietlyNow<T>(
-  run: () => Promise<T> | T,
-): Promise<{ value: T; results: GcResult[] }> {
+async function quietlyNow<T>(run: () => Promise<T> | T): Promise<{ value: T; results: GcResult[] }> {
   const { log, error } = { log: console.log, error: console.error };
   const exitCode = process.exitCode;
   takeGcResults();
@@ -172,104 +125,74 @@ async function quietlyNow<T>(
   }
 }
 
-function outcomeOf(
-  results: readonly GcResult[],
-  fallbackBytes: number,
-): ActionOutcome {
-  const failed = results.find((result) => result.status === "failed");
+function outcomeOf(results: readonly GcResult[], fallbackBytes: number): ActionOutcome {
+  const failed = results.find((result) => result.status === 'failed');
   if (failed)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: 0,
       detail: failed.detail ?? `could not process ${failed.label}`,
     };
-  const done = results.filter((result) => result.status === "done");
+  const done = results.filter((result) => result.status === 'done');
   if (done.length)
     return {
-      status: "done",
-      bytes:
-        done.reduce((sum, result) => sum + (result.bytes ?? 0), 0) ||
-        fallbackBytes,
-      detail: done.map((result) => result.label).join(", "),
+      status: 'done',
+      bytes: done.reduce((sum, result) => sum + (result.bytes ?? 0), 0) || fallbackBytes,
+      detail: done.map((result) => result.label).join(', '),
     };
-  return kept(
-    results.find((result) => result.detail)?.detail ??
-      "nothing was eligible when the action ran",
-  );
+  return kept(results.find((result) => result.detail)?.detail ?? 'nothing was eligible when the action ran');
 }
 
 function rootCache(dir: string): CacheDescriptor | null {
   const name =
     canonicalPath(dir) === canonicalPath(buildCacheRoot())
-      ? "Build cache"
+      ? 'Build cache'
       : canonicalPath(dir) === canonicalPath(metroCacheRoot())
-        ? "Metro transform caches"
+        ? 'Metro transform caches'
         : null;
   return name
     ? {
         name,
         dir,
-        prune: "entries",
-        entriesDepth: name === "Build cache" ? 2 : 3,
-        note: "",
+        prune: 'entries',
+        entriesDepth: name === 'Build cache' ? 2 : 3,
+        note: '',
       }
     : null;
 }
 
-async function cacheOf(
-  action: MaintenanceAction,
-): Promise<CacheDescriptor | null> {
+async function cacheOf(action: MaintenanceAction): Promise<CacheDescriptor | null> {
   const discovered = await discoverCachesAsync();
   if (action.dir) {
     const dir = canonicalPath(action.dir);
-    return (
-      discovered.find((cache) => canonicalPath(cache.dir) === dir) ??
-      rootCache(action.dir)
-    );
+    return discovered.find((cache) => canonicalPath(cache.dir) === dir) ?? rootCache(action.dir);
   }
-  return (
-    discovered.find((cache) => cacheLabel(cache) === action.target) ?? null
-  );
+  return discovered.find((cache) => cacheLabel(cache) === action.target) ?? null;
 }
 
-async function trimCache(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function trimCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const cache = await cacheOf(action);
-  if (!cache) return kept("it is no longer a cache Stim may trim");
+  if (!cache) return kept('it is no longer a cache Stim may trim');
   const [planned] = planCacheEmptying([cache], false);
-  if (!planned || planned.machineGlobal)
-    return kept(
-      planned?.machineGlobal ?? "it is no longer a cache Stim may trim",
-    );
+  if (!planned || planned.machineGlobal) return kept(planned?.machineGlobal ?? 'it is no longer a cache Stim may trim');
   const aged = action.olderThanDays !== undefined;
   const result = pruneCache(cache, {
-    olderThanDays: Math.max(
-      action.olderThanDays ?? 0,
-      context.settings.protectRecentHours / 24,
-    ),
+    olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
-    protect: (context.protect ??= await cacheEntryProtectionFor(
-      loadConfig(),
-      context.operation,
-    )),
+    protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
   });
   if (result.skipped) return kept(result.skipped);
   if (result.failed)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: result.bytes,
       detail: `${result.failed} entries could not be removed`,
     };
-  const protectedNote = result.protectedEntries
-    ? `; ${result.protectedEntries} protected entries kept`
-    : "";
-  if (result.removed === 0)
-    return kept(`no unprotected entry was old enough${protectedNote}`);
+  const protectedNote = result.protectedEntries ? `; ${result.protectedEntries} protected entries kept` : '';
+  if (result.removed === 0) return kept(`no unprotected entry was old enough${protectedNote}`);
   return {
-    status: "done",
+    status: 'done',
     bytes: result.bytes,
     detail: `${result.removed} entries${protectedNote}`,
     ...(!aged && result.bytes < action.bytes
@@ -284,59 +207,31 @@ async function trimCache(
 async function emptyCache(action: MaintenanceAction): Promise<ActionOutcome> {
   const dir = action.dir ?? sharedCompilationCache();
   const discovered = await discoverCachesAsync();
-  const compilation =
-    canonicalPath(dir) === canonicalPath(sharedCompilationCache());
+  const compilation = canonicalPath(dir) === canonicalPath(sharedCompilationCache());
   if (compilation) {
-    const blocked = cacheBlocked(
-      { name: "Swift compilation cache", dir, category: "compilation-cache" },
-      discovered,
-    );
+    const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' }, discovered);
     if (blocked) return kept(blocked);
   }
-  const cache = discovered.find(
-    (candidate) => canonicalPath(candidate.dir) === canonicalPath(dir),
-  );
-  if (!cache) return kept("it is not a cache Stim registered");
-  if (compilation && cache.prune !== "atomic")
-    return kept("it is not a registered cache Stim empties whole");
-  const [planned] = planCacheEmptying(
-    [{ ...cache, bytes: action.bytes }],
-    true,
-  );
-  const { results } = await quietly(() =>
-    emptyCaches(planned ? [planned] : []),
-  );
+  const cache = discovered.find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
+  if (!cache) return kept('it is not a cache Stim registered');
+  if (compilation && cache.prune !== 'atomic') return kept('it is not a registered cache Stim empties whole');
+  const [planned] = planCacheEmptying([{ ...cache, bytes: action.bytes }], true);
+  const { results } = await quietly(() => emptyCaches(planned ? [planned] : []));
   return outcomeOf(results, action.bytes);
 }
 
-async function recordAction(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function recordAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const before = lowestFree(measureDisk());
-  const { results } = await executeRecordAction(
-    action,
-    context.operation,
-    quietly,
-  );
+  const { results } = await executeRecordAction(action, context.operation, quietly);
   return outcomeOf(results, action.bytes || freedSince(before));
 }
 
-async function clearOutputs(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function clearOutputs(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const root = action.workspace;
-  if (!root) return kept("the action names no workspace");
-  if (root === context.protectedRoot)
-    return kept("the command that started this pass runs in it");
-  if (await maintenancePinnedReader(context.operation)(root))
-    return kept("pinned by maintenance.keep");
-  const recent = recentUse(
-    root,
-    context.settings,
-    protectWindowMs(context.settings),
-  );
+  if (!root) return kept('the action names no workspace');
+  if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
+  if (await maintenancePinnedReader(context.operation)(root)) return kept('pinned by maintenance.keep');
+  const recent = recentUse(root, context.settings, protectWindowMs(context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
@@ -352,86 +247,52 @@ async function clearOutputs(
       })
     : collectWorkspaceOutputs({ olderThan, now, measure: false, only: root });
   const entry = report.workspaces.find(
-    (candidate) =>
-      candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
+    (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
-  if (!entry) return kept("it has no build outputs any more");
+  if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs(
-      { ...report, workspaces: [entry] },
-      { olderThan, now, operation },
-    ),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, operation }),
   );
   return outcomeOf(results, action.bytes);
 }
 
-async function removeWorktree(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function removeWorktree(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const sweep = context.worktreeSweep;
-  const worktree = sweep?.worktrees.find(
-    (candidate) => candidate.path === action.target,
-  );
-  if (!sweep || !worktree)
-    return kept("it is not in this pass's worktree check");
+  const worktree = sweep?.worktrees.find((candidate) => candidate.path === action.target);
+  if (!sweep || !worktree) return kept("it is not in this pass's worktree check");
   const path = canonicalPath(worktree.path);
-  if (
-    context.protectedRoot === path ||
-    context.protectedRoot.startsWith(`${path}${sep}`)
-  )
-    return kept("the command that started this pass runs inside it");
+  if (context.protectedRoot === path || context.protectedRoot.startsWith(`${path}${sep}`))
+    return kept('the command that started this pass runs inside it');
   const pinned = maintenancePinnedReader(context.operation);
-  for (const key of worktree.keys)
-    if (await pinned(key)) return kept("pinned by maintenance.keep");
+  for (const key of worktree.keys) if (await pinned(key)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
-  const { results } = await quietly(() =>
-    removeWorktrees({ ...sweep, worktrees: [worktree] }),
-  );
+  const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
   const outcome = outcomeOf(results, freedSince(before));
-  const removal = results.find((result) => result.status === "done")?.detail;
-  return outcome.status === "done"
-    ? { ...outcome, detail: removal ?? action.reason }
-    : outcome;
+  const removal = results.find((result) => result.status === 'done')?.detail;
+  return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
-  const orphans = await collectOrphanedWorkspaces(
-    Object.keys(loadConfig()?.projects ?? {}),
-    listMountedVolumes(),
-  );
-  const orphan = orphans.orphaned.find(
-    (candidate) => candidate.dir === action.target,
-  );
-  if (!orphan) return kept("it is no longer an orphaned workspace directory");
+  const orphans = await collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes());
+  const orphan = orphans.orphaned.find((candidate) => candidate.dir === action.target);
+  if (!orphan) return kept('it is no longer an orphaned workspace directory');
   const { results } = await quietly(() => deleteOrphanedWorkspaces([orphan]));
   return outcomeOf(results, orphan.bytes ?? 0);
 }
 
-async function deleteParkedDevice(
-  action: MaintenanceAction,
-): Promise<ActionOutcome> {
-  if (deviceSweepIsScoped())
-    return kept("STIM_HOME scopes this config, and devices are machine-wide");
+async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
+  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
   const age = { olderThanDays: action.olderThanDays ?? null, now: Date.now() };
-  const sims = (await collectParkedSims({}, age)).filter(
-    (sim) => sim.udid === action.target,
-  );
-  const avds = sims.length
-    ? []
-    : (await collectParkedAvds({}, age)).filter(
-        (avd) => avd.name === action.target,
-      );
+  const sims = (await collectParkedSims({}, age)).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : (await collectParkedAvds({}, age)).filter((avd) => avd.name === action.target);
   if (!sims.length && !avds.length)
     return kept(
       action.olderThanDays === undefined
-        ? "it is no longer parked"
+        ? 'it is no longer parked'
         : `it is no longer parked, or was parked within ${action.olderThanDays} days`,
     );
   const before = lowestFree(measureDisk());
-  const { results } = await quietly(
-    async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)),
-  );
+  const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
   return outcomeOf(results, freedSince(before));
 }
 
@@ -452,32 +313,26 @@ async function deleteOwnedDevicesOf(
   const config = loadConfig();
   const project = config?.projects?.[root];
   if (!config || !project) return null;
-  const owns = (kind: "ios" | "android") =>
-    projectDeviceSlots(project).some(
-      ({ platforms }) => platforms[kind]?.owned === true,
-    );
+  const owns = (kind: 'ios' | 'android') =>
+    projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
   let sims: Awaited<ReturnType<typeof listAllIosSimsAsync>> = [];
   let avds: string[] = [];
   try {
-    if (owns("ios"))
+    if (owns('ios'))
       sims = await listAllIosSimsAsync({
         timeoutMs: DEVICE_LIST_TIMEOUT_MS,
         operation,
         signal: operation?.signal,
       });
     operation?.signal.throwIfAborted();
-    if (owns("android"))
-      avds = await listAvdsAsync({ operation, signal: operation?.signal });
+    if (owns('android')) avds = await listAvdsAsync({ operation, signal: operation?.signal });
     operation?.signal.throwIfAborted();
   } catch (error) {
-    if (
-      error instanceof WorkspaceProcessCleanupError ||
-      (error instanceof Error && "reportCleanup" in error)
-    )
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     operation?.signal.throwIfAborted();
     return {
-      status: "failed",
+      status: 'failed',
       bytes: 0,
       detail: `its owned devices could not be listed: ${error instanceof Error ? error.message : String(error)}`,
     };
@@ -489,18 +344,11 @@ async function deleteOwnedDevicesOf(
     olderThanDays: 0,
     lastTouched: () => 0,
   });
-  if (noneIsKept && devices.length === 0)
-    return kept("it owns no listed devices any more");
-  const failures = await deleteProjectDevices(
-    [],
-    devices,
-    [],
-    output,
-    operation,
-  );
+  if (noneIsKept && devices.length === 0) return kept('it owns no listed devices any more');
+  const failures = await deleteProjectDevices([], devices, [], output, operation);
   return failures
     ? {
-        status: "failed",
+        status: 'failed',
         bytes: 0,
         detail: `${failures} owned devices could not be deleted`,
       }
@@ -528,16 +376,11 @@ export async function deleteIdleWorkspaceDevices(
   },
 ): Promise<ActionOutcome> {
   operation?.signal.throwIfAborted();
-  if (root === protectedRoot)
-    return kept("the command that started this pass runs in it");
-  if (
-    operation
-      ? await maintenancePinnedAsync(root, operation)
-      : maintenancePinned(root)
-  )
-    return kept("pinned by maintenance.keep");
+  if (root === protectedRoot) return kept('the command that started this pass runs in it');
+  if (operation ? await maintenancePinnedAsync(root, operation) : maintenancePinned(root))
+    return kept('pinned by maintenance.keep');
   if (deviceSweepIsScoped(operation?.env ?? process.env))
-    return kept("STIM_HOME scopes this config, and devices are machine-wide");
+    return kept('STIM_HOME scopes this config, and devices are machine-wide');
   const activeReason = async () => {
     const now = Date.now();
     if (!operation) return workspaceActiveReason(root, now, windowMs);
@@ -545,12 +388,7 @@ export async function deleteIdleWorkspaceDevices(
       root,
       now,
       windowMs,
-      cachedDeviceActivityAsync(
-        now,
-        operation.env,
-        operation.signal,
-        operation,
-      ),
+      cachedDeviceActivityAsync(now, operation.env, operation.signal, operation),
       operation.signal,
     );
     operation.signal.throwIfAborted();
@@ -558,159 +396,100 @@ export async function deleteIdleWorkspaceDevices(
   };
   const active = (await activeReason()) ?? (await liveShareKeepReason(root));
   if (active) return kept(active);
-  const before = lowestFree(
-    operation ? await measureDiskAsync(operation) : measureDisk(),
-  );
+  const before = lowestFree(operation ? await measureDiskAsync(operation) : measureDisk());
   const run = await withIdleWorkspace(
     root,
     async (): Promise<ActionOutcome | null> => {
-      if (await activeReason()) return kept("it became active");
+      if (await activeReason()) return kept('it became active');
       const share = await liveShareKeepReason(root);
-      return share
-        ? kept(share)
-        : deleteOwnedDevicesOf(root, { noneIsKept: true, operation, output });
+      return share ? kept(share) : deleteOwnedDevicesOf(root, { noneIsKept: true, operation, output });
     },
     { purpose, operation },
   );
-  if (!run.ran) return kept(`in use: ${run.reasons.join("; ")}`);
-  const bytes = operation
-    ? freedSince(before, await measureDiskAsync(operation))
-    : freedSince(before);
-  return run.value
-    ? { ...run.value, bytes }
-    : { status: "done", bytes, detail: root };
+  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
+  const bytes = operation ? freedSince(before, await measureDiskAsync(operation)) : freedSince(before);
+  return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
 }
 
-function deviceWindowMs(
-  action: MaintenanceAction,
-  context: ActContext,
-): number {
-  if (action.olderThanDays !== undefined)
-    return action.olderThanDays * 86_400_000;
-  return Math.max(
-    context.worktreeSweep?.graceMs ?? 0,
-    context.settings.protectRecentHours * 3_600_000,
-  );
+function deviceWindowMs(action: MaintenanceAction, context: ActContext): number {
+  if (action.olderThanDays !== undefined) return action.olderThanDays * 86_400_000;
+  return Math.max(context.worktreeSweep?.graceMs ?? 0, context.settings.protectRecentHours * 3_600_000);
 }
 
-async function deleteDevices(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function deleteDevices(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const { value } = await quietly(() =>
     deleteIdleWorkspaceDevices(action.workspace ?? action.target, {
       windowMs: deviceWindowMs(action, context),
       protectedRoot: context.protectedRoot,
-      purpose: "automatic maintenance",
+      purpose: 'automatic maintenance',
       operation: context.operation,
     }),
   );
   return value;
 }
 
-async function clearArtifacts(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
-  return clearArtifact(
-    action,
-    action.kind === "would-delete-dependencies" ? "dependencies" : "build",
-    {
-      windowMs: protectWindowMs(context.settings),
-      protectedRoot: context.protectedRoot,
-      pinned: maintenancePinnedReader(context.operation),
-      worktrees: (context.worktrees ??= await artifactWorktreesFor(
-        context.operation,
-      )),
-      operation: context.operation,
-    },
-  );
+async function clearArtifacts(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  return clearArtifact(action, action.kind === 'would-delete-dependencies' ? 'dependencies' : 'build', {
+    windowMs: protectWindowMs(context.settings),
+    protectedRoot: context.protectedRoot,
+    pinned: maintenancePinnedReader(context.operation),
+    worktrees: (context.worktrees ??= await artifactWorktreesFor(context.operation)),
+    operation: context.operation,
+  });
 }
 
 const GRADLE_EXIT_WAIT_MS = 3000;
 
-async function stopGradleDaemonsAction(
-  action: MaintenanceAction,
-): Promise<ActionOutcome> {
-  const targets = [...action.target.matchAll(/\d+/g)].map((match) =>
-    Number(match[0]),
-  );
-  const { value: failures, results } = await quietly(() =>
-    stopIdleGradleDaemons(targets),
-  );
-  const daemons = results.filter(
-    (result) =>
-      result.kind === "gradleDaemon" || result.kind === "kotlinDaemon",
-  );
-  const stopped = daemons.filter((result) => result.status === "done");
+async function stopGradleDaemonsAction(action: MaintenanceAction): Promise<ActionOutcome> {
+  const targets = [...action.target.matchAll(/\d+/g)].map((match) => Number(match[0]));
+  const { value: failures, results } = await quietly(() => stopIdleGradleDaemons(targets));
+  const daemons = results.filter((result) => result.kind === 'gradleDaemon' || result.kind === 'kotlinDaemon');
+  const stopped = daemons.filter((result) => result.status === 'done');
   if (failures)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: 0,
-      detail: `${plural(failures, "daemon")} could not be stopped`,
+      detail: `${plural(failures, 'daemon')} could not be stopped`,
     };
-  if (stopped.length === 0)
-    return kept(
-      daemons.find((result) => result.detail)?.detail ??
-        "no daemon was stopped",
-    );
+  if (stopped.length === 0) return kept(daemons.find((result) => result.detail)?.detail ?? 'no daemon was stopped');
   const left = await waitForGradleExit(
-    stopped.flatMap((result) =>
-      result.id && /^\d+$/.test(result.id) ? [Number(result.id)] : [],
-    ),
+    stopped.flatMap((result) => (result.id && /^\d+$/.test(result.id) ? [Number(result.id)] : [])),
     GRADLE_EXIT_WAIT_MS,
   );
-  const labels = stopped.map((result) => result.label).join(", ");
+  const labels = stopped.map((result) => result.label).join(', ');
   return {
-    status: "done",
+    status: 'done',
     bytes: 0,
-    detail: left.length
-      ? `${labels}; pid ${left.join(", ")} had not exited yet`
-      : labels,
+    detail: left.length ? `${labels}; pid ${left.join(', ')} had not exited yet` : labels,
   };
 }
 
-async function stopWatchmanAction(
-  action: MaintenanceAction,
-): Promise<ActionOutcome> {
+async function stopWatchmanAction(action: MaintenanceAction): Promise<ActionOutcome> {
   const pid = Number(/\d+/.exec(action.target)?.[0]);
-  const { value: failures, results } = await quietly(() =>
-    stopUnusedWatchman(pid),
-  );
-  const failed = results.find((result) => result.status === "failed");
+  const { value: failures, results } = await quietly(() => stopUnusedWatchman(pid));
+  const failed = results.find((result) => result.status === 'failed');
   if (failures || failed)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: 0,
-      detail: failed?.detail ?? "watchman could not be shut down",
+      detail: failed?.detail ?? 'watchman could not be shut down',
     };
-  const stopped = results.find(
-    (result) => result.kind === "watchman" && result.status === "done",
-  );
+  const stopped = results.find((result) => result.kind === 'watchman' && result.status === 'done');
   return stopped
-    ? { status: "done", bytes: 0, detail: `${stopped.label} exited` }
-    : kept(
-        results.find((result) => result.kind === "watchman")?.detail ??
-          "watchman is in use now",
-      );
+    ? { status: 'done', bytes: 0, detail: `${stopped.label} exited` }
+    : kept(results.find((result) => result.kind === 'watchman')?.detail ?? 'watchman is in use now');
 }
 
-async function deleteGradleVersionAction(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function deleteGradleVersionAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const before = lowestFree(measureDisk());
   try {
     const result = await deleteGradleVersion(action.target, {
-      olderThanDays:
-        action.olderThanDays ?? context.settings.gradleVersionIdleDays,
+      olderThanDays: action.olderThanDays ?? context.settings.gradleVersionIdleDays,
     });
-    return result.deleted
-      ? { status: "done", bytes: freedSince(before), detail: result.detail }
-      : kept(result.detail);
+    return result.deleted ? { status: 'done', bytes: freedSince(before), detail: result.detail } : kept(result.detail);
   } catch (error) {
     return {
-      status: "failed",
+      status: 'failed',
       bytes: freedSince(before),
       detail: error instanceof Error ? error.message : String(error),
     };
@@ -721,90 +500,61 @@ async function deleteTrashAction(): Promise<ActionOutcome> {
   const { value: done } = await quietly(() => deleteTrash(undefined));
   if (done.failures)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: done.bytes,
       detail: `${done.failures} could not be deleted`,
     };
   return done.count
-    ? { status: "done", bytes: done.bytes, detail: `${done.count} deleted` }
-    : kept("none is deletable now");
+    ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` }
+    : kept('none is deletable now');
 }
 
 async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
   const { value: done } = await quietly(() => deleteTempLeftovers());
   if (done.failures)
     return {
-      status: "failed",
+      status: 'failed',
       bytes: done.bytes,
       detail: `${done.failures} could not be deleted`,
     };
-  return done.count
-    ? { status: "done", bytes: done.bytes, detail: `${done.count} deleted` }
-    : kept("none is idle now");
+  return done.count ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` } : kept('none is idle now');
 }
 
-async function deleteStatusCachesAction(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function deleteStatusCachesAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const signal = context.operation?.signal;
-  const { stale } = await collectStaleStatusCachesAsync(
-    listMountedVolumes(),
-    signal,
-  );
+  const { stale } = await collectStaleStatusCachesAsync(listMountedVolumes(), signal);
   const own = stale.filter((entry) => dirname(entry.file) === action.target);
-  if (!own.length)
-    return kept(
-      "no entry in it describes a folder that is provably gone any more",
-    );
-  const { results } = await quietly(() =>
-    deleteStaleStatusCaches(own, GC_OUTPUT, signal),
-  );
+  if (!own.length) return kept('no entry in it describes a folder that is provably gone any more');
+  const { results } = await quietly(() => deleteStaleStatusCaches(own, GC_OUTPUT, signal));
   return outcomeOf(
     results,
     own.reduce((sum, entry) => sum + entry.bytes, 0),
   );
 }
 
-async function deleteProcessLocksAction(
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function deleteProcessLocksAction(context: ActContext): Promise<ActionOutcome> {
   const count = await pruneEmptyProcessLockDirs(context.operation?.signal);
-  return count
-    ? { status: "done", bytes: 0, detail: `${count} deleted` }
-    : kept("none is empty now");
+  return count ? { status: 'done', bytes: 0, detail: `${count} deleted` } : kept('none is empty now');
 }
 
-async function deleteDeviceLeaseAction(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
-  const entry = collectDeviceLeases(Date.now()).expired.find(
-    (candidate) => candidate.path === action.target,
-  );
-  if (!entry) return kept("it is no longer an expired lease");
+async function deleteDeviceLeaseAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const entry = collectDeviceLeases(Date.now()).expired.find((candidate) => candidate.path === action.target);
+  if (!entry) return kept('it is no longer an expired lease');
   const keep = await leaseKeepReason(entry, context.operation);
   if (keep) return kept(`the lease expired, but ${keep}`);
   return (await removeExpiredLeaseAsync(entry, context.operation?.signal))
-    ? { status: "done", bytes: 0, detail: entry.name }
-    : kept("it was renewed or removed since the pass planned it");
+    ? { status: 'done', bytes: 0, detail: entry.name }
+    : kept('it was renewed or removed since the pass planned it');
 }
 
-async function deleteExpiredArchivesAction(
-  context: ActContext,
-): Promise<ActionOutcome> {
+async function deleteExpiredArchivesAction(context: ActContext): Promise<ActionOutcome> {
   const expiry = await archivesPastRetention(Date.now(), context.operation);
-  if ("refusal" in expiry) return kept(expiry.refusal);
-  if (
-    expiry.records.length +
-      expiry.parts.length +
-      expiry.worktreeArchives.length ===
-    0
-  )
-    return kept("nothing is past its retention now");
+  if ('refusal' in expiry) return kept(expiry.refusal);
+  if (expiry.records.length + expiry.parts.length + expiry.worktreeArchives.length === 0)
+    return kept('nothing is past its retention now');
   await enforceArchiveRetention(Date.now(), context.operation);
   return {
-    status: "done",
+    status: 'done',
     bytes: expiry.bytes,
     detail: archiveExpiryReason(expiry),
   };
@@ -817,97 +567,83 @@ function unregisterCache(action: MaintenanceAction): ActionOutcome {
     !isOnMountedVolume(dir, listMountedVolumes()) ||
     !readManifest().caches.some((c) => c.dir === dir)
   )
-    return kept("it can no longer be shown to be a stale registration");
-  return unregister(dir)
-    ? { status: "done", bytes: 0, detail: dir }
-    : kept("it was already unregistered");
+    return kept('it can no longer be shown to be a stale registration');
+  return unregister(dir) ? { status: 'done', bytes: 0, detail: dir } : kept('it was already unregistered');
 }
 
-export async function executeAction(
-  action: MaintenanceAction,
-  context: ActContext,
-): Promise<ActionOutcome> {
+export async function executeAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   switch (action.kind) {
-    case "would-clear-outputs":
+    case 'would-clear-outputs':
       return clearOutputs(action, context);
-    case "would-trim-cache":
+    case 'would-trim-cache':
       return trimCache(action, context);
-    case "would-empty-cache":
+    case 'would-empty-cache':
       return emptyCache(action);
-    case "would-remove-worktree":
+    case 'would-remove-worktree':
       return removeWorktree(action, context);
-    case "would-remove-orphan":
+    case 'would-remove-orphan':
       return removeOrphan(action);
-    case "would-unregister-cache":
+    case 'would-unregister-cache':
       return unregisterCache(action);
-    case "would-delete-parked-device":
+    case 'would-delete-parked-device':
       return deleteParkedDevice(action);
-    case "would-delete-devices":
+    case 'would-delete-devices':
       return deleteDevices(action, context);
-    case "would-shutdown-device":
-      return kept(
-        "automatic maintenance does not stop devices or dev servers for disk",
-      );
-    case "would-stop-workspace":
-      return action.check === "idle"
+    case 'would-shutdown-device':
+      return kept('automatic maintenance does not stop devices or dev servers for disk');
+    case 'would-stop-workspace':
+      return action.check === 'idle'
         ? stopIdleWorkspace(action, {
-            protectedRoot: context.background ? "" : context.protectedRoot,
+            protectedRoot: context.background ? '' : context.protectedRoot,
             devices: () => {
               const { operation } = context;
               return operation
-                ? cachedDeviceActivityAsync(
-                    Date.now(),
-                    operation.env,
-                    operation.signal,
-                    operation,
-                  )
+                ? cachedDeviceActivityAsync(Date.now(), operation.env, operation.signal, operation)
                 : cachedDeviceActivity(Date.now());
             },
             operation: context.operation,
             hostedOnly: true,
           })
         : kept(
-            "the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours",
+            'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
-    case "would-clear-build-dirs":
-    case "would-delete-dependencies":
+    case 'would-clear-build-dirs':
+    case 'would-delete-dependencies':
       return clearArtifacts(action, context);
-    case "would-stop-gradle-daemons":
+    case 'would-stop-gradle-daemons':
       return stopGradleDaemonsAction(action);
-    case "would-stop-watchman":
+    case 'would-stop-watchman':
       return stopWatchmanAction(action);
-    case "would-delete-gradle-version":
+    case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
-    case "would-delete-temp-leftovers":
+    case 'would-delete-temp-leftovers':
       return deleteTempLeftoversAction();
-    case "would-delete-trash":
+    case 'would-delete-trash':
       return deleteTrashAction();
-    case "would-delete-status-caches":
+    case 'would-delete-status-caches':
       return deleteStatusCachesAction(action, context);
-    case "would-delete-process-locks":
+    case 'would-delete-process-locks':
       return deleteProcessLocksAction(context);
-    case "would-delete-device-lease":
+    case 'would-delete-device-lease':
       return deleteDeviceLeaseAction(action, context);
-    case "would-delete-expired-archives":
+    case 'would-delete-expired-archives':
       return deleteExpiredArchivesAction(context);
-    case "would-dormant-stage":
+    case 'would-dormant-stage':
       return enterDormantStage(action, context.operation);
-    case "would-delete-runtime":
+    case 'would-delete-runtime':
       return deleteRuntimeAction(action, context.operation);
-    case "would-delete-unavailable-sim":
+    case 'would-delete-unavailable-sim':
       return deleteUnavailableSimAction(action, context.operation);
-    case "would-prune-project":
-    case "would-delete-orphaned-devices":
-    case "would-forget-stale-records":
-    case "would-trim-workspace-logs":
-    case "would-delete-recordings":
-    case "would-delete-hosted-devices":
-    case "would-delete-eas-sessions":
-    case "would-delete-archives":
+    case 'would-prune-project':
+    case 'would-delete-orphaned-devices':
+    case 'would-forget-stale-records':
+    case 'would-trim-workspace-logs':
+    case 'would-delete-recordings':
+    case 'would-delete-hosted-devices':
+    case 'would-delete-eas-sessions':
+    case 'would-delete-archives':
       return recordAction(action, context);
     default:
-      return kept(
-        "automatic maintenance does not stop devices or dev servers yet",
-      );
+      return kept('automatic maintenance does not stop devices or dev servers yet');
   }
 }

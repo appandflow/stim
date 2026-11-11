@@ -1,15 +1,11 @@
-import { lstatSync, readdirSync } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
-import { basename, dirname, join, relative, sep } from "node:path";
-import { canonicalPath } from "../commands/gc/paths.ts";
-import { gitQuietAsync } from "./git.ts";
-import {
-  othersRunningAsync,
-  readRunningProcessesAsync,
-  runningFromReason,
-} from "./running-from.ts";
+import { lstatSync, readdirSync } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
+import { basename, dirname, join, relative, sep } from 'node:path';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { gitQuietAsync } from './git.ts';
+import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
-export type ArtifactKind = "build" | "dependencies";
+export type ArtifactKind = 'build' | 'dependencies';
 
 /**
  * Directories that hold only what a build or an install regenerates, relative to an app or package root. ios/build is
@@ -18,8 +14,8 @@ export type ArtifactKind = "build" | "dependencies";
  * recreates them.
  */
 export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
-  build: ["android/app/build", "android/build", "android/.gradle", ".build"],
-  dependencies: ["node_modules", "ios/Pods"],
+  build: ['android/app/build', 'android/build', 'android/.gradle', '.build'],
+  dependencies: ['node_modules', 'ios/Pods'],
 };
 
 type DirRead = { names: string } | { directory: string };
@@ -36,21 +32,17 @@ function* realDirectory(path: string): DirReads<boolean> {
 
 function answerSync(read: DirRead): string[] | boolean {
   try {
-    return "names" in read
-      ? readdirSync(read.names)
-      : lstatSync(read.directory).isDirectory();
+    return 'names' in read ? readdirSync(read.names) : lstatSync(read.directory).isDirectory();
   } catch {
-    return "names" in read ? [] : false;
+    return 'names' in read ? [] : false;
   }
 }
 
 async function answerAsync(read: DirRead): Promise<string[] | boolean> {
   try {
-    return "names" in read
-      ? await readdir(read.names)
-      : (await lstat(read.directory)).isDirectory();
+    return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
   } catch {
-    return "names" in read ? [] : false;
+    return 'names' in read ? [] : false;
   }
 }
 
@@ -66,48 +58,29 @@ async function readAsync<T>(reads: DirReads<T>): Promise<T> {
   return step.value;
 }
 
-function* existingDirsReads(
-  root: string,
-  dirs: readonly string[],
-): DirReads<string[]> {
+function* existingDirsReads(root: string, dirs: readonly string[]): DirReads<string[]> {
   const found: string[] = [];
-  for (const path of dirs.map((dir) => join(root, dir)))
-    if (yield* realDirectory(path)) found.push(path);
+  for (const path of dirs.map((dir) => join(root, dir))) if (yield* realDirectory(path)) found.push(path);
   return found;
 }
 
 /** The existing real directories among `dirs` under `root`, never through a link. */
-export function existingDirsOf(
-  root: string,
-  dirs: readonly string[],
-): string[] {
+export function existingDirsOf(root: string, dirs: readonly string[]): string[] {
   return readSync(existingDirsReads(root, dirs));
 }
 
-const DERIVED_DATA_NAME = ".dd";
-const CXX_NAME = ".cxx";
-const NOT_SCANNED = new Set([
-  "node_modules",
-  "Pods",
-  ".git",
-  ".worktrees",
-  ...ARTIFACT_DIRS.build,
-]);
-const ANDROID_OUTPUT = new Set(["build", ".gradle"]);
+const DERIVED_DATA_NAME = '.dd';
+const CXX_NAME = '.cxx';
+const NOT_SCANNED = new Set(['node_modules', 'Pods', '.git', '.worktrees', ...ARTIFACT_DIRS.build]);
+const ANDROID_OUTPUT = new Set(['build', '.gradle']);
 
 function* derivedDataLayout(dir: string): DirReads<boolean> {
   const names = yield* namesIn(dir);
-  if (!names.includes("Build") || !(yield* realDirectory(join(dir, "Build"))))
-    return false;
-  const build = yield* namesIn(join(dir, "Build"));
-  if (!build.includes("Products") && !build.includes("Intermediates.noindex"))
-    return false;
+  if (!names.includes('Build') || !(yield* realDirectory(join(dir, 'Build')))) return false;
+  const build = yield* namesIn(join(dir, 'Build'));
+  if (!build.includes('Products') && !build.includes('Intermediates.noindex')) return false;
   for (const name of names)
-    if (
-      (name === "ModuleCache.noindex" || name === "Logs") &&
-      (yield* realDirectory(join(dir, name)))
-    )
-      return true;
+    if ((name === 'ModuleCache.noindex' || name === 'Logs') && (yield* realDirectory(join(dir, name)))) return true;
   return false;
 }
 
@@ -121,19 +94,16 @@ export function isDerivedDataLayout(dir: string): boolean {
 }
 
 function* cxxDirs(root: string): DirReads<string[]> {
-  const android = join(root, "android");
+  const android = join(root, 'android');
   const modules = (yield* namesIn(android))
     .filter((name) => !ANDROID_OUTPUT.has(name) && name !== CXX_NAME)
     .map((name) => join(android, name, CXX_NAME));
   const found: string[] = [];
-  for (const path of [join(android, CXX_NAME), ...modules])
-    if (yield* realDirectory(path)) found.push(path);
+  for (const path of [join(android, CXX_NAME), ...modules]) if (yield* realDirectory(path)) found.push(path);
   return found;
 }
 
-function* derivedDataDirs(
-  root: string,
-): DirReads<{ path: string; named: boolean }[]> {
+function* derivedDataDirs(root: string): DirReads<{ path: string; named: boolean }[]> {
   const found: { path: string; named: boolean }[] = [];
   for (const name of yield* namesIn(root)) {
     if (NOT_SCANNED.has(name)) continue;
@@ -144,8 +114,8 @@ function* derivedDataDirs(
   return found;
 }
 
-const CARGO_TARGET = "target";
-const EXACT_APP_FILES = ["exact.mjs"];
+const CARGO_TARGET = 'target';
+const EXACT_APP_FILES = ['exact.mjs'];
 
 function* exactTargetDirs(root: string): DirReads<string[]> {
   const names = yield* namesIn(root);
@@ -158,11 +128,7 @@ function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
   const cargo = yield* exactTargetDirs(root);
-  return [
-    ...cxx,
-    ...derived.filter(({ named }) => named).map(({ path }) => path),
-    ...cargo,
-  ];
+  return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
 /**
@@ -202,21 +168,13 @@ export function xcodebuildOutputDirs(root: string): string[] {
 
 /** Whether `path` is a directory that `existingBuildDirsAsync` lists for the checkout or app containing it. */
 export function isBuildDirPath(path: string): boolean {
-  if (
-    ARTIFACT_DIRS.build.some((dir) =>
-      path.endsWith(`${sep}${dir.split("/").join(sep)}`),
-    )
-  )
-    return true;
+  if (ARTIFACT_DIRS.build.some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`))) return true;
   const name = basename(path);
   if (name === CXX_NAME) {
     const parent = dirname(path);
-    return (
-      basename(parent) === "android" || basename(dirname(parent)) === "android"
-    );
+    return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET)
-    return readSync(exactTargetDirs(dirname(path))).includes(path);
+  if (name === CARGO_TARGET) return readSync(exactTargetDirs(dirname(path))).includes(path);
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
@@ -226,43 +184,27 @@ export function isBuildDirPath(path: string): boolean {
  * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
  * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
-export async function regenerableDirProblem(
-  root: string,
-  path: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
+export async function regenerableDirProblem(root: string, path: string, signal?: AbortSignal): Promise<string | null> {
   const rel = relative(root, path);
   try {
-    if (!lstatSync(path).isDirectory()) return "it is not a directory";
+    if (!lstatSync(path).isDirectory()) return 'it is not a directory';
   } catch {
-    return "it is gone";
+    return 'it is gone';
   }
   if (canonicalPath(path) !== join(canonicalPath(root), rel))
-    return "it or a directory above it is a link, or it lies outside its project";
-  const tracked = await gitQuietAsync(root, ["ls-files", "--", rel], {
+    return 'it or a directory above it is a link, or it lies outside its project';
+  const tracked = await gitQuietAsync(root, ['ls-files', '--', rel], {
     signal,
   });
-  if (tracked === null) return "git cannot tell whether it holds tracked files";
-  if (tracked.trim()) return "it holds files git tracks";
-  const unignored = await gitQuietAsync(
-    root,
-    ["ls-files", "--others", "--exclude-standard", "--", rel],
-    { signal },
-  );
-  if (unignored === null)
-    return "git cannot tell whether it ignores every file in it";
-  if (unignored.trim()) return "it holds files git does not ignore";
-  if (
-    basename(path) === CARGO_TARGET &&
-    (await readAsync(exactTargetDirs(dirname(path)))).includes(path)
-  ) {
-    const others = await othersRunningAsync(
-      await readRunningProcessesAsync(signal),
-      signal,
-    );
+  if (tracked === null) return 'git cannot tell whether it holds tracked files';
+  if (tracked.trim()) return 'it holds files git tracks';
+  const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
+  if (unignored === null) return 'git cannot tell whether it ignores every file in it';
+  if (unignored.trim()) return 'it holds files git does not ignore';
+  if (basename(path) === CARGO_TARGET && (await readAsync(exactTargetDirs(dirname(path)))).includes(path)) {
+    const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
-    if (running)
-      return `its app may be in use: ${running.replace(/ it\b/, " its app")}`;
+    if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
   }
   return null;
 }

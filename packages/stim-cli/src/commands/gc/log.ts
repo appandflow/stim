@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute } from 'node:path';
 import {
   gcLogFile,
   runId,
@@ -6,15 +6,15 @@ import {
   type GcLogRecord,
   type GcLogTrigger,
   type MaintenanceAction,
-} from "@stim-cli/core/state";
-import { loadConfig } from "../../workspace/config.ts";
-import { formatBytes } from "../../fs-util.ts";
-import { openRetainedLog } from "../../stimd/passes/log.ts";
-import { resolveMaintenanceSettings } from "../../stimd/passes/settings.ts";
-import type { ActionOutcome } from "../../stimd/passes/act.ts";
-import type { GcResult } from "./results.ts";
+} from '@stim-cli/core/state';
+import { loadConfig } from '../../workspace/config.ts';
+import { formatBytes } from '../../fs-util.ts';
+import { openRetainedLog } from '../../stimd/passes/log.ts';
+import { resolveMaintenanceSettings } from '../../stimd/passes/settings.ts';
+import type { ActionOutcome } from '../../stimd/passes/act.ts';
+import type { GcResult } from './results.ts';
 
-type GcLogItem = Omit<GcResult, "kind"> & { kind: string };
+type GcLogItem = Omit<GcResult, 'kind'> & { kind: string };
 
 interface GcLogRun {
   trigger: GcLogTrigger;
@@ -30,28 +30,21 @@ export interface GcLog {
 }
 
 const VERBS = {
-  done: "Cleared",
-  kept: "Kept",
-  failed: "Failed to clear",
+  done: 'Cleared',
+  kept: 'Kept',
+  failed: 'Failed to clear',
 } as const;
 
-function gcLogRecord(
-  run: GcLogRun,
-  result: GcLogItem,
-  ts: number,
-): GcLogRecord {
-  const path =
-    [result.id, result.label].find(
-      (value) => value !== null && isAbsolute(value),
-    ) ?? null;
-  const size = result.bytes ? ` (${formatBytes(result.bytes)})` : "";
-  const why = result.detail ? `: ${result.detail}` : "";
+function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord {
+  const path = [result.id, result.label].find((value) => value !== null && isAbsolute(value)) ?? null;
+  const size = result.bytes ? ` (${formatBytes(result.bytes)})` : '';
+  const why = result.detail ? `: ${result.detail}` : '';
   return {
     ts,
-    src: "gc",
-    level: result.status === "failed" ? "error" : "info",
+    src: 'gc',
+    level: result.status === 'failed' ? 'error' : 'info',
     msg: `${VERBS[result.status]} ${result.kind} ${result.label}${size}${why}`,
-    event: "gc_item",
+    event: 'gc_item',
     runId: run.runId ?? runId(),
     trigger: run.trigger,
     ...(run.via === undefined ? {} : { via: run.via }),
@@ -72,28 +65,22 @@ export function openGcLog(run: GcLogRun): GcLog {
   const held: GcLogRecord[] = [];
   const append = (record: GcLogRecord) => {
     try {
-      const writer = openRetainedLog(
-        gcLogFile(),
-        resolveMaintenanceSettings(loadConfig(), run.env),
-      );
+      const writer = openRetainedLog(gcLogFile(), resolveMaintenanceSettings(loadConfig(), run.env));
       try {
-        if (!writer.write(record))
-          throw writer.lastError ?? new Error("write failed");
+        if (!writer.write(record)) throw writer.lastError ?? new Error('write failed');
       } finally {
         writer.close();
       }
     } catch (error) {
       if (failed) return;
       failed = true;
-      console.error(
-        `Could not write the gc log ${gcLogFile()}: ${error instanceof Error ? error.message : error}`,
-      );
+      console.error(`Could not write the gc log ${gcLogFile()}: ${error instanceof Error ? error.message : error}`);
     }
   };
   return {
     record(result) {
       const record = gcLogRecord(run, result, Date.now());
-      if (!acted && result.status === "kept") {
+      if (!acted && result.status === 'kept') {
         held.push(record);
         return;
       }
@@ -107,59 +94,52 @@ export function openGcLog(run: GcLogRun): GcLog {
 }
 
 const MAINTENANCE_KINDS: Record<string, string> = {
-  "clear-outputs": "workspaceOutputs",
-  "trim-cache": "cache",
-  "empty-cache": "cache",
-  "unregister-cache": "cache",
-  "remove-worktree": "worktree",
-  "remove-orphan": "workspaceDirectory",
-  "delete-parked-device": "parkedDevice",
-  "delete-devices": "device",
-  "stop-workspace": "device",
-  "shutdown-device": "idleDevice",
-  "delete-temp-leftovers": "tempLeftover",
-  "delete-status-caches": "statusCache",
-  "delete-process-locks": "homeEntry",
-  "delete-device-lease": "deviceLease",
-  "delete-expired-archives": "archive",
-  "stop-gradle-daemons": "gradleDaemon",
-  "stop-watchman": "watchman",
-  "delete-gradle-version": "gradleVersion",
-  "clear-build-dirs": "buildDirectory",
-  "delete-dependencies": "dependencies",
-  "prune-project": "project",
-  "delete-orphaned-devices": "device",
-  "forget-stale-records": "ledgerEntry",
-  "trim-workspace-logs": "workspaceLogs",
-  "delete-recordings": "recording",
-  "delete-hosted-devices": "parkedHostedDevice",
-  "delete-eas-sessions": "easSession",
-  "delete-archives": "archive",
-  "delete-build-outputs": "workspaceOutputs",
-  "idle-stage": "devServer",
-  "dormant-stage": "device",
-  "delete-trash": "trash",
-  "delete-runtime": "runtime",
-  "delete-unavailable-sim": "device",
-  "clean-tool-cache": "toolCache",
+  'clear-outputs': 'workspaceOutputs',
+  'trim-cache': 'cache',
+  'empty-cache': 'cache',
+  'unregister-cache': 'cache',
+  'remove-worktree': 'worktree',
+  'remove-orphan': 'workspaceDirectory',
+  'delete-parked-device': 'parkedDevice',
+  'delete-devices': 'device',
+  'stop-workspace': 'device',
+  'shutdown-device': 'idleDevice',
+  'delete-temp-leftovers': 'tempLeftover',
+  'delete-status-caches': 'statusCache',
+  'delete-process-locks': 'homeEntry',
+  'delete-device-lease': 'deviceLease',
+  'delete-expired-archives': 'archive',
+  'stop-gradle-daemons': 'gradleDaemon',
+  'stop-watchman': 'watchman',
+  'delete-gradle-version': 'gradleVersion',
+  'clear-build-dirs': 'buildDirectory',
+  'delete-dependencies': 'dependencies',
+  'prune-project': 'project',
+  'delete-orphaned-devices': 'device',
+  'forget-stale-records': 'ledgerEntry',
+  'trim-workspace-logs': 'workspaceLogs',
+  'delete-recordings': 'recording',
+  'delete-hosted-devices': 'parkedHostedDevice',
+  'delete-eas-sessions': 'easSession',
+  'delete-archives': 'archive',
+  'delete-build-outputs': 'workspaceOutputs',
+  'idle-stage': 'devServer',
+  'dormant-stage': 'device',
+  'delete-trash': 'trash',
+  'delete-runtime': 'runtime',
+  'delete-unavailable-sim': 'device',
+  'clean-tool-cache': 'toolCache',
 };
 
-export function maintenanceItem(
-  action: MaintenanceAction,
-  outcome: ActionOutcome,
-): GcLogItem {
-  const name = action.kind.replace(/^would-/, "");
-  const done = outcome.status === "done";
+export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcome): GcLogItem {
+  const name = action.kind.replace(/^would-/, '');
+  const done = outcome.status === 'done';
   return {
     kind: MAINTENANCE_KINDS[name] ?? name,
     status: outcome.status,
     label: action.target,
     id: action.dir ?? action.workspace ?? null,
     bytes: done && outcome.bytes ? outcome.bytes : null,
-    detail: done
-      ? outcome.detail
-        ? `${action.reason} (${outcome.detail})`
-        : action.reason
-      : outcome.detail,
+    detail: done ? (outcome.detail ? `${action.reason} (${outcome.detail})` : action.reason) : outcome.detail,
   };
 }
