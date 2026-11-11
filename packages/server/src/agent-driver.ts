@@ -348,7 +348,11 @@ export class HostedAgentHost {
     const child = this.devices.get(session);
     if (child) return child.forward(session, token, request, response, from);
     const verdict = this.authorize(session, token, from);
-    if (verdict === 'ok') void proxy(this.active, session, request, response);
+    if (verdict === 'ok')
+      proxy(this.active, session, request, response).catch(() => {
+        if (response.headersSent) response.destroy();
+        else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+      });
     else if (verdict === 'unknown' && request.method === 'POST' && /\/rpc(?:\?|$)/.test(request.url ?? ''))
       response.writeHead(404, { 'content-type': 'application/json' }).end(
         JSON.stringify({

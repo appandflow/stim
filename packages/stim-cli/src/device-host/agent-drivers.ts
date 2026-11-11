@@ -1,10 +1,15 @@
-import agentDeviceManifest from '@stim-cli/agent-driver-agent-device/package.json' with { type: 'json' };
 import type { PluginSource } from '@stim-cli/core/plugin-loader';
 import { agentClientConfigFile, loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
 const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
-  'agent-device': { load: () => import('@stim-cli/agent-driver-agent-device'), manifest: () => agentDeviceManifest },
+  'agent-device': {
+    load: () => import('@stim-cli/agent-driver-agent-device'),
+    manifest: () =>
+      import('@stim-cli/agent-driver-agent-device/package.json', { with: { type: 'json' } }).then(
+        (manifest) => manifest.default,
+      ),
+  },
 };
 
 function registered(name: string): name is keyof typeof DRIVERS {

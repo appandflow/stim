@@ -17,6 +17,7 @@ const shared = [
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
+  ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\//],
   ...pluginRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
@@ -37,7 +38,10 @@ const deny = {
   api: shared,
   tiers: pluginRules,
   daemon: [ownFingerprint, ...pluginRules],
-  net: [['transport-tailscale', /^@stim-cli\/transport-tailscale\//]],
+  net: [
+    ['transport-tailscale', /^@stim-cli\/transport-tailscale\//],
+    ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\//],
+  ],
 };
 
 /** The most dist files and bytes an entry's static closure may load. */

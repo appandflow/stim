@@ -124,7 +124,17 @@
       "files": ["packages/server/**/*.{ts,mts,mjs,js}"],
       "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
       "rules": {
-        "stim/static-imports": ["error", { "modules": ["@stim-cli/transport-tailscale"] }]
+        "stim/static-imports": [
+          "error",
+          { "modules": ["@stim-cli/transport-tailscale", "@stim-cli/agent-driver-agent-device"] }
+        ]
+      }
+    },
+    {
+      "files": ["packages/stim-cli/src/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
+      "rules": {
+        "stim/static-imports": ["error", { "modules": ["@stim-cli/agent-driver-agent-device"] }]
       }
     },
     {
