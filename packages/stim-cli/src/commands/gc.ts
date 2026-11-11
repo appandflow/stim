@@ -1,10 +1,13 @@
 import { throwIfCancelled } from '../cancellation.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
-import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
+import { configDir, ensurePrivateDir, isScopedHome, type StimContext } from '@stim-cli/core';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
-import { maintenanceRunClaims } from '@stim-cli/core/state';
+import { gcReportFile, maintenanceRunClaims } from '@stim-cli/core/state';
 import { previewMaintenance, type MaintenancePreview } from '../stimd/passes/preview.ts';
 import { gcLadderLevel, previewGcLadder, runGcLadder, type GcLadder } from './gc/ladder.ts';
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
@@ -21,7 +24,7 @@ import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
-import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import { directorySizeAsync, formatBytes, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
@@ -99,6 +102,7 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
+import { formatGcSummary } from './gc/summary.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -198,6 +202,8 @@ type GcDependencies = EasGcDependencies & GcDeviceDependencies & OtherHomesDepen
 interface GcExecution {
   output: GcOutput;
   takeResults: () => GcResult[];
+  /** Plain mode: the full report goes to `detail` and only the summary is printed. */
+  plain?: { detail: (line: string) => void; print: (line: string) => void };
 }
 
 export type GcMutationOptions = Omit<RunGcOptions, 'json'>;
@@ -752,20 +758,66 @@ export async function executeGc(
     : null;
   const results = createGcResults(log?.record);
   let failed = false;
+  const detail: string[] | null = opts.json ? null : [];
   const output: GcOutput = {
-    log: (line) => write('stdout', line),
-    error: (line) => write('stderr', line),
+    log: (line) => {
+      detail?.push(stripVTControlCharacters(line));
+      write('stdout', line);
+    },
+    error: (line) => {
+      detail?.push(stripVTControlCharacters(line));
+      write('stderr', line);
+    },
     record: results.record,
     fail: () => {
       failed = true;
     },
   };
+  let reported = false;
+  const plain = detail
+    ? {
+        detail: (line: string) => {
+          reported = true;
+          detail.push(stripVTControlCharacters(line));
+        },
+        print: (line: string) => write('stdout', line),
+      }
+    : undefined;
   try {
     declareSpawnsOn(deps.operation, claim);
-    const payload = await sweep(opts, deps, { output, takeResults: results.take });
+    const payload = await sweep(opts, deps, { output, takeResults: results.take, plain });
+    if (detail && reported) {
+      if ('results' in payload && opts.delete) write('stdout', deleteTally(payload.results));
+      write('stdout', saveGcReport(detail));
+    }
     return { payload, exitCode: failed ? 1 : 0 };
   } finally {
     stopDeclaringSpawnsOn(deps.operation, claim);
+  }
+}
+
+function deleteTally(results: readonly GcResult[]): string {
+  const done = results.filter((result) => result.status === 'done');
+  const bytes = done.reduce((sum, result) => sum + (result.bytes ?? 0), 0);
+  const kept = results.filter((result) => result.status === 'kept').length;
+  const failed = results.filter((result) => result.status === 'failed').length;
+  const tally = `Cleared ${done.length} entr${done.length === 1 ? 'y' : 'ies'}, freeing about ${formatBytes(bytes)}; kept ${kept}; failed ${failed}.`;
+  return failed ? chalk.red(`${tally} The failures are listed above.`) : tally;
+}
+
+function saveGcReport(lines: readonly string[]): string {
+  const file = gcReportFile();
+  const staged = `${file}.${process.pid}.tmp`;
+  try {
+    ensurePrivateDir(dirname(file));
+    writeFileSync(staged, `${lines.join('\n')}\n`, { mode: 0o600 });
+    renameSync(staged, file);
+    return chalk.dim(`Full report: ${file}`);
+  } catch (error) {
+    rmSync(staged, { force: true });
+    return chalk.yellow(
+      `Could not write the full report to ${file}: ${error instanceof Error ? error.message : String(error)}; \`stim gc --json\` prints every entry.`,
+    );
   }
 }
 
@@ -1088,7 +1140,11 @@ async function runGcCore(
   }
   const all = report.all;
 
-  if (!reportOnly) for (const line of formatGcReport(report)) output.log(line);
+  if (!reportOnly) {
+    const { plain } = execution;
+    for (const line of formatGcReport(report)) (plain ? plain.detail : output.log)(line);
+    if (plain) for (const line of formatGcSummary(report, opts.delete === true)) plain.print(line);
+  }
 
   const {
     deadProjects,

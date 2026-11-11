@@ -225,6 +225,11 @@ export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
 }
 
+/** The full plain-text report of the last plain `stim gc` run, which prints only a summary. */
+export function gcReportFile(): string {
+  return join(gcLogDir(), 'last-report.txt');
+}
+
 export function buildLedgerDir(): string {
   return join(configDir(), 'builds');
 }

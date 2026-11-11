@@ -207,7 +207,7 @@ function unresolvedLockLines(
   ];
 }
 
-function scopeLine(cacheScope: string): string {
+export function scopeLine(cacheScope: string): string {
   if (memoryCacheKind(cacheScope)) return `Cache scope: "${cacheScope}". Only these helper processes were inspected.`;
   return includesParkedDevices(cacheScope)
     ? `Cache scope: "${cacheScope}". Unparked devices, project entries and locks were not inspected.`
