@@ -1,4 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
@@ -46,7 +47,6 @@ export async function startRepackServer({
   }
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
-  // Re.Pack's own adb reverse reaches every connected device, including ones this workspace does not own.
   const args = [
     'start',
     '--port',
@@ -72,7 +72,9 @@ export async function startRepackServer({
     cwd: root,
     stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
     detached: group,
-    env: { ...node.env, FORCE_COLOR: '0', ...extraEnv },
+    // Re.Pack 5 runs `$ANDROID_HOME/platform-tools/adb reverse` on every connected device before each Android
+    // compile, even with --no-reverse-port, and ignores its failures; Stim reverses only the devices it drives.
+    env: { ...node.env, FORCE_COLOR: '0', ANDROID_HOME: devNull, ...extraEnv },
   });
   return superviseChildServer({
     mode: MODE_REPACK,

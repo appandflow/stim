@@ -200,8 +200,10 @@ WHO RUNS IT
                  so its JSON progress events become bundle_build_started and
                  bundle_build_done records, which launch verification reads
                  as bundle evidence. Other lines arrive as repack_stdout and
-                 repack_stderr records. Re.Pack's own adb reverse is off;
-                 Stim manages the reverse for its port. A config that names
+                 repack_stderr records. Re.Pack's own adb reverse, which
+                 would reach every connected device, is off: Stim passes
+                 --no-reverse-port and points the child's ANDROID_HOME at
+                 the null device, and manages the reverse for its port. A config that names
                  Re.Pack without rock or @callstack/repack installed refuses
                  with STIM_REPACK_BIN instead of falling back to Expo.
     command-child  metro.command (\`guide settings\`): that argv runs as a

@@ -1,6 +1,6 @@
 import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isBundleProof } from '../engine/launch-verify.ts';
 import { repackRecords, startRepackServer } from '../stimd/metro/server-repack.ts';
@@ -71,7 +71,7 @@ describe('detectDevServer', () => {
 });
 
 describe('startRepackServer', () => {
-  test("runs Rock's bin with the fixed Re.Pack flags, and Stim's own node on Windows", async () => {
+  test("runs Rock's bin with the fixed Re.Pack flags and no adb for Re.Pack's own reverse, and Stim's own node on Windows", async () => {
     file('rock.config.mjs', ROCK_REPACK);
     installed('rock', 'dist/src/bin.js');
     installed('@callstack/repack');
@@ -86,6 +86,7 @@ describe('startRepackServer', () => {
 
     const flags = ['start', '--port', '8095', '--no-interactive', '--no-reverse-port', '--json'];
     expect(calls[0]).toMatchObject({ args: [...flags, '--reset-cache'], opts: { cwd: root } });
+    expect(calls[0]?.opts.env?.ANDROID_HOME).toBe(devNull);
     expect(calls[0]?.cmd.endsWith(join('rock', 'dist', 'src', 'bin.js'))).toBe(true);
     expect(calls[1]?.cmd).toBe(process.execPath);
     expect(calls[1]?.args.slice(1)).toEqual(flags);
