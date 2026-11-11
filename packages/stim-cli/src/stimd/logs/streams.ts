@@ -103,6 +103,8 @@ export interface StreamTable {
     checkCoverage?: boolean,
   ): Promise<{ revision: number; gone?: true; coverage?: 'pending' | 'covered' | 'failed' }>;
   running(): boolean;
+  /** The workspaces whose device log streams run. */
+  roots(): string[];
   close(): Promise<void>;
 }
 
@@ -1097,6 +1099,7 @@ export function createStreams(
       });
     },
     running: () => streams.size > 0,
+    roots: () => [...new Set([...streams.keys()].map((key) => key.slice(0, key.indexOf('\0'))))],
     async close(): Promise<void> {
       closing = true;
       closePromise ??= (async () => {

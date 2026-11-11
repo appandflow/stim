@@ -44,7 +44,7 @@ import {
   readOnlyFooter,
   replayFooter,
   stuckMinutesOptions,
-  videoQualityFooter,
+  deviceViewFooter,
   videoQualityOptions,
   type Option,
 } from '@/lib/settings-options';
@@ -53,7 +53,7 @@ import { radius } from '@/design/tokens';
 
 export function Settings() {
   const colors = useUnistyles().theme.colors;
-  const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
+  const { appearance, setAppearance, videoQuality, setVideoQuality, deviceFrame, setDeviceFrame } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
   const notifications = useNotificationPrefs();
@@ -94,7 +94,7 @@ export function Settings() {
           </Toggle>
         </Section>
         <NotificationsSection colors={colors} value={notifications} modifiers={rowModifiers} />
-        <Section title={t`Device View`} footer={<Text>{videoQualityFooter()}</Text>}>
+        <Section title={t`Device View`} footer={<Text>{deviceViewFooter()}</Text>}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -104,6 +104,9 @@ export function Settings() {
             onChange={setVideoQuality}
             modifiers={rowModifiers}
           />
+          <Toggle isOn={deviceFrame} onIsOnChange={setDeviceFrame} modifiers={rowModifiers}>
+            <RowLabel colors={colors} title={t`Device Frame`} symbol="iphone" />
+          </Toggle>
         </Section>
         {connections.length > 0 ? (
           <Section title={t`Machines`} footer={anyReadOnly ? <Text>{readOnlyFooter()}</Text> : undefined}>

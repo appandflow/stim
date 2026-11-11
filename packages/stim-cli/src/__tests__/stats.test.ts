@@ -104,6 +104,31 @@ describe('the update rule', () => {
     expect(bucket.timeSavedMs).toBe(0);
     expect(record.machine.ios?.timeSavedMs).toBe(0);
   });
+
+  test('an uncached build is kept as a tagged run sample that survives later runs, and counts in no hit or miss total', () => {
+    const recordRun = (at: number, incremental: boolean) => {
+      const recorder = createRunRecorder({
+        platform: 'ios',
+        write: recordRunStats,
+        now: () => at,
+        note: () => {},
+        phases: () => ({ compile: incremental ? 20_000 : 300_000 }),
+        incremental: () => incremental,
+      });
+      recorder.setProject('/repo/exact');
+      recorder.setUncached();
+      recorder.record({ failed: false, durationMs: incremental ? 30_000 : 320_000 });
+    };
+    recordRun(T0, false);
+    for (let i = 1; i <= 12; i++) recordRun(T0 + i * 60_000, true);
+
+    const { record } = readStats();
+    const cold = record?.history?.['/repo/exact']?.ios?.cold ?? [];
+    expect(cold.filter((sample) => sample.incremental === false).map((sample) => sample.durationMs)).toEqual([320_000]);
+    expect(cold.filter((sample) => sample.incremental === true)).toHaveLength(10);
+    expect(record?.projects).toEqual({});
+    expect(record?.machine).toEqual({});
+  });
 });
 
 describe('build placements', () => {

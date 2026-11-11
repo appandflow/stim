@@ -146,6 +146,7 @@ export async function buildIosOperation(
           note,
           phases: () => progress.durations(),
           deviceSetup: () => false,
+          incremental: () => progress.incrementalKnown(),
         });
         stats.setProject(projectKey);
         progress.estimate(projectKey);
@@ -255,6 +256,7 @@ export async function buildIosOperation(
                 place: progress.place,
                 waitingOn: progress.waitingOn,
                 waitingFor: progress.waitingFor,
+                incremental: progress.incremental,
               },
             },
             {

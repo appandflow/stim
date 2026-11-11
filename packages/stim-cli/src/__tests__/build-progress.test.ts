@@ -456,4 +456,35 @@ describe('estimates', () => {
     });
     expect(buildReport(unsettled, { state: 'running', history: undefined }).plannedPhases).toBeNull();
   });
+
+  test('a run that knows whether its uncached build is incremental estimates from matching runs only', () => {
+    const tagged: RunHistory = {
+      ios: {
+        cold: [
+          { ...histSample(300_000, { compile: 280_000 }), incremental: false },
+          { ...histSample(30_000, { compile: 20_000 }), incremental: true },
+          { ...histSample(40_000, { compile: 30_000 }), incremental: true },
+        ],
+      },
+    };
+    const at = new Date(T0).toISOString();
+    const record: ActiveBuildRecord = {
+      platform: 'ios',
+      slot: 'default',
+      startedAt: at,
+      phase: 'compile',
+      phaseStartedAt: at,
+      phases: [{ phase: 'compile', startedAt: at }],
+      claim: { root: '/x', path: '/x/c', claimId: 'c', pid: 1 },
+      outcome: 'cold',
+    };
+    const report = (incremental?: boolean) =>
+      buildReport(
+        { ...record, ...(incremental === undefined ? {} : { incremental }) },
+        { state: 'running', history: tagged },
+      );
+    expect(report(true)).toMatchObject({ expectedMs: 35_000, expectedPhaseMs: 25_000, basis: 2 });
+    expect(report(false)).toMatchObject({ expectedMs: 300_000, expectedPhaseMs: 280_000, basis: 1 });
+    expect(report()).toMatchObject({ expectedMs: 40_000, basis: 3 });
+  });
 });

@@ -58,6 +58,9 @@ export interface StatsRun {
   phases?: Record<string, number>;
   cleanupMs?: number;
   deviceSetup?: boolean;
+  /** The build skipped the artifact cache, so the run counts in neither the hit nor the miss totals. */
+  uncached?: true;
+  incremental?: boolean;
   placement?: RunPlacement;
 }
 
@@ -78,6 +81,8 @@ interface RunOutcome {
 export interface RunRecorder {
   setProject(key: string): void;
   setCacheKey(key: string): void;
+  /** Records the run though it has no cache key, because its build cannot use the artifact cache. */
+  setUncached(): void;
   setBuildMs(ms: number): void;
   setPodsMs(ms: number): void;
   setPlacement(placement: RunPlacement): void;
@@ -96,6 +101,8 @@ export function emptyStats(): StatsRecord {
 export function updateStats(record: StatsRecord, run: StatsRun, now: number): StatsRecord {
   const at = new Date(now).toISOString();
   const durationMs = wholeMs(run.durationMs);
+  const history = withHistorySample(record.history, run, at, durationMs);
+  if (run.uncached) return { ...record, version: STATS_VERSION, ...(Object.keys(history).length ? { history } : {}) };
   const phases = {
     coldBuildMs: wholeMs(run.coldBuildMs),
     podsMs: wholeMs(run.podsMs),
@@ -120,22 +127,6 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     credit,
     phases,
   });
-
-  const history = { ...record.history };
-  if (run.phases && !run.failed && !run.waitedForBuild && !run.offloadedTo) {
-    const outcome: RunOutcomeKind = isHit(run.cacheHit) ? 'hit' : 'cold';
-    const project: RunHistory = { ...history[run.projectKey] };
-    const lists = { ...project[run.platform] };
-    const sample: RunSample = {
-      at,
-      durationMs,
-      phases: wholePhases(run.phases),
-      ...(run.deviceSetup === undefined ? {} : { deviceSetup: run.deviceSetup }),
-    };
-    lists[outcome] = trimSamples([...(lists[outcome] ?? []), sample]);
-    project[run.platform] = lists;
-    history[run.projectKey] = project;
-  }
 
   let placements = record.placements;
   let buildMachines = record.buildMachines;
@@ -162,6 +153,30 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     ...(capacityWaits.length ? { capacityWaits } : {}),
     ...(buildMachines && Object.keys(buildMachines).length ? { buildMachines } : {}),
   };
+}
+
+function withHistorySample(
+  before: StatsRecord['history'],
+  run: StatsRun,
+  at: string,
+  durationMs: number,
+): Record<string, RunHistory> {
+  const history = { ...before };
+  if (!run.phases || run.failed || run.waitedForBuild || run.offloadedTo) return history;
+  const outcome: RunOutcomeKind = isHit(run.cacheHit) ? 'hit' : 'cold';
+  const project: RunHistory = { ...history[run.projectKey] };
+  const lists = { ...project[run.platform] };
+  const sample: RunSample = {
+    at,
+    durationMs,
+    phases: wholePhases(run.phases),
+    ...(run.deviceSetup === undefined ? {} : { deviceSetup: run.deviceSetup }),
+    ...(run.incremental === undefined ? {} : { incremental: run.incremental }),
+  };
+  lists[outcome] = trimSamples([...(lists[outcome] ?? []), sample]);
+  project[run.platform] = lists;
+  history[run.projectKey] = project;
+  return history;
 }
 
 function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): BuildPlacement {
@@ -273,6 +288,7 @@ export function createRunRecorder({
   note,
   phases,
   deviceSetup,
+  incremental,
 }: {
   platform: StatsPlatform;
   write: (run: StatsRun, now: number) => RecordStatsResult;
@@ -280,9 +296,11 @@ export function createRunRecorder({
   note: (line: string) => void;
   phases?: () => Record<string, number>;
   deviceSetup?: () => boolean | undefined;
+  incremental?: () => boolean | undefined;
 }): RunRecorder {
   let projectKey: string | null = null;
   let cacheKey: string | null = null;
+  let uncached = false;
   let coldBuildMs = 0;
   let podsMs = 0;
   let placement: RunPlacement | null = null;
@@ -294,6 +312,9 @@ export function createRunRecorder({
     },
     setCacheKey(key: string): void {
       cacheKey = key;
+    },
+    setUncached(): void {
+      uncached = true;
     },
     setBuildMs(ms: number): void {
       coldBuildMs = wholeMs(ms);
@@ -318,9 +339,10 @@ export function createRunRecorder({
       offloadedTo = null,
       remoteDevice = false,
     }: RunOutcome): void {
-      if (!projectKey || !cacheKey || recorded) return;
+      if (!projectKey || (!cacheKey && !uncached) || recorded) return;
       recorded = true;
       const ran = failed ? {} : (phases?.() ?? {});
+      const built = incremental?.();
       try {
         const outcome = write(
           {
@@ -336,6 +358,8 @@ export function createRunRecorder({
             ...(!remoteDevice && Object.keys(ran).length ? { phases: ran } : {}),
             ...(ran.cleanup === undefined ? {} : { cleanupMs: ran.cleanup }),
             ...(failed || deviceSetup?.() === undefined ? {} : { deviceSetup: deviceSetup()! }),
+            ...(!cacheKey && uncached ? { uncached: true as const } : {}),
+            ...(built === undefined ? {} : { incremental: built }),
             ...(placement
               ? { placement: { ...placement, ...(deviceSlotWaitMs > 0 ? { deviceSlotWaitMs } : {}) } }
               : {}),

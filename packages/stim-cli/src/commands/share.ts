@@ -3,7 +3,7 @@ import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
-import { ensureNet, type NetAnswer } from '../daemon/client.ts';
+import { ensureNet, otherBuildRefusal, type NetAnswer } from '../daemon/client.ts';
 import {
   LocalServerUnavailable,
   requestLocalServer,
@@ -51,6 +51,8 @@ export interface ShareDeps {
   request: <M extends ShareMethod>(method: M, params: Methods[M]['params']) => Promise<LocalServerAnswer<M>>;
   /** Asks this Stim home's stimd, started when none runs, to start its net thread; null when no stimd answers. */
   startServer: () => Promise<NetAnswer | null>;
+  /** Why a stimd of another build that holds this Stim home cannot serve this stim; null when none refused it. */
+  otherBuild: () => { code: string; message: string; remedy: string } | null;
   /** Writes a line to stderr. */
   note: (line: string) => void;
   /** The host platform: stim-server serves its local socket everywhere but win32. */
@@ -88,6 +90,8 @@ async function ask<M extends ShareMethod>(
     answer = await deps.request(method, params);
   } catch (cause) {
     if (cause instanceof LocalServerUnavailable) {
+      const refused = deps.otherBuild();
+      if (refused && !start) return refused;
       if (!start) {
         return failure(
           'STIM_SERVER_NOT_RUNNING',
@@ -97,7 +101,10 @@ async function ask<M extends ShareMethod>(
       }
       const started = await deps.startServer();
       if (!started) {
-        return failure('STIM_SERVER_NOT_RUNNING', `No stimd runs for this Stim home.`, serverRemedy(version));
+        return (
+          deps.otherBuild() ??
+          failure('STIM_SERVER_NOT_RUNNING', `No stimd runs for this Stim home.`, serverRemedy(version))
+        );
       }
       if (!started.listening) {
         return failure(
@@ -597,6 +604,7 @@ const DEFAULT_DEPS = (version: string): ShareDeps => ({
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   request: (method, params) => requestLocalServer(method, params, { version }),
   startServer: () => ensureNet(true),
+  otherBuild: otherBuildRefusal,
   note: (line) => console.error(line),
   platform: process.platform,
 });

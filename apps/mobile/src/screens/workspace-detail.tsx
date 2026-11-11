@@ -404,7 +404,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const reload = () => {
     if (multi) {
       const live = apps.flatMap((app) =>
-        livePlatforms(app)
+        (app.devServer === false ? [] : livePlatforms(app))
           .filter((platform) => platform !== 'macos')
           .map((platform) => ({ path: app.path, platform })),
       );
@@ -505,8 +505,11 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
             <Stack.Toolbar.Menu inline>
               {actions.available.includes('reload') &&
               (multi
-                ? apps.some((app) => livePlatforms(app).some((platform) => platform !== 'macos'))
-                : !env.macos || livePlatforms(env).some((platform) => platform !== 'macos')) ? (
+                ? apps.some(
+                    (app) => app.devServer !== false && livePlatforms(app).some((platform) => platform !== 'macos'),
+                  )
+                : env.devServer !== false &&
+                  (!env.macos || livePlatforms(env).some((platform) => platform !== 'macos'))) ? (
                 <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled={actions.pending !== null} onPress={reload}>
                   {t`Reload`}
                 </Stack.Toolbar.MenuAction>

@@ -97,13 +97,17 @@ interface IosArtifactRequest {
     phase: (name: unknown, text: string) => void;
     note: (line: string) => void;
     logWriter: () => NdjsonWriter;
-    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs' | 'setPlacement' | 'deviceSlotWaitMs'>;
+    stats: Pick<
+      RunRecorder,
+      'setCacheKey' | 'setUncached' | 'setBuildMs' | 'setPodsMs' | 'setPlacement' | 'deviceSlotWaitMs'
+    >;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
     hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
     waitingOn: (root: string | null) => void;
     waitingFor?: BuildProgress['waitingFor'];
+    incremental?: BuildProgress['incremental'];
   };
 }
 
@@ -172,7 +176,19 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
+  const {
+    phase,
+    note,
+    logWriter,
+    stats,
+    step,
+    miss,
+    hit: lateHit,
+    place,
+    waitingOn,
+    waitingFor,
+    incremental,
+  } = progress;
   const cachePolicy = cache.policy;
   const release = isReleaseConfiguration(configuration);
   const embedsJs = (runtime: string) => release && !recipe.offload?.request(runtime).native;
@@ -261,6 +277,8 @@ export async function acquireIosArtifact(
     if ('cacheIneligible' in identity) {
       cacheIneligible = identity.cacheIneligible;
       useBuildCache = false;
+      stats.setUncached();
+      if (identity.incremental !== undefined) incremental?.(identity.incremental);
       phase('fingerprint', `unavailable: ${cacheIneligible}`);
       return;
     }

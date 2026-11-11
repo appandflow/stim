@@ -9,6 +9,7 @@ const applyAppearance = (value: Appearance) =>
 
 const APPEARANCE_KEY = 'stim.appearance';
 const VIDEO_QUALITY_KEY = 'stim.videoQuality';
+const DEVICE_FRAME_KEY = 'stim.deviceFrame';
 
 export type VideoQuality = 'auto' | 'high' | 'dataSaver';
 
@@ -17,6 +18,8 @@ interface SettingsContextValue {
   setAppearance: (value: Appearance) => void;
   videoQuality: VideoQuality;
   setVideoQuality: (value: VideoQuality) => void;
+  deviceFrame: boolean;
+  setDeviceFrame: (value: boolean) => void;
 }
 
 const Context = createContext<SettingsContextValue>({
@@ -24,15 +27,18 @@ const Context = createContext<SettingsContextValue>({
   setAppearance: () => {},
   videoQuality: 'auto',
   setVideoQuality: () => {},
+  deviceFrame: false,
+  setDeviceFrame: () => {},
 });
 
 const parseAppearance = (raw: string | null): Appearance => (raw === 'light' || raw === 'dark' ? raw : 'system');
 const parseVideoQuality = (raw: string | null): VideoQuality => (raw === 'high' || raw === 'dataSaver' ? raw : 'auto');
 
-/** Appearance and device-view quality, saved on this phone so they survive restarts. */
+/** Appearance, device-view quality and device frame, saved on this phone so they survive restarts. */
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [appearance, setAppearanceState] = useState<Appearance>('system');
   const [videoQuality, setVideoQualityState] = useState<VideoQuality>('auto');
+  const [deviceFrame, setDeviceFrameState] = useState(false);
 
   useEffect(() => {
     SecureStore.getItemAsync(APPEARANCE_KEY).then(
@@ -47,6 +53,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       (raw) => setVideoQualityState(parseVideoQuality(raw)),
       () => {},
     );
+    SecureStore.getItemAsync(DEVICE_FRAME_KEY).then(
+      (raw) => setDeviceFrameState(raw === 'on'),
+      () => {},
+    );
   }, []);
 
   const setAppearance = useCallback((next: Appearance) => {
@@ -59,9 +69,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     SecureStore.setItemAsync(VIDEO_QUALITY_KEY, next).catch(() => {});
   }, []);
 
+  const setDeviceFrame = useCallback((next: boolean) => {
+    setDeviceFrameState(next);
+    SecureStore.setItemAsync(DEVICE_FRAME_KEY, next ? 'on' : 'off').catch(() => {});
+  }, []);
+
   const value = useMemo(
-    () => ({ appearance, setAppearance, videoQuality, setVideoQuality }),
-    [appearance, setAppearance, videoQuality, setVideoQuality],
+    () => ({ appearance, setAppearance, videoQuality, setVideoQuality, deviceFrame, setDeviceFrame }),
+    [appearance, setAppearance, videoQuality, setVideoQuality, deviceFrame, setDeviceFrame],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
