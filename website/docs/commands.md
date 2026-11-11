@@ -1090,8 +1090,8 @@ and restores exactly what the stop paused, never more:
 - **Metro.** When the dev server's last stop was an idle stop, it starts it
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
-- **Devices.** For each recorded launch except Release and hosted
-  launches (see below), it boots the owned simulator or
+- **Devices.** For each recorded launch except Release, Android
+  native-process and hosted launches (see below), it boots the owned simulator or
   emulator the app ran on (the same UDID or AVD), on this machine and through
   the same device admission as `ios` and `android` (`concurrency.maxDevices`
   included). It never creates or adopts another device.
@@ -1104,8 +1104,8 @@ app, has nothing to restart: revive boots the owned simulator its recorded
 launch ran on, through the same ownership check and admission, and launches
 the app already installed there. It installs nothing and never builds, so it
 works after the idle stage deleted the app's build directory. Release launches
-of a React Native app do not use Metro, and hosted launches belong to their
-host, so revive does not relaunch them; run `stim ios` or `stim android` for
+of a React Native app and Android native-process launches do not use Metro,
+and hosted launches belong to their host, so revive does not relaunch them; run `stim ios` or `stim android` for
 them. Revive refuses instead of widening:
 
 - `STIM_NO_METRO` when Metro is not running and its last stop was not an idle

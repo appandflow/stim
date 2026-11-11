@@ -84,7 +84,7 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
         builtAt: '',
         cache: { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' },
       },
-      installedApp: 'com.example.app',
+      installedApp: null,
       expectedDevice: 'U1',
     },
   ]);

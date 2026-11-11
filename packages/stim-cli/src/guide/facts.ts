@@ -511,8 +511,9 @@ leased until <time>" for each one.`,
                   null when revive relaunched only native-process launches
                   of a workspace with no Metro to resume
   devices         one entry per recorded launch on a local owned
-                  simulator or emulator, except Release and hosted
-                  launches, which revive does not relaunch. Run as
+                  simulator or emulator, except Release, Android
+                  native-process and hosted launches, which revive does
+                  not relaunch. Run as
                   agent-device's boot hook, only the launch on the device
                   agent-device asked for: { platform, slot, deviceId, deviceName,
                   rebooted, app: { bundleId, relaunched, launched } }.

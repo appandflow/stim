@@ -31,6 +31,8 @@ const androidLaunch: WorkspaceLaunchRecord = {
   launchedAt: '2026-09-04T12:00:00.000Z',
 };
 
+const shutDownSim = () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never;
+
 const project: ProjectRecord = {
   metroPort: 8082,
   platforms: {
@@ -570,7 +572,7 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     'ios',
     {
       readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
-      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+      resolveIos: shutDownSim,
     },
     '`stim ios`',
   ],
@@ -579,7 +581,7 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     'ios',
     {
       readLaunches: () => ({ ios: { ...iosLaunch, runtime: 'process', metroPort: null } }),
-      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+      resolveIos: shutDownSim,
     },
     '`stim revive`',
   ],

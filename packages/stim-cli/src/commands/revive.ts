@@ -66,7 +66,7 @@ interface RunRequest {
   slot: string;
   configuration: string | null;
   recordedBuild: RecordedBuild | null;
-  installedApp: string;
+  installedApp: string | null;
   expectedDevice: string;
 }
 
@@ -369,7 +369,7 @@ export async function runRevive({
       slot: target.slot,
       configuration: target.configuration,
       recordedBuild: target.build,
-      installedApp: target.record.appId,
+      installedApp: target.build ? null : target.record.appId,
       expectedDevice: target.expectedDevice,
     });
     if (!outcome.ok) {
@@ -460,7 +460,13 @@ export function reviveDeps(context: StimContext): ReviveDeps {
       (platform === 'ios' ? await iosAppProcess(deviceId, appId) : await androidAppProcess(deviceId, appId)).state ===
       'running',
     resolveCachedApp: (platform, cacheKey) => resolveBuild(platform, cacheKey),
-    detectProject: async (root) => projectRegistry.detectProject(root, await resolveProjectSettingsAsync(root)),
+    detectProject: async (root) => {
+      try {
+        return projectRegistry.detectProject(root, await resolveProjectSettingsAsync(root));
+      } catch {
+        return { platforms: [], devServer: true };
+      }
+    },
     startMetro: async (root, note) => {
       const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root);
       const [shapeError] = settingShapeErrors(settings);
@@ -477,7 +483,8 @@ export function reviveDeps(context: StimContext): ReviveDeps {
           root,
           {
             slot,
-            ...(recordedBuild ? { recordedBuild } : { installedApp }),
+            ...(recordedBuild ? { recordedBuild } : {}),
+            ...(installedApp ? { installedApp } : {}),
             expectedDevice,
             remote: 'local',
             ...(configuration ? { configuration } : {}),

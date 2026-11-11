@@ -1397,8 +1397,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   this code when the booted simulator no longer has that app installed. Run
   as agent-device's boot hook for a device this workspace owns, it also
   refuses with this code when the last launch on that device is one revive
-  does not relaunch (a Release launch, or one whose record does not name that
-  device), or when no launch is recorded on that device. Revive never fingerprints or builds, so nothing was started. Run the
+  does not relaunch (a Release or Android native-process launch, or one whose
+  record does not name that device), or when no launch is recorded on that device. Revive never fingerprints or builds, so nothing was started. Run the
   printed \`stim ios\` or \`stim android\` command; it restores the app
   from the cache or builds it.
 
