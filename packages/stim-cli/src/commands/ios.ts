@@ -1405,7 +1405,6 @@ async function runIos(
           release,
           configuration,
           buildScheme,
-          isExpo,
           metroCheck,
           metroPort,
           logsDir,

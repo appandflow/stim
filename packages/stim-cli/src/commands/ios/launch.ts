@@ -69,7 +69,6 @@ interface VerifyIosRunArgs {
   logsDir: string;
   launchedAt: number;
   metroPort: number | null;
-  isExpo: boolean;
   bundleId: string;
   udid: string;
   scheme?: string;
@@ -254,7 +253,6 @@ export async function verifyIosMetroRun({
   logsDir,
   launchedAt,
   metroPort,
-  isExpo,
   bundleId,
   udid,
   scheme,
@@ -442,7 +440,6 @@ export async function verifyIosMetroRun({
     udid,
     scheme,
     lanAddress,
-    isExpo,
     remoteDevice,
     physical,
     lanOrigin,
@@ -483,7 +480,6 @@ function reportUnverified({
   | 'udid'
   | 'scheme'
   | 'lanAddress'
-  | 'isExpo'
   | 'remoteDevice'
   | 'physical'
   | 'lanOrigin'
@@ -586,7 +582,6 @@ interface FinishIosRunArgs {
   release: boolean;
   configuration: string | null;
   buildScheme?: string;
-  isExpo: boolean;
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string;
@@ -892,7 +887,6 @@ export async function finishIosRun({
   release,
   configuration,
   buildScheme,
-  isExpo,
   metroCheck,
   metroPort,
   logsDir,
@@ -1331,7 +1325,6 @@ export async function finishIosRun({
     logsDir,
     launchedAt,
     metroPort,
-    isExpo,
     bundleId: bundleId!,
     udid,
     scheme,

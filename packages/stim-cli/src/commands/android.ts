@@ -1584,7 +1584,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         useBuildCache,
         variant,
         release,
-        isExpo,
         metroPort,
         logsDir,
         emuLog,

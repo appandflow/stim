@@ -101,7 +101,6 @@ interface VerifyAndroidRunArgs {
   logsDir: string;
   launchedAt: number;
   metroPort: number | null;
-  isExpo: boolean;
   physical: boolean;
   device: OwnedDeviceRecord;
   scheme?: string | null;
@@ -492,7 +491,6 @@ interface FinishAndroidRunArgs {
   useBuildCache: boolean;
   variant: string | null;
   release: boolean;
-  isExpo: boolean;
   metroPort: number | null;
   logsDir: string;
   emuLog: string;
@@ -744,7 +742,6 @@ export async function finishAndroidRun({
   useBuildCache,
   variant,
   release,
-  isExpo,
   metroPort,
   logsDir,
   emuLog,
@@ -1106,7 +1103,6 @@ export async function finishAndroidRun({
     logsDir,
     launchedAt,
     metroPort,
-    isExpo,
     physical,
     device,
     scheme,
