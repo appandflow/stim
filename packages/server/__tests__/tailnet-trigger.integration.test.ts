@@ -150,6 +150,16 @@ const cases: [string, TriggerCase][] = [
     },
   ],
   [
+    'an approved build client beside a device registry this version cannot read',
+    {
+      before: (home) => {
+        writeRegistry(home, 'devices.json', {});
+        writeRegistry(home, 'build-clients.json', [record('builder', ['build'])]);
+      },
+      marked: true,
+    },
+  ],
+  [
     'stim serve --tailnet',
     {
       after: async () =>

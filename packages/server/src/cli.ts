@@ -25,7 +25,6 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
-  readRegistries,
   readUnreadable,
   watchClientRegistries,
   renameDevice,
@@ -296,27 +295,26 @@ const RECONCILE_MS = 60_000;
  */
 async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Promise<() => void> {
   let migrated = false;
-  const servedRoute = async () =>
-    !!label &&
-    !!(
-      await serviceManagerOrNull()
-        ?.read(label)
-        .catch(() => null)
-    )?.serve;
-  let served: Promise<boolean> | null = null;
+  const servedRoute = async (): Promise<boolean | null> => {
+    if (!label) return false;
+    const unit = await serviceManagerOrNull()
+      ?.read(label)
+      .catch(() => undefined);
+    return unit === undefined ? null : !!unit?.serve;
+  };
+  let served: boolean | null = null;
   let reported = '';
   const check = async () => {
     if (tailnet.current()) return;
     // compat C28 until removal-minor
     if (!migrated && !hasTailnetMarker()) {
-      const { devices, build, deviceHost } = readRegistries();
-      if (devices.length + build.length + deviceHost.length + readUnreadable().length)
-        markTailnet('registry records at the first start');
+      const records = [readDevices, readBuildClients, readDeviceHostClients, readUnreadable];
+      if (records.some((read) => read().length)) markTailnet('registry records at the first start');
       migrated = true;
     }
     // compat end
     if (hasTailnetMarker()) return void (await tailnet.load('tailnet marker'));
-    if (await (served ??= servedRoute())) return void (await tailnet.load('service serve route'));
+    if ((served ??= await servedRoute())) return void (await tailnet.load('service serve route'));
     if (readBuildClients().length + readDeviceHostClients().length && (await tailnet.binary()))
       await tailnet.load('approved clients');
   };
