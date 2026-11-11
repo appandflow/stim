@@ -532,8 +532,11 @@ port and shuts down the owned local device. On Windows, if the daemon crashes or
 When `stimd` restarts on another Stim build, it stops each simulator and
 emulator log collector, and the new `stimd` starts it again. `device.ndjson`
 misses the lines the app logs between the two, about the time `stimd` takes to
-restart. A collector that cannot start again (the device or app is gone, or its
-workspace was stopped) is dropped and noted in `stimd`'s own log. A physical
+restart. The new `stimd` skips a collector whose workspace was stopped after the
+restart began, and notes it in its own log. One whose device or app is gone
+starts and then ends, as any collector does: `device.ndjson` records it as
+stopped or failed. A `stimd` attached to a command (CI, sandboxes) starts none
+and leaves them to the next detached `stimd`. A physical
 iPhone's console is not restarted, because that would launch the app again; it
 holds the restart until `stim stop`.
 
