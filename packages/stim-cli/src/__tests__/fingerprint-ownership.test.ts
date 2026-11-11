@@ -14,7 +14,7 @@ vi.mock('../daemon/engine-switch.ts', async (original) => ({
   ownStoreEngine: () => ({ root: fixture.root, build: '0123456789ab' }),
 }));
 
-test('a selected engine stays pending until pre-existing declared work settles', async () => {
+test('a selected engine stays claimed until pre-existing declared work settles', async () => {
   const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
   fixture.root = join(area, 'store');
   const tree = join(fixture.root, '0123456789ab');
@@ -48,9 +48,7 @@ test('a selected engine stays pending until pre-existing declared work settles',
       }),
     ]);
     const engineRoot = buildClaimRoot(fixture.root, '0123456789ab');
-    expect(readClaimSet(engineRoot).live).toEqual(
-      expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-    );
+    expect(readClaimSet(engineRoot).live).toHaveLength(1);
     activity.settle();
     expect(await running).toBe('done');
     expect(readClaimSet(engineRoot).live).toEqual([]);
@@ -73,7 +71,7 @@ test.each([
         remedy: 'fixture cleanup could not be verified',
       }),
   ],
-] as const)('a marked %s cleanup failure retains the native and engine claims', async (_kind, failure) => {
+] as const)('a marked %s cleanup failure retains only the native claim', async (_kind, failure) => {
   const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
   fixture.root = join(area, 'store');
   const tree = join(fixture.root, '0123456789ab');
@@ -91,10 +89,10 @@ test.each([
       }),
     ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
     const native = join(home, 'workspaces', workspaceName(root), 'native-run.lock');
-    for (const claimRoot of [native, buildClaimRoot(fixture.root, '0123456789ab')])
-      expect(readClaimSet(claimRoot).live).toEqual(
-        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-      );
+    expect(readClaimSet(native).live).toEqual(
+      expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
+    );
+    expect(readClaimSet(buildClaimRoot(fixture.root, '0123456789ab'))).toMatchObject({ live: [], unresolved: [] });
   } finally {
     rmSync(area, { recursive: true, force: true });
   }

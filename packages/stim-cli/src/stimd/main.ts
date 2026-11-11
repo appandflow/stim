@@ -45,7 +45,6 @@ import {
 import {
   ClaimUnavailableError,
   claimFailure,
-  claimRemoveCommand,
   processGroupAlive,
   isClaimRefusal,
   isClaimUnavailable,
@@ -56,7 +55,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { reportChildOf, soleReportChild, WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
+import { reportChildOf, WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -474,7 +473,7 @@ async function waitForeground(done: Promise<void> | undefined, failure: () => un
 
 function refuseUnresolvedDaemonClaims(writer: { close: () => unknown }): void {
   const blocking = unresolvedStimdStartClaims();
-  if (blocking.length === 0 || blocking.some((claim) => !claim.path.endsWith('.claim'))) return;
+  if (!blocking.some((claim) => claim.path.endsWith('.claim'))) return;
   writer.close();
   const refusal = unresolvedDaemonClaimsError(blocking);
   throw Object.assign(refusal, { retentionFailure: true, remedy: refusal.remedy.replace(/ and retry\.$/, '') });
@@ -502,10 +501,10 @@ function childKey(error: unknown): string | null {
 }
 
 /**
- * The report children whose cleanup a tick could not verify. Each keeps stimd up until a later tick finds it stopped,
- * which releases the claims its failure retained once no other unverified child holds them. Only a refusal that
- * names one child and how to check it is contained, each child once and at most `MAX_CONTAINED_CLEANUPS` of them; any
- * other unverified cleanup ends stimd as before.
+ * The children whose cleanup a tick or a Metro or tunnel stop could not verify. Each keeps stimd up until a later tick
+ * finds it stopped, which releases the claims its failure retained once no other unverified child holds them. Only a
+ * refusal that names one child and how to check it is contained, each child once and at most `MAX_CONTAINED_CLEANUPS`
+ * of them; any other unverified cleanup ends stimd.
  */
 function createCleanupWatch(log: (level: Level, event: string, msg: string) => void) {
   let unsettled: { error: ClaimUnavailableError; settled: () => boolean; claims: readonly ClaimHandle[] }[] = [];
@@ -525,7 +524,7 @@ function createCleanupWatch(log: (level: Level, event: string, msg: string) => v
       log(
         'error',
         'daemon_cleanup_unverified',
-        `the tick goes on, and stimd stays up until the child has stopped: ${error.message} ${error.remedy ?? ''}`.trim(),
+        `stimd goes on and stays up until the child has stopped: ${error.message} ${error.remedy ?? ''}`.trim(),
       );
       return true;
     },
@@ -562,30 +561,6 @@ function cleanupCheck(error: object): (() => boolean) | null {
 
 function isUnverifiedCleanup(error: unknown): error is ClaimUnavailableError {
   return isClaimUnavailable(error) && 'reportCleanup' in error;
-}
-
-/**
- * Keeps stimd's engine claim past its exit for children whose cleanup was not verified, since such a child may still run
- * from that build. When every one of `unverified` names the same identified child, the claim records that child and
- * frees itself once its process group is gone; otherwise it records an unknown child, which only a person can clear.
- * stimd's home and daemon claims say only that a live stimd owns the home, so they are never kept for a child: a child
- * whose work needs protection keeps it through the claim that guards that work.
- */
-function retainUnverifiedForeground(
-  error: unknown,
-  retention: ReturnType<typeof followEngine>,
-  unverified: readonly unknown[] = [error],
-): unknown {
-  if (!isClaimUnavailable(error)) return undefined;
-  if (!('reportCleanup' in error)) return error;
-  const child = soleReportChild(unverified);
-  const enginePath = retention?.retainUnknown(child);
-  if ('retentionFailure' in error || !enginePath) return error;
-  error.message += ` The Stim engine claim remains held at ${enginePath}${child ? ` until process group ${child.pid} has exited` : ''}.`;
-  return Object.assign(error, {
-    retentionFailure: true,
-    remedy: `${error.remedy} After verifying the child and descendants have stopped, remove this claim: ${claimRemoveCommand(enginePath)}`,
-  });
 }
 
 async function retainAttachedEngine(
@@ -634,13 +609,6 @@ async function retainAttachedEngine(
         claimPath: join(engine.root, 'claims', engine.build),
       });
     retention.record(true, workspaceEngineDirs(loadConfig()));
-    try {
-      retention.retainUnknown();
-    } catch (error) {
-      throw new ClaimUnavailableError(`could not guard the attached Stim engine: ${String(error)}`, {
-        claimPath: join(engine.root, 'claims', engine.build),
-      });
-    }
     return retention;
   } catch (error) {
     retention?.release();
@@ -777,12 +745,10 @@ async function runStimdInner(
   let startupFollower: ReturnType<typeof followEngine> = null;
   let startupRetention: ReturnType<typeof followEngine> = null;
   startup.cleanup = async (error) => {
-    if (isUnverifiedCleanup(error)) {
-      keepOwn = true;
-      retainUnverifiedForeground(error, startupRetention ?? startupFollower);
-    } else {
-      startupRetention?.release();
-      startupFollower?.release();
+    startupRetention?.release();
+    startupFollower?.release();
+    if (isUnverifiedCleanup(error)) keepOwn = true;
+    else {
       releaseClaim(startupClaim);
       releaseClaim(own);
     }
@@ -1033,22 +999,11 @@ async function runStimdInner(
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const enginePinned = (): boolean => pinned() || logs.holdsRelaunch();
-  const unverifiedSeen = new Set<unknown>();
-  const retainFor = (error: unknown, others: readonly unknown[] = []) => {
-    for (const failure of [error, ...others]) if (isUnverifiedCleanup(failure)) unverifiedSeen.add(failure);
-    return retainUnverifiedForeground(error, retention ?? follower, [
-      ...new Set([...unverifiedSeen, ...cleanups.errors()]),
-    ]);
-  };
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
     keepDaemon = true;
-    try {
-      (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
-    } finally {
-      retainFor(error);
-    }
+    (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
     if (attached) requestEnd(why, 'error');
     else shutdown(why, 'error');
   };
@@ -1450,15 +1405,9 @@ async function runStimdInner(
           keepOwn = true;
           keepDaemon = true;
         }
-        const retained =
-          retainFor(error, [
-            initial,
-            backgroundFailure,
-            ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
-          ]) ?? error;
-        shutdown('attached cleanup could not be verified', 'error', true);
+        shutdown('attached cleanup could not be verified', 'error');
         await shutdownDone;
-        throw retained;
+        throw isUnverifiedCleanup(error) ? Object.assign(error, { retentionFailure: true }) : error;
       }
       shutdown(why, endingLevel);
       await shutdownDone;
@@ -1510,7 +1459,7 @@ async function runStimdInner(
     attachedEnding = finishAttached();
   };
   const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
-  const shutdown = (why: string, level: Level = 'info', preserve = false) => {
+  const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
     foregroundAbort.abort();
@@ -1527,7 +1476,6 @@ async function runStimdInner(
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    let unverified = false;
     shutdownDone = Promise.allSettled([
       waitForeground(foregroundDone, () => foregroundFailure),
       lane.settled(),
@@ -1537,28 +1485,25 @@ async function runStimdInner(
     ])
       .then(async (results) => {
         cleanups.settle();
-        const failures = [
+        const unverified = [
           backgroundFailure,
           ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
           ...cleanups.errors(),
-        ].filter(isUnverifiedCleanup);
-        const [error] = failures;
-        if (error) {
-          unverified = true;
+        ].some(isUnverifiedCleanup);
+        if (unverified) {
           keepOwn = true;
           keepDaemon = true;
-          retainFor(error, failures);
         }
         await threads.close();
         return undefined;
       })
       .catch(() => {})
       .then(() => {
-        if (!unverified && !metroCleanupPending()) follower?.release();
+        follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
         markAbnormal = null;
-        if (!preserve && !unverified) retention?.release();
+        retention?.release();
         return undefined;
       });
     writerDone = shutdownDone
@@ -1571,7 +1516,7 @@ async function runStimdInner(
   };
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
-    shutdown('daemon startup failed', lifetime.failLevel, isUnverifiedCleanup(error));
+    shutdown('daemon startup failed', lifetime.failLevel);
     await shutdownDone;
     await writerDone;
   };
@@ -1592,8 +1537,10 @@ async function runStimdInner(
     throw lifetime.listenFailed(error);
   }
   openMetroChildren((error) => {
+    if (cleanups.contain(error, endingNow())) return true;
     failBackground(error, 'Metro cleanup could not be verified');
     log('error', 'metro_cleanup_unverified', error instanceof Error ? error.message : String(error));
+    return false;
   });
   adoptMetroChildren(log);
   resumeLogStreams(logs, log, attached !== undefined);
