@@ -74,6 +74,16 @@ for (const [specifier, exportName, context] of entrypoints) {
   assert.equal(typeof (await import(resolved))[exportName], 'function', `import(${specifier}) must load ESM`);
 }
 
+const stimDist = join(repositoryRoot, 'packages', 'stim-cli', 'dist');
+const driverChunks = readdirSync(stimDist).filter((file) =>
+  /^(?:agent-driver-agent-device|package)-.*\.mjs$/.test(file),
+);
+assert.ok(
+  driverChunks.some((file) => file.startsWith('agent-driver-agent-device-')),
+  'stim bundles the agent-device driver',
+);
+for (const file of driverChunks) await import(pathToFileURL(join(stimDist, file)).href);
+
 const apiScratch = mkdtempSync(join(tmpdir(), 'stim-runtime-api-'));
 try {
   mkdirSync(join(apiScratch, 'node_modules'));
