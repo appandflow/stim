@@ -326,10 +326,13 @@ plugin's code as your user, with access to files, the network and other
 processes; it is not a sandbox, so test only a plugin you trust. What it
 isolates: the module loads in a worker thread, never in the CLI process; its
 environment holds only HOME, PATH, STIM_HOME and STIM_AGENT_DEVICE_BIN, all in
-a temporary directory with no tools, deleted afterwards and on interrupt; its
+a temporary directory with no tools, deleted afterwards and on interrupt (your
+own variables are not passed to it, though the worker shares the CLI's process
+and can still read them through the OS); its
 output goes to stderr. A transport gets empty options; expose and unexpose are
 not called. An agent driver gets a stateDir and claimRoot in that directory,
-so start must refuse with agent-driver-unavailable.
+so start must refuse with agent-driver-unavailable. The env a runContract
+caller gives is the plugin's whole process.env: env: {} runs it without PATH.
 builtin:tailscale is not tested, because it reads and watches this Mac's
 Tailscale, and a cache provider is not tested, because it runs in the calling
 process: run runCacheProviderContract from 'stim/plugin' in its own tests. Both

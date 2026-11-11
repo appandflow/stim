@@ -19,7 +19,7 @@ export interface TransportContractOptions {
   baseDir: string;
   /** Passed to `createTransport` as `options`. */
   options?: Record<string, unknown>;
-  /** Passed to `createTransport` as `env`. */
+  /** Passed to `createTransport` as `env`, and the worker's whole `process.env`: `{}` runs the module without `PATH`. */
   env: NodeJS.ProcessEnv;
   checkTimeoutMs?: number;
   /**

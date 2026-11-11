@@ -48,5 +48,6 @@ test('a changed member breaks unless its own kind integer goes up and the notes 
   expect(verdict(changed, note('transport 1'))).toBe('breaking');
   expect(verdict({ ...changed, cacheVersion: 2 }, note('cache-provider 2'))).toBe('breaking');
   expect(verdict({ ...changed, version: 2 }, note('an older break'))).toBe('breaking');
+  expect(verdict({ ...changed, version: 2 }, note('transport 21'))).toBe('breaking');
   expect(verdict({ ...changed, version: 2 }, note('`close` returns void, transport 2'))).toBe('accepted');
 });

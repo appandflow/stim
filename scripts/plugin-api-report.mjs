@@ -120,7 +120,7 @@ export function apiReportVerdict({ baseline, current, notes }) {
     }
   }
   for (const kind of bumped)
-    if (!section.includes(`${kind} ${after[kind]}`))
+    if (!new RegExp(`(?<![\\w-])${kind} ${after[kind]}(?![\\w.])`).test(section))
       needs.push(`a line naming "${kind} ${after[kind]}" under "## Removed (breaking)" in ${notesFile}`);
   return { status: needs.length === 0 ? 'accepted' : 'breaking', added, removed, needs };
 }
@@ -177,7 +177,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       `stim/plugin removes or changes lines of ${baselineFile}:\n${listing}\n` +
         'A plugin built against the old lines may break, so this change needs:\n' +
         verdict.needs.map((need) => `  * ${need}`).join('\n') +
-        `\nBump the *_API_VERSION constant of each kind named in brackets ([*] lines need the kind they break), add the line to ${notesFile}, then run ${RUN_UPDATE} and commit ${baselineFile}. If the change was not meant to remove anything, restore the removed lines instead.`,
+        `\nBump the *_API_VERSION constant of each kind named in brackets ([*] lines need the kind they break), add the line to ${notesFile}, then run ${RUN_UPDATE} and commit ${baselineFile}. If the change was not meant to remove anything, restore the removed lines instead. Lines tagged [*] come from a module that defines no single kind, an export under another name, or a file in a src/ subdirectory; they need at least one kind bumped.`,
     );
     process.exit(1);
   } else if (update) {

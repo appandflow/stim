@@ -24,7 +24,10 @@ export interface AgentDriverContractOptions {
   baseDir: string;
   /** The module's `id`; without it, the kit checks the driver against the module's own `id` export. */
   id?: string;
-  /** Factory input for a host whose driving tool is not installed; the kit supplies `host`. */
+  /**
+   * Factory input for a host whose driving tool is not installed; the kit supplies `host`. Its `env` is also the
+   * worker's whole `process.env`, so `{}` runs the module without `PATH`.
+   */
   unavailableInput: Omit<AgentDriverInput, 'host'>;
   /** An app the driver would scope a grant to. */
   app: HostedAgentApp;

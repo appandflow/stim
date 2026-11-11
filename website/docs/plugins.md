@@ -100,7 +100,9 @@ What the command does isolate:
 - The module loads in a worker thread, never in the CLI process, as Stim runs it.
 - Its environment holds only `HOME`, `PATH`, `STIM_HOME` and
   `STIM_AGENT_DEVICE_BIN`, all pointing into a temporary directory that holds no
-  tools; none of your own environment variables reach it. Stim deletes the
+  tools; none of your own environment variables are passed to it. The worker
+  shares the CLI's process, so a plugin can still read the real environment
+  through the operating system: this is not a sandbox. Stim deletes the
   directory afterwards, also when you interrupt the command.
 - Its own output goes to stderr, so `--json` stdout holds only the payload.
 - A transport gets empty options. The kit calls its `bindAddresses`, `watch`,
@@ -109,6 +111,10 @@ What the command does isolate:
 - An agent driver gets a state directory and claim root in the temporary
   directory, with no driving tool on `PATH`, so `start` must refuse with
   `agent-driver-unavailable`.
+
+`runContract` from `stim/plugin` does the same with the `env` you give it: that
+object is the plugin's whole `process.env`, so `env: {}` runs the plugin without
+`PATH`.
 
 `builtin:tailscale` is not tested, because it reads and watches this Mac's
 Tailscale. A cache provider is not tested either, because it runs in the
