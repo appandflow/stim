@@ -82,8 +82,7 @@ the changes inherit them, then run stim doctor --platform ios there: it register
 the clone with Stim so Stim Desktop sees it, and builds or boots nothing. Do not
 run the app: the clone is only the base for the user's changes; only the optional
 delete step removes it.
-Report the findings of stim doctor and do not act on them: no SimSlim install, no
---fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
+Report the findings of stim doctor and do not act on them: no --fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
 and stop.
 
 ${local}

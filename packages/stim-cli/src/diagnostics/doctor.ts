@@ -53,7 +53,7 @@ import { ccacheInstallCommand } from '../engine/ccache.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { countLiveOwnedDevices, countLiveOwnedDevicesAsync } from '../engine/device-capacity.ts';
-import { simslimIsOnPath } from '../engine/simslim.ts';
+import { parseSlimProfile } from '../engine/simslim.ts';
 import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
@@ -78,7 +78,6 @@ import {
   resolveAndroidLayout,
   resolveIosProjectDir,
   type AndroidLayout,
-  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
   projectSettingsContext,
   remoteAndroidSetting,
@@ -940,48 +939,13 @@ async function projectEasBuildDownloadFinding(
   });
 }
 
-export function checkSimSlim({
-  configured = false,
-  slimByDefault = false,
-  profileError = null,
-  onPath = false,
-}: {
-  configured?: boolean;
-  slimByDefault?: boolean;
-  profileError?: string | null;
-  onPath?: boolean;
-} = {}): Finding | null {
-  if (profileError) {
-    return finding(
-      'cost',
-      'The SimSlim profile is invalid',
-      profileError,
-      'Set ios.simslimProfile to a readable JSON profile inside the repository.',
-    );
-  }
-  if (!configured && slimByDefault) {
-    if (onPath) return null;
-    return finding(
-      'cost',
-      'ios.simslim is on, but SimSlim is not installed',
-      '`stim ios` boots owned simulators without SimSlim until the `simslim` command is installed.',
-      'brew install mobai-app/tap/simslim',
-    );
-  }
-  if (!configured) {
-    return finding(
-      'note',
-      'SimSlim is recommended for parallel iOS simulator work',
-      'A reviewed profile can reduce background simulator services and memory use. It is optional: disabling services can affect tests that depend on them, and installing the binary alone does not apply a profile.',
-      'Run `stim guide lifecycle simslim` to install SimSlim and configure ios.simslimProfile. Stim does not enable a profile through doctor --fix.',
-    );
-  }
-  if (onPath) return null;
+export function checkSimSlim({ profileError = null }: { profileError?: string | null } = {}): Finding | null {
+  if (!profileError) return null;
   return finding(
     'cost',
-    'A SimSlim profile is configured, but SimSlim is not installed',
-    '`stim ios` needs the `simslim` command to apply the profile to its owned simulator.',
-    'brew install mobai-app/tap/simslim',
+    'The SimSlim profile is invalid',
+    profileError,
+    'Set ios.simslimProfile to a readable JSON profile inside the repository.',
   );
 }
 
@@ -1056,7 +1020,6 @@ export interface DoctorInspectionOptions {
   operation?: StimContext;
   lookupAgentDevice?: (() => boolean) | null;
   lookupEasCli?: (() => boolean) | null;
-  lookupSimSlim?: (() => boolean) | null;
   lookupSigningIdentities?: () => Promise<readonly SigningIdentity[] | null>;
   memoryPressure?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
   lookupCcache?: (() => boolean) | null;
@@ -1088,7 +1051,6 @@ export async function runDoctor(
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
-    lookupSimSlim = null,
     lookupSigningIdentities = () => probeSigningIdentities({ env: options.operation?.env ?? process.env }),
     memoryPressure = readHostMemoryPressureAsync,
     lookupChrome,
@@ -1168,25 +1130,21 @@ export async function runDoctor(
       );
     }
   }
-  let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
+  let simslimProfileSet = false;
   if (localIos) {
     try {
-      simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
+      const path = iosSimSlimProfileSetting(projectSettings, projectRoot);
+      simslimProfileSet = path !== null;
+      if (path) parseSlimProfile(readFileSync(path, 'utf8'), path);
     } catch (error) {
       simslimProfileError = String((error as Error)?.message || error);
     }
   }
-  const simslimByDefault = localIos && iosSimSlimDefaultSetting(projectSettings);
   const simslimFinding =
-    !localIos || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
+    !localIos || (!simslimProfileSet && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
-      : checkSimSlim({
-          configured: Boolean(simslimProfile),
-          slimByDefault: simslimByDefault,
-          profileError: simslimProfileError,
-          onPath: simslimProfile || simslimByDefault ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
-        });
+      : checkSimSlim({ profileError: simslimProfileError });
   const memoryAdvice =
     localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(await memoryPressure()) : null;
 
@@ -1202,7 +1160,7 @@ export async function runDoctor(
           'cost',
           'Host memory pressure can stall the iOS simulator',
           memoryAdvice,
-          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
+          'Free host memory, then retry. Owned iOS simulators already run slim; `stim guide lifecycle simslim` lists what it turns off.',
         )
       : null,
     simslimFinding,

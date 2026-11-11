@@ -1,3 +1,4 @@
+import { slimmedFeatureNames } from '../engine/simslim.ts';
 export default {
   summary: 'The normal coding-agent workflow, safety rules, and topic routing',
   body: () => `AGENT WORKFLOW
@@ -293,6 +294,12 @@ Stim creates, boots, and deletes only devices it created. Owned simulators use
 the stim-<label> (<model> <runtime>) name. Never point Stim at a user-created
 emulator or simulator.
 
+Owned iOS simulators run slim by default: Stim turns off background system
+services before the first boot, which cuts memory several times over. That
+turns off these features on the simulator: ${slimmedFeatureNames().join(', ')}. An app
+that needs one keeps it with ios.simslimProfile, or opts out with
+ios.simslim off (guide lifecycle simslim).
+
 worktree remove parks the workspace's simulator or emulator for later adoption.
 During owned-device teardown, Stim best-effort closes local agent-device sessions
 on that exact device; failures warn and teardown continues (guide cleanup).
@@ -461,7 +468,7 @@ Read the matching guide before acting in these situations:
 | Doctor finding: iOS Debug archs, .cxx, fingerprints   | stim guide lifecycle builds      |
 | Temporary storage placement                           | stim guide settings              |
 | Read or change a setting (stim settings)              | stim guide settings              |
-| Parallel iOS, simulator stall, or memory pressure     | stim guide lifecycle simslim     |
+| Slim iOS simulators, stall, or memory pressure        | stim guide lifecycle simslim     |
 | Android boot timeout                                  | stim guide errors STIM_NO_DEVICE |
 | gc or orphaned resources                              | stim guide cleanup gc            |
 | watchman or Gradle daemon memory                      | stim guide cleanup memory        |

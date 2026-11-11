@@ -545,8 +545,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   On a local iOS simulator, a timed-out launch can mean the simulator cannot
   spawn processes, even while it reports Booted. Check the reported memory
   pressure and free host memory before retrying; a timeout alone is not an OOM
-  diagnosis. See \`stim guide lifecycle simslim\` for recovery and the optional
-  SimSlim recommendation.
+  diagnosis. See \`stim guide lifecycle simslim\` for recovery and the slim
+  simulator defaults.
   On a PHONE it means the app never appeared in the device's own process list
   after \`devicectl device process launch\`, and the devicectl lines that
   explain it are quoted under the message. The refusal a first launch usually
@@ -1532,7 +1532,7 @@ Inspect what remains with gc() before retrying a mutation.
   Ctrl-C while the run delivers the app to a hosting Mac, or waits for the app
   to load its bundle or report readiness, ends that work and reports
   STIM_CANCELLED. A second Ctrl-C exits at once, and so does a Ctrl-C with no
-  build tool, SimSlim, hosted app delivery or launch readiness wait to stop;
+  build tool, hosted app delivery or launch readiness wait to stop;
   those exits print no payload. Run the same command again when you want the
   app on a device.`,
     },
