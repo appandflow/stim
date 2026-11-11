@@ -178,8 +178,8 @@ function repackBinRefusal(root: string, config: RepackConfig | null): { message:
  * only once a device asks for its bundle, so its progress events become `bundle_build_started` and
  * `bundle_build_done` records. Other requests are dropped, and other lines, such as Rock's own output and the
  * compile errors Re.Pack's LoggerPlugin prints as text, stay raw `repack_stdout` and `repack_stderr` records.
- * LoggerPlugin prints a compile's errors right after its `done` progress event, so an error-level line carries the
- * platform of the compile that finished last.
+ * LoggerPlugin prints a compile's errors right after its `done` progress event, so an error-level line that follows a
+ * `done` before any other request or progress line carries that compile's platform.
  */
 export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
   const building = new Set<string>();
@@ -191,6 +191,7 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
     const entry = parseRepackEntry(chunk);
     if (!entry) return attributed(recordFromLine(chunk, { stream, source: 'repack' }));
     const { progress, request } = entry;
+    if (request || progress) compiled = null;
     if (request) return requestRecord(request, requests);
     if (progress) {
       if (typeof progress.time === 'number') {

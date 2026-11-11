@@ -24,7 +24,8 @@ Metro warm up while you do other work.
 
 Bare React Native runs Metro in Stim's Metro host process. Expo runs the
 project's Expo CLI. Re.Pack runs through the project's Rock CLI, or the React
-Native CLI when `react-native.config.js` registers Re.Pack's commands. All of
+Native CLI when `react-native.config.js` (or `.cjs`, `.mjs`) registers Re.Pack's
+commands. All of
 them run on the Node the project pins. A healthy server that another process
 started for the same project can be reused, but Stim cannot capture its full
 output.
@@ -46,14 +47,16 @@ script. It reads the project's config files as text and takes the first match:
 1. `metro.command` is set, so Stim runs that command.
 2. A `rock.config.*` file imports `@rock-js/plugin-repack`, so Stim runs
    Re.Pack through Rock.
-3. There is no `rock.config.*` and `react-native.config.js` requires
+3. There is no `rock.config.*` and `react-native.config.js` (or `.cjs`, `.mjs`)
+   requires
    `@callstack/repack/commands`, so Stim runs Re.Pack through the React Native
    CLI.
 4. The app uses Expo, so Stim runs the Expo CLI.
 5. Otherwise Stim runs Metro in its own host.
 
-Only an `import`, `require` or dynamic `import()` of the package counts. A
-comment or a string that mentions it does not. An app that installs `expo`
+Only a value or side-effect `import`, a `require` or a dynamic `import()` of
+the package counts. A comment, a string, `import type` or an
+`import('...').Name` type does not. An app that installs `expo`
 only for Expo modules but bundles with Re.Pack gets Re.Pack. Every other app,
 including a Rock app on Metro, gets the same dev server as before Stim
 supported Re.Pack. `stim start` names the file that decided, for example
@@ -77,7 +80,8 @@ with `STIM_LAN_METRO_UNREACHABLE`, and a `--remote`, tunnel or hosted run with
 `STIM_REMOTE_METRO_UNREACHABLE`. For those, set `metro.command` to the
 project's own start command with the host the device can reach, for example
 `["npx", "rock", "start", "--port", "{port}", "--host", "0.0.0.0"]`. If the
-config imports Re.Pack but `rock` or `@callstack/repack` 5 is not installed,
+config imports Re.Pack but its CLI (`rock`, or `react-native` for a
+`react-native.config.*`) or `@callstack/repack` 5 is not installed,
 `stim start` refuses with `STIM_REPACK_BIN` and names the version it found,
 instead of falling back to Expo.
 

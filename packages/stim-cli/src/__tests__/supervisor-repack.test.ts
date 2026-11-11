@@ -115,6 +115,67 @@ describe('detectDevServer', () => {
     expect(detectDevServer(root)).toEqual(expected);
   });
 
+  test.each([
+    {
+      name: 'a glob string before the require',
+      file: 'react-native.config.js',
+      text: "module.exports = {\n  assets: ['./fonts/*'],\n  commands: require('@callstack/repack/commands/rspack'),\n  x: '**/y',\n};\n",
+      repack: true,
+    },
+    {
+      name: 'a glob string and a later doc comment',
+      file: 'rock.config.js',
+      text: "const ignore = ['src/*'];\nconst { pluginRepack } = require('@rock-js/plugin-repack');\n/** @type {import('rock').Config} */\nmodule.exports = {};\n",
+      repack: true,
+    },
+    {
+      name: 'a URL string on the import line',
+      file: 'rock.config.mjs',
+      text: "const u = 'a//b'; import { pluginRepack } from '@rock-js/plugin-repack';\n",
+      repack: true,
+    },
+    {
+      name: 'CRLF line endings after a commented-out import',
+      file: 'rock.config.mjs',
+      text: "// import { pluginRepack } from '@rock-js/plugin-repack';\r\nimport { pluginRepack } from '@rock-js/plugin-repack';\r\n",
+      repack: true,
+    },
+    {
+      name: 'a dynamic import with then',
+      file: 'rock.config.mjs',
+      text: "export default import('@rock-js/plugin-repack').then((m) => ({ bundler: m.pluginRepack() }));\n",
+      repack: true,
+    },
+    { name: 'a side-effect import', file: 'rock.config.mjs', text: "import '@rock-js/plugin-repack';\n", repack: true },
+    {
+      name: 'a type-only import in a Metro config',
+      file: 'rock.config.ts',
+      text: "import type { X } from '@rock-js/plugin-repack';\nimport { pluginMetro } from '@rock-js/plugin-metro';\n",
+      repack: false,
+    },
+    {
+      name: 'an import statement inside a string',
+      file: 'rock.config.mjs',
+      text: 'const s = "import x from \'@rock-js/plugin-repack\'";\n',
+      repack: false,
+    },
+    {
+      name: 'an import statement inside a template literal',
+      file: 'rock.config.mjs',
+      text: "const s = `import x from '@rock-js/plugin-repack'`;\n",
+      repack: false,
+    },
+    {
+      name: 'an import() type expression',
+      file: 'rock.config.ts',
+      text: "let options: import('@rock-js/plugin-repack').Options;\n",
+      repack: false,
+    },
+  ])('$name: Re.Pack is $repack', ({ file: name, text, repack }) => {
+    file(name, text);
+    expect(detectDevServer(root, null).mode === 'repack-child').toBe(repack);
+  });
+
   test('metro.command wins over a Re.Pack config', () => {
     file('rock.config.mjs', ROCK_REPACK);
     expect(detectDevServer(root, ['node', 'start.js', '{port}']).mode).toBe('command-child');
@@ -249,6 +310,15 @@ describe('repackRecords', () => {
     expect(toRecord(REAL.failed, 'stdout')).toMatchObject({ level: 'error', platform: 'ios' });
   });
 
+  test('an error after another compile starts or a request arrives is not attributed to the last finished compile', () => {
+    const toRecord = repackRecords();
+    const androidProgress = REAL.progress.replace('"ios"', '"android"');
+    [REAL.progress, REAL.done, androidProgress].forEach((line) => toRecord(line, 'stdout'));
+    expect(toRecord(REAL.failed, 'stdout')).not.toHaveProperty('platform');
+    [REAL.progress, REAL.done, REAL.statusIn].forEach((line) => toRecord(line, 'stdout'));
+    expect(toRecord(REAL.failed, 'stdout')).not.toHaveProperty('platform');
+  });
+
   test('an error response fails its bundle request', () => {
     const toRecord = repackRecords();
     const failed = REAL.bundleOut.replace('"statusCode":200', '"statusCode":500');
@@ -296,6 +366,12 @@ describe('verifyLaunch on Re.Pack records', () => {
       compileErrors: [expect.objectContaining({ level: 'error', platform: 'ios' })],
     });
     expect(result).not.toHaveProperty('fatal');
+  });
+
+  test('an error printed while Android compiles does not taint a warm iOS delivery', async () => {
+    const androidProgress = REAL.progress.replace('"ios"', '"android"');
+    const lines = [REAL.progress, REAL.done, androidProgress, REAL.failed, REAL.bundleIn, REAL.bundleOut];
+    expect(await verify(lines, 'repack-child')).toMatchObject({ verified: true });
   });
 
   test('an error from an earlier compile does not taint a bundle a later clean compile produced', async () => {

@@ -1351,7 +1351,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   node_modules/.bin/expo does not exist. Install the project's dependencies.`,
     },
     STIM_REPACK_BIN: {
-      summary: 'rock.config or react-native.config imports Re.Pack, but rock or @callstack/repack 5 is missing',
+      summary: 'rock.config or react-native.config imports Re.Pack, but its CLI or @callstack/repack 5 is missing',
       body: () => `STIM_REPACK_BIN  (Re.Pack)
   The project's rock.config.* imports @rock-js/plugin-repack, or its
   react-native.config.js requires @callstack/repack's commands, but the

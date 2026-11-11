@@ -177,9 +177,9 @@ WHO RUNS IT
        resolvable expo dependency): expo-child.
     5. Otherwise: bare-inproc.
 
-  Stim reads those config files as text and never runs them. Only an import,
-  require or dynamic import of the package counts; a comment or a string that
-  mentions it does not. An app that installs expo only for Expo modules but
+  Stim reads those config files as text and never runs them. Only a value or
+  side-effect import, a require or a dynamic import of the package counts. A
+  comment, a string, \`import type\` or an \`import('...').Name\` type does not. An app that installs expo only for Expo modules but
   bundles with Re.Pack gets repack-child. Any other app, including a Rock app
   on Metro, gets the mode it would get without Re.Pack support. \`start\` names the file that decided, as in
   "starting on port 8082 (repack-child from rock.config.mjs)".

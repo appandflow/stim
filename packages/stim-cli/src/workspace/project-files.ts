@@ -175,11 +175,74 @@ export function detectRepackConfig(projectRoot: string): RepackConfig | null {
     : null;
 }
 
+/**
+ * Whether source loads `specifier` or a subpath of it through a value import, a side-effect import, `require()` or a
+ * dynamic `import()`. Comments, strings, `import type` and `import('...').Name` type expressions do not count. Regular
+ * expression literals are not recognized, so a quote inside one can hide what follows it.
+ */
 function importsModule(source: string, specifier: string): boolean {
-  const code = source.replace(/\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/.*$/gm, '$1');
-  return new RegExp(`(?:\\bfrom|\\bimport|\\brequire\\s*\\()\\s*\\(?\\s*(['"\`])${specifier}(?:/[^'"\`]*)?\\1`).test(
-    code,
-  );
+  const tokens = sourceTokens(source);
+  const names = (at: number) => {
+    const token = tokens[at];
+    return token?.kind === 'string' && (token.value === specifier || token.value.startsWith(`${specifier}/`));
+  };
+  const is = (at: number, value: string) => tokens[at]?.kind === 'code' && tokens[at]?.value === value;
+  for (let at = 0; at < tokens.length; at++) {
+    if (is(at - 1, '.')) continue;
+    if (is(at, 'require') && is(at + 1, '(') && names(at + 2)) return true;
+    if (!is(at, 'import')) continue;
+    if (names(at + 1)) return true;
+    if (is(at + 1, '(')) {
+      const typeExpression =
+        names(at + 2) && is(at + 3, ')') && is(at + 4, '.') && !PROMISE_METHODS.has(tokens[at + 5]?.value ?? '');
+      if (names(at + 2) && !typeExpression) return true;
+      continue;
+    }
+    if (is(at + 1, 'type') && !is(at + 2, 'from') && !is(at + 2, ',')) continue;
+    let end = at + 1;
+    while (end < tokens.length && !is(end, 'from') && !is(end, ';') && !is(end, 'import')) end++;
+    if (is(end, 'from') && names(end + 1)) return true;
+  }
+  return false;
+}
+
+const PROMISE_METHODS = new Set(['then', 'catch', 'finally']);
+
+function sourceTokens(source: string): { kind: 'code' | 'string' | 'template'; value: string }[] {
+  const tokens: { kind: 'code' | 'string' | 'template'; value: string }[] = [];
+  const word = /[A-Za-z_$][\w$]*/y;
+  let at = 0;
+  while (at < source.length) {
+    const char = source.charAt(at);
+    if (char === '/' && source[at + 1] === '/') {
+      const end = source.indexOf('\n', at);
+      at = end === -1 ? source.length : end;
+    } else if (char === '/' && source[at + 1] === '*') {
+      const end = source.indexOf('*/', at + 2);
+      at = end === -1 ? source.length : end + 2;
+    } else if (char === "'" || char === '"' || char === '`') {
+      let value = '';
+      at++;
+      while (at < source.length && source[at] !== char && (char === '`' || source[at] !== '\n')) {
+        if (source[at] === '\\') at++;
+        value += source[at] ?? '';
+        at++;
+      }
+      at++;
+      tokens.push({ kind: char === '`' ? 'template' : 'string', value });
+    } else {
+      word.lastIndex = at;
+      const match = word.exec(source);
+      if (match) {
+        tokens.push({ kind: 'code', value: match[0] });
+        at += match[0].length;
+      } else {
+        if (!/\s/.test(char)) tokens.push({ kind: 'code', value: char });
+        at++;
+      }
+    }
+  }
+  return tokens;
 }
 
 function readFirstText(projectRoot: string, names: string[]): { name: string; text: string } | null {
