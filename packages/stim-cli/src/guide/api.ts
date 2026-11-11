@@ -319,8 +319,8 @@ false, with the reason, when the module does not resolve or declares another
 integer. doctor reports the same as a plugin-ref finding, and stim settings set
 cache.provider warns on stderr and still writes the value.
 
-plugin test takes a path that starts with ./ or /, a package installed in the
-current directory, or builtin:local or builtin:agent-device, and runs the kit of
+plugin test takes a plugin directory or module path, a package installed in
+the current directory, or builtin:local or builtin:agent-device, and runs the kit of
 each transport or agent-driver kind the manifest declares. The module loads in
 a worker thread, as Stim runs it, never in the CLI process. A transport gets an
 empty env and options; expose and unexpose are not called. An agent driver gets

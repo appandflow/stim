@@ -84,7 +84,7 @@ A plugin Stim cannot load has `"accepted": false` and a `reason`.
 <StimTabs code="stim plugin test ." />
 
 Runs the contract kit of each `transport` and `agent-driver` kind the plugin
-declares. Name a path that starts with `./` or `/`, a package installed in the
+declares. Name a plugin directory or module path, a package installed in the
 current directory, or `builtin:local` or `builtin:agent-device`. The module
 loads in a worker thread, as Stim runs it, never in the CLI process.
 
