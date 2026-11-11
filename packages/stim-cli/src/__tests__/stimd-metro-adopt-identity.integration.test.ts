@@ -18,7 +18,7 @@ import {
   metroTick,
   openMetroChildren,
 } from '../stimd/metro/children.ts';
-import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { injectedDigest } from '../stimd/metro/injected.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { stopForeignSupervisors } from '../stimd/foreign-supervisors.ts';
@@ -244,40 +244,47 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
     }
   }, 15_000);
 
-  test('after an engine switch the successor does not stop a Metro it adopted as a foreign supervisor', async () => {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-adopted-foreign-')));
-    vi.stubEnv('STIM_HOME', home);
-    const root = join(home, 'project');
-    mkdirSync(root);
-    upsertProject(root, { metroPort: 8185 });
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
-    await once(child, 'spawn');
-    child.unref();
-    const pid = child.pid;
-    if (!pid) throw new Error('fixture child did not start');
-    const token = captureProcessToken(pid);
-    if (!token) {
-      child.kill('SIGKILL');
-      throw new Error('fixture child identity unavailable');
-    }
-    plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', goneClaimOwner(), {
-      details: { port: 8185, mode: 'command', digest: injectedDigest(), engineDir: 'previous-build' },
-      child: { record: { pid, processToken: token } },
-    });
-    writeWorkspaceState(root, {
-      supervisor: { pid, processToken: token, engineDir: 'previous-build', port: 8185, mode: 'command' },
-    });
-    openMetroChildren();
-    try {
-      adoptMetroChildren(() => {});
-      expect(await stopForeignSupervisors('next-build', Date.now() + 60 * 60_000)).toBe(0);
-      await new Promise((done) => setTimeout(done, 300));
-      expect(inspectProcessIdentity({ pid, processToken: token })).toBe('same');
-      await closeMetroChildren();
-    } finally {
-      await stopFixture(pid, token);
-      vi.unstubAllEnvs();
-      rmSync(home, { recursive: true, force: true });
-    }
-  }, 15_000);
+  test.each([
+    ['it adopted', goneClaimOwner],
+    ['its predecessor still holds', liveClaimOwner],
+  ])(
+    'after an engine switch the successor does not stop a Metro %s as a foreign supervisor',
+    async (_, owner) => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-adopted-foreign-')));
+      vi.stubEnv('STIM_HOME', home);
+      const root = join(home, 'project');
+      mkdirSync(root);
+      upsertProject(root, { metroPort: 8185 });
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+      await once(child, 'spawn');
+      child.unref();
+      const pid = child.pid;
+      if (!pid) throw new Error('fixture child did not start');
+      const token = captureProcessToken(pid);
+      if (!token) {
+        child.kill('SIGKILL');
+        throw new Error('fixture child identity unavailable');
+      }
+      plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', owner(), {
+        details: { port: 8185, mode: 'command', digest: injectedDigest(), engineDir: 'previous-build' },
+        child: { record: { pid, processToken: token } },
+      });
+      writeWorkspaceState(root, {
+        supervisor: { pid, processToken: token, engineDir: 'previous-build', port: 8185, mode: 'command' },
+      });
+      openMetroChildren();
+      try {
+        adoptMetroChildren(() => {});
+        expect(await stopForeignSupervisors('next-build', Date.now() + 60 * 60_000)).toBe(0);
+        await new Promise((done) => setTimeout(done, 300));
+        expect(inspectProcessIdentity({ pid, processToken: token })).toBe('same');
+        await closeMetroChildren();
+      } finally {
+        await stopFixture(pid, token);
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
