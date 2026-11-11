@@ -15,6 +15,13 @@ import startCommand from '../commands/start.ts';
 import statusOp from '../commands/status.ts';
 import stopOp from '../commands/stop.ts';
 import worktreeOp from '../commands/worktree.ts';
+import iosCommand from '../commands/ios.ts';
+import androidCommand from '../commands/android.ts';
+import reloadCommand from '../commands/reload.ts';
+import reviveCommand from '../commands/revive.ts';
+import webCommand from '../commands/web.ts';
+import macosCommand from '../commands/macos.ts';
+import agentDeviceCommand from '../commands/agent-device.ts';
 
 const OPS = [
   statusOp,
@@ -31,6 +38,12 @@ const OPS = [
   startCommand,
   stopOp,
   worktreeOp,
+  iosCommand,
+  androidCommand,
+  reloadCommand,
+  reviveCommand,
+  webCommand,
+  macosCommand,
 ];
 
 interface Outcome {
@@ -292,9 +305,153 @@ test.each(
     ['worktree', 'remove', 'a', 'b'],
     ['worktree', 'help', 'remove'],
     ['worktree', 'bogus'],
+    ['ios'],
+    ['ios', '--remote', 'mini'],
+    ['ios', '--slot', 'tablet', '--remote', 'mini'],
+    ['ios', '--remote-build', 'mini', '--no-build-cache', '--json'],
+    [
+      'ios',
+      '--eas-profile',
+      'dev',
+      '--slot',
+      'phone',
+      '--remote-build',
+      'auto',
+      '--json',
+      '--plan',
+      '--scheme',
+      'App',
+      '--no-metro-check',
+      '--no-build-cache',
+      '--configuration',
+      'Release',
+      '--device-type',
+      'iPad Pro 13-inch (M5)',
+      '--runtime',
+      '26.0',
+      '--install-runtime',
+      '--simulator-app',
+      'none',
+      '--device',
+      'UDID',
+      '--remote',
+      '  mini  ',
+      '--wait',
+      '30',
+    ],
+    ['ios', '--device'],
+    ['ios', '--device', '--json'],
+    ['ios', '--device', '-5'],
+    ['ios', '--device=', '--plan'],
+    ['ios', '--device', 'UDID', 'extra'],
+    ['ios', '--no-wait'],
+    ['ios', '--wait', '0'],
+    ['ios', '--wait'],
+    ['ios', '--wait', '5', '--no-wait'],
+    ['ios', '--no-wait', '--wait', '5'],
+    ['ios', '--no-wait=1'],
+    ['ios', '--metro-check'],
+    ['ios', '--slot', 'bad/slot'],
+    ['ios', '--slot', 'web'],
+    ['ios', '--remote', 'bad name'],
+    ['ios', '--remote'],
+    ['ios', '--remote-build', ''],
+    ['ios', '--remote-build', 'bad name!'],
+    ['ios', 'extra'],
+    ['ios', '--bogus', '--slot', 'phone'],
+    ['ios', '--jsn'],
+    ['ios', '-V'],
+    ['ios', '--', '--json'],
+    ['android'],
+    ['android', '--slot', 'tablet', '--remote', 'mini'],
+    ['android', '--remote-build', 'mini', '--no-build-cache', '--json'],
+    [
+      'android',
+      '--eas-profile',
+      'dev',
+      '--variant',
+      'productionDebug',
+      '--system-image',
+      'system-images;android-36;google_apis;arm64-v8a',
+      '--device-profile',
+      'pixel_fold',
+      '--no-metro-check',
+      '--plan',
+      '--remote',
+      '  mini  ',
+      '--device',
+      '--no-wait',
+    ],
+    ['android', '--device', 'SERIAL', '--wait', '0'],
+    ['android', '--device', '--wat'],
+    ['android', '--remote', 'bad name'],
+    ['android', '--slot', 'web'],
+    ['android', '--wiat', '5'],
+    ['android', 'extra'],
+    ['reload'],
+    ['reload', 'web'],
+    ['reload', 'ios', '--json'],
+    ['reload', 'bogus'],
+    ['reload', 'a', 'b'],
+    ['reload', '--jsn'],
+    ['revive'],
+    ['revive', '--json'],
+    ['revive', 'extra'],
+    ['web'],
+    ['web', '--headed'],
+    ['web', '--headed', '--json'],
+    ['web', '--headless'],
+    ['macos'],
+    ['macos', '--remote', 'mini'],
+    ['macos', '--plan', '--json', '--remote', 'mini', '--remote-build', 'local'],
+    ['macos', '--remote-build', 'bad name!'],
+    ['macos', '--remote'],
+    ['macos', '--host', 'mini'],
+    ['macos', '--no-build-cache'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {
   const op = OPS.find((each) => each.name === name);
   if (!op) throw new Error(`no op named ${name}`);
   expect(await viaDefineOp(op, args)).toEqual(await viaCommander(op, args));
+});
+
+test.each([
+  [[]],
+  [['--help']],
+  [['-h']],
+  [['--version']],
+  [['-V']],
+  [['help', 'snapshot']],
+  [['--json', 'snapshot', '--slot', 'phone']],
+  [['snapshot', '--platform', 'ios', '--', '--json']],
+  [['--', '--json']],
+  [['agent-device', 'x']],
+])('agent-device %j reaches agent-device unchanged', async (args) => {
+  let passed: unknown;
+  const { out, err } = capture();
+  try {
+    const code = await runCli({ ...agentDeviceCommand, run: ({ args: given }) => void (passed = given) }, args, {
+      version: '9.9.9',
+    });
+    expect(code).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(passed).toEqual(args);
+  expect([out.join(''), err.join('')]).toEqual(['', '']);
+});
+
+test('help agent-device prints its usage instead of running it', async () => {
+  let ran = false;
+  const { out } = capture();
+  try {
+    await runCli({ ...agentDeviceCommand, run: () => void (ran = true) }, ['--help', 'snapshot'], {
+      version: '9.9.9',
+      help: true,
+    });
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(ran).toBe(false);
+  expect(out.join('')).toMatch(/^Usage: stim agent-device \[args\.\.\.\]\n/);
 });

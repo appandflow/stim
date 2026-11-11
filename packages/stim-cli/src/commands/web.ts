@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import type { WebBrowserState } from '@stim-cli/core/state';
 import type { StimContext } from '@stim-cli/core';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
@@ -92,15 +92,22 @@ export async function runWeb({
   };
 }
 
-export default function webCommand(program: Command): void {
-  program
-    .command('web')
-    .description(
+function webOp(): Op {
+  return defineOp({
+    name: 'web',
+    description:
       "Open this workspace's page in a Stim-owned headless Chrome and capture its console, errors and failed requests in stim logs",
-    )
-    .option('--headed', 'Show the Chrome window instead of running headless')
-    .option('--json', 'Print the result as one JSON object; progress goes to stderr')
-    .action(async (opts: { headed?: boolean; json?: boolean }) => {
+    options: {
+      headed: {
+        flags: '--headed',
+        description: 'Show the Chrome window instead of running headless',
+      },
+      json: {
+        flags: '--json',
+        description: 'Print the result as one JSON object; progress goes to stderr',
+      },
+    },
+    run: async ({ options: opts }) => {
       const json = Boolean(opts.json);
       const root = findCommandWorkspace(process.cwd());
       if (!root) {
@@ -133,5 +140,10 @@ export default function webCommand(program: Command): void {
           : `${facts.url} ${launched}, and the owned Chrome is no longer running. Run stim logs --errors, then stim web again.`,
       );
       if (links) console.error(chalk.dim(workspaceLinkLine(links)));
-    });
+    },
+  });
 }
+
+const web: Op = webOp();
+
+export default web;

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import type { StimContext } from '@stim-cli/core';
 import { hostedNativeRecords, readIdleStop, type PlatformRecords, type WorkspaceState } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
@@ -522,14 +522,18 @@ export function reviveDeps(context: StimContext): ReviveDeps {
   };
 }
 
-export function registerRevive(program: Command, overrides: Partial<ReviveDeps> = {}): void {
-  program
-    .command('revive')
-    .description(
+export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
+  return defineOp({
+    name: 'revive',
+    description:
       'Resume this workspace after an idle stop: restart its Metro, boot the owned simulator or emulator the app last ran on, and relaunch that app from cold. Never builds, and never starts or boots what the workspace did not have.',
-    )
-    .option('--json', 'Emit the revived facts as one JSON line; every other line goes to stderr')
-    .action(async (opts: { json?: boolean }) => {
+    options: {
+      json: {
+        flags: '--json',
+        description: 'Emit the revived facts as one JSON line; every other line goes to stderr',
+      },
+    },
+    run: async ({ options: opts }) => {
       const json = Boolean(opts.json);
       const root = await (overrides.findWorkspace ?? findWorkspace)(process.cwd());
       if (!root) {
@@ -555,9 +559,10 @@ export function registerRevive(program: Command, overrides: Partial<ReviveDeps> 
       for (const line of reviveLines(result.facts, Date.now())) console.error(line);
       if (json) console.log(JSON.stringify(result.facts));
       if (interrupted !== null) process.exitCode = interrupted;
-    });
+    },
+  });
 }
 
-export default function reviveCommand(program: Command): void {
-  registerRevive(program);
-}
+const revive: Op = reviveOp();
+
+export default revive;

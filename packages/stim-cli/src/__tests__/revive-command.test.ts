@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import type { WorkspaceState } from '@stim-cli/core/state';
 import { resolveBuild } from '../cache/build-cache.ts';
-import { registerRevive, reviveLines, runRevive, type ReviveDeps } from '../commands/revive.ts';
+import { reviveOp, reviveLines, runRevive, type ReviveDeps } from '../commands/revive.ts';
 import type { WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 
@@ -417,10 +417,8 @@ describe('the command output', () => {
   });
 
   async function revive(args: string[], overrides: Partial<ReviveDeps>) {
-    const program = new Command().exitOverride();
     const { deps } = harness({ findWorkspace: async () => join(home, 'app'), ...overrides });
-    registerRevive(program, deps);
-    await program.parseAsync(['node', 'stim', 'revive', ...args]);
+    await runCli(reviveOp(deps), args, { version: '0.0.0' });
   }
 
   test.each<[string, Partial<ReviveDeps>, number | undefined]>([

@@ -40,11 +40,13 @@ type OptionValues<O extends Record<string, OpOption>> = {
 };
 
 type ArgValue<S extends string> = S extends `<${string}>` ? string : string | undefined;
-type ArgValues<S extends string> = S extends `${infer Head} ${infer Tail}`
-  ? [ArgValue<Head>, ...ArgValues<Tail>]
-  : S extends ''
-    ? []
-    : [ArgValue<S>];
+type ArgValues<S extends string> = S extends `[${string}...]`
+  ? string[]
+  : S extends `${infer Head} ${infer Tail}`
+    ? [ArgValue<Head>, ...ArgValues<Tail>]
+    : S extends ''
+      ? []
+      : [ArgValue<S>];
 
 export interface OpInput<Options, Args> {
   readonly args: Args;
@@ -101,6 +103,8 @@ export interface CliContext {
   readonly version: string;
   /** Runs after the command line parsed and before the op runs, with the command path. */
   readonly before?: (path: string[]) => unknown;
+  /** `stim help <op>`: a passThrough op prints its help instead of running. */
+  readonly help?: boolean;
 }
 
 const HELP = { flags: '-h, --help', description: 'display help for command' };
@@ -344,7 +348,7 @@ function boxWrap(text: string, width: number): string {
 function helpText(path: Op[], op: Op, width: number): string {
   const items = (heading: string, rows: [string, string][]): string[] =>
     rows.length ? [heading, ...rows.map(([term, description]) => item(term, description)), ''] : [];
-  const options: [string, string][] = [...Object.values(op.options), HELP].map((each) => [
+  const options: [string, string][] = (op.passThrough ? [] : [...Object.values(op.options), HELP]).map((each) => [
     each.flags,
     each.description,
   ]);
@@ -370,7 +374,11 @@ function helpText(path: Op[], op: Op, width: number): string {
         : boxWrap(description, remaining).replace(/\n/g, `\n${' '.repeat(pad + 2)}`);
     return `  ${term.padEnd(pad)}  ${text.replace(/\n/g, '\n  ')}`;
   };
-  const usage = ['[options]', ...(op.commands.length ? ['[command]'] : []), ...(op.arguments ? [op.arguments] : [])];
+  const usage = [
+    ...(op.passThrough ? [] : ['[options]']),
+    ...(op.commands.length ? ['[command]'] : []),
+    ...(op.arguments ? [op.arguments] : []),
+  ];
   return [
     `Usage: ${['stim', ...path.map((each) => each.name), ...usage].join(' ')}`,
     '',
@@ -412,6 +420,7 @@ function checkArity(op: Op, operands: string[]): void {
  */
 export async function runCli(op: Op, args: string[], context: CliContext): Promise<number> {
   if (op.passThrough) {
+    if (context.help) return showHelp([op], op, false);
     await context.before?.([op.name]);
     await op.run?.({ args, options: {}, parent: {}, version: context.version });
     return 0;
