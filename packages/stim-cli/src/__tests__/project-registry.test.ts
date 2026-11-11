@@ -100,7 +100,12 @@ test('an Exact app selects the exact integration for iOS and has no dev server, 
   write(join(exact, 'exact.mjs'));
   const ios = projectRegistry.selectIos(exact);
   expect('id' in ios ? ios.id : ios.problem.message).toBe('exact');
-  expect(projectRegistry.projectProblem(exact, 'android')?.kind).toBe('not-an-app');
+  for (const operation of ['android', 'dev-server'] as const) {
+    const problem = projectRegistry.projectProblem(exact, operation);
+    expect(problem?.kind).toBe('not-an-app');
+    expect(problem?.message).toMatch(/is an Exact app/);
+    expect(problem?.remedy).toMatch(/stim ios/);
+  }
 
   const expo = join(dir, 'expo');
   write(join(expo, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));

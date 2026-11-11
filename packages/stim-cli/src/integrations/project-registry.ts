@@ -90,7 +90,7 @@ function operationSelection(
     };
   if (providers.length === 1) return { match: providers[0]!.match };
   return {
-    problem: results[0]?.problem ?? {
+    problem: (results.find(({ match }) => match.application) ?? results[0])?.problem ?? {
       kind: 'not-an-app',
       message: `No project integration supports ${operation} at ${root}.`,
       remedy: 'Run this from the directory of a supported app.',
