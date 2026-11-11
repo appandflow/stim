@@ -1,5 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  Agent,
+  request as httpRequest,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import {
   AGENT_ROUTE_PREFIX,
   agentRoute,
@@ -50,10 +56,31 @@ export interface HostedAgentHostOptions {
   maxRestarts?: number;
 }
 
-const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'host']);
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'host', 'te', 'trailer']);
 
-function endToEnd(headers: IncomingHttpHeaders): IncomingHttpHeaders {
-  return Object.fromEntries(Object.entries(headers).filter(([name]) => !HOP_BY_HOP.has(name)));
+/** The client's credentials stay with stim-server: the driver authenticates to its own daemon. */
+const CREDENTIALS = new Set(['authorization', 'x-agent-device-token', 'cookie']);
+
+const HOP_CONNECT_TIMEOUT_MS = 10_000;
+
+/** A recording or artifact streams for minutes; the hop ends only after this long without a byte either way. */
+const HOP_IDLE_TIMEOUT_MS = 10 * 60_000;
+
+/** Loopback connections are cheap, and a fresh one per request cannot race the listener closing an idle socket. */
+const hopAgent = new Agent({ keepAlive: false });
+
+function endToEnd(headers: IncomingHttpHeaders, strip: ReadonlySet<string> = new Set()): IncomingHttpHeaders {
+  const listed = new Set(
+    String(headers.connection ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => !HOP_BY_HOP.has(name) && !name.startsWith('proxy-') && !listed.has(name) && !strip.has(name),
+    ),
+  );
 }
 
 /** Sends an authenticated agent request to the driver's own loopback listener and streams its answer back. */
@@ -84,7 +111,9 @@ async function proxy(
       port: target.port,
       method: request.method,
       path: `${target.path}${url.slice(prefix.length)}`,
-      headers: endToEnd(request.headers),
+      headers: endToEnd(request.headers, CREDENTIALS),
+      agent: hopAgent,
+      timeout: HOP_IDLE_TIMEOUT_MS,
     },
     (answer) => {
       response.writeHead(answer.statusCode ?? 502, endToEnd(answer.headers));
@@ -95,6 +124,15 @@ async function proxy(
   upstream.once('error', () => {
     if (response.headersSent) response.destroy();
     else notRunning();
+  });
+  upstream.once('timeout', () => upstream.destroy(new Error('The agent driver stopped answering.')));
+  upstream.once('socket', (socket) => {
+    const connect = setTimeout(
+      () => upstream.destroy(new Error('The agent driver did not accept the connection.')),
+      HOP_CONNECT_TIMEOUT_MS,
+    );
+    socket.once('connect', () => clearTimeout(connect));
+    socket.once('close', () => clearTimeout(connect));
   });
   response.once('close', () => {
     if (!response.writableFinished) upstream.destroy();

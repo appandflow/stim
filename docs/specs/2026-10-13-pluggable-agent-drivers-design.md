@@ -37,33 +37,40 @@ workspace's own `AGENT_DEVICE_STATE_DIR` rather than a hosted driver.
 
 ## Contract
 
-A driver package exports `apiVersion: 1`, `id`, and
-`createAgentDriver({ env, stateDir, claimRoot, device })`, which returns the
-`HostedAgentDriver` that `HostedAgentHost` already reference-counts: `start`,
-`stop`, `issue`, `revoke`, `forward` and `onExit`, named `id`. The host keeps
+A driver package declares `"stimPlugin": { "kinds": { "agent-driver": 1 } }`
+and exports `id` and `createAgentDriver({ env, stateDir, claimRoot, device })`,
+which returns the `HostedAgentDriver` that `HostedAgentHost` already
+reference-counts: `start`, `stop`, `issue`, `revoke`, `target` and `onExit`,
+named `id`. Every argument and result is structured-clone-safe data. `target`
+names the driver's own loopback listener, to which stim-server proxies each
+authenticated request; `onExit` returns a function that stops the listener. The host keeps
 every policy decision: which client and session may use a grant, the tailnet
 node pin, restarts and teardown order. The driver confines each forwarded
 request to the one app or device it issued the grant for.
 
 Two capabilities are optional:
 
-- `client`, run by the CLI on the Mac that placed the app. It names the file it
-  writes beside the placement and turns a grant into that file's contents,
+- `client`, run by the CLI on the Mac that placed the app. It turns a grant
+  into the contents of the file Stim writes beside the placement as
+  `<id>-remote.json`,
   written with mode 0600, and a command that names the file. The command never
   carries the token. agent-device's client writes the same
   `agent-device-remote.json` as before.
-- `actions`, which reads the driver's recorded agent actions from a workspace or
-  archive directory. agent-device's reader reads `agent-device/sessions` as
-  stim-server's archived timeline did, so existing archives read the same.
+- `recover`, which stops what a driver run left behind for a stim-server
+  process that is gone.
+
+Stim reads a driver's recorded agent actions from `<id>/sessions` in a
+workspace or archive directory itself, so existing archives read the same.
 
 `loadAgentDriverModule` and `loadAgentDriver` import a module under a
 10-second deadline and resolve to `{ unavailable: reason }` for a failed or
-slow import, another `apiVersion` or `id`, a throwing factory, or a driver
-under another name. `runAgentDriverContract` loads a module the same way and
-checks the host-independent behavior every driver needs: idempotent `stop` and
-`revoke`, a refused `issue` before `start`, an error status from `forward`
-without a grant, `AgentDriverUnavailable` from `start` when the tool is
-missing, and a client file that keeps the token out of the command.
+slow import, another kind integer or `id`, a throwing factory, or a driver
+under another name. `runAgentDriverContract` loads a module in a worker thread
+and checks the host-independent behavior every driver needs: idempotent `stop`
+and `revoke`, a refused `issue` before `start`, no `target` without a grant, an
+`onExit` that stops, an error with code `agent-driver-unavailable` from `start`
+when the tool is missing, and a client file that keeps the token out of the
+command.
 
 The grant and lease types stay in `@stim-cli/core/state`, which owns the wire
 payloads and their parsers; the contract package imports them as types only.

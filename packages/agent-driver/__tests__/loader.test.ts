@@ -45,7 +45,7 @@ test('a module that is not a version 1 driver with the expected id is unavailabl
   expect(await unavailable(() => Promise.resolve(fake({ createAgentDriver: undefined })))).toBe(
     'the module does not export createAgentDriver()',
   );
-  expect(await unavailable(() => Promise.resolve(fake({ client: { configFile: 'fake-remote.json' } })))).toBe(
+  expect(await unavailable(() => Promise.resolve(fake({ client: {} })))).toBe(
     'the client capability must implement access()',
   );
   const blocked = unavailable(() => new Promise(() => undefined));

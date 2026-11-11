@@ -569,7 +569,7 @@ test.each(['absent', 'replaced'])(
       date.mockRestore();
       expect(answer.status).toBe(503);
       expect(answer.text).toContain('hosted emulator');
-      expect(fixture.calls.filter((call) => call.path !== '/health')).toEqual([]);
+      for (const call of fixture.calls) expect(call.path).toBe('/health');
       await vi.waitFor(() => expect(agents.access(SESSION)?.notice).toContain('identity could not be verified'));
       await vi.waitFor(() => expect(readClaimSet(join(home, 'claims')).live).toEqual([]));
       expect(agents.access(SESSION)?.grant).toEqual({ driver: 'none' });

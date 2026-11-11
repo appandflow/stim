@@ -38,13 +38,13 @@ function errorCode(error: unknown): { code: string } | Record<string, never> {
   return typeof code === 'string' ? { code } : {};
 }
 
-/** The object that owns `path`, such as `client` for `client.access`, and the value at it. */
+/** The object that owns `path`, such as `client` for `client.access`, and the value at it, by own properties only. */
 function lookup(root: Record<string, unknown>, path: string): { owner: unknown; value: unknown } {
   let owner: unknown = root;
   let value: unknown = root;
   for (const key of path.split('.')) {
     owner = value;
-    value = isRecord(owner) ? owner[key] : undefined;
+    value = isRecord(owner) && Object.hasOwn(owner, key) ? owner[key] : undefined;
   }
   return { owner, value };
 }
@@ -106,10 +106,12 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
         stops.delete(request.target);
         return post({ type: 'result', seq, value: null });
       }
-      const { owner, value: member } =
-        request.type === 'call' && request.module
-          ? lookup(module, request.member)
-          : { owner: instance, value: instance[request.member] };
+      const onModule = request.type === 'call' && request.module === true;
+      if (onModule && !moduleCapabilities.includes(request.member))
+        throw new Error(`${request.member} is not a module capability of this kind`);
+      const { owner, value: member } = onModule
+        ? lookup(module, request.member)
+        : { owner: instance, value: instance[request.member] };
       if (typeof member !== 'function') throw new Error(`the plugin has no ${request.member}()`);
       if (request.type === 'subscribe') {
         const stop: unknown = member.call(instance, (value: unknown) => {

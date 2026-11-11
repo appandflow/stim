@@ -179,7 +179,7 @@ export async function runAgentDriverContract(
       factory: 'createAgentDriver',
       input: options.unavailableInput,
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
-      moduleCapabilities: ['client.access', 'recover'],
+      moduleCapabilities: ['client.access'],
       idMember: 'name',
     });
   } catch (error) {
