@@ -497,8 +497,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         off for the workspace. Machine or project layers.
                         See \`guide lifecycle budget\`.
   idle.dormantDays      days without activity before a workspace goes
-                        dormant: its owned devices are deleted and its logs
-                        archived (default 3; fractions allowed; 0 never).
+                        dormant and is reduced to its minimal size: its
+                        regenerable build outputs and owned devices are
+                        deleted (the parked pool stays), its logs archived,
+                        and for a linked worktree its node_modules and
+                        ios/Pods deleted for the next Stim command to restore
+                        (default 1; fractions allowed; 0 never). Every level
+                        of \`stim gc\` and the stim-daemon apply it.
                         Machine layer. See \`guide lifecycle budget\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
@@ -865,7 +870,7 @@ THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
 reason: the disk they sit on is the whole machine's. A parked simulator keeps
-its apps and data, so it can hold gigabytes until \`stim gc\` at high or critical deletes it.
+its apps and data, so it can hold gigabytes until \`stim gc\` at high (oldest first, until the level clears) or critical (all) deletes it.
 
   {
     "pool": { "iosParkedMax": 3 }

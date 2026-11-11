@@ -165,9 +165,9 @@ actions use typed local-server operations for the selected workspace. The comman
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
-- Pressure ladder: the storage preview lists what `stim gc --delete` runs of
-  the stim-daemon's pressure ladder at high, with sizes, and marks unrecognized
-  `stim-*` devices as kept, because `stim gc --delete` never touches them.
+- Pressure ladder: the storage preview lists what `stim gc` runs of
+  the stim-daemon's pressure ladder at the measured level, with sizes, and marks unrecognized
+  `stim-*` devices as kept, because `stim gc` never touches them.
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
@@ -374,9 +374,9 @@ requests that require a workspace instead of an archive; other refusals show the
 message. Connect through **Settings > Connections** to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
-`stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
+stim-server's `desktop.gc.item.subscribe` (the item `{ kind: "archive", id, part }` with part `logs`, `recordings` or `agentActions`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
 The header menu's **Delete Archive** names the archive in a confirmation and permanently removes its
-logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
+logs, recordings, agent actions and record through the same item method (`{ kind: "archive", id }`). The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
 archives are never selected as safe space to free. The Build card falls back to the archive's
@@ -635,7 +635,7 @@ Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet
 confirms it in one line and stays open until closed. A failure shows the CLI's
-message and remedy. Cleanups run `stim gc --delete --json`, and the sheet summarizes the payload's `results`: what was freed and
+message and remedy. Cleanups run `stim gc --json` through stim-server's `desktop.gc.subscribe` (with `dryRun` and `pressure`), and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
 stays open until closed. **Command Output** is collapsed by default and contains
 the command and raw output, both while running and after completion. Launch
@@ -646,7 +646,7 @@ while commands run and a red dot when a finished one failed and was not
 opened. Its popover lists the running commands and the last 20 finished ones of
 the session, and each row reopens its sheet.
 The Machine page,
-the toolbar and the disk pressure check share one `stim gc --json` report. It is marked
+the toolbar and the disk pressure check share one `stim gc --dry-run --json` report. It is marked
 stale when an action that can change it finishes (a cleanup, a run, start or
 stop, a worktree, port, device lease or setting change), and runs again 2
 seconds after the last such action unless a run started since. A reload or a
@@ -717,8 +717,8 @@ AVD name or console port). Memory is the sum of resident sizes, so memory
 shared between processes counts more than once. The toolbar shows free space,
 without purgeable space and with the same figure as Machine, on the fullest
 volume holding the repositories, `$STIM_HOME`, and CoreSimulator, and
-what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
-version with `gc --json`.
+what `stim gc` would reclaim; the reclaimable figure needs a Stim
+version with `gc --dry-run --json`.
 
 ## Machines
 
@@ -760,7 +760,7 @@ usage is unavailable instead of listing nothing.
 
 Under **Storage**, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime
-and cache sizes come from `stim gc --json`, and the app sizes only folders
+and cache sizes come from `stim gc --dry-run --json`, and the app sizes only folders
 outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
 that takes more than three minutes reads **Unknown**. Sizes are kept for 15
 minutes, and **Refresh** measures again. Every size cell shows a size, **None**
@@ -785,7 +785,7 @@ remembers each section's choices in its own preferences.
   `node_modules`, other simulators and AVDs, runtimes and system images, and
   other tools. A category that is not fully measured shows its total as a lower
   bound (≥).
-- **Safe to free now**: one list, largest first, built from `stim gc --json`:
+- **Safe to free now**: one list, largest first, built from `stim gc --dry-run --json`:
   parked, orphaned and stale owned devices, orphaned workspace directories,
   records of deleted folders, logs over the cap, build outputs of idle
   workspaces, merged worktrees (sized by their `node_modules`, since their build
@@ -793,14 +793,16 @@ remembers each section's choices in its own preferences.
   that a refreshed report no longer lists is never acted on. Each row carries a
   checkbox and the command that frees it. The section header counts the checked rows;
   changing a selection runs nothing. Rows marked **stim gc** are one unit,
-  `stim gc --delete`, which also removes merged worktrees and clears idle build
+  `stim gc`, which also removes merged worktrees and clears idle build
   outputs; while it is checked, those rows are checked and locked. With it
   unchecked, a worktree row runs `stim worktree remove <path>` in its
-  repository and a build-outputs row runs `stim gc --delete --cache
-workspaces`. A cache row runs `stim gc --delete --cache <name or directory>`
-  and starts unchecked. **Free** previews a selection that is one gc run (`stim
-gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
-  runs the same scope with `--delete`. A mixed selection names its checked items and
+  repository and a build-outputs row deletes the outputs of idle workspaces
+  through `desktop.gc.item.subscribe` (`{ kind: "workspace-outputs" }`). A cache
+  row deletes that one cache through the same method (`{ kind: "cache", dir }`)
+  and starts unchecked; the CLI has no command that picks one item. **Free**
+  previews a selection that is one gc run (`stim gc --dry-run --json`) in the
+  activity sheet, whose **Delete** runs `stim gc --json` through
+  `desktop.gc.subscribe`. A mixed selection names its checked items and
   consequences before command details in a confirmation, then runs the commands in order. When no items are
   selected, **Free space** is muted and a **Select items to free space** hint
   appears above the checklist. Running activities show progress in the current
@@ -809,7 +811,7 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   not set up (**Not warmed**), grouped by repository and ranked by total. A
   repository with several worktrees expands into them. Each worktree shows its
   `node_modules`, owned devices (from the inventory), and
-  build outputs and logs (from `stim gc --json`). For a linked worktree,
+  build outputs and logs (from `stim gc --dry-run --json`). For a linked worktree,
   `node_modules` is the private size `stim status` reports, what removing it
   frees, and the part that copy-on-write clones or hard links share with other
   folders follows it in parentheses, not counted. A primary checkout shows all of
@@ -818,11 +820,11 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   Without a private size (an older Stim, or a folder
   status has not measured) it is sized with `du`, which counts clones in full;
   its tooltip says so. A trash icon marks build
-  outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
-  reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
+  outputs `stim gc` clears; a lock marks ones it keeps, with the
+  reason. Scissors mark logs `stim gc` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
-  main** from `stim gc --json`, **PR #n open** from the pull request
-  state in `stim gc --json`, which Stim reads through its shared pull request
+  main** from `stim gc --dry-run --json`, **PR #n open** from the pull request
+  state in `stim gc --dry-run --json`, which Stim reads through its shared pull request
   cache, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
@@ -831,7 +833,7 @@ remove` in it, with what that frees: its `node_modules`, build outputs and
   counted. In a narrow window the category
   columns fold into one line under the name.
 - **Simulators and Emulators**: every simulator and AVD from the `inventory`
-  of `stim gc --json`, largest first, with its model, runtime or system image,
+  of `stim gc --dry-run --json`, largest first, with its model, runtime or system image,
   last use and owner: **Stim · <workspace>** (with a named slot),
   **Stim · parked**, **Stim · no workspace**, **Another Stim home** for a
   `stim-*` device this home did not create, or **Yours**. Simulator sizes come
@@ -843,7 +845,9 @@ remove` in it, with what that frees: its `node_modules`, build outputs and
   reports, and Android system images sized with `du` of the SDK's
   `system-images`, each with the number of devices that use it. Unused ones
   come first and are marked. **Copy** copies the `xcrun simctl runtime delete`
-  or `sdkmanager --uninstall` command the CLI reports; Stim never runs it.
+  or `sdkmanager --uninstall` command the CLI reports. `stim gc` itself runs the
+  runtime command for a runtime no simulator uses, at every level; Stim never
+  runs the `sdkmanager` command.
 - **Other tools**: Xcode DerivedData, Gradle caches and `~/Library/Caches`,
   measured with `du` for information, with **Reveal**. A Stim cache inside one
   of them is subtracted and counted under Stim instead.
@@ -860,7 +864,9 @@ default), on every Mac, whether this app runs or not: `stim start`, `ios`,
 in the Stim home. A workspace with no activity for `idle.minutes` goes idle: its
 dev server stops, its owned simulators and emulators shut down and its
 regenerable build outputs are deleted, which `stim revive` brings back. After
-`idle.dormantDays` its owned devices are deleted. Once a day it clears the
+`idle.dormantDays` (1 day) it is reduced to its minimal size: its owned devices and build
+outputs are deleted and, in a linked worktree, its `node_modules` and `ios/Pods`, which the
+next Stim command in it restores with `stim worktree warm`. Once a day it clears the
 build outputs and cache entries unused for `maintenance.olderThanDays` and
 deletes devices parked that long, and it removes the worktrees of merged or
 closed pull requests. Under disk or memory pressure it runs its pressure ladder
@@ -886,10 +892,10 @@ what each cleanup removed.
 
 The Machine page shows the daemon's level and its last three actions. While the
 level is high or critical it shows the reasons, the sidebar marks Machine, and
-**Free Disk Space** runs `stim gc --delete`, which runs the pressure ladder to
-its end at high. When the level is critical, or high while no daemon acts on it
+**Free Disk Space** runs `stim gc`, which runs the pressure ladder to
+its end at the measured level. When the level is critical, or high while no daemon acts on it
 (`daemon.mode` is not `on`, or none runs), the app posts one notification per
-episode with **Do it**. **Do it** in a notification runs `stim gc --delete` only
+episode with **Do it**. **Do it** in a notification runs `stim gc` only
 while the level is still raised, and otherwise opens Machine; the app removes
 its delivered pressure notification once the level is back to normal. The
 pressure notification is on by default and needs the bundled app.

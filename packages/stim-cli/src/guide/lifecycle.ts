@@ -1641,8 +1641,9 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     pool: 2 parked iOS simulators (max 3)
 
-  \`stim gc --dry-run\` reports the pool, and \`stim gc\` at high or critical
-  empties every entry it can re-verify:
+  \`stim gc --dry-run\` reports the pool, and \`stim gc\` at high deletes the
+  oldest entries it can re-verify until the level clears, and at critical
+  all of them:
 
     Parked simulators (2, 4.1G):
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago com.example.app 2.3G
@@ -1668,8 +1669,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   \`pool.androidParkedMax\` (default 3) or STIM_POOL_ANDROID_PARKED_MAX.
   A redirected STIM_HOME disables parking unless that environment override
   is set. Zero disables parking and adoption. \`stop\` keeps the assignment;
-  \`worktree remove\` parks eligible AVDs, and \`gc\` at high or critical
-  empties the pool.
+  \`worktree remove\` parks eligible AVDs, and \`gc\` deletes parked ones at
+  high (until the level clears) or critical (all).
 
   Adoption matches the system image, data partition size, and the creation
   settings from android.avdConfig / android.avdConfigFile. The AVD keeps its
@@ -2524,9 +2525,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cache trimmed to the entries a workspace, parked device or build still
        uses, and the fingerprint memo emptied
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
-       for every idle one
-    5. at critical only: node_modules and Pods of idle linked worktrees,
-       recorded so the next start, ios or android runs \`stim worktree warm\`.
+       for workspaces idle 2 minutes (the same reduction a day of idleness
+       causes, DORMANT STAGE below)
+    5. node_modules and Pods of idle linked worktrees, now at high (idle 10
+       minutes) and at critical (idle 2 minutes), only those \`stim worktree
+       warm\` can restore, recorded so the next start, ios or android runs it.
        Each one holding 256 MB or more of its own (private) bytes goes, most
        first; a copy-on-write clone holding less frees almost nothing and is
        kept, logged as kept. A tree whose private size is unknown (off APFS,
@@ -2536,9 +2539,27 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
        1 GiB under memory pressure), unpinned Gradle versions unmodified for
-       maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
-       24 hours, and the worktree trash; automatic maintenance's daily sweep
-       runs this rung at normal
+       maintenance.gradleVersionIdleDays (at critical every unpinned one), Stim
+       TMPDIR leftovers unmodified for 24 hours, and the worktree trash;
+       automatic maintenance's daily sweep runs this rung at normal
+    7. worktrees: at high clean finished linked worktrees without the
+       gc.worktreeGraceMinutes wait; at critical also clean pushed worktrees no
+       Stim command used for 7 days
+    8. critical only: every device recording not being written, and archived
+       logs, recordings and agent actions
+    9. last, at critical, and at high only while free disk stays under
+       disk.minFreeGb after the rungs above: caches Stim does not own, each
+       through the tool's own command and only when that tool is installed and
+       no process of that tool runs, each listed with its size before and
+       after: \`npm cache clean --force\`, \`yarn cache clean\`, \`pnpm store
+       prune\`, \`pod cache clean --all\`, and Gradle's version-independent
+       caches (caches/modules-2, caches/transforms-N and caches/build-cache-N
+       under GRADLE_USER_HOME, which Stim removes itself because Gradle has no
+       command, only while no Gradle or Kotlin daemon process runs; rung 6
+       stops the idle daemons first). Android NDKs, Android system images no
+       AVD uses and ~/.cache/exact are only reported, with the command that
+       removes them, and never deleted. The daemon runs this rung at critical
+       like \`stim gc --pressure critical\`
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of
@@ -2551,7 +2572,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   action it would take and acts on nothing; daemon.mode off runs no rung.
   \`stim gc --dry-run\` shows what a run would do now, with
   sizes; \`stim gc\` runs the ladder at the measured level,
-  \`stim gc --pressure high\` to its end at high whatever the level,
+  \`stim gc --pressure high\` at high whatever the level,
   and \`stim gc --pressure critical\` at critical (\`guide cleanup\`).
 
   7. refuse: \`start\`, \`ios\` and \`android\` refuse with STIM_LOW_DISK only
@@ -2565,16 +2586,26 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      whose workspace has no running dev server (IDLE SHUTDOWN below).
 
   DORMANT STAGE: a workspace with nothing running and no activity for
-  idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
-  simulators and emulators are deleted through centralized teardown (the
-  parked pool is untouched) and its logs are archived when archive.enabled is
-  on. The bytes it reports as freed are the data directories of the devices it
+  idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
+  reduced to its minimal size, at every level, by \`stim gc\` and by the
+  stim-daemon: its regenerable build outputs are deleted (WORKSPACE BUILD
+  OUTPUTS in \`guide cleanup disk\`), its owned simulators and emulators are
+  deleted through centralized teardown (the parked pool is untouched), its
+  logs are archived when archive.enabled is on, and, for a linked worktree,
+  its node_modules and ios/Pods are deleted and recorded, so the next Stim
+  command in it restores them with \`stim worktree warm\`, or, when warm
+  cannot restore the same versions (its lockfile differs from the source
+  checkout's, or the source checkout's dependencies were not installed from
+  its own lockfile), refuses with STIM_DEPS_FAILED and asks for an install.
+  The source checkout's node_modules is never deleted. The bytes it reports
+  as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
-  named in the action's detail and left out of the total. node_modules and
-  Pods that hold 256 MB or more of their own (private) bytes in a linked
-  worktree are deleted, recorded for \`stim worktree warm\`,
-  and logged as dormant_dependencies; copy-on-write clones under that, and
-  trees whose private size is unknown, stay. \`stim status\` shows a dormant
+  named in the action's detail and left out of the total. A tree under 256 MB
+  of its own (private) bytes, a copy-on-write clone, and trees whose private
+  size is unknown stay. The dependency step is logged as dormant_dependencies.
+  Still kept: a workspace in use, with a running dev server or build, leased,
+  locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
+  and a path that cannot be proven. \`stim status\` shows a dormant
   stage line, and --json \`dormantStage\` { at, dormantDays, deletedDevices,
   archived }, until the next Stim command in it. When it deleted a device, the next
   \`stim ios\` or \`stim android\` creates one; with none deleted, \`stim

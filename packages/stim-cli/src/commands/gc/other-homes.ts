@@ -214,8 +214,7 @@ export function otherHomeLines(homes: readonly OtherHome[] = [], now: number = D
           : 'directory missing on a volume that is not mounted; kept';
     lines.push(`  ${home.path} (${state}, last seen ${ago(home.lastSeenAt, now)})`);
     for (const device of home.devices) lines.push(...deviceLine(device, home));
-    if (home.forgettable)
-      lines.push('    nothing of it is left on this machine; --delete forgets the LIST ENTRY only.');
+    if (home.forgettable) lines.push('    nothing of it is left on this machine; stim gc forgets the LIST ENTRY only.');
     for (const command of home.teardown) lines.push(`    ${command}`);
   }
   return lines;

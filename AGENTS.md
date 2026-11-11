@@ -759,7 +759,8 @@ of deleting it, up to a per-platform configured maximum, and adopts a compatible
 parked one before creating. While the disk pressure level is high or critical it
 deletes instead of parking. Owned devices are disposable: the stim-daemon's
 dormant stage and pressure ladder, automatic maintenance and `gc`
-delete the owned devices of an idle workspace, never of one that is in use,
+delete the owned devices of an idle workspace (one with no activity for
+`idle.dormantDays`, 1 by default, at every level), never of one that is in use,
 leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
@@ -777,6 +778,14 @@ high or critical disk pressure, or automatic maintenance's age sweep after
 `maintenance.olderThanDays`; no CLI path erases one and keeps it parked. Every
 route uses centralized teardown and ownership revalidation. `gc` deletes parked
 hosted devices through their owning session home.
+Simulator runtimes are not Stim-owned. Deleting an unused one through
+`xcrun simctl runtime delete <identifier>` is the one deliberate exception: `gc`
+and automatic maintenance do it at every level, only when simctl marks the image
+deletable and no simulator on the machine, user-created ones included, uses it.
+The only installed runtime stays, and when no runtime is used the newest stays.
+An owned simulator whose runtime is gone is deleted through centralized
+teardown. Stim never deletes a user-created unavailable simulator and never runs
+`simctl delete unavailable`.
 Park keeps a simulator that is booted when it parks it booted for
 `pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
 is free, and records `bootedUntil`; adoption of it still resets and verifies as

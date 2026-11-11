@@ -379,6 +379,10 @@ Branch on the code, never on the message.`,
   message names the claim and the exact, shell-quoted removal that clears it --
   just that claim's file, not the lock directory around it; run that, then
   run the command again. Nothing was built, installed or removed.
+  An acting \`stim gc\` takes the same exclusive maintenance claim as the
+  stim-daemon's maintenance pass. While one holds it the other refuses at once
+  with this code, naming the holder (pid, start, trigger); retry after it
+  ends. \`gc --dry-run\` takes no claim.
   \`worktree warm\` reports it for the repository-wide warm claim under
   ~/.stim/warm-locks on both paths, including a \`--refresh\` that spawned its
   install and was killed before recording which process: nothing was refreshed
@@ -1534,7 +1538,7 @@ An API operation exceeded its execution budget: 90 minutes for warmWorktree(),
 Stim attempts only that operation's cleanup before rejecting, with a 35 second
 cleanup budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
 Other clients are unaffected. Retry after the machine is less busy, or narrow
-the report with doctor({ platform }) or gc({ cache }). doctor() and gc() remain
+the report with doctor({ platform }) or gc({ pressure }). doctor() and gc() remain
 read-only. collectGarbage() can mutate resources; completed actions remain applied.
 Inspect what remains with gc() before retrying a mutation.
 `,

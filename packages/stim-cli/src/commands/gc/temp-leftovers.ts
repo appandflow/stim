@@ -305,7 +305,7 @@ export function tempLeftoverLines(report: TempLeftoverReport | null | undefined)
   for (const group of groups) {
     lines.push(`  ${formatBytes(group.bytes).padStart(10)}  ${LABELS[group.kind]}: ${group.count}`);
     if (group.deleteCount)
-      lines.push(`              --delete would DELETE ${group.deleteCount} (${formatBytes(group.deleteBytes)})`);
+      lines.push(`              stim gc would DELETE ${group.deleteCount} (${formatBytes(group.deleteBytes)})`);
     for (const { reason, count } of group.kept) lines.push(`              kept ${count}: ${reason}`);
     lines.push(`              remedy: ${group.remedy}`);
   }

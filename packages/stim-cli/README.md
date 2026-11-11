@@ -186,8 +186,9 @@ never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record
 its checked platforms after the report and owned cleanup succeed. Recording waits
 asynchronously for the config lock, honors `signal`, and rejects unavailable state.
-GC never
-deletes or shuts down idle devices. Reads can refresh their own usage caches
+`gc()` never
+deletes or shuts down idle devices; `collectGarbage({ pressure? })` runs `stim gc`
+in process. Reads can refresh their own usage caches
 and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
 after owned cleanup; a caller abort rejects with

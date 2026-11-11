@@ -389,7 +389,7 @@ export function findDeadProjectOwnedDevices({
 export function describeDeadProjectDevices(devices: DeadProjectOwnedDevice[]): string[] {
   return devices.map(
     (device) =>
-      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete tries to delete it with the entry`,
+      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; stim gc tries to delete it with the entry`,
   );
 }
 

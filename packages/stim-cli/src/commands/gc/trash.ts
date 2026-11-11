@@ -118,7 +118,7 @@ export function trashLines(report: TrashReport | null | undefined): string[] {
     lines.push(
       `  ${(entry.bytes === null ? 'deleting' : formatBytes(entry.bytes)).padStart(10)}  ${entry.path}${from}`,
     );
-    lines.push(entry.kept ? `              kept: ${entry.kept}` : '              --delete would DELETE it');
+    lines.push(entry.kept ? `              kept: ${entry.kept}` : '              stim gc would DELETE it');
   }
   return lines;
 }

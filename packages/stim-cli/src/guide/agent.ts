@@ -35,8 +35,9 @@ In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
 directories (android/app/build, android/build, android/.gradle, .build,
 android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
 and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
-workspace's build outputs when it goes idle, and node_modules and Pods of idle
-linked worktrees under critical disk pressure; the next start, ios or android
+workspace's build outputs when it goes idle, and node_modules and Pods of
+linked worktrees idle for idle.dormantDays (1 day) or under disk pressure; the
+next start, ios or android
 restores them from the build cache or with worktree warm, except an Exact
 app's target/, which its next build recompiles in full. Never fix a
 dependency by editing files inside them: the change is lost. Put dependency changes in the project's own patch
@@ -369,23 +370,27 @@ Ask the user before these actions:
   existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
-- gc, because it deletes orphaned resources, removes clean linked
-  worktrees that a stim command has run in (one another tool manages is kept
-  as not-registered) whose branch or pull request is merged (or whose pull
-  request was closed), and, at the measured level, runs the pressure ladder:
-  at high every workspace idle 2 minutes or more goes idle (stim revive
-  resumes it), parked devices are deleted, shared caches are trimmed, and
-  workspaces idle 10 minutes or more go dormant, losing their owned devices.
-  That includes the workspace you run it from: an app you are not driving
-  right now stops. It never touches a workspace that is building, driven,
-  leased, shared with stim share, hosted or pinned by maintenance.keep, and
-  keeps node_modules and Pods below critical. Run stim gc --dry-run first (add
-  --json for the sections) and show the user what it would delete (guide facts
-  gc). gc --pressure critical also empties every shared cache Stim registered
-  and runs the ladder at critical, which deletes node_modules and ios/Pods of
-  idle linked worktrees (worktree warm restores them) and removes clean pushed
-  worktrees idle 7 days, across projects. The CLI has no flag that picks one
-  cache or item; Stim Desktop does.
+- gc, because it deletes: it runs one maintenance pass at the measured
+  pressure level and removes orphaned resources, clean linked worktrees that a
+  stim command has run in (one another tool manages is kept as not-registered)
+  whose branch or pull request is merged (or whose pull request was closed),
+  unused iOS simulator runtimes, and everything a workspace idle for
+  idle.dormantDays (1) holds that regenerates: build outputs, owned devices,
+  and in a linked worktree node_modules and ios/Pods (worktree warm restores
+  them). Above normal it runs the pressure ladder: at high every workspace
+  idle 2 minutes or more goes idle (stim revive resumes it), parked devices
+  are deleted, shared caches are trimmed, and workspaces idle 10 minutes or
+  more go dormant, losing their owned devices, node_modules and Pods. At
+  critical it also empties every shared cache, removes clean pushed worktrees
+  idle 7 days across projects, and cleans other tools' caches through their own
+  commands (npm, Yarn, pnpm, CocoaPods, Gradle). That includes the workspace
+  you run it from: an app you are not driving right now stops. It never
+  touches a workspace that is building, driven, leased, shared with stim
+  share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first
+  (add --json for the sections) and show the user what it would delete
+  (guide facts gc); stim gc deletes, and --pressure <normal|high|critical>
+  picks the level. The CLI has no flag that picks one cache or item; Stim
+  Desktop does.
 - settings set daemon.mode on in a home where it is off or report, because
   it lets Stim itself stop idle workspaces, delete their build outputs and
   devices, trim caches and remove finished worktrees later, with no command

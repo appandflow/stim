@@ -458,7 +458,7 @@ test('the facts topic documents every gc verdict reason code and inventory owner
     const src = readFileSync(new URL(file, import.meta.url), 'utf-8');
     const start = src.indexOf(`type ${type} =`);
     const union = src.slice(start, src.indexOf(';', start));
-    const codes = [...union.matchAll(/'([a-zA-Z-]+)'/g)].map((m) => m[1] as string);
+    const codes = [...union.matchAll(/['"]([a-zA-Z-]+)['"]/g)].map((m) => m[1] as string);
     expect(codes.length).toBeGreaterThan(0);
     for (const code of codes) expect(body).toMatch(new RegExp(`(^|[\\s|])${code}(?=[\\s|]|$)`, 'm'));
   }

@@ -515,15 +515,15 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-| Action                        | What happens                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `stim stop`                   | Stops this workspace and releases leases. It keeps its owned device assignments for later. |
-| `stim worktree remove`        | Reclaims the workspace and parks eligible owned devices for reuse.                         |
-| `stim gc --dry-run`           | Previews what `stim gc` would delete and shows disk use. It deletes nothing.               |
-| `stim gc`                     | Removes verified stale resources and, at high or critical, deletes parked devices.         |
-| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                  |
+| Action                        | What happens                                                                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stim stop`                   | Stops this workspace and releases leases. It keeps its owned device assignments for later.                                                                                   |
+| `stim worktree remove`        | Reclaims the workspace and parks eligible owned devices for reuse.                                                                                                           |
+| `stim gc --dry-run`           | Previews what `stim gc` would delete and shows disk use. It deletes nothing.                                                                                                 |
+| `stim gc`                     | Removes verified stale resources, the owned devices of workspaces idle for `idle.dormantDays` and unused simulator runtimes, and at high or critical deletes parked devices. |
+| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                                                                    |
 
-Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. Disk pressure can shorten its lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (three days by default). Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
+Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. Disk pressure can shorten its lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (one day by default). Simulator runtimes are not Stim-owned, but `stim gc` deletes an unused one with `xcrun simctl runtime delete <identifier>` at every level, only when simctl marks the image deletable and no simulator on the machine, user-created ones included, uses it. It keeps the only installed runtime, and the newest when none is used. It deletes an owned simulator whose runtime is gone through teardown, never touches a user-created unavailable simulator, and never runs `simctl delete unavailable`. Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
 
 If teardown fails, Stim keeps the ownership record for a retry. For pool settings, reuse rules and recovery, run the version-matched guide.
 

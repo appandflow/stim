@@ -98,7 +98,7 @@ export function statusCacheLines(stale: readonly StaleStatusCache[]): string[] {
     const count = stale.filter((entry) => entry.kind === kind).length;
     if (count) lines.push(`  ${kind}: ${count}`);
   }
-  lines.push('              --delete removes them; `stim status` measures a folder again if it comes back.');
+  lines.push('              stim gc removes them; `stim status` measures a folder again if it comes back.');
   return lines;
 }
 

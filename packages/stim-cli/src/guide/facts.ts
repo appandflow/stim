@@ -885,7 +885,12 @@ RULES
                   delete-parked-device, trim-cache, empty-cache,
                   dormant-stage, delete-dependencies, stop-gradle-daemons,
                   stop-watchman, delete-gradle-version,
-                  delete-temp-leftovers, delete-trash, remove-worktree and
+                  delete-temp-leftovers, delete-trash, remove-worktree,
+                  delete-runtime (an unused iOS simulator runtime),
+                  delete-unavailable-sim (an owned simulator whose runtime
+                  is gone), clean-tool-cache (rung 9: another tool's cache,
+                  through its own command), report-tool-cache (rung 9: a
+                  cache Stim only reports, with its command in detail) and
                   the maintenance plan's own kinds. restore says how to
                   rebuild what a delete removed, where that applies
   blocked         one string per thing the run could not decide or reach,
@@ -900,12 +905,12 @@ RULES
                   workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover, trash, archive,
-                  watchman, workspaceLogs, ledgerEntry, statusCache and
+                  runtime, toolCache, watchman, workspaceLogs, ledgerEntry, statusCache and
                   homeEntry.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null
-  inventory       present on a dry run only. Report
-                  only: gc never acts on it.
+  inventory       present on a dry run only. Report only, except the
+                  unused simulator runtimes gc deletes.
                   { devices, runtimes, systemImages, notices }
     devices       { kind, id, name, model, runtime, state, lastUsedAt, bytes,
                     directory, owner, project, slot }  every available iOS
@@ -925,8 +930,8 @@ RULES
                     any other \`simctl list runtimes\` shows, with bytes
                     and command null. deviceCount is the simulators on
                     it; command is the \`xcrun simctl runtime delete\`
-                    line for a deletable runtime, else null. Stim never
-                    runs it
+                    line for a deletable runtime, else null. gc runs it
+                    only for a runtime no simulator uses
     systemImages  { package, directory, avdCount, stimInstalled,
                     command }  installed Android system images; avdCount
                     is the AVDs whose image.sysdir.1 names it;
@@ -1229,8 +1234,7 @@ RULES
 
     { "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }
 
-  - an unknown option, including the removed --delete, --cache,
-    --older-than and --worktrees
+  - an unknown option
   - a --pressure value other than normal, high or critical`,
     },
     status: {
