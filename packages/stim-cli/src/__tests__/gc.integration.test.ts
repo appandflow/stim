@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
   gcLogFile,
+  isGcLogRecord,
   readGcLog,
   deviceHostArea,
   deviceHostRoot,
@@ -4751,7 +4752,7 @@ describe('the gc log', () => {
     stageRun();
     await captureLog(() => sweepingGc({ delete: true, olderThan: 3 }));
 
-    const records = readGcLog();
+    const records = readGcLog().filter(isGcLogRecord);
     expect(records.map((r) => [r.kind, r.status, r.id?.split('/').pop() ?? null]).toSorted()).toEqual([
       ['buildLock', 'kept', expect.stringContaining('android-def-debug-sim')],
       ['deviceLease', 'done', expect.stringContaining('UDID-OLD')],
@@ -4791,6 +4792,12 @@ describe('the gc log', () => {
     stageRun();
     vi.stubEnv('STIM_DESKTOP_APP', '/Applications/Stim.app');
     await captureLog(() => sweepingGc({ delete: true }));
-    expect(new Set(readGcLog().map((r) => r.trigger))).toEqual(new Set(['desktop']));
+    expect(
+      new Set(
+        readGcLog()
+          .filter(isGcLogRecord)
+          .map((r) => r.trigger),
+      ),
+    ).toEqual(new Set(['desktop']));
   });
 });

@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
 import {
   maintenanceRunClaims,
   maintenanceDir,
   maintenanceStateFile,
-  maintenanceNdjsonFile,
+  gcLogFile,
   parseMaintenanceState,
   workspaceLogsDir,
   type MaintenanceState,
@@ -130,9 +130,9 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
   expect(result.blocked).toContainEqual(expect.stringContaining('eligible targets cannot reach'));
 });
 
-test('maintenance records stay parseable, mirror named workspace actions and rotate with retention', () => {
-  const file = maintenanceNdjsonFile();
-  mkdirSync(maintenanceDir());
+test('maintenance records go to the one cleanup log, mirror named workspace actions and rotate with retention', () => {
+  const file = gcLogFile();
+  mkdirSync(dirname(file));
   writeFileSync(rotatedLogPath(file), 'expired\n');
   const past = new Date(Date.now() - 31 * 86_400_000);
   utimesSync(rotatedLogPath(file), past, past);
@@ -163,12 +163,14 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   for (const record of records)
     expect(record).toMatchObject({
       ts: expect.any(Number),
-      src: 'maintenance',
-      pass: 'pass-1',
-      trigger: 'status',
+      src: 'gc',
+      runId: 'pass-1',
+      trigger: 'maintenance',
+      via: 'status',
       mode: 'report',
       msg: record.event,
     });
+  expect(records[0]).not.toHaveProperty('pass');
   expect(
     readFileSync(join(workspaceLogsDir(workspace), 'maintenance.ndjson'), 'utf8')
       .trim()
@@ -190,7 +192,7 @@ test('maintenance records about a removed workspace do not recreate its director
   const record = logger.write('maintenance_skip', 'info', 'Kept it', { workspace: removed, target: removed });
   logger.close();
   expect(record?.event).toBe('maintenance_skip');
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('Kept it');
+  expect(readFileSync(gcLogFile(), 'utf8')).toContain('Kept it');
   expect(existsSync(workspaceDir(removed))).toBe(false);
 });
 
