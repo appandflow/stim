@@ -44,6 +44,28 @@ const packageFence = {
   },
 };
 
+const typeOnly = (node, kind) =>
+  node[kind] === 'type' || (node.specifiers?.length > 0 && node.specifiers.every((s) => s[kind] === 'type'));
+
+const staticImports = {
+  meta: {
+    type: 'problem',
+    schema: [{ type: 'object', properties: { modules: { type: 'array', items: { type: 'string' } } } }],
+  },
+  create(context) {
+    const modules = context.options[0]?.modules ?? [];
+    const check = (node, spec, types) => {
+      if (!types && modules.some((name) => spec === name || spec.startsWith(`${name}/`)))
+        context.report({ node, message: `Load ${spec} with await import(); a static import puts it in this closure.` });
+    };
+    return {
+      ImportDeclaration: (node) => check(node, node.source.value, typeOnly(node, 'importKind')),
+      ExportNamedDeclaration: (node) => node.source && check(node, node.source.value, typeOnly(node, 'exportKind')),
+      ExportAllDeclaration: (node) => check(node, node.source.value, node.exportKind === 'type'),
+    };
+  },
+};
+
 const directive = /^\s*(?:eslint|oxlint)-disable(?:-next-line|-line)?(?=\s|$)(.*)$/s;
 const reasoned = /^\s+[^\s-].*?\s-{2,}\s+\S/s;
 
@@ -111,6 +133,7 @@ export default {
   meta: { name: 'stim' },
   rules: {
     'package-fence': packageFence,
+    'static-imports': staticImports,
     'directive-reason': directiveReason,
     'no-snapshot': noSnapshot,
     'refusal-remedy': refusalRemedy,

@@ -23,8 +23,9 @@ not keep exports:
   AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
   AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
 
-The path is $STIM_HOME/workspaces/<name>/agent-device. stim start creates it
-and writes boot-hook.json there: an agent-device that reads it runs stim revive
+The path is $STIM_HOME/workspaces/<name>/agent-device. stim start, or an ios
+run of an app without Metro (Exact), creates it and writes boot-hook.json
+there: an agent-device that reads it runs stim revive
 (guide metro, IDLE STOP) instead of booting a shut-down simulator or emulator
 itself, so the device comes back through Stim's admission with this
 workspace's Metro. Sessions (including events, runner logs and request text), logs,
@@ -542,7 +543,9 @@ WHAT WRITES WHAT
                        passes Expo's initial URL directly. Fatal output is available
                        before delayed OS reports, which can take about a minute
                        or longer to appear; rerun logs --errors for those
-                       before stopping or releasing the device. Collection requires
+                       before stopping or releasing the device. An OS report of an
+                       abort carries the Rust panic messages (an Exact app) the app
+                       wrote to stderr. Collection requires
                        this workspace's current launch and device ownership or lease;
                        afterward only already-captured reports remain available.
                        The app cache holds console files, so external STIM_HOME
@@ -655,5 +658,14 @@ WHAT WRITES WHAT
   \`ios\` / \`android\` produce them.
 
   A collector is killed and replaced on the next \`ios\` / \`android\` run for
-  that platform, and reaped by \`stop\`.`,
+  that platform, and reaped by \`stop\`. When stimd restarts on another Stim
+  build, it stops each simulator and emulator collector and the new stimd
+  starts it again, so device.ndjson misses the lines the app logs between the
+  two, about the time stimd takes to restart. The new stimd skips a collector
+  whose workspace was stopped after the restart began, and notes it in its own
+  log. One whose device or app is gone starts and then ends, as any collector
+  does: device.ndjson records it as stopped or failed. A stimd attached to a
+  command (CI, sandboxes) starts none and leaves them to the next detached
+  stimd. A physical iPhone's console is not restarted: it holds stimd's
+  restart until \`stop\`.`,
 };

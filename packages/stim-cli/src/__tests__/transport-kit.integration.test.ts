@@ -5,8 +5,12 @@ import { runContract } from '../transport-kit.ts';
 const fixture = (name: string) => fileURLToPath(new URL(`../../../../test/fixtures/plugins/${name}`, import.meta.url));
 const local = fileURLToPath(new URL('../../../transport-local', import.meta.url));
 
-const run = (baseDir: string, options: Record<string, unknown> = {}, reference = './index.mjs') =>
-  runContract('transport', { reference, baseDir, options, env: {} });
+const run = (
+  baseDir: string,
+  options: Record<string, unknown> = {},
+  reference = './index.mjs',
+  expose?: { port: number },
+) => runContract('transport', { reference, baseDir, options, env: {}, ...(expose ? { expose } : {}) });
 const failed = (results: Awaited<ReturnType<typeof run>>) =>
   Object.fromEntries(results.filter((result) => !result.passed).map(({ name, error }) => [name, error]));
 
@@ -21,6 +25,18 @@ test('a transport whose members answer in cloneable data passes every check', as
     'resolve answers an endpoint or a reason',
     'close settles',
   ]);
+});
+
+test('expose and unexpose run only when the caller asks for them', async () => {
+  const asked = await run(fixture('transport-fixture'), { exposable: true }, './index.mjs', { port: 7787 });
+  expect(failed(asked)).toEqual({});
+  expect(asked.map(({ name }) => name)).toContain(
+    'expose answers the port and whether it is reachable, and unexpose settles',
+  );
+  const broken = failed(
+    await run(fixture('transport-fixture'), { exposable: true, break: 'expose' }, './index.mjs', { port: 7787 }),
+  );
+  expect(Object.keys(broken)).toEqual(['expose answers the port and whether it is reachable, and unexpose settles']);
 });
 
 test('an event or an identity that cannot cross the thread boundary fails its check', async () => {

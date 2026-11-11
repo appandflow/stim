@@ -57,7 +57,8 @@ interface PullRequestWorktree {
 }
 
 export interface PushNotifierOptions {
-  name: string;
+  /** This machine's name, read once when the notifier starts watching. */
+  name: () => Promise<string>;
   endpoint: string;
   subscribeStatus: (listener: FeedListener) => () => void;
   readVolumes: () => MachineVolume[];
@@ -197,6 +198,8 @@ export class PushNotifier {
   private resubscribe: NodeJS.Timeout | null = null;
   private lookingUp = false;
   private closed = false;
+  private name: string | null = null;
+  private naming: Promise<void> | null = null;
 
   constructor(options: PushNotifierOptions) {
     this.options = options;
@@ -243,7 +246,7 @@ export class PushNotifier {
     const suppressed = device ? this.suppression('control', [device], now) : null;
     this.record([{ ...entryOf(notification, suppressed), device: deviceId }]);
     if (!device || suppressed !== null) return;
-    const message = this.message(device, notification);
+    const message = this.message(device, notification, this.name);
     if (message.interruptionLevel === 'passive' || this.take(device, now)) void this.send([message]);
   }
 
@@ -259,6 +262,10 @@ export class PushNotifier {
   }
 
   private watch(): void {
+    if (this.name === null) {
+      this.naming ??= this.watchOnceNamed();
+      return;
+    }
     if (!this.disk) {
       void this.readMachine();
       this.disk = setInterval(() => void this.readMachine(), this.limits.diskMs);
@@ -266,6 +273,19 @@ export class PushNotifier {
     if (!this.tick) this.tick = setInterval(() => this.evaluate(), this.limits.tickMs);
     if (!this.lookups) this.lookups = setInterval(() => void this.lookUpPullRequests(), this.limits.pullRequestMs);
     if (!this.unsubscribe && !this.resubscribe) this.subscribe();
+  }
+
+  private async watchOnceNamed(): Promise<void> {
+    try {
+      this.name = await this.options.name();
+    } catch (cause) {
+      warn(`could not read this machine's name: ${String(cause)}`);
+      return this.later(() => {
+        this.naming = null;
+        if (this.watching()) this.watch();
+      }, this.limits.resubscribeMs);
+    }
+    if (!this.closed && this.watching()) this.watch();
   }
 
   private unwatch(): void {
@@ -343,11 +363,11 @@ export class PushNotifier {
   }
 
   private evaluate(): void {
-    const status = this.status;
-    if (!status || this.closed) return;
+    const { status, name } = this;
+    if (!status || this.closed || name === null) return;
     const now = this.now();
     const input = {
-      machine: this.options.name,
+      machine: name,
       status,
       volumes: this.volumes,
       memoryPressure: this.pressure,
@@ -376,8 +396,8 @@ export class PushNotifier {
       if (result.wakeAt !== null) wakeAt = wakeAt === null ? result.wakeAt : Math.min(wakeAt, result.wakeAt);
       const due =
         result.notifications.length > this.limits.summarizeAbove
-          ? [this.summary(device, result.notifications)]
-          : result.notifications.map((n) => this.message(device, n));
+          ? [this.summary(device, result.notifications, name)]
+          : result.notifications.map((n) => this.message(device, n, name));
       for (const message of due) {
         if (message.interruptionLevel === 'passive' || this.take(device, now)) messages.push(message);
       }
@@ -418,13 +438,13 @@ export class PushNotifier {
     this.options.logged?.(logged);
   }
 
-  private message(device: Registered, notification: OversightNotification): PushMessage {
+  private message(device: Registered, notification: OversightNotification, name: string | null): PushMessage {
     const { push } = device;
     const seq = this.options.log.latest(notification.id, device.id);
     return {
       to: push.token,
       title: notification.title,
-      ...(notification.target.kind === 'machine' ? {} : { subtitle: this.options.name }),
+      ...(notification.target.kind === 'machine' || name === null ? {} : { subtitle: name }),
       body: notification.body,
       ...DELIVERY[levelOf(push, notification)],
       collapseId: collapseId(`${push.ref}\n${notification.id}`),
@@ -433,11 +453,11 @@ export class PushNotifier {
     };
   }
 
-  private summary(device: Registered, notifications: OversightNotification[]): PushMessage {
+  private summary(device: Registered, notifications: OversightNotification[], name: string): PushMessage {
     const silent = notifications.every((n) => levelOf(device.push, n) === 'silent');
     return {
       to: device.push.token,
-      title: this.options.name,
+      title: name,
       body: `${notifications.length} things need a look`,
       ...DELIVERY[silent ? 'silent' : 'alert'],
       data: { ref: device.push.ref, target: 'home' },

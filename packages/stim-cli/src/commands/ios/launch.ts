@@ -22,6 +22,7 @@ import {
   RELEASE_VERIFY_WAIT_MS,
 } from '../../engine/launch-verify.ts';
 import type { IosDeps } from './dependencies.ts';
+import { writeAgentDeviceBootHook } from '../../engine/agent-device.ts';
 import {
   formatDuration,
   appReadinessMessage,
@@ -847,6 +848,12 @@ async function recordIosReloadTarget({
     });
   } catch (error) {
     note(chalk.yellow(phaseLine('state', `could not record iOS launch: ${(error as Error)?.message || error}`)));
+  }
+  if (runtimeKind !== 'process') return;
+  try {
+    writeAgentDeviceBootHook(root);
+  } catch (error) {
+    note(chalk.yellow(`Could not write agent-device's boot hook: ${error instanceof Error ? error.message : error}`));
   }
 }
 

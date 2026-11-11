@@ -24,7 +24,7 @@ import {
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
-import { deviceConsoleLevel, parseDeviceConsoleLine } from '../stimd/logs/ios-device.ts';
+import { deviceConsoleLevel, parseDeviceConsoleLine, rustPanics } from '../stimd/logs/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
 
 const PHONE = '00008030-001A2B3C4D5E802E';
@@ -943,5 +943,53 @@ describe('localNetworkPending', () => {
     const before = JSON.stringify(pending);
     localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN });
     expect(JSON.stringify(pending)).toBe(before);
+  });
+});
+
+describe('Rust panics in captured app stderr (rustc 1.97.0 output)', () => {
+  const fixture = (name: string) => readFileSync(new URL(`./fixtures/ios-device/${name}`, import.meta.url), 'utf-8');
+
+  test('each panic keeps its header and message lines, without the backtrace hint', () => {
+    expect(rustPanics(fixture('rust-panic-threads.txt'))).toEqual([
+      "thread '<unnamed>' (95688746) panicked at p.rs:2:63:\nindex out of bounds: the len is 0 but the index is 3",
+      "thread 'worker' (95688748) panicked at p.rs:4:72:\nfirst line\nsecond line",
+      'thread \'main\' (95688741) panicked at p.rs:7:7:\ncalled `Result::unwrap()` on an `Err` value: "boom"',
+    ]);
+  });
+
+  test('a panic across the C ABI keeps both panics and drops the forced backtrace', () => {
+    expect(rustPanics(fixture('rust-panic-nounwind.txt'))).toEqual([
+      "thread 'main' (95688686) panicked at q.rs:1:22:\nfrom ffi",
+      "thread 'main' (95688686) panicked at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:225:5:\npanic in a function that cannot unwind",
+    ]);
+  });
+
+  test('a later panic with no terminator keeps one message line, not the log lines after it', () => {
+    const text = [
+      "thread 'main' panicked at src/main.rs:2:5:",
+      'first',
+      'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace',
+      "thread 'worker' (7) panicked at src/lib.rs:9:1:",
+      'second',
+      'app: loading feed',
+      'app: feed loaded',
+      '',
+      ...Array.from({ length: 8 }, (_, line) => `app: log ${line}`),
+      '',
+      "thread 'main' (7) panicked at src/main.rs:20:1:",
+      'third',
+      '',
+    ].join('\n');
+    expect(rustPanics(text)).toEqual([
+      "thread 'main' panicked at src/main.rs:2:5:\nfirst",
+      "thread 'worker' (7) panicked at src/lib.rs:9:1:\nsecond",
+      "thread 'main' (7) panicked at src/main.rs:20:1:\nthird",
+    ]);
+  });
+
+  test('an indented or quoted header is no panic, and a panic is no fatal console line', () => {
+    expect(rustPanics("  thread 'main' (7) panicked at build.rs:14:19:\nmessage")).toEqual([]);
+    expect(rustPanics("retrying after thread 'main' panicked at src/main.rs:2:5:")).toEqual([]);
+    expect(deviceConsoleLevel("thread 'main' (7) panicked at src/main.rs:2:5:")).toBe('info');
   });
 });

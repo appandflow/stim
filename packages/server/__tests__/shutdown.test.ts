@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,6 +35,8 @@ test.each([false, true])(
   async (failed) => {
     const home = mkdtempSync(join(tmpdir(), 'stim-server-shutdown-'));
     process.env.STIM_HOME = home;
+    mkdirSync(join(home, 'server'));
+    writeFileSync(join(home, 'server', 'tailnet.json'), '{}');
     const exitCode = process.exitCode;
     process.exitCode = undefined;
     fixture.monitorStop.mockClear();

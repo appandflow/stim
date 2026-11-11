@@ -1,4 +1,4 @@
-import tailscaleManifest from '@stim-cli/transport-tailscale/package.json' with { type: 'json' };
+import { mkdirSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pinnedReleaseFloor, readHostedSessions } from '@stim-cli/core/state';
@@ -26,8 +26,10 @@ import {
   readDeviceHostClients,
   readDevices,
   readUnreadable,
+  watchClientRegistries,
   renameDevice,
   revokeDevice,
+  serverDir,
   serverIdentity,
   type PairedDevice,
   type UnreadableRecord,
@@ -41,18 +43,13 @@ import { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { legacyServerRefusal } from './legacy-server-probe.ts';
 // compat end
 import type { ServeRoute } from '@stim-cli/core/protocol';
-import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
+import type { TailscaleState } from '@stim-cli/transport-tailscale';
 import { readLanAddresses, watchServerSettings } from './lan.ts';
-import {
-  findTailscale,
-  serveCommand,
-  serveRoute,
-  tailnetEndpoint,
-  readTailscaleStatus,
-  isTailscaleTransport,
-  type TailscaleState,
-} from '@stim-cli/transport-tailscale';
+import { createTailnet, tailscalePackage, type Tailnet } from './tailnet-helper.ts';
+import { hasTailnetMarker, markTailnet, tailnetMarkerFile } from './tailnet-marker.ts';
+
+type TailscaleModule = Awaited<ReturnType<typeof tailscalePackage>>;
 
 const pkg = { version: bundledStim().version };
 
@@ -68,7 +65,7 @@ function tailscaleNote(tailscale: TailscaleState): string | null {
   return null;
 }
 
-function routeNote(route: ServeRoute, port: number): string | null {
+function routeNote({ serveCommand }: TailscaleModule, route: ServeRoute, port: number): string | null {
   if (route.state === 'missing') {
     return `No \`tailscale serve\` route reaches port ${port}, so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
@@ -82,7 +79,13 @@ function routeNote(route: ServeRoute, port: number): string | null {
   return null;
 }
 
-function pairingEndpoint(ips: string[], dnsName: string, route: ServeRoute, port: number) {
+function pairingEndpoint(
+  { tailnetEndpoint }: TailscaleModule,
+  ips: string[],
+  dnsName: string,
+  route: ServeRoute,
+  port: number,
+) {
   const ip = ips.find((address) => !address.includes(':')) ?? ips[0];
   if ((route.state === 'missing' || route.state === 'unknown') && ip)
     return `ws://${ip.includes(':') ? `[${ip}]` : ip}:${port}`;
@@ -149,17 +152,10 @@ export async function serve(
   if (legacy) throw new NetRefusal(legacy);
   // compat end
 
-  const loaded = await loadTransport({
-    reference: '@stim-cli/transport-tailscale',
-    manifest: () => tailscaleManifest,
-    load: () => import('@stim-cli/transport-tailscale'),
-    input: { env, options: {} },
-  });
-  if ('unavailable' in loaded) throw new NetRefusal(`the Tailscale transport is unavailable: ${loaded.unavailable}`);
-  if (!isTailscaleTransport(loaded.transport))
-    throw new NetRefusal('@stim-cli/transport-tailscale did not create a Tailscale transport');
-  const transport = loaded.transport;
-  const { state: tailscale } = transport.snapshot();
+  const tailnet = createTailnet(env);
+  const stopTriggers = loopbackOnly
+    ? () => {}
+    : await watchTailnetTriggers(tailnet, serviceManagerOrNull()?.runningLabel(process.env) ?? null);
   const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
@@ -172,7 +168,7 @@ export async function serve(
       attached: options.attached,
       requestUpdate,
       ...(options.owner ? { owner: options.owner } : {}),
-      name: macName(tailscale),
+      name: () => tailnet.hostName(),
       host: captureHost,
       hosts: ['127.0.0.1'],
       ...(loopbackOnly ? { loopbackOnly: true } : {}),
@@ -183,7 +179,8 @@ export async function serve(
       serverVersion: pkg.version,
       env,
       currentEnv,
-      transports: [transport, lan],
+      transports: [lan],
+      tailnet,
       keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
@@ -192,9 +189,10 @@ export async function serve(
       },
     });
   } catch (error) {
+    stopTriggers();
     lanSetting.stop();
     lan.close?.();
-    transport.close?.();
+    tailnet.close();
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
       throw new NetRefusal(
         `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
@@ -212,23 +210,27 @@ export async function serve(
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
   }
-  const announce = async (state: TailscaleState) => {
-    let note = tailscaleNote(state);
-    if (state.state === 'running' && state.dnsName) {
-      const route = await transport.serveRoute(port);
-      if (route.state !== 'funneled')
-        console.log(`tailnet endpoint: ${pairingEndpoint(state.ips, state.dnsName, route, port)}`);
-      note = routeNote(route, port);
-      if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
-    }
-    if (note) console.error(note);
-  };
   if (!loopbackOnly)
-    transport.monitor?.onChange((snapshot, previous) => {
-      const { state } = snapshot;
-      if (state.state === 'running') console.log('Tailscale is running.');
-      else if (previous.state.state === 'running') console.error('Tailscale stopped.');
-      if (state.state === 'running' || previous.state.state === 'running') void announce(state);
+    tailnet.onLoad((transport) => {
+      const announce = async (state: TailscaleState) => {
+        const tailscale = await tailscalePackage();
+        let note = tailscaleNote(state);
+        if (state.state === 'running' && state.dnsName) {
+          const route = await transport.serveRoute(port);
+          if (route.state !== 'funneled')
+            console.log(`tailnet endpoint: ${pairingEndpoint(tailscale, state.ips, state.dnsName, route, port)}`);
+          note = routeNote(tailscale, route, port);
+          if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
+        }
+        if (note) console.error(note);
+      };
+      transport.monitor?.onChange((snapshot, previous) => {
+        const { state } = snapshot;
+        if (state.state === 'running') console.log('Tailscale is running.');
+        else if (previous.state.state === 'running') console.error('Tailscale stopped.');
+        if (state.state === 'running' || previous.state.state === 'running') void announce(state);
+      });
+      void announce(transport.snapshot().state);
     });
   let lanProblems = '';
   const announceLan = () => {
@@ -246,9 +248,10 @@ export async function serve(
   const close = () =>
     (closed ??= (async () => {
       stopLan();
+      stopTriggers();
       lanSetting.stop();
       lan.close?.();
-      transport.close?.();
+      tailnet.close();
       await server.close().catch((error: unknown) => {
         reportShutdownFailure(error);
         process.exitCode = 1;
@@ -264,7 +267,6 @@ export async function serve(
       );
     }
   }
-  if (!loopbackOnly) void announce(tailscale);
   return {
     server,
     keep: () => {
@@ -272,6 +274,70 @@ export async function serve(
     },
     close,
   };
+}
+
+/**
+ * `stim serve --tailnet`: records that this home's server listens on the tailnet from now on, and returns a line to
+ * print when Tailscale cannot carry it yet.
+ */
+export async function rememberTailnet(): Promise<string | null> {
+  markTailnet('stim serve --tailnet');
+  const { findTailscale, readTailscaleStatus } = await tailscalePackage();
+  return tailscaleNote(await readTailscaleStatus(findTailscale(process.env), process.env));
+}
+
+const RECONCILE_MS = 60_000;
+
+/**
+ * Loads the Tailscale transport once this machine uses the tailnet: while the tailnet marker exists, when the running
+ * service recorded a `tailscale serve` route, and when a build or device-host client is approved while the tailscale
+ * command is installed. File events are hints; a check every minute repairs a missed one and retries a failed load.
+ */
+async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Promise<() => void> {
+  let migrated = false;
+  const servedRoute = async (): Promise<boolean | null> => {
+    if (!label) return false;
+    const unit = await serviceManagerOrNull()
+      ?.read(label)
+      .catch(() => undefined);
+    return unit === undefined ? null : !!unit?.serve;
+  };
+  let served: boolean | null = null;
+  let reported = '';
+  const check = async () => {
+    if (tailnet.current()) return;
+    // compat C28 until removal-minor
+    if (!migrated && !hasTailnetMarker()) {
+      const records = [readDevices, readBuildClients, readDeviceHostClients, readUnreadable];
+      if (records.some((read) => read().length)) markTailnet('registry records at the first start');
+      migrated = true;
+    }
+    // compat end
+    if (hasTailnetMarker()) return void (await tailnet.load('tailnet marker'));
+    if ((served ??= await servedRoute())) return void (await tailnet.load('service serve route'));
+    if (readBuildClients().length + readDeviceHostClients().length && (await tailnet.binary()))
+      await tailnet.load('approved clients');
+  };
+  const checked = async () => {
+    try {
+      await check();
+      reported = '';
+    } catch (error) {
+      const line = `stim-server: could not check whether this machine uses the tailnet: ${String(error)}`;
+      if (line !== reported) console.error(line);
+      reported = line;
+    }
+  };
+  mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
+  const unwatch = watchClientRegistries(() => void checked(), [tailnetMarkerFile()]);
+  const reconcile = setInterval(() => void checked(), RECONCILE_MS).unref();
+  const stop = () => {
+    unwatch();
+    clearInterval(reconcile);
+  };
+  tailnet.onLoad(stop);
+  await checked();
+  return stop;
 }
 
 function reportShutdownFailure(failure: unknown): void {
@@ -292,6 +358,8 @@ const SCOPE_TEXT: Record<Scope, string> = {
 };
 
 export async function pair(port: number, json: boolean, control: boolean): Promise<void> {
+  const tailscaleModule = await tailscalePackage();
+  const { findTailscale, readTailscaleStatus, serveRoute } = tailscaleModule;
   const binary = findTailscale(process.env);
   const tailscale = await readTailscaleStatus(binary, process.env);
   const [lan] = resolveLanAddresses(await readLanAddresses(), networkInterfaces()).addresses;
@@ -301,9 +369,10 @@ export async function pair(port: number, json: boolean, control: boolean): Promi
     note = `${note} The endpoint above only works ${lan ? 'on this local network, while stim-server listens there (server.lanAddresses)' : 'on this machine'}.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
-    if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
-    endpoint = pairingEndpoint(tailscale.ips, tailscale.dnsName, route, port);
-    note = routeNote(route, port);
+    if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(tailscaleModule, route, port)}`);
+    endpoint = pairingEndpoint(tailscaleModule, tailscale.ips, tailscale.dnsName, route, port);
+    note = routeNote(tailscaleModule, route, port);
+    markTailnet('pair');
   }
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
   const fingerprint = keyFingerprint(serverIdentity().publicKey);

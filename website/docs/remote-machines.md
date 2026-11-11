@@ -863,6 +863,12 @@ temporarily; it cannot authenticate.
 
 Run `stim doctor` or open the machine's details in Desktop. The result shows where the connection failed, from Tailscale or LAN discovery to the HTTPS route, server or approval. Check that the worker is awake and serving on the expected network. Confirm a changed key on the worker before trusting it.
 
+A worker listens on its tailnet address only once something there uses the tailnet: a pairing or Desktop's phone setup, `stim setup`'s tailnet route, a build or device-host approval, a `tailscale serve` route Stim installed or a request it forwards. A worker that none of these reached refuses a direct tailnet connection, so the client sees a refused connection. A request that tailscale serve forwards to the loopback port loads the tailnet for that run, and a peer that still cannot be identified shows up only in the worker's server log as `no transport identified the peer`. Run this once on the worker so it listens on the tailnet from then on:
+
+<StimTabs code={`stim serve --tailnet`} />
+
+The worker remembers `--tailnet` in `$STIM_HOME/server/tailnet.json`, so every later start listens on the tailnet too. It refuses `--loopback-only` and `--share`, which serve that machine only, and warns when Tailscale is not installed or not running; the server starts listening on the tailnet once Tailscale runs. To undo it, delete `$STIM_HOME/server/tailnet.json` on the worker and restart its server. The first start of a home without the file writes it again when the home already holds a pairing or an approved build or device-host client.
+
 ### Find out why a remote machine was slow or refused
 
 <StimTabs

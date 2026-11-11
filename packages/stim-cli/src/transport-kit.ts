@@ -26,6 +26,12 @@ export interface TransportContractOptions {
   /** Passed to `createTransport` as `env`. */
   env: NodeJS.ProcessEnv;
   checkTimeoutMs?: number;
+  /**
+   * Checks `expose` and then `unexpose` on this port. They change which of the machine's ports are reachable, so the
+   * kit calls them only when the caller passes this, for a module it knows is safe to expose from: a fixture, or a
+   * transport whose `options` point it at a test environment.
+   */
+  expose?: { port: number };
 }
 
 const CHECK_TIMEOUT_MS = 10_000;
@@ -58,7 +64,9 @@ async function withDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> 
   }
 }
 
-function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
+const EXPOSURE_STATES = new Set(['routed', 'funneled', 'missing', 'unknown']);
+
+function checks(worker: KitWorker, expose: { port: number } | undefined): { name: string; run(): Promise<void> }[] {
   const has = (member: string) => worker.members.includes(member);
   const list: { name: string; run(): Promise<void> }[] = [];
   if (has('bindAddresses'))
@@ -108,6 +116,18 @@ function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
         );
       },
     });
+  if (expose && has('expose'))
+    list.push({
+      name: 'expose answers the port and whether it is reachable, and unexpose settles',
+      run: async () => {
+        const exposure = await worker.call('expose', expose);
+        assert(
+          isRecord(exposure) && EXPOSURE_STATES.has(String(exposure.state)) && typeof exposure.port === 'number',
+          'expose did not return { state, port }',
+        );
+        if (has('unexpose')) await worker.call('unexpose', expose);
+      },
+    });
   if (has('close'))
     list.push({
       name: 'close settles',
@@ -122,6 +142,7 @@ function checks(worker: KitWorker): { name: string; run(): Promise<void> }[] {
  * Loads a transport module in a worker thread, as it will run, and runs the host-independent checks every transport
  * must pass: the manifest's kind integer, a factory that returns an object with an `id`, and each member the module
  * has answers with data that crosses the thread boundary. A module that imports `stim` at runtime fails to load.
+ * `expose` and `unexpose` run only with `options.expose`, since on a real transport they change the machine's routes.
  */
 export async function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]> {
   const timeoutMs = options.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
@@ -147,7 +168,7 @@ export async function runTransportContract(options: TransportContractOptions): P
   if ('unavailable' in worker) return [{ name: 'the module loads', passed: false, error: worker.unavailable }];
   const results: TransportContractResult[] = [{ name: 'the module loads', passed: true }];
   try {
-    for (const check of checks(worker)) {
+    for (const check of checks(worker, options.expose)) {
       try {
         await withDeadline(check.run(), timeoutMs);
         results.push({ name: check.name, passed: true });

@@ -30,6 +30,32 @@ const FATAL_MARKERS: RegExp[] = [
   /^(?:\S+:\d+: )?Fatal error: /,
 ];
 
+const RUST_PANIC = /^thread '.*' (?:\(\d+\) )?panicked at \S/;
+const RUST_PANIC_MESSAGE_LINES = 8;
+const RUST_PANIC_END = /^(?:note: |stack backtrace:$|thread caused non-unwinding panic)/;
+
+/**
+ * Each Rust panic in an app's stderr with its message. rustc prints the `note:` backtrace hint after the first panic
+ * of a process only, and a blank line before the next panic's header, so a message ends there; with neither within
+ * a few lines it keeps its first line alone rather than the app output after it.
+ */
+export function rustPanics(text: string): string[] {
+  const lines = text.split('\n').map((line) => line.replace(/\r$/, ''));
+  const ends = (index: number) =>
+    RUST_PANIC_END.test(lines[index] ?? '') ||
+    RUST_PANIC.test(lines[index] ?? '') ||
+    (lines[index] === '' && RUST_PANIC.test(lines[index + 1] ?? ''));
+  const panics: string[] = [];
+  lines.forEach((header, index) => {
+    if (!RUST_PANIC.test(header)) return;
+    let end = index + 1;
+    while (end <= index + RUST_PANIC_MESSAGE_LINES && end < lines.length && !ends(end)) end++;
+    const message = ends(end) ? lines.slice(index + 1, end) : lines.slice(index + 1, index + 2);
+    panics.push([header, ...message].join('\n'));
+  });
+  return panics;
+}
+
 export const TOOL_ERROR_PREFIX = 'ERROR: ';
 
 const MIRROR_LINE =

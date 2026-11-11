@@ -96,7 +96,8 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
       CLOSE_REFUSED,
     );
   }
-  const tooOld = ctx.local ? null : helloRefusal(params.client, access, ctx.options.name, ctx.options.stimVersion);
+  const serverName = await ctx.serverName();
+  const tooOld = ctx.local ? null : helloRefusal(params.client, access, serverName, ctx.options.stimVersion);
   // compat C9 permanent
   if (!ctx.local && wireInteger(params.client.phoneApi) > PHONE_API)
     ctx.options.requestUpdate?.(`a phone speaks phoneApi ${wireInteger(params.client.phoneApi)}`);
@@ -140,7 +141,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
     phoneApi: PHONE_API,
     desktopApi: DESKTOP_API,
     server: {
-      name: ctx.options.name,
+      name: serverName,
       version: ctx.options.serverVersion,
       stim: ctx.options.stimVersion,
       channel: readRecords(engineRoot(process.env)).current?.channel ?? 'latest',

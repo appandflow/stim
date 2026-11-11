@@ -2,6 +2,7 @@ import type { ServeRoute } from '@stim-cli/core/protocol';
 import { peerEndpoint } from '@stim-cli/core/state';
 import { isIP } from 'node:net';
 import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
+import packageJson from './package.json' with { type: 'json' };
 import {
   findTailscale,
   readRawTailscaleStatus,
@@ -38,9 +39,13 @@ export { watchTailscale, type TailscaleMonitor, type TailscaleSnapshot } from '.
 
 export const id = 'tailscale';
 
+/** This package's manifest, for a host that bundles the package and cannot read its package.json beside it. */
+export const manifest: { stimPlugin: { kinds: { transport: number } } } = packageJson;
+
 /**
  * The Tailscale transport, plus what stim-server still reads from Tailscale directly: the snapshot behind the
- * `tailscale` and `route` fields of `/health`, the raw status that pins paired machines, and `route.setup`.
+ * `tailscale` and `route` fields of `/health` and the raw status that pins paired machines. `expose` adds a
+ * tailnet-only `tailscale serve` route to the port when none reaches it, and never enables Funnel.
  */
 export interface TailscaleTransport extends Transport {
   id: typeof id;
@@ -48,8 +53,8 @@ export interface TailscaleTransport extends Transport {
   monitor: TailscaleMonitor | null;
   rawStatus(): Promise<unknown>;
   resolve: NonNullable<Transport['resolve']>;
+  expose: NonNullable<Transport['expose']>;
   serveRoute(target: number, timeoutMs?: number): Promise<ServeRoute>;
-  setupRoute(target: number): Promise<ServeRoute>;
 }
 
 export function isTailscaleTransport(transport: Transport): transport is TailscaleTransport {
@@ -99,9 +104,9 @@ export function tailscaleTransport({
       const { binary, state } = now();
       return serveRoute(binary, env, target, state.state === 'running' ? state.ips : [], timeoutMs);
     },
-    setupRoute(target) {
+    expose({ port }) {
       const { binary, state } = now();
-      return setupServeRoute(binary, env, target, state);
+      return setupServeRoute(binary, env, port, state);
     },
     close: () => monitor?.stop(),
   };

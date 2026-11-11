@@ -67,6 +67,8 @@ export interface IosCommandOptions {
   scheme?: string;
   easProfile?: string;
   recordedBuild?: RecordedBuildRequest;
+  /** Launch this bundle id as already installed on the owned simulator: no build and no install. */
+  installedApp?: string;
   expectedDevice?: string;
   cleanAppState?: boolean;
   deviceType?: string;

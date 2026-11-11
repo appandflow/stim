@@ -117,7 +117,9 @@ a blank screen. [`stim revive`](./commands.md#revive) resumes exactly what the
 idle stop paused, and nothing more: it restarts the dev server, boots the owned
 simulators and emulators the app last ran on, and relaunches the app from cold
 from the build cache entry that launch installed. In-app state is gone. It
-never builds, and never creates or adopts a device.
+never builds, and never creates or adopts a device. For an app that runs
+without Metro, such as an Exact app, it boots the owned simulator and
+relaunches the app installed there.
 
 <StimTabs code={`stim revive`} />
 
@@ -265,6 +267,8 @@ Console redirection uses the app's writable cache, including when `STIM_HOME` is
 on an external volume; captured crash evidence is retained in the workspace logs.
 OS crash reports can take about a minute or longer to arrive: rerunning
 `stim logs --errors` collects them before you stop or release the simulator.
+An OS report of an abort carries the Rust panic messages, such as an Exact
+app's, that the app wrote to stderr.
 Reports are matched to the app, simulator, and launch time. Existing source locations
 and symbol names are retained, and app addresses are resolved with
 `atos` only when the local binary's UUID matches the report. Android reads the
@@ -506,7 +510,8 @@ device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 exits after five idle minutes with no open session. This is opt-in per command; forgetting the
 variable uses `~/.agent-device`.
 
-`stim start` also writes `boot-hook.json` into that directory. An agent-device
+`stim start`, or a `stim ios` run of an app without Metro such as an Exact app,
+also writes `boot-hook.json` into that directory. An agent-device
 that reads it runs [`stim revive`](./commands.md#revive) when the simulator or
 emulator it was asked to use is shut down, instead of booting the device
 itself, then checks that the device is booted. The device comes back through
@@ -528,6 +533,17 @@ stim logs --source agent.
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
+
+When `stimd` restarts on another Stim build, it stops each simulator and
+emulator log collector, and the new `stimd` starts it again. `device.ndjson`
+misses the lines the app logs between the two, about the time `stimd` takes to
+restart. The new `stimd` skips a collector whose workspace was stopped after the
+restart began, and notes it in its own log. One whose device or app is gone
+starts and then ends, as any collector does: `device.ndjson` records it as
+stopped or failed. A `stimd` attached to a command (CI, sandboxes) starts none
+and leaves them to the next detached `stimd`. A physical
+iPhone's console is not restarted, because that would launch the app again; it
+holds the restart until `stim stop`.
 
 ## Named server ports
 

@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { planServe } from '@stim-cli/transport-tailscale';
 import {
-  planServe,
   applyServeEnvironment,
   parseEnvAssignment,
   parseInstalledPlist,

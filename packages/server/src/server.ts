@@ -446,11 +446,22 @@ function pruneSetup(): void {
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  const { transports, tailscale } = serverTransports(options);
+  const { transports, tailnet } = await serverTransports(options);
+  const givenName = options.name;
+  let resolvedName = typeof givenName === 'string' ? givenName : null;
+  const serverName = async () => (resolvedName ??= typeof givenName === 'string' ? givenName : await givenName());
+  /**
+   * A peer that `tailscale serve` forwarded to loopback comes over the tailnet, so it needs the Tailscale transport for
+   * this run. A loopback-only server serves no tailnet peer and never loads it.
+   */
+  const forwardedPeer = async (request: IncomingMessage) => {
+    if (!options.loopbackOnly && isLoopback(request.socket.remoteAddress)) await tailnet.load('forwarded peer');
+  };
   /** The addresses each transport that binds some reports now: read when watching starts, then replaced by its `watch` events. */
   const bindings = new Map<Transport, string[]>();
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
   const peerNode = cachedPeerNode(async (request: IncomingMessage, address: string): Promise<string | null> => {
+    await forwardedPeer(request);
     for (const transport of transports) {
       const identity = await transport.identify?.({ address, headers: request.headers }).catch(() => null);
       if (identity) return identity.id;
@@ -466,6 +477,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const agentNodes = new Map<string, string>();
   /** Names a peer for people to read; never decides who a client is. */
   async function describePeer(request: IncomingMessage, address: string): Promise<string> {
+    await forwardedPeer(request);
     for (const transport of transports) {
       const label = peerLabel(
         (await transport.identify?.({ address, headers: request.headers }).catch(() => null)) ?? null,
@@ -824,7 +836,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const jobs: OffloadJobs = new OffloadJobs({
     stimCli: options.stimCli,
-    machine: options.name,
+    get machine() {
+      return resolvedName ?? 'this machine';
+    },
     attached: options.attached,
     env: () => options.currentEnv?.() ?? options.env,
     limits: builds.limits,
@@ -865,11 +879,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     presence,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
-  const funnel = tailscaleFunnel(
-    () => tailscale.snapshot().binary,
+  const funnelTool = tailscaleFunnel(
+    () => tailnet.binary(),
     options.env,
-    () => tailscale.rawStatus(),
+    () => tailnet.rawStatus(),
   );
+  const funnel = {
+    ...funnelTool,
+    add: async (route: Parameters<typeof funnelTool.add>[0]) => {
+      await funnelTool.add(route);
+      if (!options.loopbackOnly) void tailnet.load('funnel share');
+    },
+  };
   const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
   const exposedRoute = new ExposedRoute(
     shareRoute,
@@ -877,7 +898,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const share = loadConfig()?.share;
       return { exposure: share?.exposure, publicUrl: share?.publicUrl, port: share?.port };
     },
-    async () => tailscaleLoggedIn(await tailscale.rawStatus()),
+    async () => tailscaleLoggedIn(await tailnet.rawStatus()),
   );
   const shares = new ShareHub({
     frames,
@@ -950,11 +971,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
     stimDir: dirname(dirname(options.stimCli)),
-    status: () => tailscale.rawStatus(),
+    status: () => tailnet.rawStatus(),
     endpoint: options.hostedRelay?.endpoint,
   });
   const updates = new EngineUpdates({
-    name: options.name,
+    get name() {
+      return resolvedName ?? undefined;
+    },
     label: options.service?.label ?? null,
     port: options.port,
     build: { version: options.serverVersion, stimBuild: ownStimBuild },
@@ -986,7 +1009,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const localWss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
-    name: options.name,
+    name: serverName,
     endpoint: options.pushEndpoint ?? EXPO_PUSH_API,
     subscribeStatus: (listener) => statusFeed.subscribe(listener),
     readVolumes: readDiskVolumes,
@@ -1014,7 +1037,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const desktopSessions = new Set<ServerSocket>();
   const hostConnections = new HostConnections(
     {
-      ...(options.hostedRelay ?? { status: () => tailscale.rawStatus() }),
+      ...(options.hostedRelay ?? { status: () => tailnet.rawStatus() }),
       log: requestLog.host,
     },
     options.serverVersion,
@@ -1208,7 +1231,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const shapeChanges = { tokens: controlLimits.shapeChangesPerSecond, at: Date.now() };
     const ctx: ConnectionContext = {
       options,
-      tailscale,
+      tailnet,
+      serverName,
       get homeId() {
         return homeId;
       },
@@ -1906,7 +1930,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   const health = {
     server: 'stim-server',
-    name: options.name,
     version: options.serverVersion,
     stim: options.stimVersion,
     stimBuild: ownStimBuild,
@@ -1922,13 +1945,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return first ? { lan: { addresses: bound.map(({ host }) => host), port: first.port } } : {};
   };
   const answerHealth = async (response: ServerResponse) => {
-    const { state } = tailscale.snapshot();
-    const route =
-      state.state === 'running' && state.dnsName
-        ? await tailscale.serveRoute(addresses[0]!.port, HEALTH_ROUTE_TIMEOUT_MS)
-        : undefined;
+    const { state, route } = await tailnet.health(addresses[0]!.port, HEALTH_ROUTE_TIMEOUT_MS);
     const body: ServerHealth = {
       ...health,
+      name: await serverName(),
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
       busy: {
@@ -2149,22 +2169,30 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (bindings.size) reconciling = reconciling.then(reconcile);
   };
   const stopWatching: (() => void)[] = [];
+  const bind = (transport: Transport) => {
+    if (!transport.bindAddresses || bindings.has(transport)) return;
+    if (transport.watch)
+      stopWatching.push(
+        transport.watch((event) => {
+          bindings.set(transport, event.addresses);
+          queueReconcile();
+        }),
+      );
+    bindings.set(transport, transport.bindAddresses());
+  };
   try {
-    for (const transport of transports) {
-      if (!transport.bindAddresses) continue;
-      if (transport.watch)
-        stopWatching.push(
-          transport.watch((event) => {
-            bindings.set(transport, event.addresses);
-            queueReconcile();
-          }),
-        );
-      bindings.set(transport, transport.bindAddresses());
-    }
+    for (const transport of transports) bind(transport);
   } catch (error) {
     for (const stop of stopWatching) stop();
     throw error;
   }
+  if (options.tailnet)
+    tailnet.onLoad((transport) => {
+      if (closing || transports.includes(transport)) return;
+      transports.push(transport);
+      bind(transport);
+      queueReconcile();
+    });
   queueReconcile();
   await reconciling;
   keepAwake.sync();

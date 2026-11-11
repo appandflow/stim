@@ -12,7 +12,7 @@ const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const JOB_KEYS = ['STIM_HOME', 'SHELL'];
 
-export { planServe, type ServeRecord } from '@stim-cli/transport-tailscale';
+export type { ServeRecord } from '@stim-cli/transport-tailscale';
 export {
   installedService,
   parseInstalledPlist,
