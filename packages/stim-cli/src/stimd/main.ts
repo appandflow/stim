@@ -75,6 +75,7 @@ import {
   serveThroughStimd,
   isSandboxBlocked,
   stimdBuildId,
+  stimdEnv,
   stimdLive,
   waitForStimdHello,
   type NetAnswer,
@@ -392,6 +393,7 @@ function handleForegroundError(
 function createNetAndLogsClose(
   net: ReturnType<typeof createNetThread>,
   logs: ReturnType<typeof createStreams>,
+  handingOver: () => boolean,
 ): () => Promise<void> {
   let netAndLogsClose: Promise<void> | undefined;
   return (): Promise<void> => {
@@ -403,7 +405,7 @@ function createNetAndLogsClose(
         netFailure = error;
       }
       try {
-        await logs.close();
+        await logs.close({ handover: handingOver() });
       } catch (error) {
         if (logs.running())
           throw Object.assign(new ClaimUnavailableError(`device log cleanup could not be verified: ${String(error)}`), {
@@ -416,6 +418,23 @@ function createNetAndLogsClose(
     })();
     return netAndLogsClose;
   };
+}
+
+function resumeLogStreams(
+  logs: ReturnType<typeof createStreams>,
+  log: (level: Level, event: string, msg: string) => void,
+  attached: boolean,
+): void {
+  if (attached) return;
+  try {
+    logs.resume(Object.keys(loadConfig()?.projects ?? {}), stimdEnv(process.env, process.platform));
+  } catch (error) {
+    log(
+      'warn',
+      'device_log_resume_failed',
+      `the config cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function attachedCleanupError(
@@ -880,6 +899,7 @@ async function runStimdInner(
   let shutdownDone: Promise<void> | undefined;
   let writerDone: Promise<void> | undefined;
   let relaunchDone: Promise<void> | undefined;
+  let handingOver = false;
   const foregroundAbort = new AbortController();
   let foregroundDone: Promise<void> | undefined;
   let foregroundFailure: unknown;
@@ -918,7 +938,7 @@ async function runStimdInner(
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
-  const enginePinned = (): boolean => pinned() || logs.running();
+  const enginePinned = (): boolean => pinned() || logs.holdsRelaunch();
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
@@ -938,8 +958,8 @@ async function runStimdInner(
       updatedInPlace?.build === message.build
         ? {
             handover: true,
-            ...(logs.running()
-              ? { heldBy: 'logs', workspaces: logs.roots() }
+            ...(logs.holdsRelaunch()
+              ? { heldBy: 'logs', workspaces: logs.heldRoots() }
               : net.running()?.shareOnly
                 ? { heldBy: 'shares' }
                 : {}),
@@ -966,7 +986,7 @@ async function runStimdInner(
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.running());
+      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.holdsRelaunch());
       next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
@@ -993,6 +1013,7 @@ async function runStimdInner(
     const running = net.running();
     const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
     const why = `the engine switched to ${next.version} (${next.build})`;
+    handingOver = true;
     shutdown(why);
     await shutdownDone;
     if (keepOwn) return;
@@ -1310,7 +1331,7 @@ async function runStimdInner(
   });
   let bound = false;
   const waitMs = attachedExitWaitMs();
-  const closeNetAndLogs = createNetAndLogsClose(net, logs);
+  const closeNetAndLogs = createNetAndLogsClose(net, logs, () => handingOver);
   let attachedCleanup: Promise<void> | undefined;
   const closeAttachedWork = (why: string, initial?: unknown): Promise<void> => {
     attachedCleanup ??= (async () => {
@@ -1462,6 +1483,7 @@ async function runStimdInner(
     log('error', 'metro_cleanup_unverified', error instanceof Error ? error.message : String(error));
   });
   adoptMetroChildren(log);
+  resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   startup.signal.throwIfAborted();

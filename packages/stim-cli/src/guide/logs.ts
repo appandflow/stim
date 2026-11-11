@@ -660,5 +660,14 @@ WHAT WRITES WHAT
   \`ios\` / \`android\` produce them.
 
   A collector is killed and replaced on the next \`ios\` / \`android\` run for
-  that platform, and reaped by \`stop\`.`,
+  that platform, and reaped by \`stop\`. When stimd restarts on another Stim
+  build, it stops each simulator and emulator collector and the new stimd
+  starts it again, so device.ndjson misses the lines the app logs between the
+  two, about the time stimd takes to restart. The new stimd skips a collector
+  whose workspace was stopped after the restart began, and notes it in its own
+  log. One whose device or app is gone starts and then ends, as any collector
+  does: device.ndjson records it as stopped or failed. A stimd attached to a
+  command (CI, sandboxes) starts none and leaves them to the next detached
+  stimd. A physical iPhone's console is not restarted: it holds stimd's
+  restart until \`stop\`.`,
 };

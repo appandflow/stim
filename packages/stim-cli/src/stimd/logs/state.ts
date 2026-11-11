@@ -68,3 +68,17 @@ export function unregisterStreamAll(root: string, streamId: string): void {
     writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
   });
 }
+
+export function markStreamHandedOver(root: string, streamId: string): void {
+  root = collectorRoot(root);
+  withWorkspaceStateLock(root, () => {
+    const collectors: Record<string, unknown> = { ...readWorkspaceState(root)?.collectors };
+    for (const [key, record] of Object.entries(collectors))
+      if (isJsonObject(record) && record.kind === 'stream' && record.streamId === streamId)
+        collectors[key] = { ...record, handover: true, handedOverAt: new Date().toISOString() };
+    writeWorkspaceState(root, { collectors });
+  });
+}
+
+export const handedOverStream = (record: unknown): record is Record<string, unknown> & { streamId: string } =>
+  isJsonObject(record) && record.kind === 'stream' && record.handover === true && typeof record.streamId === 'string';
