@@ -342,8 +342,9 @@ export interface MetroLaunchParams {
 /**
  * Asks this home's stimd to run the workspace's Metro through a Metro ticket (`metro.prepare`, then `metro.wait`): the
  * admitted operation's when it has a stimd connection, else one admitted for this request, starting a stimd first
- * whatever `daemon.mode` says, since only stimd runs Metro. Resolves with stimd's answer, or null when no stimd answers
- * within `timeoutMs` or `signal` aborts.
+ * whatever `daemon.mode` says, since only stimd runs Metro. An operation admitted for this request outlives a
+ * `starting` answer until `signal` aborts, since stimd stops a Metro still starting when its operation ends. Resolves
+ * with stimd's answer, or null when no stimd answers within `timeoutMs` or `signal` aborts.
  */
 export async function ensureMetroThroughStimd(
   params: MetroLaunchParams,
@@ -375,7 +376,13 @@ export async function ensureMetroThroughStimd(
     }
     const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
     if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
-    return await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);
+    const answer = await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);
+    if (held.length > 0 && answer?.op === 'metro' && answer.state === 'starting' && signal && !signal.aborted) {
+      const release = held.splice(0);
+      for (const socket of release) socket.unref();
+      signal.addEventListener('abort', () => release.forEach((socket) => socket.destroy()), { once: true });
+    }
+    return answer;
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
     return {
