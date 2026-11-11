@@ -1,23 +1,23 @@
-import type { StimContext } from '@stim-cli/core';
+import type { StimContext } from "@stim-cli/core";
 import {
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
   type MaintenanceAction,
   type PressureLevel,
-} from '@stim-cli/core/state';
-import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { loadConfig } from '../../workspace/config.ts';
-import { measureDisk, measureMemory } from '../../daemon/measure.ts';
-import { classifyPressure, diskThresholds } from '../../daemon/pressure.ts';
-import { runForcedLadder } from '../../daemon/passes.ts';
-import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
-import { executeAction, type ActionOutcome } from './act.ts';
-import { measureSizes } from './measure.ts';
-import { measureOwnedDevices } from './devices.ts';
-import { plannedMaintenance, triggeringRoot } from './preview.ts';
-import { executionRank } from './run.ts';
-import { resolveMaintenanceSettings } from './settings.ts';
+} from "@stim-cli/core/state";
+import { isClaimUnavailable } from "@stim-cli/core/ownership-claim";
+import { loadConfig } from "../../workspace/config.ts";
+import { measureDisk, measureMemory } from "../../daemon/measure.ts";
+import { classifyPressure, diskThresholds } from "../../daemon/pressure.ts";
+import { runDormantReduction, runForcedLadder } from "../../daemon/passes.ts";
+import { deviceSweepIsScoped } from "../../commands/gc/devices.ts";
+import { executeAction, type ActionOutcome } from "./act.ts";
+import { measureSizes } from "./measure.ts";
+import { measureOwnedDevices } from "./devices.ts";
+import { plannedMaintenance, triggeringRoot } from "./preview.ts";
+import { executionRank } from "./run.ts";
+import { resolveMaintenanceSettings } from "./settings.ts";
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
 export interface LevelRunAction {
@@ -26,7 +26,7 @@ export interface LevelRunAction {
   kind: string;
   target: string;
   workspace?: string;
-  outcome: 'would' | 'done' | 'kept' | 'failed';
+  outcome: "would" | "done" | "kept" | "failed";
   bytes: number;
   /** Why the run took it, or why it kept it. */
   reason: string;
@@ -41,10 +41,14 @@ export interface LevelRun {
   actions: LevelRunAction[];
   /** What the run could not decide or reach, each for a person to look at. */
   blocked: string[];
+  /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
+  usage: { name: string; dir: string; bytes: number }[];
 }
 
 /** Measures disk and memory once and classifies them as the daemon would. */
-export async function measureLevel(operation?: StimContext): Promise<DaemonPressure> {
+export async function measureLevel(
+  operation?: StimContext,
+): Promise<DaemonPressure> {
   const config = loadConfig();
   const { thresholds } = diskThresholds(config, operation?.env);
   const [disk, memory] = await Promise.all([
@@ -55,15 +59,19 @@ export async function measureLevel(operation?: StimContext): Promise<DaemonPress
     disk,
     memory,
     thresholds,
-    previousWarningSince: readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
+    previousWarningSince:
+      readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
     now: Date.now(),
   });
 }
 
-function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRunAction {
+function fromOutcome(
+  action: MaintenanceAction,
+  outcome: ActionOutcome,
+): LevelRunAction {
   return {
     rung: null,
-    kind: action.kind.replace(/^would-/, ''),
+    kind: action.kind.replace(/^would-/, ""),
     target: action.target,
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: outcome.status,
@@ -74,15 +82,20 @@ function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRu
   };
 }
 
-function fromLadder(action: DaemonLadderAction): LevelRunAction {
+function fromLadder(
+  action: DaemonLadderAction,
+  dormant = false,
+): LevelRunAction {
   return {
-    rung: action.rung,
+    rung: dormant ? null : action.rung,
     kind: action.kind,
     target: action.target,
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: action.outcome,
     bytes: action.bytes,
-    reason: `pressure ladder rung ${action.rung}`,
+    reason: dormant
+      ? "no activity for idle.dormantDays"
+      : `pressure ladder rung ${action.rung}`,
     detail: action.detail,
     ...(action.restore ? { restore: action.restore } : {}),
   };
@@ -90,8 +103,9 @@ function fromLadder(action: DaemonLadderAction): LevelRunAction {
 
 /**
  * One maintenance run at `level`, the measured one by default: at every level the plan of automatic maintenance (cap
- * trims, the age sweep, the prune of stale records and the finished-worktree check), then above normal the pressure
- * ladder forced to that level, every rung to its end. Without `act` it plans and measures and deletes nothing.
+ * trims, the age sweep with unused simulator runtimes, the prune of stale records and the finished-worktree check) and
+ * the dormant reduction of workspaces idle `idle.dormantDays`, then above normal the pressure ladder forced to that
+ * level, every rung to its end. Without `act` it plans and measures and deletes nothing.
  * `onAction` sees each action once it is decided.
  */
 export async function runMaintenanceAtLevel({
@@ -116,10 +130,13 @@ export async function runMaintenanceAtLevel({
     onAction?.(action);
   };
   const now = Date.now();
-  const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
+  const measureFailed = (target: string) =>
+    blocked.push(`Could not measure ${target}`);
   const sizes = [
     ...(await measureSizes(now, measureFailed, operation)),
-    ...(deviceSweepIsScoped(env) ? [] : await measureOwnedDevices(now, measureFailed)),
+    ...(deviceSweepIsScoped(env)
+      ? []
+      : await measureOwnedDevices(now, measureFailed)),
   ];
   const plan = await plannedMaintenance(sizes, settings, {
     caps: true,
@@ -130,7 +147,15 @@ export async function runMaintenanceAtLevel({
   });
   blocked.push(...plan.blocked);
   for (const skip of plan.skips)
-    take({ rung: null, kind: 'keep', target: skip.target, outcome: 'kept', bytes: 0, reason: '', detail: skip.reason });
+    take({
+      rung: null,
+      kind: "keep",
+      target: skip.target,
+      outcome: "kept",
+      bytes: 0,
+      reason: "",
+      detail: skip.reason,
+    });
   const context = {
     settings,
     background: false,
@@ -138,12 +163,18 @@ export async function runMaintenanceAtLevel({
     ...(plan.worktreeSweep ? { worktreeSweep: plan.worktreeSweep } : {}),
     ...(operation ? { operation } : {}),
   };
-  for (const action of plan.actions.toSorted((a, b) => executionRank(a) - executionRank(b))) {
+  for (const action of plan.actions.toSorted(
+    (a, b) => executionRank(a) - executionRank(b),
+  )) {
     operation?.signal.throwIfAborted();
     if (!act) {
       take({
-        ...fromOutcome(action, { status: 'done', bytes: action.bytes, detail: 'stim gc would do this' }),
-        outcome: 'would',
+        ...fromOutcome(action, {
+          status: "done",
+          bytes: action.bytes,
+          detail: "stim gc would do this",
+        }),
+        outcome: "would",
       });
       continue;
     }
@@ -151,22 +182,43 @@ export async function runMaintenanceAtLevel({
     try {
       outcome = await executeAction(action, context);
     } catch (error) {
-      if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+      if (
+        isClaimUnavailable(error) ||
+        (error instanceof Error && "reportCleanup" in error)
+      )
+        throw error;
       operation?.signal.throwIfAborted();
-      outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+      outcome = {
+        status: "failed",
+        bytes: 0,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
     take(fromOutcome(action, outcome));
   }
-  if (level !== 'normal') {
+  for (const action of await runDormantReduction({
+    act,
+    trigger: "gc",
+    ...(operation ? { operation } : {}),
+    protectedRoot: context.protectedRoot,
+  }))
+    take(fromLadder(action, true));
+  if (level !== "normal") {
     const ladder = await runForcedLadder({
       levels: [level],
       act,
       why: `stim gc at ${level}`,
-      trigger: 'gc',
+      trigger: "gc",
       operation,
       protectedRoot: context.protectedRoot,
     });
-    for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
+    for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? [])
+      take(fromLadder(action));
   }
-  return { pressure, level, actions, blocked };
+  const usage = sizes
+    .filter((size) => size.bytes > 0)
+    .toSorted((a, b) => b.bytes - a.bytes)
+    .slice(0, 10)
+    .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
+  return { pressure, level, actions, blocked, usage };
 }

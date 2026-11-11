@@ -1,27 +1,40 @@
-import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
+import { isClaimUnavailable } from "@stim-cli/core/ownership-claim";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { LOG_ROTATE_BYTES, type StimContext } from "@stim-cli/core";
 import {
   daemonNdjsonFile,
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
   type DaemonWorkspaceDecision,
-} from '@stim-cli/core/state';
-import { processContext } from '../cli-operation.ts';
-import { runMaintenance } from '../stimd/passes/run.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
-import { loadConfig, type Config } from '../workspace/config.ts';
-import { requestDaemonTick, stimdRefused } from './client.ts';
-import { runBootedParkedPass } from './booted-parked.ts';
-import { runDormantDependencies } from './dependencies.ts';
-import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
-import { daemonMode } from './mode.ts';
-import { runIdlePass, type IdlePassInput } from './idle.ts';
-import { idleOutputBytes, runLadder } from './ladder.ts';
-import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
-import { classifyPressure, diskThresholds } from './pressure.ts';
-import { runDormantPass } from './stages.ts';
+} from "@stim-cli/core/state";
+import { processContext } from "../cli-operation.ts";
+import { runMaintenance } from "../stimd/passes/run.ts";
+import { createNdjsonWriter } from "../ndjson.ts";
+import { loadConfig, type Config } from "../workspace/config.ts";
+import { requestDaemonTick, stimdRefused } from "./client.ts";
+import { runBootedParkedPass } from "./booted-parked.ts";
+import { runDormantDependencies } from "./dependencies.ts";
+import {
+  createFingerprintPrecompute,
+  type PrecomputeInput,
+} from "./fingerprint-precompute.ts";
+import { daemonMode } from "./mode.ts";
+import { runIdlePass, type IdlePassInput } from "./idle.ts";
+import { idleOutputBytes, runLadder } from "./ladder.ts";
+import {
+  measureDisk,
+  measureMemory,
+  measureTick,
+  type TickMeasurement,
+} from "./measure.ts";
+import { classifyPressure, diskThresholds } from "./pressure.ts";
+import {
+  clearStoppedOutputs,
+  dormantAfterMs,
+  runDormantPass,
+  stoppedOutputCandidates,
+} from "./stages.ts";
 
 interface HomePassPhases {
   measureMs: number;
@@ -54,7 +67,7 @@ export async function runHomePasses({
   signal,
 }: {
   act: boolean;
-  log: IdlePassInput['log'];
+  log: IdlePassInput["log"];
   memoryWarningSince?: string | null;
   signal?: AbortSignal;
 }): Promise<HomePasses> {
@@ -67,14 +80,27 @@ export async function runHomePasses({
   };
   const config = loadConfig();
   const now = Date.now();
-  const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
-  const measured = await measureTick(config, now, { signal: operation.signal, operation });
+  const operation = processContext(
+    process.cwd(),
+    signal ?? new AbortController().signal,
+  );
+  const measured = await measureTick(config, now, {
+    signal: operation.signal,
+    operation,
+  });
   operation.signal.throwIfAborted();
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
-  if (error) log('warn', 'pressure_settings_invalid', `${error}; that disk threshold is off until it is fixed`);
+  if (error)
+    log(
+      "warn",
+      "pressure_settings_invalid",
+      `${error}; that disk threshold is off until it is fixed`,
+    );
   let warningSince = memoryWarningSince;
-  const classify = (measurement: Pick<TickMeasurement['measurement'], 'disk' | 'memory'>): DaemonPressure => {
+  const classify = (
+    measurement: Pick<TickMeasurement["measurement"], "disk" | "memory">,
+  ): DaemonPressure => {
     const pressure = classifyPressure({
       ...measurement,
       thresholds,
@@ -88,7 +114,12 @@ export async function runHomePasses({
   const memoryLevel = measured.measurement.memory.level;
   const parkedActions = await runBootedParkedPass({
     sims: measured.sims,
-    memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
+    memory:
+      memoryLevel !== "normal"
+        ? memoryLevel
+        : pressure.memory !== "normal"
+          ? "warning"
+          : memoryLevel,
     act,
     log,
     operation,
@@ -103,36 +134,47 @@ export async function runHomePasses({
     act,
     log,
     operation,
-    ...(pressure.level === 'normal' ? {} : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
+    ...(pressure.level === "normal"
+      ? {}
+      : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
   });
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
-    ...(pressure.level === 'normal'
+    ...(pressure.level === "normal"
       ? []
       : workspaces.flatMap((entry) =>
-          entry.outcome === 'idle' || entry.outcome === 'would-idle'
+          entry.outcome === "idle" || entry.outcome === "would-idle"
             ? [
                 {
                   rung: 1,
-                  kind: 'idle-stage',
+                  kind: "idle-stage",
                   target: entry.path,
                   workspace: entry.path,
-                  outcome: entry.outcome === 'idle' ? ('done' as const) : ('would' as const),
+                  outcome:
+                    entry.outcome === "idle"
+                      ? ("done" as const)
+                      : ("would" as const),
                   bytes: entry.freedBytes ?? 0,
                   detail: entry.detail,
-                  ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
+                  ...(entry.outcome === "idle"
+                    ? { restore: "stim revive" }
+                    : {}),
                 },
               ]
             : [],
         )),
   ];
   const idleMs = lap();
-  const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
+  const reading = {
+    devices: measured.devices,
+    simsFailed: measured.sims === null,
+    operation,
+  };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
-  if (config && pressure.level !== 'normal') {
+  if (config && pressure.level !== "normal") {
     const ladder = await runLadder(
       {
         config,
@@ -145,11 +187,14 @@ export async function runHomePasses({
             measureDisk(config, operation.signal),
             measureMemory(operation.signal, operation),
           ]);
-          const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
-          if (cleanup?.status === 'rejected') throw cleanup.reason;
+          const cleanup = results.find(
+            (result) =>
+              result.status === "rejected" && isClaimUnavailable(result.reason),
+          );
+          if (cleanup?.status === "rejected") throw cleanup.reason;
           operation.signal.throwIfAborted();
-          if (results[0].status === 'rejected') throw results[0].reason;
-          if (results[1].status === 'rejected') throw results[1].reason;
+          if (results[0].status === "rejected") throw results[0].reason;
+          if (results[1].status === "rejected") throw results[1].reason;
           const [disk, memory] = [results[0].value, results[1].value];
           return classify({ disk, memory });
         },
@@ -175,7 +220,13 @@ export async function runHomePasses({
 
 export interface MaintenanceLane {
   /** Starts the slow passes from this tick's passes, unless the last ones still run. */
-  start(passes: Pick<HomePasses, 'config' | 'measured' | 'operation' | 'workspaces' | 'pressure'>, act: boolean): void;
+  start(
+    passes: Pick<
+      HomePasses,
+      "config" | "measured" | "operation" | "workspaces" | "pressure"
+    >,
+    act: boolean,
+  ): void;
   running(): boolean;
   /** The actions the slow passes took since the last call. */
   take(): DaemonLadderAction[];
@@ -192,12 +243,14 @@ export interface MaintenanceLane {
  */
 export function createMaintenanceLane(
   log: (
-    level: 'debug' | 'info' | 'warn' | 'error',
+    level: "debug" | "info" | "warn" | "error",
     event: string,
     msg: string,
     fields?: Record<string, unknown>,
   ) => void,
-  precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
+  precompute: {
+    run(input: PrecomputeInput, act: boolean): Promise<void>;
+  } = createFingerprintPrecompute(log),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -216,32 +269,64 @@ export function createMaintenanceLane(
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
       current = (async () => {
-        const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-        await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
-          if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
-          operation.signal.throwIfAborted();
-          log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
-        });
+        const reading = {
+          devices: measured.devices,
+          simsFailed: measured.sims === null,
+          operation,
+        };
+        await precompute
+          .run({ config, workspaces, pressure, operation }, act)
+          .catch((error: unknown) => {
+            if (
+              isClaimUnavailable(error) ||
+              (error instanceof Error && "reportCleanup" in error)
+            )
+              throw error;
+            operation.signal.throwIfAborted();
+            log(
+              "warn",
+              "daemon_fingerprint_precompute",
+              error instanceof Error ? error.message : String(error),
+            );
+          });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({ config, act, log, ...reading });
+        const deleted = await runDormantDependencies({
+          config,
+          act,
+          log,
+          ...reading,
+        });
         taken.push(...deleted);
         const dependenciesMs = lap();
-        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
+        const skipped = await runMaintenance("daemon", {
+          report: !act,
+          tick: { operation, measured },
+        });
         const maintenanceMs = lap();
         const tookMs = Math.round(performance.now() - started);
-        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
-          tookMs,
-          phases: { fingerprintMs, dependenciesMs, maintenanceMs },
-          eventLoopDelay: {
-            maxMs: Math.round(loopDelay.max / 1e6),
-            p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
+        log(
+          "debug",
+          "daemon_maintenance",
+          `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ""}`,
+          {
+            tookMs,
+            phases: { fingerprintMs, dependenciesMs, maintenanceMs },
+            eventLoopDelay: {
+              maxMs: Math.round(loopDelay.max / 1e6),
+              p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
+            },
+            ...(skipped ? { skipped } : {}),
           },
-          ...(skipped ? { skipped } : {}),
-        });
+        );
       })()
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) failure = error;
-          log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
+          if (error instanceof Error && "reportCleanup" in error)
+            failure = error;
+          log(
+            "warn",
+            "daemon_maintenance_failed",
+            error instanceof Error ? error.message : String(error),
+          );
         })
         .finally(() => {
           loopDelay.disable();
@@ -266,14 +351,21 @@ export function createMaintenanceLane(
  * idle stage is the daemon's activity pass. Measures and lists devices only when the level is above normal, and
  * nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
-async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
+async function runCommandLadder(
+  trigger: string,
+  env: NodeJS.ProcessEnv,
+  protectedRoot?: string,
+): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
-  if (!config || mode === 'off') return;
+  if (!config || mode === "off") return;
   const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
   const classify = async () => {
-    const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+    const [disk, memory] = await Promise.all([
+      measureDisk(config),
+      measureMemory(),
+    ]);
     const pressure = classifyPressure({
       disk,
       memory,
@@ -285,15 +377,18 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
     return pressure;
   };
   const pressure = await classify();
-  if (pressure.level === 'normal') return;
+  if (pressure.level === "normal") return;
   const measured = await measureTick(config, Date.now());
-  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(daemonNdjsonFile(), {
+    maxBytes: LOG_ROTATE_BYTES,
+  });
   try {
     await runLadder(
       {
         config,
-        act: mode === 'on',
-        log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
+        act: mode === "on",
+        log: (level, event, msg, fields = {}) =>
+          writer.write({ src: trigger, level, event, msg, ...fields }),
         devices: measured.devices,
         sims: measured.sims,
         simsFailed: measured.sims === null,
@@ -313,7 +408,7 @@ export interface ForcedLadder {
   pressure: DaemonPressure;
   /** Each workspace with something running, as the activity pass decides at `idle.minutes`; empty when acting. */
   running: DaemonWorkspaceDecision[];
-  levels: { level: 'high' | 'critical'; actions: DaemonLadderAction[] }[];
+  levels: { level: "high" | "critical"; actions: DaemonLadderAction[] }[];
 }
 
 /**
@@ -330,7 +425,7 @@ export async function runForcedLadder({
   operation,
   protectedRoot,
 }: {
-  levels: readonly ('high' | 'critical')[];
+  levels: readonly ("high" | "critical")[];
   act: boolean;
   why: string;
   trigger: string;
@@ -346,11 +441,14 @@ export async function runForcedLadder({
   const pressure = classifyPressure({
     ...measured.measurement,
     thresholds,
-    previousWarningSince: readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
+    previousWarningSince:
+      readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
     now,
   });
-  const writer = act ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES }) : null;
-  const log: IdlePassInput['log'] = (logLevel, event, msg, fields = {}) =>
+  const writer = act
+    ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES })
+    : null;
+  const log: IdlePassInput["log"] = (logLevel, event, msg, fields = {}) =>
     writer?.write({ src: trigger, level: logLevel, event, msg, ...fields });
   try {
     const reading = {
@@ -362,20 +460,41 @@ export async function runForcedLadder({
       log,
     };
     const running = act ? [] : await runIdlePass({ ...reading, act: false });
-    const result: ForcedLadder['levels'] = [];
+    const result: ForcedLadder["levels"] = [];
     for (const level of levels) {
       const actions: DaemonLadderAction[] = [];
-      for (const entry of await runIdlePass({ ...reading, act, pressure: { level, reasons: [why] } })) {
-        if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
+      for (const entry of await runIdlePass({
+        ...reading,
+        act,
+        pressure: { level, reasons: [why] },
+      })) {
+        if (
+          entry.outcome !== "idle" &&
+          entry.outcome !== "would-idle" &&
+          entry.outcome !== "failed"
+        )
+          continue;
         actions.push({
           rung: 1,
-          kind: 'idle-stage',
+          kind: "idle-stage",
           target: entry.path,
           workspace: entry.path,
-          outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
-          bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
-          detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
-          ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
+          outcome:
+            entry.outcome === "idle"
+              ? "done"
+              : entry.outcome === "would-idle"
+                ? "would"
+                : "failed",
+          bytes:
+            entry.freedBytes ??
+            (entry.outcome === "would-idle"
+              ? await idleOutputBytes(entry.path, config)
+              : 0),
+          detail:
+            entry.outcome === "would-idle"
+              ? "stim gc would do this"
+              : entry.detail,
+          ...(entry.outcome === "idle" ? { restore: "stim revive" } : {}),
         });
       }
       const ladder = await runLadder(
@@ -403,6 +522,87 @@ export async function runForcedLadder({
 }
 
 /**
+ * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: its regenerable build
+ * outputs deleted, then the dormant stage (its owned devices deleted, its logs archived), then the node_modules and
+ * Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
+ * with the stage off.
+ */
+export async function runDormantReduction({
+  act,
+  trigger,
+  operation,
+  protectedRoot,
+}: {
+  act: boolean;
+  trigger: string;
+  operation?: StimContext;
+  protectedRoot?: string;
+}): Promise<DaemonLadderAction[]> {
+  const config = loadConfig();
+  const afterMs = dormantAfterMs(config);
+  if (!config || afterMs <= 0) return [];
+  const measured = await measureTick(config, Date.now(), {
+    probe: act,
+    signal: operation?.signal,
+    operation,
+  });
+  const writer = act
+    ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES })
+    : null;
+  const log: IdlePassInput["log"] = (logLevel, event, msg, fields = {}) =>
+    writer?.write({ src: trigger, level: logLevel, event, msg, ...fields });
+  const reading = {
+    devices: measured.devices,
+    simsFailed: measured.sims === null,
+    operation,
+    ...(protectedRoot ? { protectedRoot } : {}),
+  };
+  try {
+    const actions: DaemonLadderAction[] = [];
+    for (const candidate of await stoppedOutputCandidates(
+      config,
+      reading,
+      afterMs,
+    )) {
+      const result = act
+        ? await clearStoppedOutputs(candidate, config, afterMs, operation)
+        : {
+            outcome: "would" as const,
+            bytes: await idleOutputBytes(candidate.path, config),
+            detail: "stim gc would do this",
+          };
+      if (result)
+        actions.push({
+          rung: 4,
+          kind: "delete-build-outputs",
+          target: candidate.path,
+          workspace: candidate.path,
+          ...result,
+          ...(result.outcome === "done"
+            ? {
+                restore:
+                  "the next stim ios or stim android, from the build cache when nothing changed",
+              }
+            : {}),
+        });
+    }
+    actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+    actions.push(
+      ...(await runDormantDependencies({
+        config,
+        act,
+        log,
+        ...reading,
+        force: true,
+      })),
+    );
+    return actions;
+  } finally {
+    writer?.close();
+  }
+}
+
+/**
  * Runs the pressure ladder now: one daemon tick when a daemon runs, else, unless a stimd of another build refused this
  * process and runs its own, the ladder in this process, which never takes `protectedRoot`.
  */
@@ -414,6 +614,6 @@ export async function runLadderNow(
   if ((await requestDaemonTick(env, signal)) || stimdRefused()) return;
   signal?.throwIfAborted();
   try {
-    await runCommandLadder('command', env, protectedRoot);
+    await runCommandLadder("command", env, protectedRoot);
   } catch {}
 }
