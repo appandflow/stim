@@ -40,6 +40,8 @@ function typeText(type) {
       return 'object';
     case 'bundle-url':
       return 'bundle URL';
+    case 'plugin-ref':
+      return type.choices ? type.choices.map(code).join(', ') : `${type.plugin} plugin: a module path or package name`;
   }
 }
 

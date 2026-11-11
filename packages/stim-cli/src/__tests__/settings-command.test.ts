@@ -657,3 +657,27 @@ test('build and device approvals are independent and pending machines cannot rep
   expect(loadConfig()?.remote).toMatchObject({ buildPoolDisabled: ['local'] });
   expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
 });
+
+test.each([
+  ['a module that is not installed', null, [expect.stringMatching(/^Warning: \.\/provider does not resolve from /)]],
+  [
+    'a module that speaks another integer',
+    { 'cache-provider': 2 },
+    [expect.stringMatching(/speaks cache-provider 2, this stim speaks 1/)],
+  ],
+  ['a cache provider this Stim accepts', { 'cache-provider': 1 }, []],
+])('settings set cache.provider writes %s and warns only when Stim cannot load it', async (_, kinds, expected) => {
+  if (kinds) {
+    mkdirSync(join(app, 'provider'));
+    writeFileSync(
+      join(app, 'provider', 'package.json'),
+      JSON.stringify({ name: 'provider', main: 'index.mjs', stimPlugin: { kinds } }),
+    );
+    writeFileSync(join(app, 'provider', 'index.mjs'), 'throw new Error("settings set imported the module");\n');
+  }
+  const { note, exitCode } = await settings(['set', 'cache.provider', './provider', '--scope', 'committed']);
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(join(app, '.stim.json'), 'utf8'))).toEqual({ cache: { provider: './provider' } });
+  const warnings = note.filter((line) => line.startsWith('Warning:'));
+  expect(warnings).toEqual(expected);
+});

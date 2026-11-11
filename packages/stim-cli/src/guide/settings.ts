@@ -563,6 +563,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         This module is EXECUTABLE CODE that every worktree of
                         this app runs; review a committed value the way
                         you review a build script.
+                        \`stim plugin list\` and doctor report a value that
+                        does not resolve or declares another cache-provider
+                        integer; \`stim settings set\` warns and still writes.
                         \`stim ios\` and \`stim android\` use it unless
                         artifact or remote artifact caching is disabled. Metro
                         uses its local filesystem store.

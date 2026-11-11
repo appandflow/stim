@@ -49,6 +49,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['gc', () => import('../src/commands/gc.ts')],
   ['guide', () => import('../src/commands/guide.ts')],
   ['engine', () => import('../src/commands/engine.ts')],
+  ['plugin', () => import('../src/commands/plugin.ts')],
 ]);
 
 const opBacked = new WeakSet<Command>();

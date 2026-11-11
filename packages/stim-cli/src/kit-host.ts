@@ -1,5 +1,11 @@
+import { kindError, projectPlugin } from '@stim-cli/core/plugin-loader';
+import type { PluginKind } from '@stim-cli/core/state';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { KitReply, KitRequest } from './kit-worker.ts';
+import { BUILTIN_PREFIX, builtinPlugin } from './plugin-builtins.ts';
 import { spawnEntry } from './spawn-entry.ts';
 
 const LOAD_TIMEOUT_MS = 10_000;
@@ -7,6 +13,8 @@ const LOAD_TIMEOUT_MS = 10_000;
 /** A plugin module's instance in a worker thread; every argument and result crosses a `MessagePort`. */
 export interface KitWorker {
   id: string;
+  /** The module's own `id` export, when it is a string. */
+  moduleId: string | null;
   /** The capabilities the instance has, of those asked for. */
   members: string[];
   /** The module-level capabilities the module has, of those asked for, as dotted paths such as `client.access`. */
@@ -43,6 +51,26 @@ function callHost(host: Record<string, unknown> | undefined, member: string, arg
 }
 
 /**
+ * Where the kit worker loads `reference` from, once its manifest declares `version` of `kind`: a package name or path
+ * resolved from `baseDir`, or `builtin:<name>` for a plugin this Stim bundles.
+ */
+export async function kitModuleHref(
+  reference: string,
+  baseDir: string,
+  kind: PluginKind,
+  version: number,
+): Promise<{ href: string } | { unavailable: string }> {
+  if (reference.startsWith(BUILTIN_PREFIX)) {
+    const builtin = builtinPlugin(reference);
+    if (!builtin || builtin.kind !== kind) return { unavailable: `this Stim bundles no ${kind} named ${reference}` };
+    return builtin.untested ? { unavailable: `${reference} is not tested: ${builtin.untested}` } : { href: reference };
+  }
+  const mismatch = await kindError(projectPlugin(reference, baseDir), reference, kind, version);
+  if (mismatch) return { unavailable: mismatch };
+  return { href: pathToFileURL(createRequire(join(baseDir, 'package.json')).resolve(reference)).href };
+}
+
+/**
  * Loads `href` in a worker thread, where a runtime `import 'stim'` fails, and calls its `factory` with `input`.
  * Resolves to `{ unavailable }` with the reason when the module does not load or the factory fails.
  */
@@ -50,6 +78,7 @@ export async function startKitWorker({
   href,
   factory,
   input,
+  env,
   capabilities,
   moduleCapabilities = [],
   idMember = 'id',
@@ -60,6 +89,8 @@ export async function startKitWorker({
   href: string;
   factory: string;
   input: unknown;
+  /** The worker's whole `process.env`; nothing of this process's environment reaches the module otherwise. */
+  env: NodeJS.ProcessEnv;
   /** The optional members of the kind's contract; one that is present and not a function fails the load. */
   capabilities: readonly string[];
   /** The module-level members the kit may call, as dotted paths. */
@@ -75,6 +106,9 @@ export async function startKitWorker({
   let worker: Worker;
   try {
     worker = new Worker(spawnEntry('kit-worker'), {
+      env: { ...env },
+      stdout: true,
+      stderr: true,
       workerData: {
         stimKit: true,
         href,
@@ -89,6 +123,8 @@ export async function startKitWorker({
   } catch (error) {
     return { unavailable: `the input could not be cloned: ${error instanceof Error ? error.message : String(error)}` };
   }
+  worker.stdout.pipe(process.stderr, { end: false });
+  worker.stderr.pipe(process.stderr, { end: false });
   const pending = new Map<number, Pending>();
   const listeners = new Map<number, (value: unknown) => void>();
   const failures: string[] = [];
@@ -182,6 +218,7 @@ export async function startKitWorker({
   }
   return {
     id: first.id,
+    moduleId: first.moduleId,
     members: first.members,
     moduleMembers: first.moduleMembers,
     failures,

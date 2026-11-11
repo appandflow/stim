@@ -18,7 +18,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
 `ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
-`status`, `stats`, `gc`, `guide`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
+`status`, `stats`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project

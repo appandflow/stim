@@ -37,6 +37,15 @@ function reason(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split('\n')[0]?.trim() || 'unknown error';
 }
 
+/** Why a manifest that does not declare `kind` at all is refused; null when it declares it. */
+function undeclaredKind(kinds: unknown, reference: string, kind: string, version: number): string | null {
+  if (!isRecord(kinds))
+    return `${reference} declares no stimPlugin.kinds in its package.json, so it is not a Stim plugin: a plugin declares "stimPlugin": { "kinds": { "${kind}": ${version} } }`;
+  if (kinds[kind] === undefined)
+    return `${reference} is not a ${kind} plugin: its stimPlugin.kinds declares ${Object.keys(kinds).join(', ') || 'no kind'}`;
+  return null;
+}
+
 // compat C15 permanent
 export async function kindError(
   source: PluginSource,
@@ -49,7 +58,8 @@ export async function kindError(
   const kinds = isRecord(plugin) ? plugin.kinds : undefined;
   const found = isRecord(kinds) ? kinds[kind] : undefined;
   if (Number.isInteger(found) && found === version) return null;
-  return `plugin ${reference} speaks ${kind} ${String(found)}, this stim speaks ${version}: stim engine update`;
+  const engine = `plugin ${reference} speaks ${kind} ${String(found)}, this stim speaks ${version}: stim engine update`;
+  return undeclaredKind(kinds, reference, kind, version) ?? engine;
 }
 // compat end
 

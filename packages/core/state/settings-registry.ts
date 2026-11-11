@@ -24,7 +24,30 @@ export type SettingType =
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
   | { kind: 'object' }
-  | { kind: 'bundle-url' };
+  | { kind: 'bundle-url' }
+  | PluginRefType;
+
+export type PluginKind = 'cache-provider' | 'transport' | 'agent-driver';
+
+/**
+ * A setting that names a plugin of one kind. With `choices` it is closed and names only those built-ins; without, it
+ * takes a module path or package name. The schema and the settings payload show a closed reference as `choice` and an
+ * open one as `string`; whether the module exists is checked only by `stim settings set`, `stim plugin list` and
+ * doctor, never by the commands that use it.
+ */
+export interface PluginRefType {
+  kind: 'plugin-ref';
+  plugin: PluginKind;
+  choices?: readonly string[];
+}
+
+/** The kind a plugin reference shows as outside the registry: `choice` when closed, else `string`. */
+export function shownSettingType(type: SettingType): Exclude<SettingType, PluginRefType> {
+  if (type.kind !== 'plugin-ref') return type;
+  return type.choices
+    ? { kind: 'choice', choices: type.choices }
+    : { kind: 'string', pattern: '\\S', patternHelp: 'a module path or package name' };
+}
 
 /**
  * One setting Stim reads. `scopes` are the layers the setting may be written to;
@@ -638,7 +661,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'cache.provider',
-    type: { kind: 'string', pattern: '\\S', patternHelp: 'a module path or package name' },
+    type: { kind: 'plugin-ref', plugin: 'cache-provider' },
     scopes: PROJECT,
     description: 'Second-tier cache provider module',
   },
@@ -948,7 +971,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'hosting.agentDriver',
-    type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
+    type: { kind: 'plugin-ref', plugin: 'agent-driver', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,
     default: 'none',
     description:
@@ -1158,7 +1181,8 @@ function bundleUrlAccepts(value: unknown, key: string): boolean {
   }
 }
 
-export function expectedShape(type: SettingType): string {
+export function expectedShape(declared: SettingType): string {
+  const type = shownSettingType(declared);
   switch (type.kind) {
     case 'boolean':
       return 'true or false';
@@ -1180,7 +1204,7 @@ export function expectedShape(type: SettingType): string {
 }
 
 export function acceptsShape(setting: SettingDefinition, value: unknown): boolean {
-  const { type } = setting;
+  const type = shownSettingType(setting.type);
   switch (type.kind) {
     case 'boolean':
       return typeof value === 'boolean';
@@ -1217,7 +1241,7 @@ function numberBounds(type: {
 export function settingValueError(definition: SettingDefinition | string, value: unknown): string | null {
   const setting = typeof definition === 'string' ? settingDefinition(definition) : definition;
   if (!setting) throw new Error(`Unknown Stim setting: ${definition}`);
-  const { type } = setting;
+  const type = shownSettingType(setting.type);
   if (!acceptsShape(setting, value)) {
     return type.kind === 'number' ? numberBounds(type) : expectedShape(type);
   }

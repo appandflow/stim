@@ -246,6 +246,23 @@ execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
   stdio: 'pipe',
 });
 
+const pluginHome = mkdtempSync(join(tmpdir(), 'stim-plugin-runtime-'));
+try {
+  const plugin = (...args) =>
+    JSON.parse(
+      execFileSync(process.execPath, [join(repositoryRoot, 'packages/stim-cli/dist/cli.mjs'), 'plugin', ...args], {
+        cwd: pluginHome,
+        env: { ...process.env, STIM_HOME: pluginHome },
+        encoding: 'utf8',
+      }),
+    );
+  assert.ok(plugin('list', '--json').plugins.some((each) => each.name === 'builtin:agent-device'));
+  for (const builtin of ['builtin:local', 'builtin:agent-device'])
+    assert.equal(plugin('test', builtin, '--json').passed, true, `the bundled kit worker loads ${builtin}`);
+} finally {
+  rmSync(pluginHome, { recursive: true, force: true });
+}
+
 const statsHome = mkdtempSync(join(tmpdir(), 'stim-stats-runtime-'));
 try {
   writeFileSync(join(statsHome, 'stats.json'), JSON.stringify({ version: 1, machine: { ios: { runs: 3, hits: 2 } } }));
