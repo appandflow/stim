@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { ambientContext } from '@stim-cli/core';
-import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
+import { deviceSlotKey, deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
@@ -51,6 +51,8 @@ import {
   writeOfflineOverrides,
   type SimSlimOps,
 } from './simslim.ts';
+import { stopDeviceLogStream } from '../daemon/client.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import {
@@ -338,7 +340,8 @@ export async function ensureOwnedIosDevice({
             slot,
             desired,
             runtime: model.runtime,
-            shutdownFirst: action === 'rewrite' ? () => shutDownForSlimRewrite(sim.udid, projectPath, out) : undefined,
+            shutdownFirst:
+              action === 'rewrite' ? () => shutDownForSlimRewrite(sim.udid, projectPath, slot, out) : undefined,
             boot:
               boot &&
               (async (beforeBoot) => {
@@ -452,7 +455,7 @@ export async function ensureOwnedIosDevice({
           desired,
           runtime: choice.runtime,
           shutdownFirst:
-            action === 'rewrite' ? () => shutDownForSlimRewrite(adopted.deviceUdid, projectPath, out) : undefined,
+            action === 'rewrite' ? () => shutDownForSlimRewrite(adopted.deviceUdid, projectPath, slot, out) : undefined,
           boot: async (beforeBoot) => {
             await boot(beforeBoot);
             await resetAdoptedSim(adopted.deviceUdid, out);
@@ -714,10 +717,24 @@ function bootedSlimAction({
   }
 }
 
-async function shutDownForSlimRewrite(udid: string, projectPath: string, out: Notify): Promise<boolean> {
+async function stopSlotLogStream(projectPath: string, slot: string | undefined): Promise<void> {
+  const entry: unknown = readWorkspaceState(projectPath)?.collectors?.[deviceSlotKey('ios', slot)];
+  if (!isJsonObject(entry) || entry.kind !== 'stream' || typeof entry.streamId !== 'string') return;
+  await stopDeviceLogStream(projectPath, 'ios', slot ?? 'default', entry.streamId).catch(() => {});
+}
+
+async function shutDownForSlimRewrite(
+  udid: string,
+  projectPath: string,
+  slot: string | undefined,
+  out: Notify,
+): Promise<boolean> {
   out(chalk.dim(phaseLine('device', `shutting down ${udid} to change its launchd overrides`)));
   const stopped = await teardownOwnedIosSim(udid, { workspace: projectPath });
-  if (stopped.status === 'torn-down') return true;
+  if (stopped.status === 'torn-down') {
+    await stopSlotLogStream(projectPath, slot);
+    return true;
+  }
   out(
     chalk.yellow(
       phaseLine(
