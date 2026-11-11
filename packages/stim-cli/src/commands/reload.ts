@@ -29,6 +29,7 @@ import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '..
 import {
   readRemoteSession,
   readWorkspaceLaunches,
+  revivesWithoutMetro,
   type RemoteSessionRecord,
   type WorkspaceLaunchPlatform,
   type WorkspaceLaunchRecord,
@@ -224,7 +225,7 @@ async function inspectTarget(
   slot = 'default',
 ): Promise<LiveTarget | TargetFailure> {
   const runCommand = nativeRunCommand(platform, slot);
-  const revivable = !record.release && record.runtime !== 'process';
+  const revivable = revivesWithoutMetro(platform, record) || (!record.release && record.runtime !== 'process');
   if (platform === 'ios') {
     const configured = project.platforms?.ios;
     if (!configured?.owned || configured.deviceUdid !== record.deviceId) {

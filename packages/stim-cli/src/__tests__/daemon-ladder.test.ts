@@ -297,7 +297,7 @@ describe('the dormant stage', () => {
     expect(actions[0]?.bytes).toBeGreaterThanOrEqual(256 * 1024);
   });
 
-  test('the restore hint names stim revive while the idle stop survives and no device was deleted', async () => {
+  test('the restore hint names stim revive while the idle stop or a native-process launch survives and no device was deleted', async () => {
     const root = join(projects, 'revivable');
     mkdirSync(root);
     ensureWorkspaceStorage(root);
@@ -316,12 +316,33 @@ describe('the dormant stage', () => {
     mkdirSync(workspaceLogsDir(other), { recursive: true });
     writeFileSync(join(workspaceLogsDir(other), 'metro.ndjson'), '{}\n');
 
+    const native = join(projects, 'native-process');
+    mkdirSync(native);
+    ensureWorkspaceStorage(native);
+    upsertProject(native, {});
+    recordWorkspaceUse(native, new Date(Date.now() - 4 * DAY_MS));
+    writeWorkspaceState(native, {
+      launches: {
+        ios: {
+          appId: 'com.example.exact',
+          deviceId: 'U9',
+          metroPort: null,
+          release: false,
+          runtime: 'process',
+          launchedAt: new Date(Date.now() - 4 * DAY_MS).toISOString(),
+        },
+      },
+    });
+    mkdirSync(workspaceLogsDir(native), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(native), 'metro.ndjson'), '{}\n');
+
     const actions = await dormant();
 
     expect(actions.map(({ target, restore }) => [target, restore])).toEqual(
       expect.arrayContaining([
         [root, 'stim revive'],
         [other, 'stim ios or stim android'],
+        [native, 'stim revive'],
       ]),
     );
     expect(actions.find(({ target }) => target === root)?.detail).toMatch(/stim revive resumes it\.$/);
