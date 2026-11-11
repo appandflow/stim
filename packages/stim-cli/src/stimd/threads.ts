@@ -1,6 +1,8 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
+import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { reportChildOf, WorkspaceProcessCleanupError, type ReportChild } from '../engine/workspace-process-error.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 type ThreadName = 'passes' | 'measure';
@@ -24,7 +26,15 @@ type FromThread =
       fields: Record<string, unknown>;
     }
   | { type: 'done'; result: DaemonLadderAction[] }
-  | { type: 'failed'; message: string; code?: string; remedy?: string; reportCleanup?: boolean };
+  | {
+      type: 'failed';
+      message: string;
+      code?: string;
+      remedy?: string;
+      reportCleanup?: boolean;
+      reportChild?: ReportChild;
+      claims?: ClaimHandle[];
+    };
 
 interface Thread {
   worker: Worker;
@@ -70,6 +80,8 @@ export function createThreadTable(log: Log): ThreadTable {
             ...(message.code ? { code: message.code } : {}),
             ...(message.remedy ? { remedy: message.remedy } : {}),
             ...(message.reportCleanup ? { reportCleanup: true } : {}),
+            ...(message.reportChild ? { reportChild: message.reportChild } : {}),
+            ...(message.claims ? { claims: message.claims } : {}),
           }),
         );
     });
@@ -136,7 +148,7 @@ export function createThreadTable(log: Log): ThreadTable {
 export function createPassesLane(
   threads: ThreadTable,
   log: Log,
-  onCleanupFailure?: (error: unknown) => void,
+  onCleanupFailure?: (error: unknown) => boolean,
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -155,10 +167,7 @@ export function createPassesLane(
         })
         .then((actions) => void taken.push(...actions))
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) {
-            failure = error;
-            onCleanupFailure?.(error);
-          }
+          if (error instanceof Error && 'reportCleanup' in error && onCleanupFailure?.(error) !== true) failure = error;
           log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
@@ -206,6 +215,8 @@ else if (thread && parentPort) {
       }
     } catch (error) {
       const cleanup = error instanceof Error && 'reportCleanup' in error;
+      if (cleanup) lane = undefined;
+      const child = cleanup ? reportChildOf(error) : null;
       port.postMessage({
         type: 'failed',
         message: signal.aborted && !cleanup ? 'aborted' : error instanceof Error ? error.message : String(error),
@@ -218,6 +229,8 @@ else if (thread && parentPort) {
               ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
                 ? { remedy: error.remedy }
                 : {}),
+              ...(child ? { reportChild: child } : {}),
+              ...(error instanceof WorkspaceProcessCleanupError ? { claims: [...error.claims] } : {}),
             }
           : {}),
       });

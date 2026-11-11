@@ -3,12 +3,8 @@ import { existsSync } from 'node:fs';
 import { workspaceName, type StimContext } from '@stim-cli/core';
 import { operationState } from './operation-state.ts';
 import { NATIVE_RUN_LOCK } from './native-run.ts';
-import { declareSpawnsOn, fenceDeclaredSpawns, stopDeclaringSpawnsOn } from './spawn-claims.ts';
-import {
-  withWorkspaceProcessLock,
-  workspaceProcessLockPath,
-  WorkspaceProcessCleanupError,
-} from './workspace-process-lock.ts';
+import { fenceDeclaredSpawns } from './spawn-claims.ts';
+import { withWorkspaceProcessLock, workspaceProcessLockPath } from './workspace-process-lock.ts';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
@@ -59,23 +55,15 @@ export async function withFingerprintOwnership<T>(
     }
     if (admissionFailure) throw admissionFailure.error;
   }
-  let retained = false;
   let outcome: { value: T } | { error: unknown };
   try {
     signal.throwIfAborted();
-    if (engineClaim) declareSpawnsOn(context, engineClaim);
     outcome = { value: await withWorkspaceOwnership(context, root, work, signal) };
   } catch (error) {
-    retained = Boolean(
-      engineClaim && error instanceof WorkspaceProcessCleanupError && error.claims.includes(engineClaim),
-    );
     outcome = { error };
   }
-  if (engineClaim) {
-    stopDeclaringSpawnsOn(context, engineClaim);
-    if (!retained && !releaseClaim(engineClaim))
-      throw new ClaimUnavailableError('could not release the selected engine claim', { claimPath: engineClaim.path });
-  }
+  if (engineClaim && !releaseClaim(engineClaim))
+    throw new ClaimUnavailableError('could not release the selected engine claim', { claimPath: engineClaim.path });
   if ('error' in outcome) throw outcome.error;
   return outcome.value;
 }
