@@ -1,4 +1,6 @@
-import { isJsonObject } from '@stim-cli/core/state';
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * What a hosted client may send with one agent-device command. `flags` and `refused` classify every flag

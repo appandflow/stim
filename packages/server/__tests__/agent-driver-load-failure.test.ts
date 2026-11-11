@@ -9,10 +9,8 @@ const { missing } = vi.hoisted(() => ({
 }));
 
 vi.mock('@stim-cli/agent-driver-agent-device', () => ({
-  apiVersion: 1,
   id: 'agent-device',
   client: undefined,
-  actions: undefined,
   recover: undefined,
   createAgentDriver: () => {
     throw Object.assign(new Error(`Cannot find module '${missing}' imported from /Users/someone/stim/server.mjs`), {

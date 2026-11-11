@@ -19,7 +19,6 @@ import { readTargetError, archivedTimeline } from '../logs.ts';
 import { join } from 'node:path';
 import { recordedSpans, recordingDir, timelineMarkers, segmentKeyframe } from '../replay.ts';
 import { SLOT_NAME } from '../control.ts';
-import { agentActionReaders } from '../agent-drivers.ts';
 import type { PairedDevice } from '../registry.ts';
 import { type AuditRecord, appendAudit } from '../actions.ts';
 import { homedir } from 'node:os';
@@ -121,20 +120,18 @@ export function replayRange(ctx: ConnectionContext, id: RequestId, params: unkno
   };
   if (!spans.length) return send(ctx.socket, { id, result: { ...state, markers: [] } });
   if (archive !== undefined) {
-    return agentActionReaders().then((actions) => {
-      const timeline = archivedTimeline(cwd, actions);
-      const records = [
-        ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
-        ...queryJsonLogs({
-          records: timeline,
-          sources: ['metro', 'client', 'build', 'device'],
-          minLevel: 'error',
-          tail: 5000,
-        }),
-      ];
-      const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
-      return send(ctx.socket, { id, result: { ...state, markers } });
-    });
+    const timeline = archivedTimeline(cwd);
+    const records = [
+      ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
+      ...queryJsonLogs({
+        records: timeline,
+        sources: ['metro', 'client', 'build', 'device'],
+        minLevel: 'error',
+        tail: 5000,
+      }),
+    ];
+    const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
+    return send(ctx.socket, { id, result: { ...state, markers } });
   }
   const since = `${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
   void Promise.all([

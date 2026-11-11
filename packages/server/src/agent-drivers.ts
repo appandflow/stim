@@ -1,19 +1,23 @@
-import agentDeviceManifest from '@stim-cli/agent-driver-agent-device/package.json' with { type: 'json' };
 import type { PluginSource } from '@stim-cli/core/plugin-loader';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  AgentDriverUnavailable,
+  agentDriverUnavailable,
   loadAgentDriver,
   loadAgentDriverModule,
-  type AgentDriverActions,
   type HostedAgentDevice,
   type HostedAgentDriver,
 } from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
 const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
-  'agent-device': { load: () => import('@stim-cli/agent-driver-agent-device'), manifest: () => agentDeviceManifest },
+  'agent-device': {
+    load: () => import('@stim-cli/agent-driver-agent-device'),
+    manifest: () =>
+      import('@stim-cli/agent-driver-agent-device/package.json', { with: { type: 'json' } }).then(
+        (manifest) => manifest.default,
+      ),
+  },
 };
 
 const NAMES = Object.keys(DRIVERS) as (keyof typeof DRIVERS)[];
@@ -24,7 +28,7 @@ function registered(name: unknown): name is keyof typeof DRIVERS {
 
 /**
  * Creates the driver `hosting.agentDriver` names, with its state and claim under `area`. Resolves null for
- * `none` and rejects with `AgentDriverUnavailable` when the named driver cannot load. A load failure's reason,
+ * `none` and rejects with `agent-driver-unavailable` when the named driver cannot load. A load failure's reason,
  * which can name host paths, goes to stderr; the rejection carries a generic notice for the client.
  */
 export async function configuredAgentDriver(
@@ -35,7 +39,7 @@ export async function configuredAgentDriver(
 ): Promise<HostedAgentDriver | null> {
   if (name === undefined || name === 'none') return null;
   if (!registered(name))
-    throw new AgentDriverUnavailable(
+    throw agentDriverUnavailable(
       `hosting.agentDriver names ${JSON.stringify(name)}, which this stim-server has no driver for.`,
     );
   const loaded = await loadAgentDriver(name, DRIVERS[name], {
@@ -46,9 +50,7 @@ export async function configuredAgentDriver(
   });
   if ('unavailable' in loaded) {
     process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
-    throw new AgentDriverUnavailable(
-      `The ${name} agent driver could not load on the hosting Mac. Check its server log.`,
-    );
+    throw agentDriverUnavailable(`The ${name} agent driver could not load on the hosting Mac. Check its server log.`);
   }
   return loaded.driver;
 }
@@ -87,25 +89,4 @@ export async function recoverAgentDrivers(env: NodeJS.ProcessEnv, areas: string[
       }
     }
   }
-}
-
-let actionReaders: Promise<AgentDriverActions[]> | undefined;
-
-/**
- * The action readers of every first-party driver that loads, imported on the first call and shared by later
- * ones. Never rejects; a driver that does not load contributes none.
- */
-export function agentActionReaders(): Promise<AgentDriverActions[]> {
-  return (actionReaders ??= loadActionReaders());
-}
-
-async function loadActionReaders(): Promise<AgentDriverActions[]> {
-  const readers: AgentDriverActions[] = [];
-  for (const name of NAMES) {
-    const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
-    if ('module' in loaded && loaded.module.actions) readers.push(loaded.module.actions);
-    else if ('unavailable' in loaded)
-      process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
-  }
-  return readers;
 }

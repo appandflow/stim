@@ -1,13 +1,14 @@
-import agentDeviceManifest from '@stim-cli/agent-driver-agent-device/package.json' with { type: 'json' };
 import type { PluginSource } from '@stim-cli/core/plugin-loader';
-import { loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
+import { agentClientConfigFile, loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
-const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource & { configFile: string }> = {
+const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
   'agent-device': {
     load: () => import('@stim-cli/agent-driver-agent-device'),
-    manifest: () => agentDeviceManifest,
-    configFile: 'agent-device-remote.json',
+    manifest: () =>
+      import('@stim-cli/agent-driver-agent-device/package.json', { with: { type: 'json' } }).then(
+        (manifest) => manifest.default,
+      ),
   },
 };
 
@@ -20,21 +21,16 @@ export async function agentDriverClient(
   name: string,
 ): Promise<{ client: AgentDriverClient } | { unavailable: string }> {
   if (!registered(name)) return { unavailable: `this Stim has no ${name} driver` };
-  const { configFile } = DRIVERS[name];
   const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
   if ('unavailable' in loaded) return loaded;
   const { client } = loaded.module;
-  if (!client) return { unavailable: `the ${name} driver has no client` };
-  if (client.configFile !== configFile) {
-    return { unavailable: `the ${name} driver writes ${client.configFile}, not ${configFile}` };
-  }
-  return { client };
+  return client ? { client } : { unavailable: `the ${name} driver has no client` };
 }
 
 /**
- * The config file names every first-party driver's client writes beside a placement. They are listed here rather
- * than read from the drivers, so access is removed even when a driver package does not load.
+ * The config file names every first-party driver's client writes beside a placement. They are derived from the
+ * driver ids, so access is removed even when a driver package does not load.
  */
 export function agentClientFiles(): string[] {
-  return Object.values(DRIVERS).map((driver) => driver.configFile);
+  return Object.keys(DRIVERS).map(agentClientConfigFile);
 }

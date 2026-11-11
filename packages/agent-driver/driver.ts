@@ -1,7 +1,8 @@
 import { loadKind, type PluginSource } from '@stim-cli/core/plugin-loader';
 import { randomBytes } from 'node:crypto';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { HostedAgentIssuedGrant, NdjsonRecord } from '@stim-cli/core/state';
+import type { HostedAgentIssuedGrant } from '@stim-cli/core/state';
+
+export type { HostedAgentGrant, HostedAgentIssuedGrant, HostedAgentLease } from '@stim-cli/core/state';
 
 export const AGENT_DRIVER_API_VERSION = 1 as const;
 
@@ -19,9 +20,23 @@ export type HostedAgentApp = {
   bundleId: string;
 } & ({ pid: number; udid?: never; serial?: never; avdName?: never } | (HostedAgentDevice & { pid?: never }));
 
+/** A grant as the driver issues it. stim-server fills `path` with the session's agent route. */
+export type AgentDriverGrant = Omit<HostedAgentIssuedGrant, 'path'>;
+
+/**
+ * The driver's own loopback listener for one session. stim-server proxies a request it authenticated under
+ * `agentRoute(session)` to `http://127.0.0.1:<port><path><rest>`, where `rest` is what follows the session in the
+ * route. The listener must not serve a request whose path does not start with `path`.
+ */
+export interface AgentDriverTarget {
+  port: number;
+  path: string;
+}
+
 /**
  * The host side of one driving tool. stim-server's `HostedAgentHost` calls it; a driver never decides which
- * client or session may use it.
+ * client or session may use it. Every argument and result is structured-clone-safe data, so a driver can run in a
+ * worker thread behind a `MessagePort`; `onExit`'s listener is the in-thread form of an event the bridge carries.
  */
 export interface HostedAgentDriver {
   /** The module's `id`. */
@@ -30,18 +45,28 @@ export interface HostedAgentDriver {
   start(): Promise<void>;
   /** Stops the daemon with identity-checked signals and releases its claim; resolves only once it is gone. */
   stop(): Promise<void>;
-  /** Issues a grant scoped to exactly one hosted app. Refuses with `AgentDriverUnavailable` when it cannot scope. */
-  issue(app: HostedAgentApp): Promise<HostedAgentIssuedGrant>;
+  /** Issues a grant scoped to exactly one hosted app. Refuses with `agent-driver-unavailable` when it cannot scope. */
+  issue(app: HostedAgentApp): Promise<AgentDriverGrant>;
   /** Invalidates a session's grant and lease. */
   revoke(session: string): Promise<void>;
-  /** Forwards one request the host already authenticated to the loopback daemon. */
-  forward(session: string, request: IncomingMessage, response: ServerResponse): void;
-  /** Calls `listener` once for each daemon run that exits without `stop()`; a driver keeps one listener. */
-  onExit(listener: () => void): void;
+  /** Where stim-server proxies `session`'s authenticated requests, or null when the session has no live grant. */
+  target(session: string): Promise<AgentDriverTarget | null>;
+  /** Calls `listener` once for each daemon run that exits without `stop()`; the result stops the listener. */
+  onExit(listener: () => void): () => void;
 }
 
-/** The driver cannot run or cannot scope an app; the message is safe to show a client. */
-export class AgentDriverUnavailable extends Error {}
+/** The error code of a driver that cannot run or cannot scope an app; the message is safe to show a client. */
+export const AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
+
+export type AgentDriverUnavailableError = Error & { code: typeof AGENT_DRIVER_UNAVAILABLE };
+
+export function agentDriverUnavailable(message: string): AgentDriverUnavailableError {
+  return Object.assign(new Error(message), { code: AGENT_DRIVER_UNAVAILABLE } as const);
+}
+
+export function isAgentDriverUnavailable(error: unknown): error is AgentDriverUnavailableError {
+  return error instanceof Error && 'code' in error && error.code === AGENT_DRIVER_UNAVAILABLE;
+}
 
 export const AGENT_ROUTE_PREFIX = '/device-host/agent/';
 
@@ -89,23 +114,19 @@ export interface AgentClientAccess {
  * grant it cannot use on `platform`; `command` must name `file` and never carry the token.
  */
 export interface AgentDriverClient {
-  /** The file name the client writes in the placement's state directory. */
-  configFile: string;
   access(input: AgentClientAccessInput): AgentClientAccess | null;
 }
 
-/** Reads the driver's recorded agent actions from a workspace or archive directory, as `agent` log records. */
-export interface AgentDriverActions {
-  read(input: { workspaceDir: string }): NdjsonRecord[];
+/** The file a driver's client writes in the placement's state directory. */
+export function agentClientConfigFile(id: string): string {
+  return `${id}-remote.json`;
 }
 
 /** The module shape a driver package exports. `stimPlugin.kinds` declares its supported contract. */
 export interface AgentDriverModule {
-  apiVersion: typeof AGENT_DRIVER_API_VERSION;
   id: string;
   createAgentDriver(input: AgentDriverInput): HostedAgentDriver | Promise<HostedAgentDriver>;
   client?: AgentDriverClient;
-  actions?: AgentDriverActions;
   /**
    * Called when stim-server starts, once for each hosted session area this driver has state in. Stops what a driver
    * run left behind for a stim-server process that is gone; rejects naming what it could not resolve.
@@ -125,14 +146,8 @@ function moduleError(candidate: Record<string, unknown>, id: string): string | n
   if (candidate.id !== id) return `expected id ${JSON.stringify(id)}, found ${JSON.stringify(candidate.id)}`;
   if (typeof candidate.createAgentDriver !== 'function') return 'the module does not export createAgentDriver()';
   const client = candidate.client;
-  if (
-    client !== undefined &&
-    (!isRecord(client) || typeof client.configFile !== 'string' || typeof client.access !== 'function')
-  )
-    return 'the client capability must name configFile and implement access()';
-  const actions = candidate.actions;
-  if (actions !== undefined && (!isRecord(actions) || typeof actions.read !== 'function'))
-    return 'the actions capability must implement read()';
+  if (client !== undefined && (!isRecord(client) || typeof client.access !== 'function'))
+    return 'the client capability must implement access()';
   if (candidate.recover !== undefined && typeof candidate.recover !== 'function')
     return 'the recover capability must be a function';
   return null;
@@ -141,7 +156,7 @@ function moduleError(candidate: Record<string, unknown>, id: string): string | n
 function driverError(driver: unknown, id: string): string | null {
   if (!isRecord(driver)) return 'createAgentDriver() did not return a driver object';
   if (driver.name !== id) return `the driver is named ${JSON.stringify(driver.name)}, not ${JSON.stringify(id)}`;
-  for (const method of ['start', 'stop', 'issue', 'revoke', 'forward', 'onExit'])
+  for (const method of ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'])
     if (typeof driver[method] !== 'function') return `the driver does not implement ${method}()`;
   return null;
 }

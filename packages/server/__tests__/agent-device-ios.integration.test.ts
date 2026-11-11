@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -209,26 +209,14 @@ async function rpc(params: object, method = 'agent_device.command', path = '/rpc
 }
 
 async function rpcBody(body: object | string, path = '/rpc') {
-  const request = Object.assign(Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]), {
-    url: `/device-host/agent/${SESSION}${path}`,
+  const target = await driver.target(SESSION);
+  if (!target) return { status: 503, text: '' };
+  const response = await fetch(`http://127.0.0.1:${target.port}${target.path}${path}`, {
     method: 'POST',
+    body: typeof body === 'string' ? body : JSON.stringify(body),
     headers: { authorization: 'Bearer client-private' },
   });
-  const response = Object.assign(new PassThrough(), {
-    statusCode: 0,
-    writeHead(status: number) {
-      this.statusCode = status;
-      return this;
-    },
-  });
-  let text = '';
-  response.on('data', (chunk: Buffer) => {
-    text += chunk.toString();
-  });
-  const done = new Promise<void>((resolve) => response.once('finish', resolve));
-  driver.forward(SESSION, request as IncomingMessage, response as unknown as ServerResponse);
-  await done;
-  return { status: response.statusCode, text };
+  return { status: response.status, text: await response.text() };
 }
 
 async function start() {

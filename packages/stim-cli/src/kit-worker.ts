@@ -12,15 +12,15 @@ const NO_STIM_IMPORT = `export async function resolve(specifier, context, next) 
 }`;
 
 export type KitRequest =
-  | { type: 'call'; seq: number; member: string; args: unknown[] }
+  | { type: 'call'; seq: number; member: string; args: unknown[]; module?: boolean }
   | { type: 'subscribe'; seq: number; member: string }
   | { type: 'unsubscribe'; seq: number; target: number };
 
 export type KitReply =
-  | { type: 'ready'; id: string; members: string[] }
+  | { type: 'ready'; id: string; members: string[]; moduleMembers: string[] }
   | { type: 'failed'; message: string }
   | { type: 'result'; seq: number; value: unknown }
-  | { type: 'error'; seq: number; message: string }
+  | { type: 'error'; seq: number; message: string; code?: string }
   | { type: 'event'; seq: number; value: unknown };
 
 type Member = (...args: unknown[]) => unknown;
@@ -33,12 +33,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function errorCode(error: unknown): { code: string } | Record<string, never> {
+  const code = isRecord(error) ? error.code : undefined;
+  return typeof code === 'string' ? { code } : {};
+}
+
+/** The object that owns `path`, such as `client` for `client.access`, and the value at it, by own properties only. */
+function lookup(root: Record<string, unknown>, path: string): { owner: unknown; value: unknown } {
+  let owner: unknown = root;
+  let value: unknown = root;
+  for (const key of path.split('.')) {
+    owner = value;
+    value = isRecord(owner) && Object.hasOwn(owner, key) ? owner[key] : undefined;
+  }
+  return { owner, value };
+}
+
 async function run(port: NonNullable<typeof parentPort>): Promise<void> {
-  const { href, factory, input, capabilities } = workerData as {
+  const { href, factory, input, capabilities, moduleCapabilities, idMember } = workerData as {
     href: string;
     factory: string;
     input: unknown;
     capabilities: string[];
+    moduleCapabilities: string[];
+    idMember: string;
   };
   const post = (reply: KitReply) => port.postMessage(reply);
   let module: Record<string, unknown>;
@@ -63,8 +81,8 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
   let instance: Record<string, unknown>;
   try {
     const made: unknown = await (module[factory] as Member)(input);
-    if (!isRecord(made) || typeof made.id !== 'string')
-      return post({ type: 'failed', message: `${factory}() did not return an object with a string id` });
+    if (!isRecord(made) || typeof made[idMember] !== 'string')
+      return post({ type: 'failed', message: `${factory}() did not return an object with a string ${idMember}` });
     instance = made;
   } catch (error) {
     return post({ type: 'failed', message: `${factory}() failed: ${reason(error)}` });
@@ -74,8 +92,9 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
     return post({ type: 'failed', message: `${factory}() returned a ${malformed} that is not a function` });
   post({
     type: 'ready',
-    id: instance.id as string,
+    id: instance[idMember] as string,
     members: capabilities.filter((name) => typeof instance[name] === 'function'),
+    moduleMembers: moduleCapabilities.filter((name) => typeof lookup(module, name).value === 'function'),
   });
 
   const stops = new Map<number, () => void>();
@@ -87,8 +106,13 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
         stops.delete(request.target);
         return post({ type: 'result', seq, value: null });
       }
-      const member = instance[request.member];
-      if (typeof member !== 'function') throw new Error(`the transport has no ${request.member}()`);
+      const onModule = request.type === 'call' && request.module === true;
+      if (onModule && !moduleCapabilities.includes(request.member))
+        throw new Error(`${request.member} is not a module capability of this kind`);
+      const { owner, value: member } = onModule
+        ? lookup(module, request.member)
+        : { owner: instance, value: instance[request.member] };
+      if (typeof member !== 'function') throw new Error(`the plugin has no ${request.member}()`);
       if (request.type === 'subscribe') {
         const stop: unknown = member.call(instance, (value: unknown) => {
           try {
@@ -101,10 +125,10 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
         stops.set(seq, stop as () => void);
         return post({ type: 'result', seq, value: null });
       }
-      const value: unknown = await member.apply(instance, request.args);
+      const value: unknown = await member.apply(owner, request.args);
       post({ type: 'result', seq, value: value === undefined ? null : value });
     } catch (error) {
-      post({ type: 'error', seq, message: reason(error) });
+      post({ type: 'error', seq, message: reason(error), ...errorCode(error) });
     }
   });
 }

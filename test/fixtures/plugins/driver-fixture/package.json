@@ -1,0 +1,12 @@
+{
+  "name": "driver-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "stimPlugin": {
+    "kinds": {
+      "agent-driver": 1
+    }
+  }
+}

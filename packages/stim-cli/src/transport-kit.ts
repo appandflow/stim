@@ -1,14 +1,14 @@
-import {
-  runAgentDriverContract,
-  type AgentDriverContractOptions,
-  type AgentDriverContractResult,
-} from '@stim-cli/agent-driver/contract';
 import { runCacheProviderContract, type CacheContractModuleOptions, type CacheContractResult } from '@stim-cli/cache';
 import { kindError, projectPlugin } from '@stim-cli/core/plugin-loader';
 import { TRANSPORT_API_VERSION } from '@stim-cli/transport';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  runAgentDriverContract,
+  type AgentDriverContractOptions,
+  type AgentDriverContractResult,
+} from './agent-driver-kit.ts';
 import { startKitWorker, type KitWorker } from './kit-host.ts';
 
 export interface TransportContractResult {

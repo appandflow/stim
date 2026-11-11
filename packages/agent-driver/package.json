@@ -23,11 +23,6 @@
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
-    "./contract": {
-      "types": "./dist/contract.d.mts",
-      "module-sync": "./dist/contract.mjs",
-      "default": "./dist/contract.mjs"
-    },
     "./driver": {
       "types": "./dist/driver.d.mts",
       "module-sync": "./dist/driver.mjs",

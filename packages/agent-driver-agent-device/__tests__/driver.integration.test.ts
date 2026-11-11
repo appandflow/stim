@@ -10,14 +10,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
-import { createServer, request as httpRequest } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver } from '../driver.ts';
-import { AgentDriverUnavailable } from '@stim-cli/agent-driver';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
@@ -112,7 +110,21 @@ function driverIn(
   });
 }
 
-function through(
+function loopback(port: number, method: string, path: string, body?: string, headers = {}) {
+  return new Promise<{ status: number; text: string; contentType: string | undefined }>((resolve, reject) => {
+    const outgoing = httpRequest({ host: '127.0.0.1', port, method, path, headers }, (answer) => {
+      let text = '';
+      answer.on('data', (chunk: Buffer) => (text += chunk.toString()));
+      answer.on('end', () =>
+        resolve({ status: answer.statusCode ?? 0, text, contentType: answer.headers['content-type'] }),
+      );
+    });
+    outgoing.once('error', reject);
+    outgoing.end(body);
+  });
+}
+
+async function through(
   driver: AgentDeviceDriver,
   session: string,
   method: string,
@@ -120,31 +132,9 @@ function through(
   body?: string,
   headers = {},
 ) {
-  const front = createServer((request, response) => driver.forward(session, request, response));
-  return new Promise<{ status: number; text: string; contentType: string | undefined }>((resolve, reject) => {
-    front.listen(0, '127.0.0.1', () => {
-      const outgoing = httpRequest(
-        {
-          host: '127.0.0.1',
-          port: (front.address() as AddressInfo).port,
-          method,
-          path: `/device-host/agent/${session}${path}`,
-          headers,
-        },
-        (answer) => {
-          let text = '';
-          answer.on('data', (chunk: Buffer) => (text += chunk.toString()));
-          answer.on('end', () => {
-            front.closeAllConnections();
-            front.close();
-            resolve({ status: answer.statusCode ?? 0, text, contentType: answer.headers['content-type'] });
-          });
-        },
-      );
-      outgoing.once('error', reject);
-      outgoing.end(body);
-    });
-  });
+  const target = await driver.target(session);
+  if (!target) return { status: 503, text: '', contentType: undefined };
+  return loopback(target.port, method, `${target.path}${path}`, body, headers);
 }
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
@@ -198,7 +188,8 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         bundleId: 'dev.example.app.hosted1',
         pid: 4242,
       });
-      expect(parseHostedAgentGrant(grant)).toEqual(grant);
+      const routed = { ...grant, path: `/device-host/agent/${SESSION}/` };
+      expect(parseHostedAgentGrant(routed)).toEqual(routed);
       if (!grant.lease) throw new Error('expected a lease');
       expect(grant.lease.deviceKey).toBe('dev.example.app.hosted1@4242');
       const calls = () =>
@@ -587,7 +578,7 @@ describe.skipIf(process.platform === 'win32')('agent-device confinement', () => 
   test('refuses to start an agent-device that cannot lease one macOS app, and leaves nothing running', async () => {
     install(root);
     const driver = driverIn(root, {}, { FAKE_LEASE_BACKENDS: 'ios-instance,android-instance' });
-    await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
+    await expect(driver.start()).rejects.toMatchObject({ code: 'agent-driver-unavailable' });
     await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
     const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
     await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
@@ -637,6 +628,11 @@ describe.skipIf(process.platform === 'win32')('agent-device confinement', () => 
     try {
       await driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 });
       expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(200);
+      const target = await driver.target(SESSION);
+      if (!target) throw new Error('expected a target');
+      const forged = `/${'A'.repeat(target.path.length - SESSION.length - 2)}/${SESSION}/health`;
+      expect((await loopback(target.port, 'GET', forged)).status).toBe(404);
+      expect((await loopback(target.port, 'GET', `/${SESSION}/health`)).status).toBe(404);
       expect((await through(driver, SESSION, 'GET', '/admin/human-control/holds')).status).toBe(404);
       expect((await through(driver, SESSION, 'GET', '/admin/leases')).status).toBe(404);
       expect((await through(driver, SESSION, 'GET', '/rpc/../admin')).status).toBe(404);

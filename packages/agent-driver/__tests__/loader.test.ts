@@ -1,18 +1,16 @@
-import { AgentDriverUnavailable, loadAgentDriver, loadAgentDriverModule, runAgentDriverContract } from '../index.ts';
+import { agentDriverUnavailable, loadAgentDriver, loadAgentDriverModule } from '../index.ts';
 
 const input = { env: {}, stateDir: '/nonexistent/state', claimRoot: '/nonexistent/claims' };
-const app = { client: 'client', session: '11111111-1111-4111-8111-111111111111', bundleId: 'dev.example.app', pid: 42 };
 
-function driver(name = 'fake', start = () => Promise.reject(new AgentDriverUnavailable('fake is not installed.'))) {
+function driver(name = 'fake', start = () => Promise.reject(agentDriverUnavailable('fake is not installed.'))) {
   return {
     name,
     start,
     stop: () => Promise.resolve(),
     issue: () => Promise.reject(new Error('not running')),
     revoke: () => Promise.resolve(),
-    forward: (_session: string, _request: unknown, response: { writeHead(status: number): { end(): void } }) =>
-      response.writeHead(503).end(),
-    onExit: () => undefined,
+    target: () => Promise.resolve(null),
+    onExit: () => () => undefined,
   };
 }
 
@@ -20,7 +18,6 @@ const manifest = () => ({ stimPlugin: { kinds: { 'agent-driver': 1 } } });
 const source = (module: unknown) => ({ manifest, load: () => Promise.resolve(module) });
 
 const fake = (overrides: Record<string, unknown> = {}) => ({
-  apiVersion: 1,
   id: 'fake',
   createAgentDriver: () => driver(),
   ...overrides,
@@ -48,8 +45,8 @@ test('a module that is not a version 1 driver with the expected id is unavailabl
   expect(await unavailable(() => Promise.resolve(fake({ createAgentDriver: undefined })))).toBe(
     'the module does not export createAgentDriver()',
   );
-  expect(await unavailable(() => Promise.resolve(fake({ client: { access: () => null } })))).toBe(
-    'the client capability must name configFile and implement access()',
+  expect(await unavailable(() => Promise.resolve(fake({ client: {} })))).toBe(
+    'the client capability must implement access()',
   );
   const blocked = unavailable(() => new Promise(() => undefined));
   await vi.advanceTimersByTimeAsync(20);
@@ -94,27 +91,6 @@ test('a module or factory that fails in an unusual way is unavailable, never a r
   } finally {
     process.off('unhandledRejection', unhandled);
   }
-});
-
-test('the contract kit fails a driver whose forward() throws or never answers', async () => {
-  const run = (forward: () => void) =>
-    runAgentDriverContract({
-      id: 'fake',
-      manifest,
-      load: () => Promise.resolve(fake({ createAgentDriver: () => ({ ...driver(), forward }) })),
-      unavailableInput: input,
-      app,
-      checkTimeoutMs: 200,
-    });
-  const failedNames = async (forward: () => void) =>
-    (await run(forward)).filter((result) => !result.passed).map((result) => result.name);
-  const throwing = await failedNames(() => {
-    throw new Error('boom');
-  });
-  expect(throwing).toHaveLength(1);
-  const blocked = failedNames(() => undefined);
-  await vi.runAllTimersAsync();
-  expect(await blocked).toEqual(throwing);
 });
 
 test('awaits an async driver factory and stops a driver returned after the deadline', async () => {

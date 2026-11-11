@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -174,26 +174,14 @@ async function rpc(params: object, method = 'agent_device.command', path = '/rpc
 }
 
 async function rpcBody(body: object, path = '/rpc') {
-  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
-    url: `/device-host/agent/${SESSION}${path}`,
+  const target = await driver.target(SESSION);
+  if (!target) return { status: 503, text: '' };
+  const response = await fetch(`http://127.0.0.1:${target.port}${target.path}${path}`, {
     method: 'POST',
+    body: JSON.stringify(body),
     headers: { authorization: 'Bearer client-private' },
   });
-  const response = Object.assign(new PassThrough(), {
-    statusCode: 0,
-    writeHead(status: number) {
-      this.statusCode = status;
-      return this;
-    },
-  });
-  let text = '';
-  response.on('data', (chunk: Buffer) => {
-    text += chunk.toString();
-  });
-  const done = new Promise<void>((resolve) => response.once('finish', resolve));
-  driver.forward(SESSION, request as IncomingMessage, response as unknown as ServerResponse);
-  await done;
-  return { status: response.statusCode, text };
+  return { status: response.status, text: await response.text() };
 }
 
 async function start() {
@@ -204,7 +192,8 @@ async function start() {
 test('pins the serial policy and verifies its digest before granting Android control', async () => {
   const grant = await start();
   expect(fixture.helperSession).toBe('0');
-  expect(parseHostedAgentGrant(grant)).toEqual(grant);
+  const routed = { ...grant, path: `/device-host/agent/${SESSION}/` };
+  expect(parseHostedAgentGrant(routed)).toEqual(routed);
   expect(grant).toMatchObject({ lease: { backend: 'android-instance', deviceKey: `android:mobile:${SERIAL}` } });
   const policy = JSON.parse(readFileSync(join(home, 'agent', 'policy.json'), 'utf8'));
   expect(policy.devices).toEqual({ allow: [{ serial: SERIAL }] });
@@ -580,7 +569,7 @@ test.each(['absent', 'replaced'])(
       date.mockRestore();
       expect(answer.status).toBe(503);
       expect(answer.text).toContain('hosted emulator');
-      expect(fixture.calls).toEqual([]);
+      for (const call of fixture.calls) expect(call.path).toBe('/health');
       await vi.waitFor(() => expect(agents.access(SESSION)?.notice).toContain('identity could not be verified'));
       await vi.waitFor(() => expect(readClaimSet(join(home, 'claims')).live).toEqual([]));
       expect(agents.access(SESSION)?.grant).toEqual({ driver: 'none' });

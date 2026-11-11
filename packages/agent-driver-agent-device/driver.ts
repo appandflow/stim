@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -13,7 +13,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, extname, join } from 'node:path';
 import { resolveAgentDevice as resolveAgentDeviceBin, type AgentDeviceInvocation } from '@stim-cli/core';
@@ -34,18 +40,18 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '@stim-cli/core/process-identity';
-import { isJsonObject, type HostedAgentIssuedGrant, type HostedAgentLease } from '@stim-cli/core/state';
-import {
-  AGENT_ROUTE_PREFIX,
-  AgentDriverUnavailable,
-  agentRoute,
-  newAgentToken,
-  type HostedAgentApp,
-  type HostedAgentDevice,
-  type HostedAgentDriver,
+import type {
+  AGENT_DRIVER_UNAVAILABLE,
+  AgentDriverGrant,
+  AgentDriverTarget,
+  HostedAgentApp,
+  HostedAgentDevice,
+  HostedAgentDriver,
+  HostedAgentLease,
 } from '@stim-cli/agent-driver';
 import {
   DEVICE_COMMAND_RULES,
+  isJsonObject,
   REFUSED_DEVICE_COMMANDS,
   remoteScreenshot,
   type DeviceCommandRule,
@@ -149,11 +155,22 @@ const LEASE_METHODS = new Set([
 
 export type { AgentDeviceInvocation } from '@stim-cli/core';
 
+const UNAVAILABLE: typeof AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
+
+function unavailable(message: string): Error {
+  return Object.assign(new Error(message), { code: UNAVAILABLE });
+}
+
+/** A 256-bit secret in the alphabet `parseHostedAgentGrant` accepts. */
+function newToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
 export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocation {
   try {
     return resolveAgentDeviceBin(env);
   } catch (error) {
-    throw new AgentDriverUnavailable(error instanceof Error ? error.message : String(error));
+    throw unavailable(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -243,6 +260,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private daemonRecord: ProcessRecord | null = null;
   private deviceProxy: { child: ChildProcess; record: ProcessRecord | null } | null = null;
   private listener: (() => void) | null = null;
+  private loopback: Promise<{ server: Server; port: number; secret: string }> | null = null;
   private androidProbe: Promise<AndroidIdentity> | null = null;
   private androidVerifiedAt = 0;
   private readonly leases = new Map<string, Lease>();
@@ -304,8 +322,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       throw new Error(`${link} does not lead to ${this.sessionsTarget}`);
   }
 
-  onExit(listener: () => void): void {
+  onExit(listener: () => void): () => void {
     this.listener = listener;
+    return () => {
+      if (this.listener === listener) this.listener = null;
+    };
   }
 
   start(): Promise<void> {
@@ -341,7 +362,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         !match ||
         !(Number(match[1]) > 0 || Number(match[2]) > 21 || (Number(match[2]) === 21 && Number(match[3]) >= 30))
       )
-        throw new AgentDriverUnavailable(DEVICE_AGENT_DEVICE);
+        throw unavailable(DEVICE_AGENT_DEVICE);
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
@@ -369,7 +390,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       mode: 0o600,
     });
     markClaimChildPending(claim);
-    const token = newAgentToken();
+    const token = newToken();
     let proxy: ChildProcess | undefined;
     try {
       proxy = spawn(
@@ -401,7 +422,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
       setClaimChild(claim, daemon);
       if (!(await leasesBackend(url, this.options.device ? deviceScope(this.options.device).backend : 'macos-app')))
-        throw new AgentDriverUnavailable(this.options.device ? DEVICE_AGENT_DEVICE : UNSCOPED);
+        throw unavailable(this.options.device ? DEVICE_AGENT_DEVICE : UNSCOPED);
       const watch = setInterval(() => void this.watchDaemon(), this.options.watchMs);
       watch.unref();
       const running: Running = {
@@ -487,7 +508,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     if (this.options.device && value.policyDigest !== devicePolicyDigest(this.options.device)) {
       this.daemonRecord = record;
-      throw new AgentDriverUnavailable(DEVICE_AGENT_DEVICE);
+      throw unavailable(DEVICE_AGENT_DEVICE);
     }
     return { record, admin: { port: value.httpPort, token: value.token } };
   }
@@ -542,6 +563,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.closeLoopback();
     await this.starting?.catch(() => undefined);
     await this.recordStarting?.catch(() => undefined);
     let recorderError: unknown;
@@ -732,7 +754,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
    * Grants one device's automatic instance lease or allocates and renews a macos-app lease over
    * agent-device's host-only admin route. Forwarded requests are pinned to the grant's scope.
    */
-  async issue(app: HostedAgentApp): Promise<HostedAgentIssuedGrant> {
+  async issue(app: HostedAgentApp): Promise<AgentDriverGrant> {
     const running = this.running;
     if (!running) throw new Error('The agent-device daemon is not running.');
     if (this.options.device) {
@@ -746,9 +768,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           `The agent-device daemon belongs to another hosted ${this.options.device.serial ? 'emulator' : 'simulator'}.`,
         );
       if ((await this.androidIdentity()) !== 'verified')
-        throw new AgentDriverUnavailable(
-          'Agent control is refused: the hosted Android emulator identity could not be verified.',
-        );
+        throw unavailable('Agent control is refused: the hosted Android emulator identity could not be verified.');
       const scope: HostedAgentLease = {
         tenant: `stim.${app.session}`,
         runId: app.session,
@@ -757,13 +777,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         backend: deviceScope(this.options.device).backend,
       };
       this.leases.set(app.session, { id: app.session, scope, renewing: Promise.resolve() });
-      return {
-        driver: 'agent-device',
-        path: agentRoute(app.session),
-        token: newAgentToken(),
-        scope: app.session,
-        lease: scope,
-      };
+      return { driver: 'agent-device', token: newToken(), scope: app.session, lease: scope };
     }
     const scope: HostedAgentLease = {
       tenant: `stim.${app.session}`,
@@ -787,7 +801,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     };
     lease.renew?.unref();
     this.leases.set(app.session, lease);
-    return { driver: 'agent-device', path: agentRoute(app.session), token: newAgentToken(), scope: id, lease: scope };
+    return { driver: 'agent-device', token: newToken(), scope: id, lease: scope };
   }
 
   async revoke(session: string): Promise<void> {
@@ -823,14 +837,65 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
   }
 
-  forward(session: string, request: IncomingMessage, response: ServerResponse): void {
+  async target(session: string): Promise<AgentDriverTarget | null> {
+    if (!this.running || !this.leases.has(session)) return null;
+    const { port, secret } = await this.serveLoopback();
+    return { port, path: `/${secret}/${session}` };
+  }
+
+  private serveLoopback(): Promise<{ server: Server; port: number; secret: string }> {
+    this.loopback ??= new Promise<{ server: Server; port: number; secret: string }>((resolve, reject) => {
+      const secret = newToken();
+      const server = createServer((request, response) => this.serveLoopbackRequest(secret, request, response));
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject);
+        server.unref();
+        const address = server.address();
+        resolve({ server, port: typeof address === 'object' && address ? address.port : 0, secret });
+      });
+    }).catch((error: unknown) => {
+      this.loopback = null;
+      throw error;
+    });
+    return this.loopback;
+  }
+
+  private closeLoopback(): void {
+    const loopback = this.loopback;
+    this.loopback = null;
+    void loopback?.then(
+      ({ server }) => {
+        server.closeAllConnections();
+        return server.close();
+      },
+      () => undefined,
+    );
+  }
+
+  private serveLoopbackRequest(secret: string, request: IncomingMessage, response: ServerResponse): void {
+    const url = request.url ?? '';
+    const presented = Buffer.from(url.slice(1, secret.length + 1));
+    if (
+      url[secret.length + 1] !== '/' ||
+      presented.length !== secret.length ||
+      !timingSafeEqual(presented, Buffer.from(secret))
+    ) {
+      response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+      return;
+    }
+    const rest = url.slice(secret.length + 1);
+    this.forward(/^\/([^/?]*)/.exec(rest)?.[1] ?? '', rest, request, response);
+  }
+
+  private forward(session: string, url: string, request: IncomingMessage, response: ServerResponse): void {
     const running = this.running;
     const lease = this.leases.get(session);
     if (!running || !lease) {
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
       return;
     }
-    const target = daemonPath(session, request.url ?? '', request.method, lease.scope.tenant);
+    const target = daemonPath(session, url, request.method, lease.scope.tenant);
     if (!target) {
       response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
       return;
@@ -1858,7 +1923,7 @@ function isTenantDiagnostics(path: string, tenant: string): boolean {
  * refuses, and the diagnostics of another tenant's sessions are not this client's.
  */
 function daemonPath(session: string, url: string, method: string | undefined, tenant: string): string | null {
-  const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
+  const prefix = `/${session}`;
   if (!url.startsWith(prefix)) return null;
   const rest = url.slice(prefix.length);
   const query = rest.indexOf('?');

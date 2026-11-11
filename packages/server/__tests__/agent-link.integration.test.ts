@@ -1,11 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import { connect as connectNet, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { agentRoute, newAgentToken, type HostedAgentApp, type HostedAgentDriver } from '@stim-cli/agent-driver';
+import {
+  AGENT_ROUTE_PREFIX,
+  agentRoute,
+  newAgentToken,
+  type AgentDriverTarget,
+  type HostedAgentApp,
+  type HostedAgentDriver,
+} from '@stim-cli/agent-driver';
 import { secretValues, newSecret } from '@stim-cli/core/noise-session';
 import {
   clientIdentity,
@@ -49,17 +56,31 @@ class FakeDriver implements HostedAgentDriver {
   revoke(): Promise<void> {
     return Promise.resolve();
   }
-  forward(session: string, request: IncomingMessage, response: ServerResponse): void {
-    const chunks: Buffer[] = [];
-    request.on('data', (chunk: Buffer) => chunks.push(chunk));
-    request.on('end', () => {
-      this.forwarded.push(session);
-      response
-        .writeHead(200, { 'content-type': 'application/json' })
-        .end(JSON.stringify({ session, url: request.url, bytes: Buffer.concat(chunks).length }));
+  private loopback: Promise<number> | null = null;
+  async target(session: string): Promise<AgentDriverTarget> {
+    this.loopback ??= new Promise((resolve) => {
+      const server = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on('data', (chunk: Buffer) => chunks.push(chunk));
+        request.on('end', () => {
+          const routed = (request.url ?? '').slice(AGENT_ROUTE_PREFIX.length).split('/')[0] ?? '';
+          this.forwarded.push(routed);
+          response
+            .writeHead(200, { 'content-type': 'application/json' })
+            .end(JSON.stringify({ session: routed, url: request.url, bytes: Buffer.concat(chunks).length }));
+        });
+      });
+      server.listen(0, '127.0.0.1', () => {
+        server.unref();
+        const address = server.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
     });
+    return { port: await this.loopback, path: `${AGENT_ROUTE_PREFIX}${session}` };
   }
-  onExit(): void {}
+  onExit(): () => void {
+    return () => undefined;
+  }
 }
 
 const agents = vi.hoisted(() => {
