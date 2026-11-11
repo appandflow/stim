@@ -10,6 +10,7 @@ import {
   stopDeclaringSpawnsOn,
 } from '../engine/spawn-claims.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { captureProcessIdentity } from '../process-identity.ts';
 import { testContext } from './_context.ts';
 import { makeChildProcess } from './_factories.ts';
 
@@ -173,4 +174,22 @@ test('a failed fenced child keeps ownership pending and refuses another fence', 
   await expect(fence.finish(error)).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
   expect(readClaimSet(root).live[0]?.childDeclared).toBe(true);
   expect(() => fenceDeclaredSpawns(context)).toThrow(/ownership/);
+});
+
+test.each([
+  ['records the one identified child', true],
+  ['keeps an unknown child when the child has no identity token', false],
+])('a fence that fails on an unverified report child %s', async (_name, identified) => {
+  const captured = captureProcessIdentity(process.pid);
+  assert(captured.ok);
+  const reportChild = { pid: process.pid, processToken: identified ? captured.token : null };
+  const fence = fenceDeclaredSpawns(context);
+  const unverified = Object.assign(new Error('cleanup unverified'), { reportCleanup: true, reportChild });
+  const settled = Promise.reject(unverified);
+  settled.catch(() => {});
+  spawnDeclared(context, () => makeChildProcess(), { until: settled });
+  await expect(fence.finish(unverified)).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+  const [held] = readClaimSet(root).live;
+  expect(held?.childDeclared).toBe(true);
+  expect(held?.child).toEqual(identified ? reportChild : null);
 });
