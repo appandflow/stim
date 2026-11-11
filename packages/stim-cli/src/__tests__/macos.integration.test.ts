@@ -57,7 +57,7 @@ import { withLocalMacosAdmission } from '../macos/admission.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import * as nativeRun from '../engine/native-run.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
@@ -1796,9 +1796,8 @@ test.skipIf(process.platform !== 'darwin')(
         );
         launch.mockResolvedValue(app);
         stdout.mockClear();
-        const program = new Command();
-        macosCommand(program);
-        await program.parseAsync(['node', 'stim', 'macos', '--json', ...(hosted ? ['--remote', 'mini'] : [])]);
+        const program = macosCommand;
+        await runCli(program, ['--json', ...(hosted ? ['--remote', 'mini'] : [])], { version: '0.0.0' });
         expect(stdout).toHaveBeenCalledOnce();
         const payload = JSON.parse(stdout.mock.calls[0]![0]);
         expect(payload.agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
@@ -1807,9 +1806,8 @@ test.skipIf(process.platform !== 'darwin')(
         expect(payload.product).toBe('Sample');
         expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
         stdout.mockClear();
-        const plain = new Command();
-        macosCommand(plain);
-        await plain.parseAsync(['node', 'stim', 'macos']);
+        const plain = macosCommand;
+        await runCli(plain, [], { version: '0.0.0' });
         expect(stdout).toHaveBeenCalledWith(
           expect.stringContaining(`AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
         );
@@ -1900,13 +1898,12 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
     const previousExit = process.exitCode;
     try {
-      const program = new Command();
-      macosCommand(program);
-      await program.parseAsync(['macos', '--plan', '--json', '--remote-build', 'local'], { from: 'user' });
+      const program = macosCommand;
+      await runCli(program, ['--plan', '--json', '--remote-build', 'local'], { version: '0.0.0' });
       expect(stdout).toHaveBeenCalledTimes(1);
       expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({ platform: 'macos', buildMachine: 'local' });
       stdout.mockClear();
-      await program.parseAsync(['macos', '--plan', '--json', '--remote', 'mini'], { from: 'user' });
+      await runCli(program, ['--plan', '--json', '--remote', 'mini'], { version: '0.0.0' });
       expect(stdout).toHaveBeenCalledTimes(1);
       expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
         code: 'STIM_BAD_ARG',
@@ -1916,14 +1913,14 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
       expect(existsSync(process.env.STIM_HOME!)).toBe(false);
       cwd.mockReturnValue(dir);
       stdout.mockClear();
-      await program.parseAsync(['macos', '--plan', '--json'], { from: 'user' });
+      await runCli(program, ['--plan', '--json'], { version: '0.0.0' });
       expect(stdout).toHaveBeenCalledTimes(1);
       expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
         code: 'STIM_BAD_ARG',
         message: 'Run stim macos from the Swift Package directory.',
       });
       stdout.mockClear();
-      await expect(program.parseAsync(['macos'], { from: 'user' })).rejects.toThrow(
+      await expect(runCli(program, [], { version: '0.0.0' })).rejects.toThrow(
         'Run stim macos from the Swift Package directory.',
       );
       expect(stdout).not.toHaveBeenCalled();

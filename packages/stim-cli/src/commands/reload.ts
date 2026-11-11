@@ -11,7 +11,7 @@ import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { androidAppProcess, ensureMetroReverse, iosAppProcess, type AppProcessProbe } from '../engine/app-install.ts';
@@ -764,18 +764,19 @@ export async function runReload({
   };
 }
 
-interface ReloadOptions {
-  json?: boolean;
-}
-
-export function registerReload(program: Command, deps: Partial<ReloadDeps> = {}): void {
-  program
-    .command('reload [platform]')
-    .description(
+export function reloadOp(deps: Partial<ReloadDeps> = {}): Op {
+  return defineOp({
+    name: 'reload',
+    arguments: '[platform]',
+    description:
       "Request a JavaScript reload in this workspace's live app, or reload its owned Chrome page, without observing completion. Specify ios, android or web when more than one is live.",
-    )
-    .option('--json', 'Emit the reload facts as one JSON line')
-    .action(async (value: string | undefined, opts: ReloadOptions) => {
+    options: {
+      json: {
+        flags: '--json',
+        description: 'Emit the reload facts as one JSON line',
+      },
+    },
+    run: async ({ args: [value], options: opts }) => {
       if (value !== undefined && value !== 'ios' && value !== 'android' && value !== 'web') {
         const error = failure(
           'STIM_BAD_ARG',
@@ -839,9 +840,10 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
           `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.${restored}${scope} Completion is not observed; verify the expected UI and run stim logs --errors.`,
         );
       }
-    });
+    },
+  });
 }
 
-export default function reloadCommand(program: Command): void {
-  registerReload(program);
-}
+const reload: Op = reloadOp();
+
+export default reload;

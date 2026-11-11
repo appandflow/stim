@@ -1,6 +1,5 @@
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from './engine/operation-state.ts';
-import { InvalidArgumentError } from 'commander';
 import { parseMachine, automaticMachineEnabled, placementWord, readBuildMachines } from '@stim-cli/core/state';
 import type { PlacementSetting, SettingSource } from './placement-log.ts';
 import { loadConfig } from './workspace/config.ts';
@@ -83,14 +82,6 @@ export function resolveBuildMachine(flag?: string, env?: string, setting?: unkno
     );
   }
   return placementWord(selected) ?? selected.trim();
-}
-
-export function parseBuildMachineOption(value: string): string {
-  try {
-    return resolveBuildMachine(value);
-  } catch (error) {
-    throw new InvalidArgumentError((error as Error).message);
-  }
 }
 
 export function automaticBuild(selected: string): boolean {

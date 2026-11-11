@@ -129,7 +129,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     const loaded = await loadCommand?.();
     if (loaded && typeof loaded.default !== 'function') {
       const args = first === 'help' ? ['--help', ...argv.slice(4)] : argv.slice(3);
-      const code = await runCli(loaded.default, args, { version: pkg.version, before });
+      const code = await runCli(loaded.default, args, { version: pkg.version, before, help: first === 'help' });
       if (code !== 0) exitCode = code;
     } else {
       if (loaded) {

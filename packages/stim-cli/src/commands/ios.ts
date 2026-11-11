@@ -28,7 +28,7 @@ import {
 } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
-import { type Command, InvalidArgumentError } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import chalk from 'chalk';
 import { phaseLine, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/device-lease-run.ts';
@@ -77,7 +77,7 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
-import { parseBuildMachineOption } from '../build-placement.ts';
+import { resolveBuildMachine } from '../build-placement.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
@@ -132,93 +132,109 @@ export {
 
 export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
 
-export default function iosCommand(program: Command): void {
-  registerIos(program);
-}
-
-export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void {
-  program
-    .command('ios')
-    .description(
+export function iosOp(deps: Partial<IosDeps> = {}): Op {
+  return defineOp({
+    name: 'ios',
+    description:
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator. React Native and Expo Debug runs start the dev server when it is not running.',
-    )
-    .option(
-      '--eas-profile <name>',
-      'Download a matching EAS development build; on a miss, print the build command without running it',
-    )
-    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
-    .option(
-      '--remote-build <value>',
-      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
-      parseBuildMachineOption,
-    )
-    .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
-    .option(
-      '--plan',
-      'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
-        'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
-    )
-    .option(
-      '--scheme <name>',
-      'Shared Xcode app scheme to build; overrides automatic scheme selection, not the app URL scheme',
-    )
-    .option(
-      '--no-metro-check',
-      'Skip the "is this workspace\'s dev server running?" check: do not start it, and build anyway',
-    )
-    .option(
-      '--no-build-cache',
-      "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
-    )
-    .option(
-      '--configuration <name>',
-      'Xcode configuration to build (e.g. Release). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
-    )
-    .option(
-      '--device-type <name>',
-      "Simulator model to create this workspace's owned sim as, exactly as `xcrun simctl list devicetypes` names it " +
-        '(e.g. "iPad Pro 13-inch (M5)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
-        'runtime can create refuses with STIM_BAD_ARG and prints the models they do offer.',
-    )
-    .option(
-      '--runtime <version>',
-      'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
-        '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
-        'refuses with STIM_BAD_ARG and prints the installed runtimes.',
-    )
-    .option(
-      '--install-runtime',
-      'Install the explicitly requested missing iOS runtime with Xcode on the local or named approved Mac (about 8-10 GB; shared by all workspaces)',
-    )
-    .option(
-      '--simulator-app <app>',
-      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, or none to open no viewer, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
-    )
-    .option(
-      '--device [udid]',
-      "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
-        'owned simulator. The phone can be cabled or paired over Wi-Fi. With no UDID, the first cabled device this workspace can lease ' +
-        'is used, waiting for one that is busy; a Wi-Fi device is used only when no cabled one is connected and ready. In Debug the app is wired to this ' +
-        "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
-    )
-    .option(
-      '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. remote tries remote.machines in order first and runs here only when none takes it. remote-only never runs here. local runs here, whatever ios.remote says.',
-      (value) => {
-        if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, local, auto, remote, remote-only, or a remote Mac name');
+      'simulator. React Native and Expo Debug runs start the dev server when it is not running.',
+    options: {
+      easProfile: {
+        flags: '--eas-profile <name>',
+        description: 'Download a matching EAS development build; on a miss, print the build command without running it',
       },
-    )
-    .option(
-      '--wait <seconds>',
-      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
-    )
-    .option(
-      '--no-wait',
-      "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
-    )
-    .action(async (opts: IosCommandOptions) => {
+      slot: {
+        flags: '--slot <name>',
+        description: 'Reusable device slot within this workspace (default: default)',
+        parse: parseDeviceSlotOption,
+      },
+      remoteBuild: {
+        flags: '--remote-build <value>',
+        description:
+          'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
+        parse: resolveBuildMachine,
+      },
+      json: {
+        flags: '--json',
+        description: 'Emit the facts as a single JSON line on stdout; every other line goes to stderr',
+      },
+      plan: {
+        flags: '--plan',
+        description:
+          'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
+          'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
+      },
+      scheme: {
+        flags: '--scheme <name>',
+        description: 'Shared Xcode app scheme to build; overrides automatic scheme selection, not the app URL scheme',
+      },
+      metroCheck: {
+        flags: '--no-metro-check',
+        description: 'Skip the "is this workspace\'s dev server running?" check: do not start it, and build anyway',
+      },
+      buildCache: {
+        flags: '--no-build-cache',
+        description:
+          "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
+      },
+      configuration: {
+        flags: '--configuration <name>',
+        description:
+          'Xcode configuration to build (e.g. Release). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
+      },
+      deviceType: {
+        flags: '--device-type <name>',
+        description:
+          "Simulator model to create this workspace's owned sim as, exactly as `xcrun simctl list devicetypes` names it " +
+          '(e.g. "iPad Pro 13-inch (M5)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
+          'runtime can create refuses with STIM_BAD_ARG and prints the models they do offer.',
+      },
+      runtime: {
+        flags: '--runtime <version>',
+        description:
+          'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
+          '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
+          'refuses with STIM_BAD_ARG and prints the installed runtimes.',
+      },
+      installRuntime: {
+        flags: '--install-runtime',
+        description:
+          'Install the explicitly requested missing iOS runtime with Xcode on the local or named approved Mac (about 8-10 GB; shared by all workspaces)',
+      },
+      simulatorApp: {
+        flags: '--simulator-app <app>',
+        description:
+          'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, or none to open no viewer, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
+      },
+      device: {
+        flags: '--device [udid]',
+        description:
+          "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
+          'owned simulator. The phone can be cabled or paired over Wi-Fi. With no UDID, the first cabled device this workspace can lease ' +
+          'is used, waiting for one that is busy; a Wi-Fi device is used only when no cabled one is connected and ready. In Debug the app is wired to this ' +
+          "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
+      },
+      remote: {
+        flags: '--remote <target>',
+        description:
+          'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. remote tries remote.machines in order first and runs here only when none takes it. remote-only never runs here. local runs here, whatever ios.remote says.',
+        parse: (value: string) => {
+          if (parseMachine(value)) return value.trim();
+          throw new Error('expected eas, proxy, local, auto, remote, remote-only, or a remote Mac name');
+        },
+      },
+      wait: {
+        flags: '--wait <seconds>',
+        description:
+          'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
+      },
+      noWait: {
+        flags: '--no-wait',
+        description:
+          "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
+      },
+    },
+    run: async ({ options: opts }) => {
       if (opts.plan) {
         const d = { ...DEFAULT_DEPS, ...deps };
         await planIos(opts, d);
@@ -230,8 +246,13 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       );
       if (!completion) exitCli(interrupted ?? 1);
       else if (completion.uploadsAbandoned) exitCli(0);
-    });
+    },
+  });
 }
+
+const ios: Op = iosOp();
+
+export default ios;
 
 export function runIosOperation(
   context: StimContext,

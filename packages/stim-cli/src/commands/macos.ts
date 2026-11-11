@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
@@ -49,7 +49,7 @@ import {
 } from '../macos/stop.ts';
 import { startedBy } from '../macos/instances.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
+import { resolveBuildPlacement, resolveBuildMachine } from '../build-placement.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import {
@@ -484,22 +484,32 @@ function launchPayload(root: string, record: MacosAppRecord): Record<string, unk
   return { agentDevice, platform: 'macos', product, displayName, launchId, build, host };
 }
 
-export default function macosCommand(program: Command): void {
-  program
-    .command('macos')
-    .description('Build and launch an owned Swift Package macOS Debug app.')
-    .option(
-      '--remote-build <value>',
-      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
-      parseBuildMachineOption,
-    )
-    .option('--json', 'print one launch or plan payload; build output goes to stderr')
-    .option('--plan', 'validate the next SwiftPM Debug build without building or launching')
-    .option(
-      '--remote <placement>',
-      'run it here (local), on the Mac a placement word chooses (auto, remote, remote-only), or on one approved remote Mac from remote.machines',
-    )
-    .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
+function macosOp(): Op {
+  return defineOp({
+    name: 'macos',
+    description: 'Build and launch an owned Swift Package macOS Debug app.',
+    options: {
+      remoteBuild: {
+        flags: '--remote-build <value>',
+        description:
+          'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
+        parse: resolveBuildMachine,
+      },
+      json: {
+        flags: '--json',
+        description: 'print one launch or plan payload; build output goes to stderr',
+      },
+      plan: {
+        flags: '--plan',
+        description: 'validate the next SwiftPM Debug build without building or launching',
+      },
+      remote: {
+        flags: '--remote <placement>',
+        description:
+          'run it here (local), on the Mac a placement word chooses (auto, remote, remote-only), or on one approved remote Mac from remote.machines',
+      },
+    },
+    run: async ({ options }) => {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {
         try {
@@ -543,5 +553,10 @@ export default function macosCommand(program: Command): void {
       else console.log(`Started ${record.product} (pid ${record.app?.pid}).`);
       if (!options.json)
         console.log(phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`));
-    });
+    },
+  });
 }
+
+const macos: Op = macosOp();
+
+export default macos;

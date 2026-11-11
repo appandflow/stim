@@ -62,7 +62,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import {
   getProject,
   loadConfig,
@@ -89,7 +89,7 @@ import {
   workspaceStateFile,
 } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import {
+import androidCommand, {
   NO_DEVICE,
   androidDevClientScheme,
   androidSystemImageSetting,
@@ -107,7 +107,6 @@ import {
   noDeviceDiagnostic,
   startCollector,
   phaseLine,
-  registerAndroid,
   runAndroid,
 } from '../commands/android.ts';
 import * as androidDevices from '../devices/android.ts';
@@ -204,25 +203,20 @@ afterEach(() => {
   else process.env.ANDROID_SDK_ROOT = androidSdkRoot;
 });
 
-function parseRemoteOption(args: string[]): unknown {
-  const program = new Command();
-  program.exitOverride();
-  program.configureOutput({ writeErr: () => {} });
-  registerAndroid(program);
-  const command = program.commands[0];
-  assert(command);
-  command.parseOptions(args);
-  return command.opts().remote;
+async function parseRemoteOption(args: string[]): Promise<unknown> {
+  let parsed: Record<string, unknown> = {};
+  await runCli({ ...androidCommand, run: ({ options }) => void (parsed = options) }, args, { version: '0.0.0' });
+  return parsed.remote;
 }
 
 describe('--remote', () => {
-  test('the CLI parser accepts backend and hosting names but rejects malformed targets', () => {
-    expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
-    expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
-    expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
-    expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
-    expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
-    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/tailnet machine name/i);
+  test('the CLI parser accepts backend and hosting names but rejects malformed targets', async () => {
+    expect(await parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
+    expect(await parseRemoteOption(['--remote', 'eas'])).toBe('eas');
+    await expect(parseRemoteOption(['--remote'])).rejects.toThrow(/argument missing/i);
+    expect(await parseRemoteOption(['--remote', 'mini'])).toBe('mini');
+    expect(await parseRemoteOption(['--remote', 'auto'])).toBe('auto');
+    await expect(parseRemoteOption(['--remote', 'bad name'])).rejects.toThrow(/tailnet machine name/i);
   });
 });
 
@@ -5969,15 +5963,10 @@ describe('the project cache provider', () => {
   });
 });
 
-function parseDeviceOption(args: string[]): unknown {
-  const program = new Command();
-  program.exitOverride();
-  program.configureOutput({ writeErr: () => {} });
-  registerAndroid(program);
-  const command = program.commands[0];
-  assert(command);
-  command.parseOptions(args);
-  return command.opts().device;
+async function parseDeviceOption(args: string[]): Promise<unknown> {
+  let parsed: Record<string, unknown> = {};
+  await runCli({ ...androidCommand, run: ({ options }) => void (parsed = options) }, args, { version: '0.0.0' });
+  return parsed.device;
 }
 
 describe('--device (a physical Android device)', () => {
@@ -6001,10 +5990,10 @@ describe('--device (a physical Android device)', () => {
     });
   }
 
-  test('the CLI parser accepts --device bare and with a serial', () => {
-    expect(parseDeviceOption(['--device'])).toBe(true);
-    expect(parseDeviceOption(['--device', 'RFCR7081Q9L'])).toBe('RFCR7081Q9L');
-    expect(parseDeviceOption([])).toBeUndefined();
+  test('the CLI parser accepts --device bare and with a serial', async () => {
+    expect(await parseDeviceOption(['--device'])).toBe(true);
+    expect(await parseDeviceOption(['--device', 'RFCR7081Q9L'])).toBe('RFCR7081Q9L');
+    expect(await parseDeviceOption([])).toBeUndefined();
   });
 
   test('a physical run installs and launches on the resolved serial', async () => {
