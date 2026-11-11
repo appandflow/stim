@@ -21,7 +21,13 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as clonefile from '../clonefile.ts';
-import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import {
+  markClaimChildPending,
+  readClaimSet,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+} from '../ownership-claim.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
 import * as engineSwitch from '../daemon/engine-switch.ts';
 import * as engineFollow from '../stimd/engine-follow.ts';
@@ -467,7 +473,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     20_000,
   );
 
-  test('unverified foreground cleanup keeps home and engine claims marked for recovery', async () => {
+  test('unverified foreground cleanup keeps the engine claim marked for recovery and leaves the home and daemon claims complete', async () => {
     const before = new Set(process.listeners('SIGTERM'));
     const oldExit = process.exitCode;
     const root = join(home, 'engine');
@@ -517,8 +523,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         code: 'STIM_CLAIM_UNAVAILABLE',
         remedy: expect.stringContaining(engineClaim.path),
       });
-      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
-      expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+      expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
       expect(readClaimSet(engineClaim.root).live).toMatchObject([{ childDeclared: true }]);
       expect(releaseEngine).not.toHaveBeenCalled();
     } finally {
@@ -531,7 +537,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 20_000);
 
-  test('unverified final measurement keeps home and engine claims marked for recovery', async () => {
+  test('unverified final measurement keeps the engine claim marked for recovery and leaves the home claim complete', async () => {
     const before = new Set(process.listeners('SIGTERM'));
     const oldExit = process.exitCode;
     const root = join(home, 'engine');
@@ -573,7 +579,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       assert(handler);
       handler('SIGTERM');
       await expect(running).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
       expect(readClaimSet(engineClaim.root).live).toMatchObject([{ childDeclared: true }]);
       expect(releaseEngine).not.toHaveBeenCalled();
     } finally {
@@ -585,6 +591,10 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await running?.catch(() => {});
     }
   }, 20_000);
+
+  const stopInProcess = (before: Set<NodeJS.SignalsListener | ((...args: never[]) => unknown)>) => {
+    for (const listener of process.listeners('SIGTERM')) if (!before.has(listener)) listener('SIGTERM');
+  };
 
   const daemonEvents = () =>
     existsSync(daemonNdjsonFile())
@@ -610,7 +620,10 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
             [retained],
             'Cannot verify cleanup for report child 85183; its process or descendants were left untouched.',
             'Inspect fixture child.',
-            Object.assign(new Error('unverified'), { reportResourceSettled: () => childGone }),
+            Object.assign(new Error('unverified'), {
+              reportChild: { pid: 85183, processToken: null },
+              reportResourceSettled: () => childGone,
+            }),
           )
         : new Error('fixture tick stops here');
     });
@@ -647,29 +660,151 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       expect(readClaimSet(stimdClaimRoot())).toMatchObject({ live: [], unresolved: [] });
       expect(readClaimSet(daemonClaimRoot())).toMatchObject({ live: [], unresolved: [] });
     } finally {
+      stopInProcess(before);
+      await running?.catch(() => {});
       passes.mockRestore();
       releaseClaim(retained);
-      await running?.catch(() => {});
     }
   }, 20_000);
 
-  test('a stimd stopped while a report child it could not verify still runs records that child on its claims instead of an unknown one', async () => {
+  test.each([
+    ['one child that fails on two ticks records that child', [0, 0], 1, true],
+    ['two different children record an unknown child', [0, 1], 2, false],
+  ])(
+    'a stimd stopped while report children it could not verify still run keeps its engine claim: %s',
+    async (_name, order, logged, recorded) => {
+      const before = new Set(process.listeners('SIGTERM'));
+      const sleepers = [0, 1].map(() => spawnChild('sleep', ['30'], { detached: true, stdio: 'ignore' }));
+      const exits = sleepers.map((sleeper) => new Promise((done) => sleeper.once('exit', done)));
+      const children = sleepers.map((sleeper) => {
+        assert(sleeper.pid);
+        const captured = captureProcessIdentity(sleeper.pid);
+        assert(captured.ok);
+        return { pid: sleeper.pid, processToken: captured.token };
+      });
+      const root = join(home, 'engine');
+      const build = 'aaaaaaaaaaaa';
+      mkdirSync(root, { recursive: true });
+      const engineClaim = tryAcquireClaim({ root: buildClaimRoot(root, build), mode: 'shared' }).acquired;
+      assert(engineClaim);
+      const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+      const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+        engine: { root, build },
+        record: () => {},
+        admit: async () => null,
+        check: async () => null,
+        retainUnknown: (child) => {
+          if (child) setClaimChild(engineClaim, child);
+          else markClaimChildPending(engineClaim);
+          return engineClaim.path;
+        },
+        release: () => {},
+      });
+      let ticks = 0;
+      const passes = vi.spyOn(daemonPasses, 'runHomePasses').mockImplementation(async () => {
+        const reportChild = children[order[Math.min(ticks, order.length - 1)] ?? 0];
+        ticks++;
+        throw Object.assign(new Error(`Cannot verify cleanup for report child ${reportChild?.pid}.`), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          remedy: 'Inspect fixture child.',
+          reportCleanup: true,
+          reportChild,
+          reportResourceSettled: () => false,
+        });
+      });
+      let running: Promise<boolean> | undefined;
+      try {
+        running = runStimd({ mode: 'on', tickMs: 60_000 });
+        await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+        for (const tick of order.keys()) {
+          await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+          await vi.waitFor(() => expect(ticks).toBeGreaterThan(tick), { timeout: 10_000, interval: 20 });
+        }
+        await vi.waitFor(
+          () => expect(daemonEvents().filter((event) => event === 'daemon_cleanup_unverified')).toHaveLength(logged),
+          { timeout: 10_000, interval: 20 },
+        );
+        expect(daemonEvents()).not.toContain('daemon_exited');
+        stopInProcess(before);
+        await running;
+        expect(readClaimSet(engineClaim.root).live).toMatchObject([
+          { childDeclared: true, child: recorded ? children[0] : null },
+        ]);
+        expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+        expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+      } finally {
+        stopInProcess(before);
+        await running?.catch(() => {});
+        passes.mockRestore();
+        follower.mockRestore();
+        ownEngine.mockRestore();
+        releaseClaim(engineClaim);
+        for (const sleeper of sleepers) sleeper.kill('SIGKILL');
+        await Promise.all(exits);
+      }
+    },
+    20_000,
+  );
+
+  test('a tick whose unverified cleanup names no child ends stimd as before', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const passes = vi.spyOn(daemonPasses, 'runHomePasses').mockRejectedValue(
+      Object.assign(new Error('No ownership claim protects fingerprint evaluation.'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        remedy: 'Run stim doctor.',
+        reportCleanup: true,
+      }),
+    );
+    let running: Promise<boolean> | undefined;
+    try {
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+      await running.catch(() => {});
+      expect(daemonEvents()).toContain('daemon_exited');
+      expect(daemonEvents()).not.toContain('daemon_cleanup_unverified');
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+    } finally {
+      stopInProcess(before);
+      await running?.catch(() => {});
+      passes.mockRestore();
+    }
+  }, 20_000);
+
+  test('a stimd that dies while a child cleanup is unverified leaves its home recoverable: a new stimd starts, and the claim guarding the child still refuses its work', async () => {
     const before = new Set(process.listeners('SIGTERM'));
     const sleeper = spawnChild('sleep', ['30'], { detached: true, stdio: 'ignore' });
     const exited = new Promise((done) => sleeper.once('exit', done));
-    assert(sleeper.pid);
-    const captured = captureProcessIdentity(sleeper.pid);
-    assert(captured.ok);
-    const reportChild = { pid: sleeper.pid, processToken: captured.token };
-    const passes = vi.spyOn(daemonPasses, 'runHomePasses').mockRejectedValue(
-      Object.assign(new Error(`Cannot verify cleanup for report child ${sleeper.pid}.`), {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        remedy: 'Inspect fixture child.',
-        reportCleanup: true,
-        reportChild,
-        reportResourceSettled: () => false,
-      }),
-    );
+    const ender = spawnChild('sleep', ['30'], { stdio: 'ignore' });
+    const enderExited = new Promise((done) => ender.once('exit', done));
+    assert(sleeper.pid && ender.pid);
+    const childIdentity = captureProcessIdentity(sleeper.pid);
+    const deadIdentity = captureProcessIdentity(ender.pid);
+    assert(childIdentity.ok && deadIdentity.ok);
+    const child = { pid: sleeper.pid, processToken: childIdentity.token };
+    const dead = { pid: ender.pid, processToken: deadIdentity.token };
+    ender.kill('SIGKILL');
+    await enderExited;
+    const guardRoot = join(home, 'native-run.lock');
+    const guard = tryAcquireClaim({ root: guardRoot, mode: 'exclusive' }).acquired;
+    assert(guard);
+    setClaimChild(guard, child);
+    const passes = vi
+      .spyOn(daemonPasses, 'runHomePasses')
+      .mockRejectedValue(
+        new WorkspaceProcessCleanupError(
+          [guard],
+          `Cannot verify cleanup for report child ${child.pid}.`,
+          'Inspect fixture child.',
+          Object.assign(new Error('unverified'), { reportChild: child, reportResourceSettled: () => false }),
+        ),
+      );
+    const ownedBy = (claimRoot: string, owner: typeof dead) => {
+      for (const holder of readClaimSet(claimRoot).live) {
+        const record: Record<string, unknown> = JSON.parse(readFileSync(holder.path, 'utf8'));
+        writeFileSync(holder.path, JSON.stringify({ ...record, owner }));
+      }
+    };
     let running: Promise<boolean> | undefined;
     try {
       running = runStimd({ mode: 'on', tickMs: 60_000 });
@@ -679,21 +814,33 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         timeout: 10_000,
         interval: 20,
       });
-      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
-      assert(handler);
-      handler('SIGTERM');
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+      expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+      stopInProcess(before);
       await running;
-      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true, child: reportChild }]);
-      expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: true, child: reportChild }]);
+      passes.mockRestore();
+      for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot(), guardRoot]) ownedBy(claimRoot, dead);
+
+      expect(readClaimSet(stimdClaimRoot()).unresolved).toEqual([]);
+      expect(readClaimSet(daemonClaimRoot()).unresolved).toEqual([]);
+      const restarted = new Set(process.listeners('SIGTERM'));
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      expect(tryAcquireClaim({ root: guardRoot, mode: 'exclusive' })).toMatchObject({ held: { child } });
+      stopInProcess(restarted);
+      await running;
     } finally {
+      stopInProcess(before);
+      await running?.catch(() => {});
       passes.mockRestore();
       sleeper.kill('SIGKILL');
       await exited;
-      await running?.catch(() => {});
     }
   }, 20_000);
 
   test('a start refuses once and names every unresolved home, daemon and engine claim, and starts once each records an exited child', async () => {
+    const started = new Set(process.listeners('SIGTERM'));
+    let running: Promise<boolean> | undefined;
     const sleeper = spawnChild('sleep', ['30'], { stdio: 'ignore' });
     assert(sleeper.pid);
     const captured = captureProcessIdentity(sleeper.pid);
@@ -726,7 +873,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       for (const path of pending)
         writeFileSync(`${path.slice(0, -'.claim'.length)}.child`, JSON.stringify({ record: gone }));
       const before = new Set(process.listeners('SIGTERM'));
-      const running = runStimd({ mode: 'on', tickMs: 60_000 });
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
       await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
       const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
       assert(handler);
@@ -734,12 +881,14 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await running;
       expect(existsSync(stimdRecordFile())).toBe(false);
     } finally {
+      stopInProcess(started);
+      await running?.catch(() => {});
       engine.mockRestore();
     }
   }, 20_000);
 
   test.each(['passes', 'measure'])(
-    'persistent %s cleanup refusal retains the home and engine',
+    'persistent %s cleanup refusal retains the engine and leaves the home claim complete',
     async (worker) => {
       const oldExit = process.exitCode;
       const root = join(home, 'engine');
@@ -775,7 +924,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
         void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
         await running;
-        expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+        expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
         const survey = readClaimSet(buildClaimRoot(root, build));
         expect(survey.live).toMatchObject([{ childDeclared: true }]);
         expect(allDrained(survey)).toBe(false);

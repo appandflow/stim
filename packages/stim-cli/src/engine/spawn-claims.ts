@@ -198,12 +198,17 @@ export function fenceDeclaredSpawns(context: StimContext): {
           error && typeof error === 'object' && 'remedy' in error && typeof error.remedy === 'string'
             ? error.remedy
             : 'Verify that the operation and all descendants have stopped.';
+        const unverified = new Set(
+          states.flatMap((state) => Array.from(state.peers, (peer) => peer.unverified)).flat(),
+        );
+        const sole = soleReportChild([...unverified]) !== null;
         throw Object.assign(
           new WorkspaceProcessCleanupError(
             claims,
             'Cannot verify all declared child cleanup.',
             remedy,
             error instanceof Error ? error : undefined,
+            sole,
           ),
           { reportCleanup: true },
         );

@@ -510,16 +510,20 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
   When a Metro, tunnel, maintenance child or server worker cannot be verified
-  stopped, Stim also retains the home, shared daemon and engine claims and
-  refuses new work in that home. When the child is identified, those claims
-  record it and free themselves once it has exited. A child of stimd's own
-  tick does not stop stimd: it logs daemon_cleanup_unverified, stays running
-  and releases what that child held once the child has stopped. A stimd that
-  cannot start names every unresolved home, daemon and engine claim at once.
+  stopped, Stim retains the claim that guards that child's work and stimd's
+  engine claim. Only when stimd knows of exactly one such child and it is
+  identified does the engine claim record it and free itself once its process
+  group has exited; otherwise it records an unknown child and waits for you.
+  stimd's home and daemon claims are never kept for a child: once that stimd
+  is gone, the next one takes the home. A report child of stimd's own tick
+  that names itself does not stop stimd: it logs daemon_cleanup_unverified,
+  stays running and releases what that child held once the child has stopped.
+  A stimd that cannot start names every unresolved home, daemon and engine
+  claim at once.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
-  An attached daemon killed unexpectedly can also leave home, shared daemon
-  and engine claims requiring the same check, including during startup or forced shutdown.
+  An attached daemon killed unexpectedly can also leave its engine claim
+  requiring the same check, including during startup or forced shutdown.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink

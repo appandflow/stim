@@ -46,9 +46,7 @@ import {
   ClaimUnavailableError,
   claimFailure,
   claimRemoveCommand,
-  markClaimChildPending,
   processGroupAlive,
-  setClaimChild,
   isClaimRefusal,
   isClaimUnavailable,
   readClaimSet,
@@ -495,19 +493,32 @@ function logKeptWorkspaces(
   }
 }
 
+const MAX_CONTAINED_CLEANUPS = 8;
+
+function childKey(error: unknown): string | null {
+  const child = reportChildOf(error);
+  return child ? `${child.pid}:${child.processToken ?? ''}` : null;
+}
+
 /**
- * The children whose cleanup a tick could not verify. Each keeps stimd up until a later tick finds it stopped, which
- * releases the claims its failure retained.
+ * The report children whose cleanup a tick could not verify. Each keeps stimd up until a later tick finds it stopped,
+ * which releases the claims its failure retained once no other unverified child holds them. Only a refusal that
+ * names one child and how to check it is contained, each child once and at most `MAX_CONTAINED_CLEANUPS` of them; any
+ * other unverified cleanup ends stimd as before.
  */
 function createCleanupWatch(log: (level: Level, event: string, msg: string) => void) {
-  let unsettled: { error: ClaimUnavailableError; settled: (() => boolean) | null; claims: readonly ClaimHandle[] }[] =
-    [];
+  let unsettled: { error: ClaimUnavailableError; settled: () => boolean; claims: readonly ClaimHandle[] }[] = [];
   return {
     contain(error: unknown, ending: boolean): boolean {
       if (ending || !isUnverifiedCleanup(error)) return false;
+      const key = childKey(error);
+      const settled = cleanupCheck(error);
+      if (!key || !settled) return false;
+      if (unsettled.some((entry) => childKey(entry.error) === key)) return true;
+      if (unsettled.length >= MAX_CONTAINED_CLEANUPS) return false;
       unsettled.push({
         error,
-        settled: cleanupCheck(error),
+        settled,
         claims: error instanceof WorkspaceProcessCleanupError ? error.claims : [],
       });
       log(
@@ -518,10 +529,13 @@ function createCleanupWatch(log: (level: Level, event: string, msg: string) => v
       return true;
     },
     settle(): void {
-      const stopped = unsettled.filter((entry) => entry.settled?.());
+      const stopped = unsettled.filter((entry) => entry.settled());
       unsettled = unsettled.filter((entry) => !stopped.includes(entry));
+      const stillHeld = new Set(unsettled.flatMap((entry) => entry.claims.map((held) => held.path)));
       for (const entry of stopped) {
-        const released = entry.claims.filter((held) => releaseClaim(held)).map((held) => held.path);
+        const released = entry.claims
+          .filter((held) => !stillHeld.has(held.path) && releaseClaim(held))
+          .map((held) => held.path);
         log(
           'info',
           'daemon_cleanup_settled',
@@ -549,51 +563,27 @@ function isUnverifiedCleanup(error: unknown): error is ClaimUnavailableError {
   return isClaimUnavailable(error) && 'reportCleanup' in error;
 }
 
-type IdentifiedChild = { pid: number; processToken: string };
-
-function markHomePending(
-  home: ClaimHandle | null,
-  cleanup: () => void = () => {},
-  enabled = true,
-  child: IdentifiedChild | null = null,
-): void {
-  if (!enabled || !home) return;
-  try {
-    if (child) setClaimChild(home, child);
-    else markClaimChildPending(home);
-  } catch (error) {
-    cleanup();
-    throw Object.assign(
-      new ClaimUnavailableError(`could not guard the Stim home: ${String(error)}`, { claimPath: home.path }),
-      { retentionFailure: true },
-    );
-  }
-}
-
 /**
- * Keeps stimd's home, daemon and engine claims past its exit for children whose cleanup was not verified. When every one
- * of `unverified` names the same identified child, the claims record that child and free themselves once its process
- * group is gone; otherwise they record an unknown child, which only a person can clear.
+ * Keeps stimd's engine claim past its exit for children whose cleanup was not verified, since such a child may still run
+ * from that build. When every one of `unverified` names the same identified child, the claim records that child and
+ * frees itself once its process group is gone; otherwise it records an unknown child, which only a person can clear.
+ * stimd's home and daemon claims say only that a live stimd owns the home, so they are never kept for a child: a child
+ * whose work needs protection keeps it through the claim that guards that work.
  */
 function retainUnverifiedForeground(
   error: unknown,
-  home: ClaimHandle,
   retention: ReturnType<typeof followEngine>,
-  daemon: ClaimHandle | null,
   unverified: readonly unknown[] = [error],
 ): unknown {
   if (!isClaimUnavailable(error)) return undefined;
   if (!('reportCleanup' in error)) return error;
-  if ('retentionFailure' in error) return error;
   const child = soleReportChild(unverified);
-  markHomePending(home, undefined, true, child);
-  if (daemon) markHomePending(daemon, undefined, true, child);
   const enginePath = retention?.retainUnknown(child);
-  const paths = [home.path, ...(daemon ? [daemon.path] : []), ...(enginePath ? [enginePath] : [])];
-  error.message += ` Stimd ownership remains held at ${paths.join(', ')}${child ? ` until process group ${child.pid} has exited` : ''}.`;
+  if ('retentionFailure' in error || !enginePath) return error;
+  error.message += ` The Stim engine claim remains held at ${enginePath}${child ? ` until process group ${child.pid} has exited` : ''}.`;
   return Object.assign(error, {
     retentionFailure: true,
-    remedy: `${error.remedy} After verifying the child and descendants have stopped, remove these claims: ${paths.map(claimRemoveCommand).join('; ')}`,
+    remedy: `${error.remedy} After verifying the child and descendants have stopped, remove this claim: ${claimRemoveCommand(enginePath)}`,
   });
 }
 
@@ -781,7 +771,6 @@ async function runStimdInner(
       );
     return false;
   }
-  const homeClaim = own;
   let keepOwn = false;
   let startupClaim: ClaimHandle | null = null;
   let startupFollower: ReturnType<typeof followEngine> = null;
@@ -789,7 +778,7 @@ async function runStimdInner(
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) {
       keepOwn = true;
-      retainUnverifiedForeground(error, homeClaim, startupRetention ?? startupFollower, startupClaim);
+      retainUnverifiedForeground(error, startupRetention ?? startupFollower);
     } else {
       startupRetention?.release();
       startupFollower?.release();
@@ -799,7 +788,6 @@ async function runStimdInner(
     markAbnormal = null;
     await writer.close();
   };
-  markHomePending(own, undefined, attached !== undefined);
   markAbnormal = () => {
     if (!own || keepOwn) return;
     keepOwn = true;
@@ -859,7 +847,6 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
   startupClaim = claim;
-  markHomePending(claim, undefined, attached !== undefined);
   startup.signal.throwIfAborted();
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
@@ -1045,15 +1032,21 @@ async function runStimdInner(
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const enginePinned = (): boolean => pinned() || logs.holdsRelaunch();
+  const unverifiedSeen = new Set<unknown>();
+  const retainFor = (error: unknown, others: readonly unknown[] = []) => {
+    for (const failure of [error, ...others]) if (isUnverifiedCleanup(failure)) unverifiedSeen.add(failure);
+    return retainUnverifiedForeground(error, retention ?? follower, [
+      ...new Set([...unverifiedSeen, ...cleanups.errors()]),
+    ]);
+  };
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
     keepDaemon = true;
-    markHomePending(homeClaim);
     try {
       (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
     } finally {
-      retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
+      retainFor(error);
     }
     if (attached) requestEnd(why, 'error');
     else shutdown(why, 'error');
@@ -1456,7 +1449,12 @@ async function runStimdInner(
           keepOwn = true;
           keepDaemon = true;
         }
-        const retained = retainUnverifiedForeground(error, homeClaim, retention, claim) ?? error;
+        const retained =
+          retainFor(error, [
+            initial,
+            backgroundFailure,
+            ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+          ]) ?? error;
         shutdown('attached cleanup could not be verified', 'error', true);
         await shutdownDone;
         throw retained;
@@ -1548,7 +1546,7 @@ async function runStimdInner(
           unverified = true;
           keepOwn = true;
           keepDaemon = true;
-          retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim, [...new Set(failures)]);
+          retainFor(error, failures);
         }
         await threads.close();
         return undefined;
@@ -1775,7 +1773,10 @@ async function runStimdInner(
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
       for (const socket of replying) socket.destroy();
-      if (cleanups.contain(error, endingNow())) continue;
+      if (cleanups.contain(error, endingNow())) {
+        interval = tickMs;
+        continue;
+      }
       foregroundFailure = handleForegroundError(error, ending, attached !== undefined, requestEnd, shutdown);
       break;
     } finally {

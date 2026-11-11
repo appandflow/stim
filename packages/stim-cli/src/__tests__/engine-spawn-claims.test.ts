@@ -177,19 +177,33 @@ test('a failed fenced child keeps ownership pending and refuses another fence', 
 });
 
 test.each([
-  ['records the one identified child', true],
-  ['keeps an unknown child when the child has no identity token', false],
-])('a fence that fails on an unverified report child %s', async (_name, identified) => {
-  const captured = captureProcessIdentity(process.pid);
-  assert(captured.ok);
-  const reportChild = { pid: process.pid, processToken: identified ? captured.token : null };
+  ['records the one identified child', [true], true],
+  ['keeps an unknown child when the child has no identity token', [false], false],
+  ['keeps an unknown child when a second child has no identity token', [true, false], false],
+  ['keeps an unknown child when two children are identified', [true, true], false],
+])('a fence that fails on unverified report children %s', async (_name, identities, recorded) => {
+  const children = identities.map((identified, index) => {
+    const pid = index === 0 ? process.pid : process.ppid;
+    const captured = captureProcessIdentity(pid);
+    assert(captured.ok);
+    return { pid, processToken: identified ? captured.token : null };
+  });
   const fence = fenceDeclaredSpawns(context);
-  const unverified = Object.assign(new Error('cleanup unverified'), { reportCleanup: true, reportChild });
-  const settled = Promise.reject(unverified);
-  settled.catch(() => {});
-  spawnDeclared(context, () => makeChildProcess(), { until: settled });
-  await expect(fence.finish(unverified)).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+  const failures = children.map((reportChild) =>
+    Object.assign(new Error('cleanup unverified'), { reportCleanup: true, reportChild }),
+  );
+  for (const failure of failures) {
+    const settled = Promise.reject(failure);
+    settled.catch(() => {});
+    spawnDeclared(context, () => makeChildProcess(), { until: settled });
+  }
+  const thrown: unknown = await fence.finish(failures[0]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(thrown).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+  expect(thrown).toHaveProperty('reportChild', recorded ? children[0] : undefined);
   const [held] = readClaimSet(root).live;
   expect(held?.childDeclared).toBe(true);
-  expect(held?.child).toEqual(identified ? reportChild : null);
+  expect(held?.child).toEqual(recorded ? children[0] : null);
 });

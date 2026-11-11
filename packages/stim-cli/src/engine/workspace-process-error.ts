@@ -40,10 +40,15 @@ export class WorkspaceProcessCleanupError extends Error {
   readonly cleanupSettled?: () => boolean;
   readonly reportChild?: ReportChild;
 
-  constructor(claims: readonly ClaimHandle[], message: string, remedy: string, cause?: Error) {
+  /**
+   * `inheritChild` false keeps `cause` for the message chain only: the error then names no child and no check that it
+   * stopped, for a failure that may involve more than the one child `cause` names.
+   */
+  constructor(claims: readonly ClaimHandle[], message: string, remedy: string, cause?: Error, inheritChild = true) {
     super(`${message} Its ownership claims remain held at ${claims.map((claim) => claim.path).join(', ')}.`, { cause });
     this.claims = claims;
     this.remedy = `${remedy} After verifying no child remains, remove only these claims: ${claims.map((claim) => claimRemoveCommand(claim.path)).join('; ')}`;
+    if (!inheritChild) return;
     const resourceSettled = cause && 'reportResourceSettled' in cause ? cause.reportResourceSettled : undefined;
     if (typeof resourceSettled === 'function') this.reportResourceSettled = () => resourceSettled() === true;
     const cleanupSettled = cause && 'cleanupSettled' in cause ? cause.cleanupSettled : undefined;
