@@ -5,8 +5,8 @@ import { isJsonObject, settingDefinition, type PluginKind } from '@stim-cli/core
 import { TRANSPORT_API_VERSION } from '@stim-cli/transport';
 import type { Finding } from './diagnostics/doctor.ts';
 import { BUILTIN_PLUGINS, BUILTIN_PREFIX } from './plugin-builtins.ts';
-import { resolveCacheProviderConfig } from './workspace/settings.ts';
-import { readSettingsContext, settingEntry, type SettingsContext } from './workspace/settings-payload.ts';
+import { resolveCacheProviderConfig, type ProjectSettingsContext } from './workspace/settings.ts';
+import { settingEntry, type SettingsContext } from './workspace/settings-payload.ts';
 
 /** The kind integers this Stim speaks. */
 export const PLUGIN_API: Readonly<Record<PluginKind, number>> = {
@@ -50,6 +50,26 @@ export interface PluginEntry {
   baseDir?: string;
 }
 
+/** The plugin `cache.provider` names for a project, or null when it names none. */
+async function cacheProviderEntry(context: ProjectSettingsContext): Promise<PluginEntry | null> {
+  const provider = resolveCacheProviderConfig(context);
+  if (!provider) return null;
+  const problem = await pluginRefProblem(provider.provider, provider.baseDir, 'cache-provider');
+  let kinds: Record<string, unknown> = {};
+  try {
+    kinds = await manifestKinds(provider.provider, provider.baseDir);
+  } catch {}
+  return {
+    name: provider.provider,
+    source: 'project',
+    kinds,
+    selectedBy: ['cache.provider'],
+    accepted: problem === null,
+    ...(problem === null ? {} : { reason: problem }),
+    baseDir: provider.baseDir,
+  };
+}
+
 /** The bundled plugins and the plugins the settings name, read from manifests only. */
 export async function listPlugins(context: SettingsContext): Promise<PluginEntry[]> {
   const driverSetting = settingDefinition('hosting.agentDriver');
@@ -61,30 +81,18 @@ export async function listPlugins(context: SettingsContext): Promise<PluginEntry
     selectedBy: kind === 'agent-driver' && driver === name ? ['hosting.agentDriver'] : [],
     accepted: true,
   }));
-  const provider = context.projectPath ? resolveCacheProviderConfig(context) : null;
-  if (provider) {
-    const problem = await pluginRefProblem(provider.provider, provider.baseDir, 'cache-provider');
-    let kinds: Record<string, unknown> = {};
-    try {
-      kinds = await manifestKinds(provider.provider, provider.baseDir);
-    } catch {}
-    entries.push({
-      name: provider.provider,
-      source: 'project',
-      kinds,
-      selectedBy: ['cache.provider'],
-      accepted: problem === null,
-      ...(problem === null ? {} : { reason: problem }),
-      baseDir: provider.baseDir,
-    });
-  }
+  const provider = context.projectPath
+    ? await cacheProviderEntry({ ...context, projectPath: context.projectPath })
+    : null;
+  if (provider) entries.push(provider);
   return entries;
 }
 
 /** Doctor's findings for plugin references this Stim cannot load. */
-export async function pluginRefFindings(root: string, env: NodeJS.ProcessEnv): Promise<Finding[]> {
-  const plugins = await listPlugins(await readSettingsContext(root, env));
-  return plugins
+export async function pluginRefFindings(context: ProjectSettingsContext): Promise<Finding[]> {
+  const provider = await cacheProviderEntry(context);
+  return [provider ?? []]
+    .flat()
     .filter((plugin) => !plugin.accepted)
     .map((plugin) => ({
       code: 'plugin-ref',

@@ -699,7 +699,7 @@ async function assembleDoctorReport(
   findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
   const agentDriver = inspectHostedAgentDriver();
   if (agentDriver) findings.push(agentDriver);
-  findings.push(...(await (await import('../plugin-refs.ts')).pluginRefFindings(root, env)));
+  findings.push(...(await (await import('../plugin-refs.ts')).pluginRefFindings(prepared.settingsContext)));
   const setup = await serverSetup;
   if (setup)
     findings.push(
