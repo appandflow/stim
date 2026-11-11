@@ -29,8 +29,10 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/agent-driver": "workspace:*",
     "@stim-cli/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@stim-cli/agent-driver": "workspace:*"
   },
   "engines": {
     "node": ">=22.12.0"
