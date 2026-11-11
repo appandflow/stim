@@ -97,7 +97,8 @@ Drivers are machine scope. stim-server is a machine daemon bundled in Stim
 Desktop, so it resolves drivers from its own dependencies, never from a
 project. stim-server and the CLI each keep a registry of the first-party driver
 packages they depend on and import a package only when its driver is needed.
-`HOSTED_AGENT_DRIVERS` in core lists the same names for the setting's choices.
+`BUILTIN_AGENT_DRIVERS` in core lists the same names, and
+`HOSTED_AGENT_DRIVERS`, the setting's choices, is `none` followed by them.
 
 The driver for a hosted macOS app keeps its state and claim under the server
 home, at `server/<driver>` and `server/<driver>.claims`. A hosted device
@@ -184,7 +185,7 @@ tool-server run, and accept the flag from the environment.
 An Argent driver needs a tool-server mode that serves one device and leaves
 other simulators untouched, and preferably a daemon policy like
 agent-device's. With that, the driver is a package beside agent-device's, plus
-its name in the two registries and in `HOSTED_AGENT_DRIVERS`.
+its name in the two registries and in `BUILTIN_AGENT_DRIVERS`.
 
 ## Decisions
 

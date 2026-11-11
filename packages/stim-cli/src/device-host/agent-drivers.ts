@@ -5,9 +5,9 @@ import {
   type AgentDriverClient,
   type AgentDriverInvocation,
 } from '@stim-cli/agent-driver';
-import type { HostedAgentDriverName } from '@stim-cli/core/state';
+import type { BuiltinAgentDriver } from '@stim-cli/core/state';
 
-const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
+const DRIVERS: Record<BuiltinAgentDriver, PluginSource> = {
   'agent-device': {
     load: () => import('@stim-cli/agent-driver-agent-device'),
     manifest: () =>
