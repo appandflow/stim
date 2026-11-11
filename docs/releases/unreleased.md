@@ -2,6 +2,7 @@
 
 ## Added
 
+- `stim plugin list` lists the bundled plugins and the plugin `cache.provider` names, and `stim plugin test <plugin>` runs a transport or agent-driver plugin's contract kit with the module in a worker thread. `stim doctor` and `stim settings set cache.provider` now report a cache provider that does not resolve or declares another integer.
 - `stim remote update <mac>` updates an approved worker to the newest compatible release on its channel. Use `--channel next` to select prereleases for one update.
 
 ## Changed

@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation; plugin list and test',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -298,5 +298,39 @@ finishes its work first.
 Normal ownership, device creation, cache locks and coordination remain active.
 All concurrent artifact-cache writers must share the same coordinating home.
 Do not point independent Stim homes at a concurrently writable shared cache.
+
+PLUGINS
+
+A plugin declares the kinds it implements and their integers in its
+package.json, such as "stimPlugin": { "kinds": { "transport": 1 } }, and
+imports only types from 'stim/plugin'; a runtime import of stim fails its test.
+The kinds are cache-provider, transport and agent-driver. runContract(kind,
+options) from 'stim/plugin' runs a kind's contract kit.
+
+  stim plugin list [--json]
+  stim plugin test <plugin> [--json]
+
+plugin list prints the plugins this Stim bundles (builtin:local and
+builtin:tailscale transports, builtin:agent-device agent driver) and the plugin
+cache.provider names, reading package.json manifests only. --json prints
+{ api: { <kind>: <integer> }, plugins: [{ name, source: 'builtin'|'project',
+kinds, selectedBy: [<setting>], accepted, reason?, baseDir? }] }; accepted is
+false, with the reason, when the module does not resolve or declares another
+integer. doctor reports the same as a plugin-ref finding, and stim settings set
+cache.provider warns on stderr and still writes the value.
+
+plugin test takes a path that starts with ./ or /, a package installed in the
+current directory, or builtin:local or builtin:agent-device, and runs the kit of
+each transport or agent-driver kind the manifest declares. The module loads in
+a worker thread, as Stim runs it, never in the CLI process. A transport gets an
+empty env and options; expose and unexpose are not called. An agent driver gets
+a temporary HOME, stateDir and claimRoot with no driving tool on PATH, so start
+must refuse with agent-driver-unavailable; the directory is deleted afterwards.
+builtin:tailscale is not tested, because it reads and watches this Mac's
+Tailscale, and a cache provider is not tested, because it runs in the calling
+process: run runCacheProviderContract from 'stim/plugin' in its own tests. Both
+refuse with STIM_BAD_ARG, as does a plugin that does not resolve. --json prints
+{ reference, kinds, skipped: [{ kind, reason }], checks: [{ kind, name,
+passed, error? }], passed }, and the exit code is 1 when a check fails.
 `,
 };

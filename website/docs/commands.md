@@ -2864,6 +2864,19 @@ then run
 `stim gc --delete --cache gradle-daemons` to stop the idle daemons.
 ```
 
+## `plugin`
+
+```text
+stim plugin list [--json]
+stim plugin test <plugin> [--json]
+```
+
+`list` prints the plugins this Stim bundles and the plugin `cache.provider`
+names, with the kind integers each declares and whether Stim can load it.
+`test` runs the contract kit of each transport or agent-driver kind a plugin
+declares, with the module in a worker thread. See [Plugins](./plugins.md) for
+what each kit runs and the JSON payloads.
+
 ## `guide`
 
 ```text
