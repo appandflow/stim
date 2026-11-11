@@ -1057,8 +1057,7 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
         inspectProcessIdentity(tunnel) === 'gone' &&
         !(GROUPS && processGroupAlive(tunnel.pid))
       ) {
-        if (GROUPS) forgetTunnel(root, tunnel);
-        else failedCleanup(unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm the tunnel tree exited.`));
+        forgetTunnel(root, tunnel);
       }
   })()
     .catch((error: unknown) => {
