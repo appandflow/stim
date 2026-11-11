@@ -44,6 +44,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -11058,6 +11059,11 @@ describe('registered iOS project recipes', () => {
     expect(local.exitCode).toBe(null);
     expect(parseFirst(local.logs)).toMatchObject({ bundleId: 'org.example.native', launched: true });
     expect(local.calls.args.installIosApp).toMatchObject({ udid: UDID });
+    const logs = readdirSync(workspaceLogsDir(root))
+      .filter((name) => name.startsWith('build-ios.ndjson'))
+      .map((name) => readFileSync(join(workspaceLogsDir(root), name), 'utf8'))
+      .join('');
+    expect(logs).toContain('"code":"hosted-unsupported"');
     const refused = await run({ remote: 'remote-only', json: true }, deps);
     expect(refused.exitCode).toBe(1);
     expect(refused.errs.join('\n')).toMatch(/cannot run on a hosted iOS simulator/);

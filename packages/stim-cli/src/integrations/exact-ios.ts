@@ -352,7 +352,21 @@ async function planExactIos(
     signal: operation.signal,
   });
   if (modelRefusal) return { refusal: modelRefusal };
-  const recorded = remote && hostedUnsupported ? readHostedNative(root, 'ios', slot)[slot] : undefined;
+  let recorded;
+  try {
+    recorded = remote && hostedUnsupported ? readHostedNative(root, 'ios', slot)[slot] : undefined;
+  } catch (error) {
+    return {
+      refusal: {
+        code: 'STIM_HOSTING_REFUSED',
+        message: error instanceof Error ? error.message : String(error),
+        remedy:
+          error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+            ? error.remedy
+            : 'Run stim stop to reconcile the recorded hosted placement, then plan again.',
+      },
+    };
+  }
   if (recorded)
     return {
       refusal: {
@@ -448,7 +462,7 @@ export function exactDoctor(): ProjectDoctor {
             {
               level: 'note',
               title: 'Exact application',
-              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to that simulator.`,
+              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator, or with no simulator for a hosted one, and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to a simulator on this Mac.`,
               fix: null,
             },
             ...((options.host ?? process.platform) === 'darwin'

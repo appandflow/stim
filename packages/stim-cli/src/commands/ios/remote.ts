@@ -204,6 +204,14 @@ export async function selectIosPlacement(
     const placement: DevicePlacement = { decision: 'local', reason: args.hostedRefusal };
     const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');
     phase('placement:', devicePlacementLine(placement, []));
+    log?.(
+      devicePlacementRecord({
+        platform: 'ios',
+        selected: selection.placement,
+        fromFlag: opts.remote !== undefined,
+        placed: { placement, code: 'hosted-unsupported', skipped: [] },
+      }),
+    );
     return { ...selection, machine: null, devicePlacement: placement };
   }
   const signal = runCancellationSignal(args.operation) ?? args.operation?.signal;
