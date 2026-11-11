@@ -10,17 +10,39 @@ const notesFile = 'docs/releases/unreleased.md';
 const header =
   '// The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.';
 
+/** The plugin kind whose contract a source module of `stim/plugin` defines; others belong to no one kind. */
+const MODULE_KINDS = {
+  cache: 'cache-provider',
+  transport: 'transport',
+  'transport-kit': 'transport',
+  'agent-driver': 'agent-driver',
+  'agent-driver-kit': 'agent-driver',
+};
+
+const VERSION_KINDS = { CACHE_PROVIDER: 'cache-provider', TRANSPORT: 'transport', AGENT_DRIVER: 'agent-driver' };
+
+const DECLARED =
+  /^(?:export )?(?:declare )?(?:abstract )?(?:const|let|function|class|interface|type|enum|namespace) (\w+)/;
+
 /**
- * One line per declaration member, prefixed by its top-level declaration, with comments, region markers and closing
- * brackets removed, and the export list split one name per line, so an addition reads as added lines only.
+ * One line per declaration member, prefixed by the plugin kind of the module that declares it (`[*]` for none) and its
+ * top-level declaration. Comments, region markers, closing brackets and constant values are removed, bundler suffixes
+ * such as `Foo$1` are dropped, and the export list is split one name per line, so an addition reads as added lines only.
  */
 export function normalizeDeclarations(text) {
-  const lines = [];
+  const entries = [];
+  const declaredIn = new Map();
+  let module = '*';
   let top = '';
-  const source = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  const source = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\b(\w+)\$\d+\b/g, '$1');
   for (const raw of source.split('\n')) {
     const line = raw.replace(/\s+$/, '');
     const trimmed = line.trim();
+    const region = /^\/\/#region (?:\.\.\/([\w-]+)\/dist\/|src\/([\w-]+)\.d\.ts)/.exec(trimmed);
+    if (region) module = MODULE_KINDS[region[1] ?? region[2]] ?? '*';
     if (trimmed === '' || trimmed.startsWith('//') || /^[\])}>;,]+$/.test(trimmed)) continue;
     const exported = /^export \{(.*)\};?$/.exec(trimmed);
     if (exported) {
@@ -28,16 +50,26 @@ export function normalizeDeclarations(text) {
         .split(',')
         .map((each) => each.trim())
         .filter(Boolean))
-        lines.push(`export ${name}`);
+        entries.push({
+          module: null,
+          name: name
+            .replace(/^type /, '')
+            .split(' as ')
+            .pop(),
+          text: `export ${name}`,
+        });
       continue;
     }
     if (line === trimmed) {
-      top = trimmed;
-      lines.push(trimmed);
+      top = trimmed.replace(/^(declare const \w+) = .*;$/, '$1;');
+      const declared = DECLARED.exec(top);
+      if (declared) declaredIn.set(declared[1], module);
+      entries.push({ module, text: top });
     } else {
-      lines.push(`${top} | ${trimmed}`);
+      entries.push({ module, text: `${top} | ${trimmed}` });
     }
   }
+  const lines = entries.map((entry) => `[${entry.module ?? declaredIn.get(entry.name) ?? '*'}] ${entry.text}`);
   return [...new Set(lines)].toSorted();
 }
 
@@ -47,22 +79,50 @@ function missing(from, to) {
   return from.filter((line) => !have.has(line));
 }
 
-/** Whether the unreleased notes have a `## Removed (breaking)` entry that names `stim/plugin`. */
-export function hasBreakingNote(notes) {
-  const section = /^## Removed \(breaking\)\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(notes);
-  return Boolean(section && section[1].includes('stim/plugin'));
+/** Each kind integer the report declares. */
+function kindIntegers(report) {
+  const integers = {};
+  for (const line of report) {
+    const found = /declare const (\w+)_API_VERSION: (\d+);$/.exec(line);
+    if (found && VERSION_KINDS[found[1]]) integers[VERSION_KINDS[found[1]]] = Number(found[2]);
+  }
+  return integers;
+}
+
+/** The `## Removed (breaking)` section of the unreleased notes, or an empty string. */
+function breakingSection(notes) {
+  return /^## Removed \(breaking\)\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(notes.replace(/\r\n?/g, '\n'))?.[1] ?? '';
 }
 
 /**
- * What a new report means against the baseline: `same`; `additive` when it only adds lines; `breaking` when it
- * removes or changes a line without a kind integer change and a release note; `accepted` when it does with both.
+ * What a new report means against the baseline: `same`; `additive` when it only adds lines; `accepted` when it
+ * removes or changes lines and, for each kind that owns one of them, that kind's integer went up and the unreleased
+ * notes' `## Removed (breaking)` section names the new integer as `<kind> <integer>`; else `breaking`. A line of a
+ * module that belongs to no one kind (`[*]`) needs at least one kind bumped. `needs` lists what is missing.
  */
 export function apiReportVerdict({ baseline, current, notes }) {
   const removed = missing(baseline, current);
   const added = missing(current, baseline);
-  if (removed.length === 0) return { status: added.length === 0 ? 'same' : 'additive', added, removed };
-  const integerChanged = removed.some((line) => /_API_VERSION: \d+/.test(line));
-  return { status: integerChanged && hasBreakingNote(notes) ? 'accepted' : 'breaking', added, removed };
+  if (removed.length === 0) return { status: added.length === 0 ? 'same' : 'additive', added, removed, needs: [] };
+  const before = kindIntegers(baseline);
+  const after = kindIntegers(current);
+  const bumped = Object.keys(after).filter((kind) => before[kind] !== undefined && after[kind] > before[kind]);
+  const owners = new Set(
+    removed.filter((line) => !/_API_VERSION: \d+;$/.test(line)).map((line) => /^\[([\w*-]+)\]/.exec(line)?.[1] ?? '*'),
+  );
+  const section = breakingSection(notes);
+  const needs = [];
+  for (const owner of owners) {
+    if (owner === '*') {
+      if (bumped.length === 0) needs.push('a bump of the integer of the kind this change breaks');
+    } else if (!bumped.includes(owner)) {
+      needs.push(`a bump of the ${owner} integer (now ${before[owner]})`);
+    }
+  }
+  for (const kind of bumped)
+    if (!section.includes(`${kind} ${after[kind]}`))
+      needs.push(`a line naming "${kind} ${after[kind]}" under "## Removed (breaking)" in ${notesFile}`);
+  return { status: needs.length === 0 ? 'accepted' : 'breaking', added, removed, needs };
 }
 
 /** Builds the declarations of `stim/plugin` alone, so they hold every type it reaches, and normalizes them. */
@@ -97,7 +157,7 @@ export function readBaseline() {
     .filter((line) => line !== '' && line !== header);
 }
 
-const BREAKING_REMEDY = `A removed or changed line breaks plugins built against stim/plugin. Bump the kind's integer (the *_API_VERSION constant) and add a line naming stim/plugin under "## Removed (breaking)" in ${notesFile}, then run node scripts/plugin-api-report.mjs --update.`;
+const RUN_UPDATE = 'node scripts/plugin-api-report.mjs --update';
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const update = process.argv.includes('--update');
@@ -113,14 +173,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (verdict.status === 'same') {
     console.log(`stim/plugin API report: ${current.length} lines, unchanged.`);
   } else if (verdict.status === 'breaking') {
-    console.error(`stim/plugin changed in a way that is not additive:\n${listing}\n${BREAKING_REMEDY}`);
+    console.error(
+      `stim/plugin removes or changes lines of ${baselineFile}:\n${listing}\n` +
+        'A plugin built against the old lines may break, so this change needs:\n' +
+        verdict.needs.map((need) => `  * ${need}`).join('\n') +
+        `\nBump the *_API_VERSION constant of each kind named in brackets ([*] lines need the kind they break), add the line to ${notesFile}, then run ${RUN_UPDATE} and commit ${baselineFile}. If the change was not meant to remove anything, restore the removed lines instead.`,
+    );
     process.exit(1);
   } else if (update) {
     writeFileSync(join(root, baselineFile), `${[header, ...current].join('\n')}\n`);
     console.log(`Updated ${baselineFile} (${verdict.status}):\n${listing}`);
   } else {
     console.error(
-      `stim/plugin differs from ${baselineFile} (${verdict.status}):\n${listing}\nRun node scripts/plugin-api-report.mjs --update and commit the report.`,
+      `stim/plugin differs from ${baselineFile} (${verdict.status === 'additive' ? 'additions only, no bump needed' : 'a bumped breaking change'}):\n${listing}\nRun ${RUN_UPDATE} and commit ${baselineFile}.`,
     );
     process.exit(1);
   }
