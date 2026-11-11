@@ -7,7 +7,7 @@ which stopped before navigating the app.
 ## Question and pilot gate
 
 The primary question is whether Stim reduces elapsed time from the first recorded agent activity
-to a changed Trailhead app visibly ready on its Settings screen. JavaScript and
+to a changed app visibly ready on its Settings screen. JavaScript and
 native changes are different workloads and are never combined into one run or
 one headline number.
 
@@ -99,9 +99,15 @@ replaces it: native error-fix and Exact results are not yet publishable on the
 page.
 
 That is 46 runs per model, one repeat. Bare React Native Android and Exact
-iOS are data rows; remove a row from the JSON to drop it. The bare React Native
-and Exact fixtures do not exist yet; their cells stay blocked until the fixture
-commit is pinned (`BARE_FIXTURE_COMMIT`, `EXACT_FIXTURE_COMMIT`). Results from
+iOS are data rows; remove a row from the JSON to drop it. The Expo, bare React
+Native and Exact fixtures live in the
+[`appandflow/stim-benchmarks`](https://github.com/appandflow/stim-benchmarks)
+repository ([benchmark fixtures](./benchmark-fixtures.md)); their cells stay
+blocked until the benchmark root pins that repository's commit
+(`FIXTURES_COMMIT`) and the blockers in the matrix data are resolved: Stim does
+not yet cache a build made in a warmed worktree (#5511), which golden
+preparation needs, and Stim has not yet run the Exact app from a worktree of
+that repository. Results from
 different platforms, scenarios, models, or deliberately changed pins remain
 separate. Never pool iOS and Android timings into one number.
 
@@ -175,6 +181,13 @@ the daemon with `daemon stop --clean` against that campaign state directory
 before starting the timer. Never stop the operator's global daemon.
 
 ## Fixed changes
+
+The fixture's `fixture.json` names the strings and files below; the examples
+are Trailhead's, which earlier recordings used. The calculator fixtures of
+`stim-benchmarks` change the `Key haptics` subtitle in
+`src/screens/SettingsScreen.tsx`, mark the window in
+`ios/StimBench/SceneDelegate.swift`, and use `StimBench <run-id>` as the native
+marker.
 
 The JavaScript cell changes only the Settings Offline maps subtitle:
 
