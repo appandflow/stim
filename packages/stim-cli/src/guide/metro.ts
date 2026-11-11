@@ -196,10 +196,14 @@ WHO RUNS IT
                  --json --log-requests (and --reset-cache for
                  \`start --reset-cache\`). Each bundle request becomes
                  bundle_response_started and _finished or _failed records,
-                 and Re.Pack's compile events become bundle_build_started,
-                 _done or _failed, which launch verification reads as bundle
-                 evidence; other requests are dropped. Other lines arrive as
-                 repack_stdout and repack_stderr records. Re.Pack keeps its
+                 and Re.Pack's compile events become bundle_build_started and
+                 _done, which launch verification reads as bundle evidence;
+                 other requests are dropped. Other lines arrive as
+                 repack_stdout and repack_stderr records. In development
+                 Re.Pack serves a bundle that compiled with errors, so a
+                 launch can report true while the app shows a redbox; its
+                 compile errors are error-level repack_stdout records in
+                 \`stim logs --errors\`. Re.Pack keeps its
                  own host, localhost by default, because it also writes that
                  host into the bundle's publicPath: a simulator and an
                  emulator or Android phone (through adb reverse) reach it, a
@@ -289,9 +293,9 @@ end the job with \`stim stop\`.
   list its devices, while its owned Chrome or a hosted device runs, while a
   web share of it exists, live or stopped for now (\`guide share\`; stim share stop or its
   expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
-  holds its metro-start lock. A dev server whose requests Stim cannot see
-  (metro.command, Re.Pack, or an Expo SDK before 54) never stops for being
-  idle. The
+  holds its metro-start lock. A dev server whose requests or HMR updates Stim
+  cannot see (metro.command, Re.Pack, or an Expo SDK before 54) never stops
+  for being idle. The
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
   devServerStop and idleStage in state.json, so \`status\` shows the idle
   stage and

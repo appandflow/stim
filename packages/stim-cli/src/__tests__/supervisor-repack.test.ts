@@ -175,17 +175,11 @@ describe('repackRecords', () => {
     expect(isBundleProof(proof, 5, 'ios')).toBe(false);
   });
 
-  test('a compile whose errors Re.Pack reports after its done event fails that platform, and an error response fails its request', () => {
+  test('an error response fails its bundle request', () => {
     const toRecord = repackRecords();
-    const records = [
-      progress(0.5),
-      progress(null, 900),
-      entry('error', ['Failed to build bundle due to errors'], 'LoggerPlugin'),
-      incoming('req-3', '/index.bundle?platform=android'),
-      completed('req-3', 500),
-    ].map((line) => toRecord(line, 'stdout'));
-
-    expect(records[2]).toMatchObject({ event: 'bundle_build_failed', level: 'error', platform: 'android' });
-    expect(records[4]).toMatchObject({ event: 'bundle_response_failed', level: 'error', platform: 'android' });
+    const records = [incoming('req-3', '/index.bundle?platform=android'), completed('req-3', 500)].map((line) =>
+      toRecord(line, 'stdout'),
+    );
+    expect(records[1]).toMatchObject({ event: 'bundle_response_failed', level: 'error', platform: 'android' });
   });
 });

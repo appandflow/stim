@@ -102,7 +102,7 @@ preparing, stopping or unknown, or one with a native operation or a claim it can
 (a session a crashed server left ready counts once its claim is proven free),
 and writes the reason to the server log and the session's idleStop journal field.
 The count is per client, not per session. A dev server that may still run after its supervisor
-exited is kept until stim stop ends it. So is a dev server whose requests Stim
+exited is kept until stim stop ends it. So is a dev server whose HMR updates Stim
 does not record: Re.Pack, an Expo project before SDK 54, which cannot load Stim's
 Metro config adapter, or a dev server an older Stim started, until stim stop and stim start
 restart it. A pass the stim-daemon runs can stop any workspace; a pass that

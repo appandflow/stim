@@ -127,13 +127,12 @@ function repackBinRefusal(root: string, config: BundlerConfig | null): { message
  * Turns Re.Pack's `--json` log lines into records. Each bundle request becomes `bundle_response_started` and
  * `bundle_response_finished` or `_failed` records, as Stim's Metro middleware writes them. Re.Pack compiles a platform
  * only once a device asks for its bundle, so its progress events become `bundle_build_started` and
- * `bundle_build_done` records, and a compile with errors becomes `bundle_build_failed`. Other requests are dropped,
- * and other lines, such as Rock's own output, stay raw `repack_stdout` and `repack_stderr` records.
+ * `bundle_build_done` records. Other requests are dropped, and other lines, such as Rock's own output and the
+ * compile errors Re.Pack's LoggerPlugin prints as text, stay raw `repack_stdout` and `repack_stderr` records.
  */
 export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
   const building = new Set<string>();
   const requests = new Map<string, string>();
-  let built: string | null = null;
   return (chunk, stream) => {
     const entry = parseRepackEntry(chunk);
     if (!entry) return recordFromLine(chunk, { stream, source: 'repack' });
@@ -142,7 +141,6 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
     if (progress) {
       if (typeof progress.time === 'number') {
         building.delete(progress.platform);
-        built = progress.platform;
         return {
           src: 'metro',
           level: 'info',
@@ -161,15 +159,6 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
         msg: `Re.Pack compiling ${progress.platform}`,
       };
     }
-    // Re.Pack reports a compile's errors after its done event, from LoggerPlugin's afterDone hook.
-    if (built && entry.level === 'error' && entry.text === 'Failed to build bundle due to errors')
-      return {
-        src: 'metro',
-        level: 'error',
-        event: 'bundle_build_failed',
-        platform: built,
-        msg: `Re.Pack failed to build ${built}`,
-      };
     if (!entry.text) return null;
     return {
       src: 'metro',
