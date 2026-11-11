@@ -188,6 +188,7 @@ export async function runAgentDriverContract(
       href: module.href,
       factory: 'createAgentDriver',
       input: options.unavailableInput,
+      env: options.unavailableInput.env,
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
       moduleCapabilities: ['client.access'],
       idMember: 'name',

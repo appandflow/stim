@@ -150,6 +150,7 @@ export async function runTransportContract(options: TransportContractOptions): P
       href: module.href,
       factory: 'createTransport',
       input: { env: { ...options.env }, options: options.options ?? {} },
+      env: options.env,
       capabilities: ['bindAddresses', 'watch', 'identify', 'expose', 'unexpose', 'resolve', 'close'],
     });
   } catch (error) {

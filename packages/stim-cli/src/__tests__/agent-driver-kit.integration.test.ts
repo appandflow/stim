@@ -105,6 +105,7 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
       href: pathToFileURL(join(fixture('driver-host-fixture'), 'index.mjs')).href,
       factory: 'createAgentDriver',
       input: { env: {}, ...scope },
+      env: {},
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
       idMember: 'name',
       host: members,

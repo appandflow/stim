@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,4 +86,19 @@ test('plugin list names the bundled plugins and a cache provider it cannot load'
       },
     ],
   });
+});
+
+test('a plugin under test sees only its scratch environment, and its output never reaches stdout', () => {
+  const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
+  const run = spawnSync(process.execPath, [cli, 'plugin', 'test', 'noisy-fixture', '--json'], {
+    cwd: fixtures,
+    env: { ...process.env, STIM_HOME: join(base, 'home'), STIM_SECRET_TOKEN: 'not for plugins' },
+    encoding: 'utf8',
+  });
+  expect(run.status).toBe(0);
+  expect(JSON.parse(run.stdout)).toMatchObject({ reference: 'noisy-fixture', passed: true });
+  expect(run.stderr).toContain('noisy-fixture loaded');
+  const seen = JSON.parse(/noisy-fixture env (\{.*\})/.exec(run.stderr)?.[1] ?? '{}');
+  expect(Object.keys(seen).toSorted()).toEqual(['HOME', 'PATH', 'STIM_AGENT_DEVICE_BIN', 'STIM_HOME']);
+  for (const value of Object.values(seen)) expect(value).toContain(join(tmpdir(), 'stim-plugin-test-'));
 });

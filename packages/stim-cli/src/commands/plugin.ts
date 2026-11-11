@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { runProcessOperation } from '../cli-operation.ts';
 import { defineOp, type Op } from '../cli/define-op.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { BUILTIN_PLUGINS, builtinPlugin } from '../plugin-builtins.ts';
 import { readSettingsContext } from '../workspace/settings-payload.ts';
 
@@ -93,7 +96,7 @@ function moduleReference(given: string, cwd: string): string {
   return existsSync(join(cwd, given)) ? `./${given}` : given;
 }
 
-async function testPlugin(given: string, cwd: string): Promise<PluginTestPayload> {
+async function testPlugin(given: string, cwd: string, context: StimContext): Promise<PluginTestPayload> {
   const reference = moduleReference(given, cwd);
   const kinds = await declaredKinds(reference, cwd);
   const skipped = Object.keys(kinds)
@@ -113,30 +116,34 @@ async function testPlugin(given: string, cwd: string): Promise<PluginTestPayload
     );
   const { runContract } = await import('../transport-kit.ts');
   const checks: PluginCheck[] = [];
-  for (const kind of tested) {
-    if (kind === 'transport') {
-      const results = await runContract('transport', { reference, baseDir: cwd, env: {}, options: {} });
+  const scratch = mkdtempSync(join(tmpdir(), 'stim-plugin-test-'));
+  const remove = () => rmSync(scratch, { recursive: true, force: true });
+  const state = operationState(context);
+  state.exitCleanups.add(remove);
+  state.handled = true;
+  const env = {
+    HOME: join(scratch, 'home'),
+    PATH: join(scratch, 'bin'),
+    STIM_HOME: join(scratch, 'stim-home'),
+    STIM_AGENT_DEVICE_BIN: join(scratch, 'missing'),
+  };
+  try {
+    for (const kind of tested) {
+      const results =
+        kind === 'transport'
+          ? await runContract('transport', { reference, baseDir: cwd, env, options: {} })
+          : await runContract('agent-driver', {
+              reference,
+              baseDir: cwd,
+              ...(builtinPlugin(reference) ? { id: reference.slice('builtin:'.length) } : {}),
+              unavailableInput: { env, stateDir: join(scratch, 'driver'), claimRoot: join(scratch, 'driver.claims') },
+              app: { client: 'stim-plugin-test', session: randomUUID(), bundleId: 'dev.stim.plugin-test', pid: 1 },
+            });
       for (const result of results) checks.push({ kind, ...result });
-      continue;
     }
-    const scratch = mkdtempSync(join(tmpdir(), 'stim-plugin-test-'));
-    try {
-      const builtin = builtinPlugin(reference);
-      const results = await runContract('agent-driver', {
-        reference,
-        baseDir: cwd,
-        ...(builtin ? { id: reference.slice('builtin:'.length) } : {}),
-        unavailableInput: {
-          env: { HOME: scratch, PATH: join(scratch, 'bin'), STIM_AGENT_DEVICE_BIN: join(scratch, 'missing') },
-          stateDir: join(scratch, 'driver'),
-          claimRoot: join(scratch, 'driver.claims'),
-        },
-        app: { client: 'stim-plugin-test', session: randomUUID(), bundleId: 'dev.stim.plugin-test', pid: 1 },
-      });
-      for (const result of results) checks.push({ kind, ...result });
-    } finally {
-      rmSync(scratch, { recursive: true, force: true });
-    }
+  } finally {
+    state.exitCleanups.delete(remove);
+    remove();
   }
   return { reference: given, kinds, skipped, checks, passed: checks.every((check) => check.passed) };
 }
@@ -180,7 +187,8 @@ const test = defineOp({
   options: { json: { flags: '--json', description: 'print the checks as JSON' } },
   run: ({ args: [reference], options }) =>
     run(Boolean(options.json), async () => {
-      const payload = await testPlugin(reference, process.cwd());
+      const cwd = process.cwd();
+      const { value: payload } = await runProcessOperation(cwd, (context) => testPlugin(reference, cwd, context));
       if (!payload.passed) process.exitCode = 1;
       if (options.json) {
         console.log(JSON.stringify(payload));

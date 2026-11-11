@@ -78,6 +78,7 @@ export async function startKitWorker({
   href,
   factory,
   input,
+  env,
   capabilities,
   moduleCapabilities = [],
   idMember = 'id',
@@ -88,6 +89,8 @@ export async function startKitWorker({
   href: string;
   factory: string;
   input: unknown;
+  /** The worker's whole `process.env`; nothing of this process's environment reaches the module otherwise. */
+  env: NodeJS.ProcessEnv;
   /** The optional members of the kind's contract; one that is present and not a function fails the load. */
   capabilities: readonly string[];
   /** The module-level members the kit may call, as dotted paths. */
@@ -103,6 +106,9 @@ export async function startKitWorker({
   let worker: Worker;
   try {
     worker = new Worker(spawnEntry('kit-worker'), {
+      env: { ...env },
+      stdout: true,
+      stderr: true,
       workerData: {
         stimKit: true,
         href,
@@ -117,6 +123,8 @@ export async function startKitWorker({
   } catch (error) {
     return { unavailable: `the input could not be cloned: ${error instanceof Error ? error.message : String(error)}` };
   }
+  worker.stdout.pipe(process.stderr, { end: false });
+  worker.stderr.pipe(process.stderr, { end: false });
   const pending = new Map<number, Pending>();
   const listeners = new Map<number, (value: unknown) => void>();
   const failures: string[] = [];
