@@ -15,7 +15,8 @@ import type { DesktopBootstrap } from '../desktop-bootstrap.ts';
 import type { SetupDeps } from '../setup.ts';
 import type { KeepAwakeOptions } from '../keep-awake.ts';
 import type { Transport } from '@stim-cli/transport';
-import type { TailscaleState, TailscaleMonitor, TailscaleTransport } from '@stim-cli/transport-tailscale';
+import type { TailscaleState, TailscaleMonitor } from '@stim-cli/transport-tailscale';
+import type { Tailnet } from '../tailnet-helper.ts';
 import type { RequestLog, RequestTracker } from '../request-log.ts';
 import type { LogLimits } from '../logs.ts';
 import { type CommandLimits, Pending } from '../stim-command.ts';
@@ -108,7 +109,8 @@ export interface ServerOptions {
   /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
   setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
-  name: string;
+  /** The name clients show for this machine, or how to read it when the first client asks. */
+  name: string | (() => Promise<string>);
   hosts: string[];
   /**
    * Listens on `hosts` alone, never on a Tailscale address, and refuses every request that names a remote peer,
@@ -147,6 +149,8 @@ export interface ServerOptions {
    * given. While Tailscale runs the server listens on its addresses, and it closes them when Tailscale stops.
    */
   tailscaleMonitor?: TailscaleMonitor;
+  /** The tailnet loaded on demand; when set, `tailscale`, `tailscaleState` and `tailscaleMonitor` are not read. */
+  tailnet?: Tailnet;
   /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
   listenRetryMs?: number;
   /**
@@ -288,7 +292,8 @@ export interface Replayable {
 /** The state the handlers of one connection share: the closure variables of `startServer` and `connection`. */
 export interface ConnectionContext {
   readonly options: ServerOptions;
-  readonly tailscale: TailscaleTransport;
+  readonly tailnet: Tailnet;
+  readonly serverName: () => Promise<string>;
   homeId: string | undefined;
   readonly hostHealth: () => Promise<HelloHost['app'] | undefined>;
   readonly statusFeed: StatusFeed;

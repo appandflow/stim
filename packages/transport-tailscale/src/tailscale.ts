@@ -1,8 +1,7 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
-import { execFile } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join, win32 } from 'node:path';
-import { isJsonObject, tailscaleEnv } from '@stim-cli/core/state';
+import { isJsonObject, portOf, runTailscale } from './shared.ts';
 import { planServe } from './serve-plan.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
@@ -71,62 +70,39 @@ function parseTailscaleStatus(value: unknown): TailscaleState {
   return { state: 'running', ips, dnsName, hostName };
 }
 
-export function readRawTailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): Promise<unknown> {
-  if (!binary) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile(
-      binary,
-      ['status', '--json'],
-      {
-        env: tailscaleEnv(env),
-        timeout: TIMEOUT_MS,
-        killSignal: 'SIGKILL',
-        encoding: 'utf8',
-        maxBuffer: STATUS_MAX_BUFFER,
-      },
-      (error, stdout) => {
-        if (error) return resolve(null);
-        try {
-          const status: unknown = JSON.parse(stdout);
-          return resolve(isJsonObject(status) && status.BackendState === 'Running' ? status : null);
-        } catch {
-          resolve(null);
-        }
-      },
-    );
+type StatusRead = { failed: string } | { status: unknown };
+
+async function readStatus(binary: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<StatusRead> {
+  const { error, stdout } = await runTailscale(binary, env, ['status', '--json'], {
+    timeout: timeoutMs,
+    maxBuffer: STATUS_MAX_BUFFER,
   });
+  if (error) return { failed: error.killed ? 'it timed out' : error.message.split('\n')[0]! };
+  try {
+    const status: unknown = JSON.parse(stdout);
+    return { status };
+  } catch {
+    return { status: undefined };
+  }
 }
 
-export function readTailscaleStatus(
+export async function readRawTailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): Promise<unknown> {
+  if (!binary) return null;
+  const read = await readStatus(binary, env, TIMEOUT_MS);
+  return 'status' in read && isJsonObject(read.status) && read.status.BackendState === 'Running' ? read.status : null;
+}
+
+export async function readTailscaleStatus(
   binary: string | null,
   env: NodeJS.ProcessEnv,
   timeoutMs: number = TIMEOUT_MS,
 ): Promise<TailscaleState> {
-  if (!binary) return Promise.resolve({ state: 'unavailable', reason: 'the tailscale command was not found' });
-  return new Promise((resolve) => {
-    execFile(
-      binary,
-      ['status', '--json'],
-      {
-        env: tailscaleEnv(env),
-        timeout: timeoutMs,
-        killSignal: 'SIGKILL',
-        encoding: 'utf8',
-        maxBuffer: STATUS_MAX_BUFFER,
-      },
-      (error, stdout) => {
-        if (error) {
-          const reason = error.killed ? 'it timed out' : error.message.split('\n')[0]!;
-          return resolve({ state: 'unavailable', reason: `\`tailscale status --json\` failed: ${reason}` });
-        }
-        try {
-          resolve(parseTailscaleStatus(JSON.parse(stdout)));
-        } catch {
-          resolve({ state: 'unavailable', reason: '`tailscale status --json` printed output that is not JSON' });
-        }
-      },
-    );
-  });
+  if (!binary) return { state: 'unavailable', reason: 'the tailscale command was not found' };
+  const read = await readStatus(binary, env, timeoutMs);
+  if ('failed' in read) return { state: 'unavailable', reason: `\`tailscale status --json\` failed: ${read.failed}` };
+  if (read.status === undefined)
+    return { state: 'unavailable', reason: '`tailscale status --json` printed output that is not JSON' };
+  return parseTailscaleStatus(read.status);
 }
 
 /**
@@ -146,10 +122,6 @@ function reaches(address: unknown, target: number, hosts: Set<string>): URL | nu
     return null;
   }
   return hosts.has(url.hostname) && url.port === String(target) ? url : null;
-}
-
-function portOf(hostPort: string): number {
-  return Number(hostPort.slice(hostPort.lastIndexOf(':') + 1));
 }
 
 /**
@@ -223,37 +195,26 @@ function parseServeStatus(value: unknown, target: number, ips: string[]): ServeR
   return { state: 'missing', port: free };
 }
 
-export function serveRoute(
+export async function serveRoute(
   binary: string | null,
   env: NodeJS.ProcessEnv,
   target: number,
   ips: string[],
   timeoutMs: number = TIMEOUT_MS,
 ): Promise<ServeRoute> {
-  if (!binary)
-    return Promise.resolve({ state: 'unknown', reason: 'the tailscale command was not found', port: SERVE_PORT });
-  return new Promise((resolve) => {
-    execFile(
-      binary,
-      ['serve', 'status', '--json'],
-      { env: tailscaleEnv(env), timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
-      (error, stdout) => {
-        let route: ServeRoute;
-        try {
-          route = error
-            ? {
-                state: 'unknown',
-                reason: error.killed ? 'it timed out' : error.message.split('\n')[0]!,
-                port: SERVE_PORT,
-              }
-            : parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target, ips);
-        } catch {
-          route = { state: 'unknown', reason: 'it printed output that is not JSON', port: SERVE_PORT };
-        }
-        resolve(route);
-      },
-    );
-  });
+  if (!binary) return { state: 'unknown', reason: 'the tailscale command was not found', port: SERVE_PORT };
+  const { error, stdout } = await runTailscale(binary, env, ['serve', 'status', '--json'], { timeout: timeoutMs });
+  if (error)
+    return {
+      state: 'unknown',
+      reason: error.killed ? 'it timed out' : error.message.split('\n')[0]!,
+      port: SERVE_PORT,
+    };
+  try {
+    return parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target, ips);
+  } catch {
+    return { state: 'unknown', reason: 'it printed output that is not JSON', port: SERVE_PORT };
+  }
 }
 
 export function tailnetEndpoint(dnsName: string, port: number): string {
@@ -277,22 +238,18 @@ export async function setupServeRoute(
   const plan = planServe(route, target, null);
   if ('refusal' in plan) throw new Error(plan.refusal.replace('run install again', 'retry setup'));
   if (!plan.create) return route;
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      binary,
-      ['serve', '--bg', `--https=${plan.record.port}`, `http://127.0.0.1:${target}`],
-      { env: tailscaleEnv(env), timeout: 10_000, killSignal: 'SIGKILL', encoding: 'utf8' },
-      (error, stdout, stderr) => {
-        if (!error) return resolve();
-        const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
-        reject(
-          new Error(
-            `Phone connection setup ${error.killed ? 'timed out' : 'failed'}. ${detail || error.message}\nIf Tailscale asks to enable HTTPS, approve its browser setup and try again.`,
-          ),
-        );
-      },
+  const created = await runTailscale(
+    binary,
+    env,
+    ['serve', '--bg', `--https=${plan.record.port}`, `http://127.0.0.1:${target}`],
+    { timeout: 10_000 },
+  );
+  if (created.error) {
+    const detail = [created.stdout.trim(), created.stderr.trim()].filter(Boolean).join('\n');
+    throw new Error(
+      `Phone connection setup ${created.error.killed ? 'timed out' : 'failed'}. ${detail || created.error.message}\nIf Tailscale asks to enable HTTPS, approve its browser setup and try again.`,
     );
-  });
+  }
   const verified = await serveRoute(binary, env, target, state.ips);
   if (verified.state !== 'routed') {
     throw new Error(
@@ -316,21 +273,20 @@ function parseWhois(value: unknown): TailnetIdentity | null {
   };
 }
 
-export function whois(binary: string | null, env: NodeJS.ProcessEnv, ip: string): Promise<TailnetIdentity | null> {
-  if (!binary) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile(
-      binary,
-      ['whois', '--json', ip],
-      { env: tailscaleEnv(env), timeout: TIMEOUT_MS, encoding: 'utf8' },
-      (error, stdout) => {
-        if (error) return resolve(null);
-        try {
-          resolve(parseWhois(JSON.parse(stdout)));
-        } catch {
-          resolve(null);
-        }
-      },
-    );
+export async function whois(
+  binary: string | null,
+  env: NodeJS.ProcessEnv,
+  ip: string,
+): Promise<TailnetIdentity | null> {
+  if (!binary) return null;
+  const { error, stdout } = await runTailscale(binary, env, ['whois', '--json', ip], {
+    timeout: TIMEOUT_MS,
+    kill: false,
   });
+  if (error) return null;
+  try {
+    return parseWhois(JSON.parse(stdout));
+  } catch {
+    return null;
+  }
 }

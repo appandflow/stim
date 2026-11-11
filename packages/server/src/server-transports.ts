@@ -1,22 +1,25 @@
 import type { Transport } from '@stim-cli/transport';
-import {
-  isTailscaleTransport,
-  tailscaleTransport,
-  type TailscaleState,
-  type TailscaleTransport,
-} from '@stim-cli/transport-tailscale';
 import type { ServerOptions } from './handlers/context.ts';
+import { createTailnet, tailscalePackage, type Tailnet } from './tailnet-helper.ts';
 
-const NO_TAILSCALE: TailscaleState = { state: 'unavailable', reason: 'the tailscale command was not found' };
-
-export function serverTransports(options: ServerOptions): { transports: Transport[]; tailscale: TailscaleTransport } {
+/**
+ * The transports a server starts with, and its tailnet. With `options.tailnet` the Tailscale transport joins the list
+ * only once something loads it; otherwise the server builds it now from `tailscale`, `tailscaleState` and
+ * `tailscaleMonitor`, or takes the one `transports` holds.
+ */
+export async function serverTransports(options: ServerOptions): Promise<{ transports: Transport[]; tailnet: Tailnet }> {
+  if (options.tailnet) return { transports: [...(options.transports ?? [])], tailnet: options.tailnet };
+  const { isTailscaleTransport, tailscaleTransport } = await tailscalePackage();
   const given = options.transports?.find(isTailscaleTransport);
   const tailscale =
     given ??
     tailscaleTransport({
       env: options.env,
-      snapshot: { binary: options.tailscale ?? null, state: options.tailscaleState ?? NO_TAILSCALE },
+      snapshot: {
+        binary: options.tailscale ?? null,
+        state: options.tailscaleState ?? { state: 'unavailable', reason: 'the tailscale command was not found' },
+      },
       monitor: options.tailscaleMonitor ?? null,
     });
-  return { transports: options.transports ?? [tailscale], tailscale };
+  return { transports: options.transports ?? [tailscale], tailnet: createTailnet(options.env, tailscale) };
 }

@@ -137,9 +137,10 @@ interface Setup {
   replay?: JsonObject;
   freeGb?: number;
   pullRequests?: PushNotifierOptions['pullRequests'];
+  name?: PushNotifierOptions['name'];
 }
 
-function setup(options: Setup = {}) {
+async function setup(options: Setup = {}) {
   let listener: FeedListener | null = null;
   let freeGb = options.freeGb ?? 200;
   let now = T0;
@@ -149,7 +150,7 @@ function setup(options: Setup = {}) {
   const log = new NotificationLog(join(logDir, 'notifications.json'), () => now);
   const logged: LoggedNotification[] = [];
   const notifier = new PushNotifier({
-    name: 'MacBook Pro',
+    name: options.name ?? (async () => 'MacBook Pro'),
     endpoint,
     subscribeStatus: (next) => {
       listener = next;
@@ -173,6 +174,7 @@ function setup(options: Setup = {}) {
     now: () => now,
   });
   notifier.refresh();
+  await tick();
   return {
     notifier,
     dropped,
@@ -198,11 +200,11 @@ async function settle(pushes = 0): Promise<void> {
 }
 
 describe('PushNotifier', () => {
-  let current: ReturnType<typeof setup> | null = null;
+  let current: Awaited<ReturnType<typeof setup>> | null = null;
   afterEach(() => current?.notifier.close());
 
   it('pushes low disk once, to the machine sheet, and only the events the device chose', async () => {
-    const t = (current = setup({ devices: [device(registration({ events: ['machine'] }))] }));
+    const t = (current = await setup({ devices: [device(registration({ events: ['machine'] }))] }));
     t.emit(status(env()));
     t.at(1000);
     t.emit(status(env({ ...driven(T0 + 1000), ...looping(T0 + 1000) })));
@@ -229,7 +231,7 @@ describe('PushNotifier', () => {
   it("looks up the pushed worktrees' pull requests and pushes one that became ready for review", async () => {
     const asked: string[][] = [];
     let draft = true;
-    const t = (current = setup({
+    const t = (current = await setup({
       pullRequests: async (worktrees) => {
         asked.push(worktrees.map((w) => `${w.path} ${w.branch} ${w.repository}`));
         return new Map([
@@ -267,8 +269,27 @@ describe('PushNotifier', () => {
     ]);
   });
 
+  it("starts watching once a failed read of this machine's name succeeds on retry", async () => {
+    const warned = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let reads = 0;
+      const t = (current = await setup({
+        limits: { resubscribeMs: 20 },
+        name: async () => {
+          if (++reads === 1) throw new Error('no name yet');
+          return 'MacBook Pro';
+        },
+      }));
+      expect(t.subscriptions.opened).toBe(0);
+      await vi.waitFor(() => expect(t.subscriptions.opened).toBe(1));
+      expect(reads).toBe(2);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
   it('sums up more than three notifications in one push', async () => {
-    const t = (current = setup());
+    const t = (current = await setup());
     t.emit(status());
     t.at(1000);
     const broken = (name: string) =>
@@ -291,7 +312,7 @@ describe('PushNotifier', () => {
   });
 
   it('drops a token the push service no longer delivers to, from a ticket or a receipt', async () => {
-    const t = (current = setup({
+    const t = (current = await setup({
       devices: [device(registration()), { ...device(registration({ token: 'ExponentPushToken[phone-b]' })), id: 'd2' }],
     }));
     expo.tickets = (messages) =>
@@ -312,7 +333,7 @@ describe('PushNotifier', () => {
   it('logs refused tickets and failed receipts without the push token', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const t = (current = setup());
+      const t = (current = await setup());
       expo.tickets = () => [
         { status: 'error', message: `"${TOKEN}" is not a valid Expo push token`, details: { error: 'InvalidToken' } },
       ];
@@ -337,7 +358,7 @@ describe('PushNotifier', () => {
   });
 
   it('stops pushing to a device past its hourly budget', async () => {
-    const t = (current = setup({ devices: [device(registration({ levels: { looping: 'alert' } }))] }));
+    const t = (current = await setup({ devices: [device(registration({ levels: { looping: 'alert' } }))] }));
     t.emit(status());
     const broken: JsonObject[] = [];
     for (let i = 1; i <= 25; i++) {

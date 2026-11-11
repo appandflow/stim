@@ -1,5 +1,4 @@
-import { execFile } from 'node:child_process';
-import { isJsonObject, tailscaleEnv } from '@stim-cli/core/state';
+import { isJsonObject, portOf, runTailscale } from './shared.ts';
 
 const TIMEOUT_MS = 5000;
 const FUNNEL_TIMEOUT_MS = 20_000;
@@ -33,10 +32,6 @@ export function funnelPorts(status: unknown): number[] | null {
 
 function configs(serve: Record<string, unknown>): Record<string, unknown>[] {
   return [serve, ...(isJsonObject(serve.Foreground) ? Object.values(serve.Foreground) : [])].filter(isJsonObject);
-}
-
-function portOf(hostPort: string): number {
-  return Number(hostPort.slice(hostPort.lastIndexOf(':') + 1));
 }
 
 function usedPorts(serve: Record<string, unknown>): Set<number> {
@@ -83,23 +78,13 @@ export function holdsFunnelRoute(serve: unknown, route: FunnelRoute): boolean {
   return foreground.every((config) => !usedPorts(config).has(route.port));
 }
 
-function run(binary: string, env: NodeJS.ProcessEnv, args: string[], timeout: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      binary,
-      args,
-      { env: tailscaleEnv(env), timeout, killSignal: 'SIGKILL', encoding: 'utf8' },
-      (error, stdout, stderr) => {
-        if (!error) return resolve(stdout);
-        const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
-        reject(
-          new Error(
-            `\`tailscale ${args.join(' ')}\` ${error.killed ? 'timed out' : 'failed'}${detail ? `: ${detail}` : ''}`,
-          ),
-        );
-      },
-    );
-  });
+async function run(binary: string, env: NodeJS.ProcessEnv, args: string[], timeout: number): Promise<string> {
+  const { error, stdout, stderr } = await runTailscale(binary, env, args, { timeout });
+  if (!error) return stdout;
+  const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+  throw new Error(
+    `\`tailscale ${args.join(' ')}\` ${error.killed ? 'timed out' : 'failed'}${detail ? `: ${detail}` : ''}`,
+  );
 }
 
 /** `tailscale serve status --json`, an ipn.ServeConfig; `{}` when nothing is served. */

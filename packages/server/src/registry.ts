@@ -131,9 +131,12 @@ function clientsFile(capability: ClientCapability): string {
   return join(serverDir(), `${capability}-clients.json`);
 }
 
-/** Registry events are hints; callers must reread grants and retain missed-event repair. */
-export function watchClientRegistries(changed: () => void): () => void {
-  const files = [clientsFile('build'), clientsFile('device-host')];
+/**
+ * Registry events are hints; callers must reread grants and retain missed-event repair. `also` names more files under
+ * the server directory to watch the same way.
+ */
+export function watchClientRegistries(changed: () => void, also: string[] = []): () => void {
+  const files = [clientsFile('build'), clientsFile('device-host'), ...also];
   const names = new Set(files.map((file) => basename(file)));
   const watchers = new Map<string, FSWatcher>();
   let stopped = false;
