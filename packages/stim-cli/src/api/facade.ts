@@ -37,7 +37,11 @@ export function clientProjectRoot(options: StimOptions): string {
     ['buildCache', options.buildCache],
   ]) {
     if (path !== undefined && !isAbsolute(path)) {
-      throw new StimError({ code: 'STIM_BAD_ARG', message: `${name} must be an absolute path.` });
+      throw new StimError({
+        code: 'STIM_BAD_ARG',
+        message: `${name} must be an absolute path.`,
+        remedy: `Pass ${name} as an absolute path, or leave it out.`,
+      });
     }
   }
   return projectRoot;

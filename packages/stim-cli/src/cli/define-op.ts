@@ -485,6 +485,8 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
       }
     }
     const sub = current.commands.find((each) => each.name === word);
+    if (sub?.passThrough && parsed.leading !== undefined)
+      return runCli(sub, rest.slice(parsed.leading + 1), { ...context, root: false });
     if (sub && parsed.leading !== undefined) {
       const { leading, taken } = parsed;
       parent = current.positionalOptions ? scan(current, rest.slice(0, leading)).options : parsed.options;

@@ -203,7 +203,13 @@ export function createLocalStim(options: StimOptions): StimClient {
       read(begin('identity', signal), (operation) => ensureHomeIdentity(operation.signal)),
     doctor: async ({ signal, platform, record }: StimDoctorOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
-        return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' }));
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: 'platform must be ios or android.',
+            remedy: 'Pass ios or android, or leave platform out.',
+          }),
+        );
       const result = await report('doctor', signal, (context) => readDoctorReport(context, platform, version));
       if (record !== true) return result;
       return read(begin(null, signal), async (context) => {
@@ -215,7 +221,11 @@ export function createLocalStim(options: StimOptions): StimClient {
       report('remoteMachines', signal, (context) => readRemoteList(version, doctorIo(context), undefined, context)),
     repairDoctor: async ({ signal, platform, beforeRepair }: StimDoctorRepairOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
-        throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
+        throw new StimError({
+          code: 'STIM_BAD_ARG',
+          message: 'platform must be ios or android.',
+          remedy: 'Pass ios or android, or leave platform out.',
+        });
       const result = await report(
         'repairDoctor',
         signal,
@@ -230,7 +240,11 @@ export function createLocalStim(options: StimOptions): StimClient {
     unlockDevice: ({ signal, platform, slot, beforeUnlock }: StimDeviceUnlockOptions = {}) =>
       read(begin('unlockDevice', signal), async (context) => {
         if (platform !== undefined && platform !== 'ios' && platform !== 'android')
-          throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
+          throw new StimError({
+            code: 'STIM_BAD_ARG',
+            message: 'platform must be ios or android.',
+            remedy: 'Pass ios or android, or leave platform out.',
+          });
         if (slot !== undefined) validateDeviceSlot(slot);
         const root = findStartRoot(context.projectRoot);
         if (!root) throw new StimError(NO_PROJECT_REFUSAL);
@@ -268,7 +282,11 @@ export function createLocalStim(options: StimOptions): StimClient {
     },
     requestMachineAccess: async ({ signal, ticket }: StimMachineAccessOptions = {}) => {
       if (ticket !== undefined && (typeof ticket !== 'string' || !decodeSecret(ticket.trim())))
-        throw new StimError({ code: 'STIM_BAD_ARG', message: 'The setup ticket must encode 32 random bytes.' });
+        throw new StimError({
+          code: 'STIM_BAD_ARG',
+          message: 'The setup ticket must encode 32 random bytes.',
+          remedy: 'Pass the setup ticket exactly as it was printed, or leave ticket out.',
+        });
       const result = await report(
         'requestMachineAccess',
         signal,
@@ -308,7 +326,11 @@ export function createLocalStim(options: StimOptions): StimClient {
             }
           }
           if (request.platform !== 'ios' && request.platform !== 'android')
-            throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios, android or macos.' });
+            throw new StimError({
+              code: 'STIM_BAD_ARG',
+              message: 'platform must be ios, android or macos.',
+              remedy: 'Pass platform ios, android or macos.',
+            });
           const selectors = { slot: validateDeviceSlot(request.slot) };
           const result =
             request.platform === 'ios'
@@ -333,7 +355,11 @@ export function createLocalStim(options: StimOptions): StimClient {
     gc: ({ signal, olderThan, cache, worktrees, measureBuildState }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
         return Promise.reject(
-          new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: 'olderThan must be a whole number of days.',
+            remedy: 'Pass olderThan as a whole number of days, or leave it out.',
+          }),
         );
       return report('gc', signal, async (context) => {
         const result = await readGcReport(
@@ -358,7 +384,14 @@ export function createLocalStim(options: StimOptions): StimClient {
               : deleting !== undefined && typeof deleting !== 'boolean'
                 ? 'delete must be a boolean.'
                 : null;
-      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      if (invalid)
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: invalid,
+            remedy: 'Pass olderThan as days, cache as a cache name, and worktrees and delete as booleans.',
+          }),
+        );
       const operation = beginReport('collectGarbage', signal);
       const request = { olderThan, cache, worktrees, delete: deleting, json: true };
       return lifecycle(operation, (context) =>
@@ -435,7 +468,14 @@ export function createLocalStim(options: StimOptions): StimClient {
           : force !== undefined && typeof force !== 'boolean'
             ? 'force must be a boolean.'
             : null;
-      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      if (invalid)
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: invalid,
+            remedy: 'Pass target as a nonempty path and force as a boolean, or leave them out.',
+          }),
+        );
       return lifecycle(beginReport('removeWorktree', signal), (context) =>
         runReport(context, (bounded) =>
           withAmbientContext(bounded, () => {
@@ -578,7 +618,13 @@ export function createLocalStim(options: StimOptions): StimClient {
     },
     diagnostics({ signal, ...request } = {}) {
       if (request.tail !== undefined && (!Number.isSafeInteger(request.tail) || request.tail < 0)) {
-        return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'tail must be a non-negative integer.' }));
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: 'tail must be a non-negative integer.',
+            remedy: 'Pass tail as a whole number of records, 0 or more.',
+          }),
+        );
       }
       return read(begin('diagnostics', signal), async (operation) => {
         const directory = workspaceLogsDir(operation.projectRoot);
@@ -749,7 +795,11 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
 
 async function start(context: StimContext, options: StimStartOptions): Promise<StimStartResult> {
   if (options.waitSeconds !== undefined && (!Number.isSafeInteger(options.waitSeconds) || options.waitSeconds <= 0)) {
-    throw new StimError({ code: 'STIM_BAD_ARG', message: 'waitSeconds must be a positive whole number.' });
+    throw new StimError({
+      code: 'STIM_BAD_ARG',
+      message: 'waitSeconds must be a positive whole number.',
+      remedy: 'Pass waitSeconds as a whole number of seconds above 0, or leave it out.',
+    });
   }
   const root = findStartRoot(context.projectRoot);
   if (!root) throw new StimError(NO_PROJECT_REFUSAL);
@@ -799,7 +849,11 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
 
 async function reload(context: StimContext, options: StimReloadOptions): Promise<StimReloadResult> {
   if (options.platform !== undefined && !['ios', 'android', 'web'].includes(options.platform)) {
-    throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios, android or web.' });
+    throw new StimError({
+      code: 'STIM_BAD_ARG',
+      message: 'platform must be ios, android or web.',
+      remedy: 'Pass ios, android or web, or leave platform out.',
+    });
   }
   const root = await findCommandWorkspaceAsync(
     context.projectRoot,
@@ -831,7 +885,11 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
     case 'macos':
       return { platform: 'macos', facts: await buildMacosOperation(context, root, options) };
     default:
-      throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim build platform.' });
+      throw new StimError({
+        code: 'STIM_BAD_ARG',
+        message: 'Unknown Stim build platform.',
+        remedy: 'Pass platform ios, android or macos.',
+      });
   }
 }
 
@@ -893,6 +951,10 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
       return { platform: 'web', facts: result.facts };
     }
     default:
-      throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim platform.' });
+      throw new StimError({
+        code: 'STIM_BAD_ARG',
+        message: 'Unknown Stim platform.',
+        remedy: 'Pass platform ios, android, macos or web.',
+      });
   }
 }

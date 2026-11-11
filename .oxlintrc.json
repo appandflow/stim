@@ -620,7 +620,14 @@
         "packages/stim-cli/src/commands/reload.ts",
         "packages/stim-cli/src/commands/revive.ts",
         "packages/stim-cli/src/commands/web.ts",
-        "packages/stim-cli/src/commands/agent-device.ts"
+        "packages/stim-cli/src/commands/agent-device.ts",
+        "packages/stim-cli/src/commands/ci.ts",
+        "packages/stim-cli/src/commands/engine.ts",
+        "packages/stim-cli/src/commands/pair.ts",
+        "packages/stim-cli/src/commands/pairings.ts",
+        "packages/stim-cli/src/commands/serve.ts",
+        "packages/stim-cli/src/commands/service.ts",
+        "packages/stim-cli/src/commands/setup.ts"
       ],
       "rules": {
         "no-restricted-imports": [
