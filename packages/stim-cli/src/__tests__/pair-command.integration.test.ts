@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Command } from 'commander';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { stimdClaimRoot, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 
@@ -32,10 +31,9 @@ afterEach(async () => {
 
 async function pair(): Promise<void> {
   vi.resetModules();
-  const { default: pairCommand } = await import('../commands/pair.ts');
-  const program = new Command().exitOverride();
-  pairCommand(program);
-  await program.parseAsync(['node', 'stim', 'pair', '--control']);
+  const { default: pairOp } = await import('../commands/pair.ts');
+  const { runCli } = await import('../cli/define-op.ts');
+  await runCli(pairOp, ['--control'], { version: '0.0.0' });
 }
 
 test('a stimd of another Stim build is named, not reported as missing', async () => {

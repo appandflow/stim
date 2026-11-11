@@ -1,6 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { readFailure, send, type ConnectionContext } from './context.ts';
-import { type StimLogsOptions, createStim } from 'stim';
+import type { StimLogsOptions } from 'stim';
+import { createStim } from 'stim/api-self';
 import {
   type NdjsonRecord,
   isJsonObject,
