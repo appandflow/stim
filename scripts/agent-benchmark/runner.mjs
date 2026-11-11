@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
+import { benchmarkArm } from './matrix.mjs';
+
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 
 export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage }) {
@@ -15,18 +17,15 @@ export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, st
   mkdirSync(codexHome, { recursive: true });
   copyFileSync(codexAuthPath, join(codexHome, 'auth.json'));
   chmodSync(join(codexHome, 'auth.json'), 0o600);
-  const selectedSkills = [
-    {
-      name: 'agent-device',
-      source: join(agentSkillsRoot, 'agent-device'),
-    },
-  ];
-  if (arm === 'stim') {
-    selectedSkills.push({
-      name: 'stim',
-      source: join(stimPackage, 'skill'),
-    });
-  }
+  const sources = {
+    'skills-root': (name) => join(agentSkillsRoot, name),
+    'stim-package': () => join(stimPackage, 'skill'),
+  };
+  const selectedSkills = benchmarkArm(arm).skills.map((skill) => {
+    if (!sources[skill.source])
+      throw new Error(`no source is configured for ${arm} skill ${skill.name} (${skill.source})`);
+    return { name: skill.name, source: sources[skill.source](skill.name) };
+  });
   for (const skill of selectedSkills) {
     const target = join(codexHome, 'skills', skill.name);
     mkdirSync(dirname(target), { recursive: true });

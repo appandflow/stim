@@ -1,3 +1,11 @@
+import {
+  armSkillNames,
+  assertCampaignModel,
+  assertRunnableCell,
+  isBenchmarkArm,
+  matrixPlatformForDriver,
+  scenarioForVariant,
+} from './matrix.mjs';
 import { killProcessTree, makeRunnerHome, spawnStamped, terminateProcessTree } from './runner.mjs';
 import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
 import { benchmarkAvdDescription as androidAvdDescription } from './android-avd.mjs';
@@ -1003,7 +1011,7 @@ function runnerForModel(model) {
 }
 
 function writeClaudeGuidance(codexHome, arm, runDir) {
-  const skillNames = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
+  const skillNames = armSkillNames(arm);
   const guidance = skillNames
     .map((name) => readFileSync(join(codexHome, 'skills', name, 'SKILL.md'), 'utf8'))
     .join('\n\n');
@@ -1058,7 +1066,7 @@ function verifyRunnerProfile(codexHome, env, arm, runDir, isolation) {
   const textParts = payload.flatMap((item) => item.content ?? []).map((item) => item.text ?? '');
   const skillsText = textParts.find((text) => text.includes('<skills_instructions>')) ?? '';
   const skillLines = skillsText.match(/^- [a-zA-Z0-9:_-]+:/gm) ?? [];
-  const expectedSkills = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
+  const expectedSkills = armSkillNames(arm);
   const actualSkills = skillLines.map((line) => line.slice(2, -1)).toSorted();
   if (JSON.stringify(actualSkills) !== JSON.stringify(expectedSkills)) {
     throw new Error(`${arm} runner skill mismatch: ${skillLines.join(', ')}`);
@@ -1150,24 +1158,15 @@ async function runnerSmoke(arm) {
 
 async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform = 'ios') {
   const platform = checkedPlatform(requestedPlatform);
-  if (!model || !['stim', 'control'].includes(arm)) {
-    throw new Error('dispatch requires <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android]');
-  }
-  if (!['javascript', 'native', launchCrashVariant].includes(variant)) {
-    throw new Error(`unsupported variant: ${variant}`);
-  }
-  const preflightReport = preflight(platform);
-  const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
-  if (
-    platform === 'android' &&
-    variant === 'native' &&
-    arm === 'stim' &&
-    timingTarget.ccacheMinHitRatePercent == null
-  ) {
+  if (!model || !isBenchmarkArm(arm)) {
     throw new Error(
-      'Android native Stim benchmark requires a ccacheMinHitRatePercent target established before dispatch',
+      'dispatch requires <model> <control|stim|expo-agent-cli> <javascript|launch-crash> [stage] [ios|android]',
     );
   }
+  assertCampaignModel(model, pins);
+  assertRunnableCell(matrixPlatformForDriver(platform), scenarioForVariant(variant, 'readiness'), arm);
+  const preflightReport = preflight(platform);
+  const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
   preflightReport.loadGate = await waitForLoadGate();
   if (!preflightReport.loadGate.passed) {
     throw new Error('one-minute load average did not pass two consecutive samples within 10 minutes');
@@ -2765,6 +2764,6 @@ if (command === 'preflight') {
   await selftestRunnerTimeout();
 } else {
   throw new Error(
-    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
+    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <control|stim|expo-agent-cli> <javascript|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
   );
 }

@@ -69,7 +69,8 @@
 }
 
 .stimKey::before,
-.controlKey::before {
+.controlKey::before,
+.agentCliKey::before {
   display: inline-block;
   width: 0.55rem;
   height: 0.55rem;
@@ -81,6 +82,32 @@
 
 .controlKey::before {
   background: #f97316;
+}
+
+.agentCliKey::before {
+  background: #8b5cf6;
+}
+
+.agentCliBar {
+  background: #8b5cf6;
+}
+
+.coverage {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.coverage th,
+.coverage td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  text-align: left;
+  vertical-align: top;
+}
+
+.coverageScroll {
+  overflow-x: auto;
 }
 
 .overviewModel {
