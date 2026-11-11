@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
-import { buildClaimRoot, keptEntries, readBuildClaims } from '../engine-store/claims.ts';
+import { buildClaimRoot } from '../engine-store/claims.ts';
 import { NATIVE_RUN_LOCK } from '../engine/native-run.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -21,7 +21,7 @@ vi.mock('../daemon/engine-switch.ts', async (original) => ({
 }));
 
 test.skipIf(process.platform === 'win32')(
-  'a killed verification retains its workspace and selected engine while the evaluator survives',
+  'a killed verification retains its workspace claim and releases the selected engine claim while the evaluator survives',
   { timeout: 30_000 },
   async () => {
     const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-verify-owned-')));
@@ -118,13 +118,10 @@ test.skipIf(process.platform === 'win32')(
       expect(await settled).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
       expect(inspectProcessIdentity(evaluator)).toBe('same');
       const native = workspaceProcessLockPath(join(home, 'workspaces', workspaceName(root)), NATIVE_RUN_LOCK, true);
-      for (const claim of [native, buildClaimRoot(selected.root, '0123456789ab')])
-        expect(readClaimSet(claim).live).toEqual(
-          expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-        );
-      expect(keptEntries({ current: null, previous: null, staged: null }, readBuildClaims(selected.root))).toContain(
-        '0123456789ab',
+      expect(readClaimSet(native).live).toEqual(
+        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
       );
+      expect(readClaimSet(buildClaimRoot(selected.root, '0123456789ab'))).toMatchObject({ live: [], unresolved: [] });
     } catch (error) {
       testFailure = { error };
     } finally {

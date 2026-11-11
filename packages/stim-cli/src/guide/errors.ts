@@ -511,12 +511,20 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
   When a Metro, tunnel, maintenance child or server worker cannot be verified
-  stopped, Stim also retains the home, shared daemon and engine claims and
-  refuses new work in that home.
+  stopped, Stim retains only the claim that guards that child's work. When the
+  child is identified, that claim records it and frees itself once the child's
+  process group has exited; otherwise it records an unknown child and waits
+  for you. stimd's home, daemon and engine claims are never kept for a child:
+  once that stimd is gone, the next one starts. Engine cleanup keeps every
+  build that a running process's command line or working directory is in. A
+  child of a detached stimd that names itself does not stop that stimd, for up
+  to 8 such children at once: it logs daemon_cleanup_unverified, stays running
+  and releases what that child held once the child has stopped. An attached
+  stimd still ends. A stimd that
+  cannot start names every unresolved home, daemon and engine claim at once,
+  with the Stim home that holds each.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
-  An attached daemon killed unexpectedly can also leave home, shared daemon
-  and engine claims requiring the same check, including during startup or forced shutdown.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink
@@ -1816,6 +1824,13 @@ not on any remote"  (worktree remove)
   warms copy it, delete <platform>/ in
   the source checkout and run \`stim <platform>\` there, so Stim generates it
   fresh and records that.
+
+"carry       left out <app>/target: <reason>"
+  The app is an Exact app (exact.mjs sits beside target/). Exact refuses a
+  Cargo target/ that was built in another checkout and fails every build
+  until it is deleted, so warm does not copy it. The first build in this
+  worktree compiles its own target/ from scratch, which takes minutes.
+  Nothing to fix.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

@@ -388,7 +388,20 @@ jobs:
           fi
           IFS=. read -r major minor _ <<<"${base%%-*}"
           stamp=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$SHA")
-          version="$major.$((minor + 1)).0-next.$stamp.g${SHA:0:7}"
+          planned="$major.$((minor + 1)).0"
+          if [ -f .github/next-version ]; then
+            declared=$(tr -d '[:space:]' < .github/next-version)
+            if [[ ! "$declared" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+              echo "::error::.github/next-version holds $declared, not an X.Y.0 version"
+              exit 1
+            fi
+            if [ "$(printf '%s\n%s\n' "$planned" "$declared" | sort -V | tail -1)" != "$declared" ]; then
+              echo "::error::.github/next-version ($declared) is below $planned; delete the file"
+              exit 1
+            fi
+            planned=$declared
+          fi
+          version="$planned-next.$stamp.g${SHA:0:7}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.0-next\.[0-9]{14}\.g[0-9a-f]{7}$ ]]; then
             echo "::error::refusing to publish $version: not an X.Y.0-next.<stamp>.g<sha> version"
             exit 1

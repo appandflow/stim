@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createStim } from 'stim';
+import { createStim } from 'stim/api-self';
 import {
   markClaimChildPending,
   processGroupAlive,

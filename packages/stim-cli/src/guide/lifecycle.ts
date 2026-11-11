@@ -453,7 +453,11 @@ artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
 is build output: the idle stage and gc clear it from an idle
 workspace (never while another process, such as a shell or an exact.mjs
 command, runs from or works in the app, nor on Windows), and the next build
-then compiles from scratch.
+then compiles from scratch. stim worktree warm copies .exact but leaves
+target/ out: Exact fails every build in a target/ built at another path ("no
+matching rustc unit dep-info"), so a new worktree's first build compiles in
+full. Exact itself seeds that build with the registry crates this machine has
+compiled (~/.cache/exact/apple-crates).
 
 stim ios --plan (and Stim Desktop's Next Build) predicts that build without
 running it: fingerprint and cacheKey are null, cacheHit is false, missReason

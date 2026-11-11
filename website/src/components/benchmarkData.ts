@@ -56,7 +56,7 @@ export type BenchmarkRun = {
   model: string;
   platform?: 'ios' | 'android';
   variant: 'javascript' | 'native' | 'launch-crash';
-  arm: 'stim' | 'control';
+  arm: BenchmarkArm;
   valid: boolean;
   invalidReasons: string[];
   measurementWarnings?: string[];
@@ -148,6 +148,14 @@ export type PlaybackCommand = {
 
 export type CommandWithLane = BenchmarkCommand & { lane: number };
 
+export type BenchmarkArm = 'stim' | 'control' | 'expo-agent-cli';
+
+export const benchmarkArmLabels: Record<BenchmarkArm, string> = {
+  stim: 'Stim',
+  control: 'Control',
+  'expo-agent-cli': 'Expo agent CLI',
+};
+
 export type BenchmarkComparison = {
   label: string;
   tone: 'gain' | 'loss' | 'neutral';
@@ -160,7 +168,7 @@ export type BenchmarkRouteSelection = {
 
 export type BenchmarkOverviewArm = {
   arm: BenchmarkRun['arm'];
-  label: 'Stim' | 'Control';
+  label: string;
   run: (BenchmarkRun & { settingsReadySeconds: number }) | null;
   widthPercent: number;
   href: string | null;
@@ -272,18 +280,20 @@ export function benchmarkOverview(benchmarks: BenchmarkData[], variant: Benchmar
   const rows: BenchmarkOverviewRow[] = candidates.map(({ benchmark, runs }) => ({
     stage: benchmark.stage,
     title: benchmark.title,
-    arms: (['stim', 'control'] as const).map((arm) => {
-      const run = runs.find((candidate) => candidate.arm === arm) ?? null;
-      return {
-        arm,
-        label: (arm === 'stim' ? 'Stim' : 'Control') as BenchmarkOverviewArm['label'],
-        run,
-        widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
-        href: run
-          ? `/benchmarks/details?${new URLSearchParams({ benchmark: benchmark.stage, run: run.id })}#audit-title`
-          : null,
-      };
-    }),
+    arms: (['stim', 'control', 'expo-agent-cli'] as const)
+      .filter((arm) => arm !== 'expo-agent-cli' || runs.some((candidate) => candidate.arm === arm))
+      .map((arm) => {
+        const run = runs.find((candidate) => candidate.arm === arm) ?? null;
+        return {
+          arm,
+          label: benchmarkArmLabels[arm],
+          run,
+          widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
+          href: run
+            ? `/benchmarks/details?${new URLSearchParams({ benchmark: benchmark.stage, run: run.id })}#audit-title`
+            : null,
+        };
+      }),
   }));
   return { maxSeconds, rows };
 }

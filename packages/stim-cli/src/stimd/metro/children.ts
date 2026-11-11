@@ -120,6 +120,8 @@ interface MetroChild {
   roots: MetroWatchRoots | null;
   /** Whether its Metro requests reach `metro.ndjson`, without which no idle stop can tell it is unused. */
   observesRequests: boolean;
+  /** Whether a stop could not verify that its process group exited. */
+  unverified?: boolean;
 }
 
 interface TunnelChild {
@@ -146,9 +148,13 @@ let closingChildren = false;
 let tickWork: Promise<void> | null = null;
 let closeWork: Promise<void> | null = null;
 let cleanupFailure: unknown;
-let onCleanupFailure: ((error: unknown) => void) | undefined;
+let onCleanupFailure: ((error: unknown) => boolean) | undefined;
 
-export function openMetroChildren(onFailure?: (error: unknown) => void): void {
+/**
+ * Starts supervising. `onFailure` hears of a child whose cleanup could not be verified; when it answers true, stimd goes
+ * on, the child's claim keeps guarding its workspace, and the next stop or tick checks that child again.
+ */
+export function openMetroChildren(onFailure?: (error: unknown) => boolean): void {
   backgroundStopped = false;
   closingChildren = false;
   closeWork = null;
@@ -169,7 +175,7 @@ export function metroEngineDirs(): string[] {
 function failedCleanup(error: unknown): void {
   if (cleanupFailure !== undefined) return;
   cleanupFailure = error;
-  onCleanupFailure?.(error);
+  if (onCleanupFailure?.(error) === true) cleanupFailure = undefined;
 }
 
 export function stopMetroTicks(): void {
@@ -326,7 +332,7 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
  */
 function settleExited(child: MetroChild, code: number | null, signal: string | null): void {
   if (!GROUPS && child.mode === MODE_COMMAND)
-    failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
+    failedCleanup(unverifiedChild(child.claim, child, `Could not confirm the dev-server tree exited.`));
   else forgetExited(child, code, signal);
 }
 
@@ -336,12 +342,24 @@ async function gone(alive: () => boolean, ms: number): Promise<boolean> {
   return !alive();
 }
 
-function unverifiedChild(claim: ClaimHandle, pid: number, reason: string): Error {
-  markClaimChildPending(claim);
+/**
+ * Where children lead their own process group and the child's identity is known, its claim keeps that child: it stays
+ * held while any member of the group runs and frees once none does. Otherwise it records an unknown child.
+ */
+function unverifiedChild(
+  claim: ClaimHandle,
+  child: { pid: number; processToken?: string | null },
+  reason: string,
+): Error {
+  const { pid, processToken } = child;
+  const known = GROUPS && pid > 0 && processToken ? { pid, processToken } : null;
+  if (known) setClaimChild(claim, known);
+  else markClaimChildPending(claim);
   return Object.assign(new Error(`${reason} Claim remains at ${claim.path}.`), {
     code: 'STIM_CLAIM_UNAVAILABLE',
     remedy: `Verify ${pid ? `pid ${pid} and its descendants have` : 'the dev-server process tree has'} stopped, then run ${claimRemoveCommand(claim.path)}.`,
     reportCleanup: true,
+    ...(known ? { reportChild: known } : {}),
   });
 }
 
@@ -375,7 +393,8 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
       }
     }
   } catch (error) {
-    throw unverifiedChild(child.claim, child.pid, error instanceof Error ? error.message : String(error));
+    child.unverified = true;
+    throw unverifiedChild(child.claim, child, error instanceof Error ? error.message : String(error));
   }
   await child.roots?.afterClose();
   const stop = stopRecord(child, null);
@@ -616,7 +635,7 @@ async function start(
   } catch (error) {
     if (spawned?.pid) {
       writer.close();
-      throw unverifiedChild(claim, spawned.pid, error instanceof Error ? error.message : String(error));
+      throw unverifiedChild(claim, { pid: spawned.pid }, error instanceof Error ? error.message : String(error));
     }
     releaseClaim(claim);
     writer.close();
@@ -633,7 +652,7 @@ async function start(
       await handle.close();
     } catch (error) {
       writer.close();
-      throw unverifiedChild(claim, pid ?? 0, error instanceof Error ? error.message : String(error));
+      throw unverifiedChild(claim, { pid: pid ?? 0 }, error instanceof Error ? error.message : String(error));
     }
     releaseClaim(claim);
     writer.close();
@@ -1024,7 +1043,11 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
     adoptMetroChildren(log);
     for (const child of children.values()) {
       if (busy.has(child.root)) continue;
-      if (child.stopping) continue;
+      if (child.stopping) {
+        if (child.unverified && inspectProcessIdentity(child) === 'gone' && !processGroupAlive(child.pid))
+          forget(child, `the ${child.mode} dev server whose stop could not be verified has exited (pid ${child.pid})`);
+        continue;
+      }
       const decidedAt = Date.now();
       if (!running(child)) {
         if (GROUPS && processGroupAlive(child.pid)) continue;
@@ -1204,7 +1227,7 @@ async function startTunnelChild(
     requireReachable: fields.requireReachable !== false,
   });
   if ('failed' in started) {
-    if (started.cleanupFailed) throw unverifiedChild(attempt.acquired, 0, started.reason);
+    if (started.cleanupFailed) throw unverifiedChild(attempt.acquired, { pid: 0 }, started.reason);
     releaseClaim(attempt.acquired);
     return { op: 'error', code: 'tunnel-start', message: started.reason };
   }
@@ -1225,14 +1248,14 @@ async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
         (await gone(() => inspectProcessIdentity(tunnel) !== 'gone', STOP_MS));
     } catch {}
     if (!stopped)
-      throw unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
+      throw unverifiedChild(tunnel.claim, tunnel, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
     forgetTunnel(root, tunnel);
     return;
   }
   const alive = () => processGroupAlive(tunnel.pid);
   const verify = () => {
     if (inspectProcessIdentity(tunnel) !== 'same')
-      throw unverifiedChild(tunnel.claim, tunnel.pid, 'Could not verify the tunnel process group.');
+      throw unverifiedChild(tunnel.claim, tunnel, 'Could not verify the tunnel process group.');
   };
   if (!alive()) {
     forgetTunnel(root, tunnel);
@@ -1248,7 +1271,7 @@ async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
       signalProcessTree(tunnel.pid, 'SIGKILL', { group: GROUPS });
     } catch {}
     if (!(await gone(alive, 1000)))
-      throw unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
+      throw unverifiedChild(tunnel.claim, tunnel, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
   }
   forgetTunnel(root, tunnel);
 }

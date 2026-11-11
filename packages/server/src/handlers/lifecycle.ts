@@ -2,7 +2,6 @@ import { type CommandOutcome, type CommandLimits, STDERR_TAIL } from '../stim-co
 import {
   type StimStopOptions,
   type StimProgress,
-  createStim,
   StimError,
   type StimReloadOptions,
   type StimClient,
@@ -11,6 +10,7 @@ import {
   type StimWorktreeWarmOptions,
   type StimWorktreeRemoveOptions,
 } from 'stim';
+import { createStim } from 'stim/api-self';
 import { realpathSync, lstatSync } from 'node:fs';
 import {
   readFailure,

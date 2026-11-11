@@ -319,7 +319,7 @@ exec sleep 600
     }
   }, 30_000);
 
-  test('the attached watchdog leaves home ownership unresolved when tunnel startup outlasts shutdown', async () => {
+  test('when tunnel startup outlasts an attached shutdown, the tunnel claim keeps guarding the child and the home stays recoverable', async () => {
     const root = bareProject();
     const started = join(dir, 'slow-tunnel-started');
     write(join(dir, 'bin', 'cloudflared'), `#!/bin/sh\ntouch ${JSON.stringify(started)}\nexec sleep 600\n`, 0o755);
@@ -340,8 +340,78 @@ exec sleep 600
     await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
     child.stdin?.end();
     await exited;
-    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toHaveLength(1);
+    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toEqual([]);
+    expect(readClaimSet(join(home, 'daemon', 'claim')).unresolved).toEqual([]);
+    const [tunnel] = readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live;
+    expect(tunnel?.child).toMatchObject({ pid: expect.any(Number) });
+    expect(inspectProcessIdentity(tunnel?.child)).toBe('same');
   }, 30_000);
+
+  test('a Metro stop that cannot verify its process group keeps stimd running, and a stimd killed meanwhile is replaced while the Metro claim refuses a new Metro until the group exits', async () => {
+    const root = bareProject();
+    rmSync(join(root, '.nvmrc'));
+    const straggler = join(dir, 'straggler-pid');
+    write(
+      join(root, 'node_modules', 'metro', 'index.js'),
+      `const http = require('node:http');
+const { spawn } = require('node:child_process');
+exports.loadConfig = async ({ port }) => ({ server: { port }, resolver: { platforms: ['ios'] }, watchFolders: [] });
+exports.runServer = (config) => new Promise((resolve) => {
+  const sleeper = spawn('sleep', ['600'], { stdio: 'ignore' });
+  require('node:fs').writeFileSync(${JSON.stringify(straggler)}, String(sleeper.pid));
+  const httpServer = http.createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''));
+  httpServer.listen(config.server.port, () => resolve({ httpServer }));
+});`,
+    );
+    const events = () =>
+      readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => String(JSON.parse(line).event));
+    const port = await freePort();
+    let sleeper = 0;
+    try {
+      const first = await startStimd();
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
+      const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+      await vi.waitFor(() => expect(existsSync(straggler)).toBe(true), { timeout: 10_000, interval: 20 });
+      sleeper = Number(readFileSync(straggler, 'utf8'));
+      process.kill(supervisor.pid, 'SIGKILL');
+      await vi.waitFor(() => expect(alive(supervisor.pid)).toBe(false), { timeout: 10_000, interval: 20 });
+      expect(processGroupAlive(supervisor.pid)).toBe(true);
+
+      await expect(
+        ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken }),
+      ).resolves.toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
+      expect(events()).toContain('daemon_cleanup_unverified');
+      expect(events()).not.toContain('daemon_exited');
+      expect(alive(first)).toBe(true);
+      const metroClaim = join(workspaceDir(root), 'metro.claim');
+      expect(readClaimSet(metroClaim).live).toMatchObject([{ child: { pid: supervisor.pid } }]);
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'error' });
+
+      const killed = stimd;
+      stimd = null;
+      killed?.kill('SIGKILL');
+      if (killed) await once(killed, 'exit');
+      await startStimd();
+      expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toEqual([]);
+      expect(readClaimSet(metroClaim).live).toMatchObject([{ child: { pid: supervisor.pid } }]);
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'error' });
+
+      process.kill(sleeper, 'SIGKILL');
+      await vi.waitFor(() => expect(processGroupAlive(supervisor.pid)).toBe(false), { timeout: 10_000, interval: 20 });
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
+      const restarted = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+      await ask('metro.stop', { root, pid: restarted.pid, processToken: restarted.processToken });
+    } finally {
+      if (sleeper && alive(sleeper)) process.kill(sleeper, 'SIGKILL');
+      if (existsSync(straggler)) {
+        const again = Number(readFileSync(straggler, 'utf8'));
+        if (again !== sleeper && alive(again)) process.kill(again, 'SIGKILL');
+      }
+    }
+  }, 60_000);
 
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
     const root = bareProject();

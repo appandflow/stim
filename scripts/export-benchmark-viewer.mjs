@@ -1,3 +1,4 @@
+import { ARMS } from './agent-benchmark/matrix.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -81,6 +82,8 @@ function clipped(value, max = 16_000) {
   const text = String(value ?? '');
   return text.length <= max ? text : `${text.slice(0, max)}\n... output clipped for the viewer`;
 }
+
+const armOrder = ARMS.map((arm) => arm.id);
 
 function publicRunId(record) {
   return `${record.variant}-${record.arm}`;
@@ -1380,7 +1383,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       (a, b) =>
         ['javascript', 'native', 'launch-crash'].indexOf(a.variant) -
           ['javascript', 'native', 'launch-crash'].indexOf(b.variant) ||
-        ['stim', 'control'].indexOf(a.arm) - ['stim', 'control'].indexOf(b.arm),
+        armOrder.indexOf(a.arm) - armOrder.indexOf(b.arm),
     );
 
   const model = runs[0].model;
@@ -1390,9 +1393,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .toSorted()
     .at(-1)
     ?.slice(0, 10);
+  const fixtures = new Set(records.map(({ runDir }) => readJson(join(runDir, 'meta.json')).fixtureKind ?? 'trailhead'));
+  if (fixtures.size !== 1) throw new Error('A benchmark stage cannot mix fixtures');
   const payload = timeBenchmarkFromFirstActivity({
     schemaVersion: 1,
     stage,
+    fixture: [...fixtures][0],
     title: formatStage(stage),
     suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
     platform: runs[0].platform,

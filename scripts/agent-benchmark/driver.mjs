@@ -1,4 +1,27 @@
-import { killProcessTree, makeRunnerHome, spawnStamped, terminateProcessTree } from './runner.mjs';
+import {
+  armSkillNames,
+  assertCampaignModel,
+  assertRunnableCell,
+  isBenchmarkArm,
+  matrixPlatformForDriver,
+  scenarioForVariant,
+} from './matrix.mjs';
+import {
+  claudeRunnerArguments,
+  killProcessTree,
+  makeRunnerHome,
+  runnerKindForModel,
+  spawnStamped,
+  terminateProcessTree,
+  writeClaudeGuidance,
+} from './runner.mjs';
+import {
+  checkExpoAgentCliPreparation,
+  expoAgentCliCommandAudit,
+  expoAgentCliEnvironment,
+  expoAgentCliPrefix,
+  installExpoAgentCli,
+} from './expo-agent-cli.mjs';
 import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
 import { benchmarkAvdDescription as androidAvdDescription } from './android-avd.mjs';
 import { ownedMetroListeners } from './metro-listeners.mjs';
@@ -102,6 +125,10 @@ const pins = Object.fromEntries(
       return [line.slice(0, at), line.slice(at + 1)];
     }),
 );
+
+const fixtureCommitPins = { trailhead: 'TRAILHEAD_FIXTURE_COMMIT', bare: 'BARE_FIXTURE_COMMIT' };
+const fixtureKind = pins.FIXTURE_KIND ?? 'trailhead';
+if (!fixtureCommitPins[fixtureKind]) throw new Error(`unsupported FIXTURE_KIND pin: ${fixtureKind}`);
 
 function benchmarkTargets() {
   const path = join(root, 'targets.json');
@@ -525,7 +552,7 @@ function versionChecks() {
   const macBuild = run('sw_vers', ['-buildVersion']);
   const xcode = run('xcodebuild', ['-version']).split('\n');
   const actual = {
-    TRAILHEAD_FIXTURE_COMMIT: git('rev-parse', 'HEAD'),
+    [fixtureCommitPins[fixtureKind]]: git('rev-parse', 'HEAD'),
     CODEX_VERSION: run(codexBin, ['--version']).replace(/^codex-cli /, ''),
     CLAUDE_VERSION: run(claudeBin, ['--version']).split(/\s+/)[0],
     NODE_VERSION: run('node', ['--version']).replace(/^v/, ''),
@@ -998,20 +1025,6 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   });
 }
 
-function runnerForModel(model) {
-  return ['sonnet', 'opus'].includes(model) || model.startsWith('claude-') ? 'claude' : 'codex';
-}
-
-function writeClaudeGuidance(codexHome, arm, runDir) {
-  const skillNames = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
-  const guidance = skillNames
-    .map((name) => readFileSync(join(codexHome, 'skills', name, 'SKILL.md'), 'utf8'))
-    .join('\n\n');
-  const path = join(runDir, 'runner-guidance.md');
-  writeFileSync(path, `${guidance}\n`);
-  return { path, skillNames };
-}
-
 function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null) {
   const runTmp = join(runDir, 'tmp');
   return prepareRunnerIsolation({
@@ -1022,6 +1035,7 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
         ...benchmarkFixtureReadPaths(main, crash?.setup),
         allowedBin,
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
+        ...(arm === 'expo-agent-cli' ? [expoAgentCliPrefix(root), process.env.STIM_BENCH_EXPO_SKILLS] : []),
       ],
       writePaths: [join(main, '.git'), env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
@@ -1058,7 +1072,7 @@ function verifyRunnerProfile(codexHome, env, arm, runDir, isolation) {
   const textParts = payload.flatMap((item) => item.content ?? []).map((item) => item.text ?? '');
   const skillsText = textParts.find((text) => text.includes('<skills_instructions>')) ?? '';
   const skillLines = skillsText.match(/^- [a-zA-Z0-9:_-]+:/gm) ?? [];
-  const expectedSkills = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
+  const expectedSkills = armSkillNames(arm);
   const actualSkills = skillLines.map((line) => line.slice(2, -1)).toSorted();
   if (JSON.stringify(actualSkills) !== JSON.stringify(expectedSkills)) {
     throw new Error(`${arm} runner skill mismatch: ${skillLines.join(', ')}`);
@@ -1150,12 +1164,26 @@ async function runnerSmoke(arm) {
 
 async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform = 'ios') {
   const platform = checkedPlatform(requestedPlatform);
-  if (!model || !['stim', 'control'].includes(arm)) {
-    throw new Error('dispatch requires <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android]');
+  if (!model || !isBenchmarkArm(arm)) {
+    throw new Error(
+      'dispatch requires <model> <control|stim|expo-agent-cli> <javascript|native|launch-crash> [stage] [ios|android]',
+    );
   }
-  if (!['javascript', 'native', launchCrashVariant].includes(variant)) {
-    throw new Error(`unsupported variant: ${variant}`);
+  assertCampaignModel(model, pins);
+  if (arm === 'expo-agent-cli') {
+    checkExpoAgentCliPreparation({
+      root,
+      pins,
+      skillsRoot: process.env.STIM_BENCH_EXPO_SKILLS,
+      projectManifest: JSON.parse(readFileSync(join(main, 'package.json'), 'utf8')),
+    });
   }
+  assertRunnableCell(
+    matrixPlatformForDriver(platform, fixtureKind),
+    scenarioForVariant(variant, 'readiness'),
+    arm,
+    pins,
+  );
   const preflightReport = preflight(platform);
   const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
   if (
@@ -1214,10 +1242,17 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   if (platform === 'android') {
     writeFileSync(join(runDir, 'avds-before.json'), `${JSON.stringify(androidAvdSnapshot(), null, 2)}\n`);
   }
-  const runnerKind = runnerForModel(model);
+  const runnerKind = runnerKindForModel(model);
   const runnerEnvironment =
     runnerKind === 'claude' ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' } : {};
-  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
+  const { codexHome } = makeRunnerHome({
+    runDir,
+    arm,
+    codexAuthPath,
+    agentSkillsRoot,
+    stimPackage,
+    expoSkillsRoot: process.env.STIM_BENCH_EXPO_SKILLS,
+  });
   const runTmp = join(runDir, 'tmp');
   mkdirSync(runTmp, { recursive: true });
   run('cp', ['-cR', `${join(platformGolden, 'control-tmp')}/.`, runTmp], {
@@ -1230,9 +1265,9 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
     TMPDIR: runTmp,
-    PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${arm === 'expo-agent-cli' ? `${join(expoAgentCliPrefix(root), 'bin')}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
   };
-  const env = isolatedShellEnvironment(baseEnv, runDir);
+  const env = isolatedShellEnvironment(arm === 'expo-agent-cli' ? expoAgentCliEnvironment(baseEnv) : baseEnv, runDir);
   if (arm === 'stim' && platform === 'ios') env.STIM_POOL_IOS_PARKED_MAX = '1';
   if (arm === 'stim' && platform === 'android') env.STIM_POOL_ANDROID_PARKED_MAX = '1';
   env.BENCH_STIM_HOME = env.STIM_HOME;
@@ -1278,6 +1313,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     arm,
     variant,
     platform,
+    fixtureKind,
     worktreeParent,
     deviceTargetingRequired: true,
     dispatchAt,
@@ -1331,28 +1367,11 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const runnerCwd = crash?.fixtureCheckout ?? main;
   const runnerArgs =
     runnerKind === 'claude'
-      ? [
-          '-p',
-          '--output-format',
-          'stream-json',
-          '--verbose',
-          '--model',
+      ? claudeRunnerArguments({
           model,
-          '--effort',
-          'high',
-          '--safe-mode',
-          '--strict-mcp-config',
-          '--permission-mode',
-          'acceptEdits',
-          '--prompt-suggestions',
-          'false',
-          '--append-system-prompt-file',
-          claudeGuidance.path,
-          '--tools',
-          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
-          '--allowedTools',
-          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
-        ]
+          guidancePath: claudeGuidance.path,
+          tools: variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
+        })
       : [
           '--ask-for-approval',
           'never',
@@ -1544,6 +1563,11 @@ function commandEvidence(meta, eventsPath, runDir, device) {
   }
   const target =
     meta.variant === launchCrashVariant ? { platform: meta.platform ?? 'ios', device: device?.udid } : null;
+  if (meta.arm === 'expo-agent-cli') {
+    const audit = expoAgentCliCommandAudit(commands);
+    if (!audit.toolInvoked) invalidReasons.push('expo-agent-cli-not-used');
+    invalidReasons.push(...audit.violations.map(({ reason }) => `expo-agent-cli-${reason}`));
+  }
   invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, ''), target));
   const auxiliarySessions = agentDeviceAuxiliarySessions(commands, agentDeviceCommand(meta, ''), target);
   return { commands, activities, completedEvents, invalidReasons, auxiliarySessions };
@@ -2757,6 +2781,8 @@ if (command === 'preflight') {
   selftestDeviceTargeting();
 } else if (command === 'selftest-agent-device-isolation') {
   selftestAgentDeviceIsolation();
+} else if (command === 'prepare-expo-agent-cli') {
+  process.stdout.write(`${JSON.stringify(installExpoAgentCli({ root, pins }), null, 2)}\n`);
 } else if (command === 'selftest-launch-crash') {
   selftestLaunchCrash();
 } else if (command === 'selftest-android') {
@@ -2765,6 +2791,6 @@ if (command === 'preflight') {
   await selftestRunnerTimeout();
 } else {
   throw new Error(
-    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
+    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | prepare-expo-agent-cli | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <control|stim|expo-agent-cli> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
   );
 }

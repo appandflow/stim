@@ -630,7 +630,10 @@ without Metro. Exact compiles incrementally in the checkout's `target/`
 directory, so Stim keeps no artifact cache for it. `target/` is build output:
 the idle stage and `gc` clear it from an idle workspace, never while
 another process, such as a shell or an `exact.mjs` command, runs from or works in
-the app, nor on Windows, and the next build then compiles from scratch. `--configuration Release`
+the app, nor on Windows, and the next build then compiles from scratch.
+`stim worktree warm` leaves `target/` out of a new worktree, because Exact fails
+every build in a `target/` built at another path; the worktree's first build
+compiles in full, starting from the registry crates Exact keeps for the machine. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
 has booted the simulator. Build-only runs (`stim ci build`) build without a

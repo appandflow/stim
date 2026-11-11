@@ -69,6 +69,8 @@ export interface ClaimProblem {
   reason: string;
   engineDirs?: string[];
   pendingChild?: boolean;
+  /** The Stim home its holder named, for a claim in a store several homes share. */
+  home?: string;
 }
 
 export interface ClaimSurvey {
@@ -422,6 +424,7 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
       into.unresolved.push({
         path,
         ...(holder.childPending ? { pendingChild: true } : {}),
+        ...(typeof holder.details.home === 'string' ? { home: holder.details.home } : {}),
         ...(Array.isArray(holder.details.engineDirs)
           ? {
               engineDirs: holder.details.engineDirs.filter(
