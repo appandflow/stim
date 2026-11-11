@@ -108,9 +108,9 @@ jobs:
         run: pnpm run build
 
       - name: Hot-path closures of the built CLI
-        run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver
+        run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver,api
 
-      - name: stim/plugin API report matches its baseline
+      - name: stim and stim/plugin API reports match their baselines
         run: node scripts/plugin-api-report.mjs
 
       - name: Committed Action bundle matches source

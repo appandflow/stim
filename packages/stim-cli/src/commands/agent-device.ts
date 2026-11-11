@@ -14,7 +14,7 @@ import {
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { resolveAgentDevice } from '@stim-cli/agent-driver-agent-device/agent-device-bin';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -815,20 +815,15 @@ async function execute(
     await publish({ ...target, command: recorded, phase: 'end', gesture });
 }
 
-export default function agentDeviceCommand(program: Command): void {
-  program.enablePositionalOptions();
-  program
-    .command('agent-device')
-    .description(
-      "Run agent-device on this workspace's device: Stim passes the platform, device, session and state directory, revives an idle workspace first, and shows each action to stim-server viewers. Arguments are agent-device's own.",
-    )
-    .helpOption(false)
-    .allowUnknownOption()
-    .allowExcessArguments()
-    .passThroughOptions()
-    .argument('[args...]')
-    .action(async () => {
-      const index = process.argv.indexOf('agent-device');
-      await runAgentDevice(process.argv.slice(index + 1));
-    });
-}
+const agentDevice: Op = defineOp({
+  name: 'agent-device',
+  arguments: '[args...]',
+  description:
+    "Run agent-device on this workspace's device: Stim passes the platform, device, session and state directory, revives an idle workspace first, and shows each action to stim-server viewers. Arguments are agent-device's own.",
+  passThrough: true,
+  run: async ({ args }) => {
+    await runAgentDevice([...args]);
+  },
+});
+
+export default agentDevice;

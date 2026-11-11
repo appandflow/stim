@@ -138,6 +138,8 @@ export function selectIosTarget({
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
     supportsRemote: boolean;
+    /** Why this project cannot run on a hosted device, which keeps an automatic placement on this machine. */
+    hostedRefusal: string | null;
     simSnapshot: IosSimSnapshot;
     validateSelectors: () => FailArgs | null | Promise<FailArgs | null>;
     deviceType: string | null;
@@ -182,6 +184,36 @@ export async function selectIosPlacement(
     return { ...selection, devicePlacement: placement };
   }
   const { root, slot, d, opts, deviceType, runtime, noWait, waitMs, phase, log, release, appMode, metroCheck } = args;
+  if (args.hostedRefusal && selection.placement === 'remote-only')
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: `This app cannot run on a hosted iOS simulator: ${args.hostedRefusal}.`,
+        remedy: 'Run it on a simulator on this Mac with --remote local, or unset ios.remote.',
+      },
+    };
+  if (args.hostedRefusal && selection.recorded)
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's iOS simulator runs on ${selection.recorded.machine}; run stim stop first.`,
+        remedy: 'Run stim stop, then stim ios to run it on this Mac.',
+      },
+    };
+  if (args.hostedRefusal) {
+    const placement: DevicePlacement = { decision: 'local', reason: args.hostedRefusal };
+    const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');
+    phase('placement:', devicePlacementLine(placement, []));
+    log?.(
+      devicePlacementRecord({
+        platform: 'ios',
+        selected: selection.placement,
+        fromFlag: opts.remote !== undefined,
+        placed: { placement, code: 'hosted-unsupported', skipped: [] },
+      }),
+    );
+    return { ...selection, machine: null, devicePlacement: placement };
+  }
   const signal = runCancellationSignal(args.operation) ?? args.operation?.signal;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };

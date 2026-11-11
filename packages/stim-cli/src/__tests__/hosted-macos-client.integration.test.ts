@@ -17,13 +17,12 @@ import {
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord } from '@stim-cli/core/state';
 import * as coreState from '@stim-cli/core/state';
 import logsOp from '../commands/logs.ts';
-import { runCli } from '../cli/define-op.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
 import { agentRemoteConfig, connectHost, placeHostedMacos, probeHostedMacos } from '../device-host/hosted-macos.ts';
@@ -299,19 +298,18 @@ test('macos rejects reserved remote backends and the retired option before state
     throw new Error('unexpected settings access');
   });
   const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));
-  const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
-  macosCommand(program);
+  const program = macosCommand;
   const cwd = process.cwd();
   process.chdir(root);
   try {
     for (const machine of ['eas', 'proxy', ' EAS ', ' PrOxY ']) {
-      await expect(program.parseAsync(['node', 'stim', 'macos', '--remote', machine])).rejects.toMatchObject({
+      await expect(runCli(program, ['--remote', machine], { version: '0.0.0' })).rejects.toMatchObject({
         code: 'STIM_BAD_ARG',
         message: expect.stringContaining('no eas or proxy backend'),
       });
     }
-    await expect(program.parseAsync(['node', 'stim', 'macos', '--host', 'mini'])).rejects.toMatchObject({
-      code: 'commander.unknownOption',
+    await expect(runCli(program, ['--host', 'mini'], { version: '0.0.0' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
       message: "error: unknown option '--host'",
     });
     expect(resolve).not.toHaveBeenCalled();
@@ -696,9 +694,8 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     const cwd = process.cwd();
     process.chdir(root);
     try {
-      const program = new Command();
-      macosCommand(program);
-      await program.parseAsync(['node', 'stim', 'macos', '--remote', 'mini', '--json']);
+      const program = macosCommand;
+      await runCli(program, ['--remote', 'mini', '--json'], { version: '0.0.0' });
     } finally {
       process.chdir(cwd);
       log.mockRestore();

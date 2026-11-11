@@ -5,10 +5,16 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const stimCli = join(root, 'packages', 'stim-cli');
-const baselineFile = 'packages/stim-cli/plugin.api.txt';
 const notesFile = 'docs/releases/unreleased.md';
-const header =
-  '// The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.';
+
+/** Each public entry the gate freezes: `stim/plugin`, and the package root `stim` (`createStim`). */
+const REPORTS = [
+  { name: 'stim/plugin', entry: 'plugin', source: 'src/plugin.ts', baselineFile: 'packages/stim-cli/plugin.api.txt' },
+  { name: 'stim', entry: 'api', source: 'src/api.ts', baselineFile: 'packages/stim-cli/api.api.txt' },
+];
+
+const header = (report) =>
+  `// The ${report.name} API report. Regenerate it with \`node scripts/plugin-api-report.mjs --update\`; see that script.`;
 
 /** The plugin kind whose contract a source module of `stim/plugin` defines; others belong to no one kind. */
 const MODULE_KINDS = {
@@ -125,15 +131,15 @@ export function apiReportVerdict({ baseline, current, notes }) {
   return { status: needs.length === 0 ? 'accepted' : 'breaking', added, removed, needs };
 }
 
-/** Builds the declarations of `stim/plugin` alone, so they hold every type it reaches, and normalizes them. */
-export async function generateReport() {
+/** Builds the declarations of one entry alone, so they hold every type it reaches, and normalizes them. */
+export async function generateReport(report = REPORTS[0]) {
   const { build } = await import('tsdown');
   const out = mkdtempSync(join(tmpdir(), 'stim-plugin-api-'));
   try {
     await build({
       config: false,
       cwd: stimCli,
-      entry: { plugin: join(stimCli, 'src', 'plugin.ts') },
+      entry: { [report.entry]: join(stimCli, report.source) },
       format: 'esm',
       dts: { emitDtsOnly: true },
       outDir: out,
@@ -143,50 +149,51 @@ export async function generateReport() {
       fixedExtension: true,
       logLevel: 'silent',
     });
-    return normalizeDeclarations(readFileSync(join(out, 'plugin.d.mts'), 'utf8'));
+    return normalizeDeclarations(readFileSync(join(out, `${report.entry}.d.mts`), 'utf8'));
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
 }
 
-export function readBaseline() {
-  const path = join(root, baselineFile);
+export function readBaseline(report = REPORTS[0]) {
+  const path = join(root, report.baselineFile);
   if (!existsSync(path)) return [];
   return readFileSync(path, 'utf8')
     .split('\n')
-    .filter((line) => line !== '' && line !== header);
+    .filter((line) => line !== '' && line !== header(report));
 }
 
 const RUN_UPDATE = 'node scripts/plugin-api-report.mjs --update';
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const update = process.argv.includes('--update');
-  const current = await generateReport();
-  const verdict = apiReportVerdict({
-    baseline: readBaseline(),
-    current,
-    notes: existsSync(join(root, notesFile)) ? readFileSync(join(root, notesFile), 'utf8') : '',
-  });
-  const listing = [...verdict.removed.map((line) => `  - ${line}`), ...verdict.added.map((line) => `  + ${line}`)].join(
-    '\n',
-  );
-  if (verdict.status === 'same') {
-    console.log(`stim/plugin API report: ${current.length} lines, unchanged.`);
-  } else if (verdict.status === 'breaking') {
-    console.error(
-      `stim/plugin removes or changes lines of ${baselineFile}:\n${listing}\n` +
-        'A plugin built against the old lines may break, so this change needs:\n' +
-        verdict.needs.map((need) => `  * ${need}`).join('\n') +
-        `\nBump the *_API_VERSION constant of each kind named in brackets ([*] lines need the kind they break), add the line to ${notesFile}, then run ${RUN_UPDATE} and commit ${baselineFile}. If the change was not meant to remove anything, restore the removed lines instead. Lines tagged [*] come from a module that defines no single kind, an export under another name, or a file in a src/ subdirectory; they need at least one kind bumped.`,
-    );
-    process.exit(1);
-  } else if (update) {
-    writeFileSync(join(root, baselineFile), `${[header, ...current].join('\n')}\n`);
-    console.log(`Updated ${baselineFile} (${verdict.status}):\n${listing}`);
-  } else {
-    console.error(
-      `stim/plugin differs from ${baselineFile} (${verdict.status === 'additive' ? 'additions only, no bump needed' : 'a bumped breaking change'}):\n${listing}\nRun ${RUN_UPDATE} and commit ${baselineFile}.`,
-    );
-    process.exit(1);
+  const notes = existsSync(join(root, notesFile)) ? readFileSync(join(root, notesFile), 'utf8') : '';
+  for (const report of REPORTS) {
+    const { name, baselineFile } = report;
+    const current = await generateReport(report);
+    const verdict = apiReportVerdict({ baseline: readBaseline(report), current, notes });
+    const listing = [
+      ...verdict.removed.map((line) => `  - ${line}`),
+      ...verdict.added.map((line) => `  + ${line}`),
+    ].join('\n');
+    if (verdict.status === 'same') {
+      console.log(`${name} API report: ${current.length} lines, unchanged.`);
+    } else if (verdict.status === 'breaking') {
+      console.error(
+        `${name} removes or changes lines of ${baselineFile}:\n${listing}\n` +
+          'A caller built against the old lines may break, so this change needs:\n' +
+          verdict.needs.map((need) => `  * ${need}`).join('\n') +
+          `\nBump the *_API_VERSION constant of each kind named in brackets ([*] lines need the kind they break), add the line to ${notesFile}, then run ${RUN_UPDATE} and commit ${baselineFile}. If the change was not meant to remove anything, restore the removed lines instead. Lines tagged [*] come from a module that defines no single kind, an export under another name, or a file in a src/ subdirectory; they need at least one kind bumped.`,
+      );
+      process.exitCode = 1;
+    } else if (update) {
+      writeFileSync(join(root, baselineFile), `${[header(report), ...current].join('\n')}\n`);
+      console.log(`Updated ${baselineFile} (${verdict.status}):\n${listing}`);
+    } else {
+      console.error(
+        `${name} differs from ${baselineFile} (${verdict.status === 'additive' ? 'additions only, no bump needed' : 'a bumped breaking change'}):\n${listing}\nRun ${RUN_UPDATE} and commit ${baselineFile}.`,
+      );
+      process.exitCode = 1;
+    }
   }
 }

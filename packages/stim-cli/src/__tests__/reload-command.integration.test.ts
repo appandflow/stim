@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import { configLockPath, isJsonObject, workspaceStateLock } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import { getProjectSettings, writeConfigSetting, type ProjectRecord } from '../workspace/config.ts';
-import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
+import { reloadOp, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -252,12 +252,11 @@ test.each([
 });
 
 test('a reload records when the workspace was last used', async () => {
-  const program = new Command();
-  registerReload(program, reloadDeps());
+  const program = reloadOp(reloadDeps());
   const originalLog = console.log;
   console.log = () => {};
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -833,13 +832,12 @@ test('a reload that reached several devices says so and counts them', async () =
 
   expect(result.ok && result.facts).toMatchObject({ strategy: 'metro-websocket', targets: 2 });
 
-  const program = new Command();
-  registerReload(program, deps);
+  const program = reloadOp(deps);
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -862,13 +860,12 @@ test.each([
     const result = await runReload({ root: '/project', platform, deps });
     expect(result.ok && result.facts).toMatchObject({ deviceId, targets: 1 });
 
-    const program = new Command();
-    registerReload(program, deps);
+    const program = reloadOp(deps);
     const lines: string[] = [];
     const originalLog = console.log;
     console.log = (line) => lines.push(String(line));
     try {
-      await program.parseAsync(['node', 'stim', 'reload', platform]);
+      await runCli(program, [platform], { version: '0.0.0' });
     } finally {
       console.log = originalLog;
     }
@@ -877,13 +874,12 @@ test.each([
 );
 
 test('a reload that reached one device does not mention other devices', async () => {
-  const program = new Command();
-  registerReload(program, reloadDeps());
+  const program = reloadOp(reloadDeps());
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -900,13 +896,12 @@ test('a broadcast reload reports its wider scope in the facts and the plain outp
 
   expect(result.ok && result.facts.strategy).toBe('metro-broadcast');
 
-  const program = new Command();
-  registerReload(program, deps);
+  const program = reloadOp(deps);
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -916,13 +911,12 @@ test('a broadcast reload reports its wider scope in the facts and the plain outp
 });
 
 test('a targeted reload does not claim the broadcast scope', async () => {
-  const program = new Command();
-  registerReload(program, reloadDeps());
+  const program = reloadOp(reloadDeps());
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -1010,16 +1004,14 @@ test.each(['default', 'tablet'].flatMap((slot) => [false, true].map((launched) =
         ? { ios: { host: { machine: 'mini', session: '' } } }
         : { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } },
     );
-    const program = new Command();
-    registerReload(
-      program,
+    const program = reloadOp(
       reloadDeps({ readLaunches: () => (launched ? { [slot === 'default' ? 'ios' : 'ios:tablet']: iosLaunch } : {}) }),
     );
     const lines: string[] = [];
     const originalLog = console.log;
     console.log = (line) => lines.push(String(line));
     try {
-      await program.parseAsync(['node', 'stim', 'reload', 'ios', '--json']);
+      await runCli(program, ['ios', '--json'], { version: '0.0.0' });
     } finally {
       console.log = originalLog;
     }
@@ -1043,13 +1035,12 @@ test('reload ignores an unreadable sibling iOS placement when reloading a live d
 });
 
 test('reload --json prints exactly one parseable facts line', async () => {
-  const program = new Command();
-  registerReload(program, reloadDeps());
+  const program = reloadOp(reloadDeps());
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android', '--json']);
+    await runCli(program, ['android', '--json'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }
@@ -1068,13 +1059,12 @@ test('reload --json prints exactly one parseable facts line', async () => {
 });
 
 test('reload plain output reports a request and retains the target facts', async () => {
-  const program = new Command();
-  registerReload(program, reloadDeps());
+  const program = reloadOp(reloadDeps());
   const lines: string[] = [];
   const originalLog = console.log;
   console.log = (line) => lines.push(String(line));
   try {
-    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+    await runCli(program, ['android'], { version: '0.0.0' });
   } finally {
     console.log = originalLog;
   }

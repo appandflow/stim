@@ -705,8 +705,9 @@ pedantic, or style-only rule.
 
 Treat `packages/stim-cli/skill/SKILL.md` as a tiny discovery router. Its body
 only tells the agent to run `stim guide agent`, or `npx stim guide agent` when
-`stim` is not on PATH, and follow the version-matched instructions. Keep
-operational guidance in the version-matched guides.
+`stim` is not on PATH, and follow the version-matched instructions, plus a
+short source section naming this repository and its provenance-signed npm
+releases. Keep operational guidance in the version-matched guides.
 `guide agent` covers the normal workflow, safety, recovery actions, and topic
 routing. Put transparent build optimizations and cache internals in the relevant
 detailed topics, not the root agent guide. Detailed topics also own flag,
@@ -717,8 +718,8 @@ fallback to the static skill. Only one skill ships.
 Update the affected guide topics and their contract tests when commands,
 defaults, safety rules, or remedies change. Change `guide agent` when the agent's
 actions, safety rules, or topic routing change. The static
-skill changes only when its activation description or single routing command
-changes.
+skill changes only when its activation description, single routing command or
+source section changes.
 
 When adding or changing a user-facing feature, update the affected website
 pages under `website/docs/` and their command examples alongside the CLI guides.
@@ -826,7 +827,8 @@ with its own `./exact.mjs ios --no-install` (plus `--release` for
 `--configuration Release`), with `EXACT_SIM` naming the
 workspace's owned simulator, started only once Stim has booted that simulator,
 so Exact never boots or shuts it down; build-only runs are refused. A build
-worker runs the same command with no `EXACT_SIM`, and only for an app whose
+worker, and a run whose simulator is hosted on another Mac, run the same
+command with no `EXACT_SIM`, and only for an app whose
 `app.json` declares no native modules, because Exact may run code on a
 simulator during the build to read an app's native modules.
 

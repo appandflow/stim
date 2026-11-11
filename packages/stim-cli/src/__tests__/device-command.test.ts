@@ -2,7 +2,6 @@ import assert from 'node:assert';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
 import androidCommand from '../commands/android.ts';
 import deviceCommand, { grantLine, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
 import iosCommand from '../commands/ios.ts';
@@ -596,12 +595,9 @@ describe('the command surface', () => {
       code: 'STIM_BAD_ARG',
       message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
     });
-    for (const args of [['ios'], ['android']]) {
-      const program = new Command();
-      program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [iosCommand, androidCommand]) register(program);
-      await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'bad/slot'])).rejects.toMatchObject({
-        code: 'commander.invalidArgument',
+    for (const op of [iosCommand, androidCommand]) {
+      await expect(runCli(op, ['--slot', 'bad/slot'], { version: '9.9.9' })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
         message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
       });
     }
@@ -618,12 +614,9 @@ describe('the command surface', () => {
         message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
       });
     }
-    for (const args of [['ios'], ['android']]) {
-      const program = new Command();
-      program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [iosCommand, androidCommand]) register(program);
-      await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'web'])).rejects.toMatchObject({
-        code: 'commander.invalidArgument',
+    for (const op of [iosCommand, androidCommand]) {
+      await expect(runCli(op, ['--slot', 'web'], { version: '9.9.9' })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
         message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
       });
     }

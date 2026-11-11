@@ -26,6 +26,7 @@ Warm copies missing Git-ignored entries from the source checkout, such as `node_
 
 - **Dependencies missing or stale?** Run the project's install command when warm reports a lockfile mismatch or has nothing to copy. Warm itself does not install packages.
 - **Expo generated native directories?** Warm copies ignored `ios/` and `android/` only when Stim recorded a current prebuild. Run `stim doctor --fix` in the source checkout to prepare them, or let the first run generate them in the worktree. [Doctor](./commands.md#doctor)
+- **Exact app?** Warm leaves the app's Cargo `target/` out, because Exact refuses a `target/` built in another checkout. The worktree's first `stim ios` compiles it.
 - **Need to leave files out?** Add patterns to the source checkout's `.worktreeexclude` or set `worktree.exclude`. Patterns match whole entries Git reports. If Git lists an ignored directory as one entry, a pattern for a file inside it has no effect.
 
 <StimTabs code="stim guide lifecycle" />

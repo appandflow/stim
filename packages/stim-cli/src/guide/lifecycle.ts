@@ -455,17 +455,30 @@ artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
 is build output: the idle stage and gc --delete clear it from an idle
 workspace (never while another process, such as a shell or an exact.mjs
 command, runs from or works in the app, nor on Windows), and the next build
-then compiles from scratch.
+then compiles from scratch. stim worktree warm copies .exact but leaves
+target/ out: Exact fails every build in a target/ built at another path ("no
+matching rustc unit dep-info"), so a new worktree's first build compiles in
+full. Exact itself seeds that build with the registry crates this machine has
+compiled (~/.cache/exact/apple-crates).
 
 stim ios --plan (and Stim Desktop's Next Build) predicts that build without
 running it: fingerprint and cacheKey are null, cacheHit is false, missReason
 is cache-skipped, bundleId is app.json's app.id, placement is this machine,
 and buildPlacement names why a build that cannot offload stays here.
-ios.remote other than auto or local is refused, as the run refuses it; with
-auto the run still refuses when auto picks a hosted device.
+With ios.remote or --remote naming a hosting Mac, or auto picking one, placement
+names that Mac; ios.remote eas is refused, as the run refuses it.
 
-Drive and test the app with Exact's own commands, with EXACT_SIM set to the
-simulator stim ios reported. Without it Exact picks a simulator by its own
+Hosted simulators: stim ios --remote <mac> builds here (or on a build Mac, as
+below) with no EXACT_SIM, then installs and launches the .app on this
+workspace's own hosted simulator on that Mac, like any app without Metro: view,
+input, stim agent-device, stim logs and stim stop work as for other hosted
+runs. Exact's own commands with EXACT_SIM drive only a simulator on this Mac.
+An app whose app.json declares native modules cannot run hosted, since Exact
+may run code on a simulator next to the build to read them: --remote <mac> and
+remote-only are refused, and auto or remote keeps it on this Mac.
+
+On this Mac, drive and test the app with Exact's own commands, with EXACT_SIM
+set to the simulator stim ios reported. Without it Exact picks a simulator by its own
 rule, which another worktree of the same app may be using.
 
 A worktree of an Exact app needs the same folder name as the checkout it was
@@ -487,7 +500,7 @@ Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
 runs the same ./exact.mjs ios --no-install [--release] in a checkout folder
 named like this app's, with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
-and this Mac installs the .app on its owned simulator; nothing is cached. The
+and this Mac installs the .app on its owned or hosted simulator; nothing is cached. The
 worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
 Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
 commit this app uses, set up with Exact's setup. A machine that lacks one is
@@ -498,7 +511,7 @@ build here: apps whose app.json declares native modules (Exact may read them on
 a simulator), an exact2 checkout with local changes, and an app folder name
 that is not a plain ASCII file name.
 
-Only iOS simulators are supported. macOS, web, Android and physical devices
+Only iOS simulators, here or hosted, are supported. macOS, web, Android and physical devices
 use Exact's own commands.`,
     },
     'native-android': {

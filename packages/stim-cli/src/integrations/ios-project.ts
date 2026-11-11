@@ -118,6 +118,8 @@ export interface IosProject {
   bundleId(): string | null | Promise<string | null>;
   schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null | Promise<FailArgs | null>;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
+  /** Why this project leaves out the hosted target, which refusals and automatic placement name. */
+  hostedUnsupported?: string;
   eas: boolean;
   runtimeKind(configuration: string | null): IosRuntimeKind;
   runtime(args: {

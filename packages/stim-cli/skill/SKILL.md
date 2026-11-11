@@ -14,3 +14,7 @@ stim guide agent
 If `stim` is not on PATH, run `npx stim guide agent`.
 
 Follow the version-matched instructions it prints.
+
+## Source
+
+`stim` is the npm package built from https://github.com/appandflow/stim. Its GitHub Actions release workflow publishes every version with npm provenance, so the package page on npmjs.com links each version to the commit and workflow run that built it. The guide is documentation shipped inside the installed package version.

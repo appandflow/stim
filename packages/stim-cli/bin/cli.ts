@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { Command } from 'commander';
 import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { CliExit } from '../src/cli-operation.ts';
-import { CliUsageError, runCli, type CliContext, type Op } from '../src/cli/define-op.ts';
+import { CliUsageError, defineOp, runCli, type Op } from '../src/cli/define-op.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 if (process.argv[2] === '__stimd') {
@@ -18,9 +17,7 @@ if (process.argv[2] === '__job') {
   process.exit(code);
 }
 
-type CommandModule = { default: ((program: Command, version: string) => void) | Op };
-
-const commands = new Map<string, () => Promise<CommandModule>>([
+const commands = new Map<string, () => Promise<{ default: Op }>>([
   ['doctor', () => import('../src/commands/doctor.ts')],
   ['worktree', () => import('../src/commands/worktree.ts')],
   ['start', () => import('../src/commands/start.ts')],
@@ -52,23 +49,12 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['plugin', () => import('../src/commands/plugin.ts')],
 ]);
 
-const opBacked = new WeakSet<Command>();
-
-function register(program: Command, command: CommandModule['default'], before: CliContext['before']): void {
-  if (typeof command === 'function') return command(program, pkg.version);
-  const listed = program.command([command.name, command.arguments].filter(Boolean).join(' '));
-  listed.description(command.description).allowExcessArguments();
-  for (const option of Object.values(command.options)) listed.option(option.flags, option.description);
-  listed.action(async (...params: unknown[]) => {
-    const self = params.at(-1);
-    const code =
-      self instanceof Command ? await runCli(command, ['--', ...self.args], { version: pkg.version, before }) : 0;
-    if (code !== 0) throw new CliExit(code);
-  });
-  opBacked.add(listed);
-}
-
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+
+function terminator(args: string[]): number {
+  const index = args.indexOf('--');
+  return index < 0 ? args.length : index;
+}
 
 export interface MainContext {
   /** The version of the copy the person ran, when a router runs this build in its place. */
@@ -80,8 +66,6 @@ export interface MainContext {
 /** Runs the CLI for `argv`, in `process.argv`'s shape. */
 export async function main(argv: string[], ctx: MainContext = {}): Promise<void> {
   Reflect.set(globalThis, Symbol.for('stim.cli'), true);
-  const program = new Command();
-  program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
   let end: (() => unknown) | undefined;
   let exitCode: number | undefined;
@@ -126,26 +110,28 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       end = entered.end;
     };
     const loadCommand = commands.get((first === 'help' ? argv[3] : first) ?? '');
-    const loaded = await loadCommand?.();
-    if (loaded && typeof loaded.default !== 'function') {
-      const args = first === 'help' ? ['--help', ...argv.slice(4)] : argv.slice(3);
-      const code = await runCli(loaded.default, args, { version: pkg.version, before });
-      if (code !== 0) exitCode = code;
-    } else {
-      if (loaded) {
-        register(program, loaded.default, before);
-      } else if (first !== '--version' && first !== '-V') {
-        const modules = await Promise.all([...commands.values()].map((load) => load()));
-        for (const module of modules) register(program, module.default, before);
-      }
-      program.hook('preAction', (_command, action) => {
-        if (opBacked.has(action)) return;
-        const path: string[] = [];
-        for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
-        return before(path);
+    const args = argv.slice(2);
+    let code = 0;
+    if (loadCommand) {
+      const help = first === 'help';
+      code = await runCli((await loadCommand()).default, help ? ['--help', ...argv.slice(4)] : argv.slice(3), {
+        version: pkg.version,
+        before,
+        help,
       });
-      await program.parseAsync(argv);
+    } else if (args.slice(0, terminator(args)).some((arg) => arg === '--version' || arg === '-V')) {
+      process.stdout.write(`${pkg.version}\n`);
+    } else {
+      const modules = await Promise.all([...commands.values()].map((load) => load()));
+      const root = defineOp({
+        name: 'stim',
+        description: 'Isolated React Native dev environments per project/worktree',
+        version: true,
+        commands: modules.map((module) => module.default),
+      });
+      code = await runCli(root, args, { version: pkg.version, before, root: true });
     }
+    if (code !== 0) exitCode = code;
   } catch (err) {
     if (err instanceof CliExit) {
       exitCode = err.exitCode;

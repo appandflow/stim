@@ -1,5 +1,5 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, expect, test, vi } from 'vitest';
-import { Command, CommanderError, InvalidArgumentError } from 'commander';
 import { CliUsageError, runCli, type Op } from '../cli/define-op.ts';
 import deviceCommand from '../commands/device.ts';
 import doctorCommand from '../commands/doctor.ts';
@@ -15,6 +15,19 @@ import startCommand from '../commands/start.ts';
 import statusOp from '../commands/status.ts';
 import stopOp from '../commands/stop.ts';
 import worktreeOp from '../commands/worktree.ts';
+import iosCommand from '../commands/ios.ts';
+import androidCommand from '../commands/android.ts';
+import reloadCommand from '../commands/reload.ts';
+import reviveCommand from '../commands/revive.ts';
+import webCommand from '../commands/web.ts';
+import macosCommand from '../commands/macos.ts';
+import agentDeviceCommand from '../commands/agent-device.ts';
+import engineOp from '../commands/engine.ts';
+import pairOp from '../commands/pair.ts';
+import pairingsCommand from '../commands/pairings.ts';
+import serveOp from '../commands/serve.ts';
+import serviceOp from '../commands/service.ts';
+import setupOp from '../commands/setup.ts';
 
 const OPS = [
   statusOp,
@@ -31,6 +44,18 @@ const OPS = [
   startCommand,
   stopOp,
   worktreeOp,
+  iosCommand,
+  androidCommand,
+  reloadCommand,
+  reviveCommand,
+  webCommand,
+  macosCommand,
+  engineOp,
+  pairOp,
+  pairingsCommand,
+  serveOp,
+  serviceOp,
+  setupOp,
 ];
 
 interface Outcome {
@@ -58,65 +83,6 @@ function spy(op: Op, path: string[], ran: (outcome: Outcome['ran']) => void): Op
   };
 }
 
-function declare(parent: Command, op: Op, path: string[], ran: (outcome: Outcome['ran']) => void): void {
-  const here = [...path, op.name];
-  const described = Object.keys(op.argumentDescriptions).length > 0;
-  const command = parent
-    .command([op.name, ...(described ? [] : [op.arguments])].filter(Boolean).join(' '))
-    .description(op.description);
-  if (described)
-    for (const arg of op.arguments.split(' ')) command.argument(arg, op.argumentDescriptions[arg.slice(1, -1)]);
-  if (op.positionalOptions) {
-    parent.enablePositionalOptions();
-    command.enablePositionalOptions();
-  }
-  for (const option of Object.values(op.options)) {
-    const add = option.mandatory ? command.requiredOption.bind(command) : command.option.bind(command);
-    const { parse } = option;
-    if (parse)
-      add(option.flags, option.description, (value: string) => {
-        try {
-          return parse(value);
-        } catch (error) {
-          throw new InvalidArgumentError(error instanceof Error ? error.message : String(error));
-        }
-      });
-    else add(option.flags, option.description);
-  }
-  for (const sub of op.commands) declare(command, sub, here, ran);
-  if (op.run)
-    command.action((...params: unknown[]) => {
-      const self = params.at(-1);
-      if (!(self instanceof Command)) throw new Error('commander passed no command');
-      const args = [...self.processedArgs];
-      while (args.length && args.at(-1) === undefined) args.pop();
-      ran({ path: here, args, options: self.opts(), parent: here.length > 1 ? (self.parent?.opts() ?? {}) : {} });
-    });
-}
-
-async function viaCommander(op: Op, args: string[]): Promise<Outcome> {
-  const outcome: Outcome = { out: '', err: '', exitCode: 0 };
-  const out: string[] = [];
-  const err: string[] = [];
-  const program = new Command()
-    .name('stim')
-    .version('9.9.9')
-    .exitOverride()
-    .configureOutput({ writeOut: (text) => out.push(text), writeErr: (text) => err.push(text) });
-  declare(program, op, [], (ran) => (outcome.ran = ran));
-  try {
-    await program.parseAsync(['node', 'stim', op.name, ...args]);
-  } catch (error) {
-    if (!(error instanceof CommanderError)) throw error;
-    outcome.exitCode = error.exitCode;
-    if (!['commander.helpDisplayed', 'commander.help', 'commander.version'].includes(error.code)) {
-      outcome.error = error.message;
-      err.length = 0;
-    }
-  }
-  return { ...outcome, out: out.join(''), err: err.join('') };
-}
-
 async function viaDefineOp(op: Op, args: string[]): Promise<Outcome> {
   const outcome: Outcome = { out: '', err: '', exitCode: 0 };
   const { out, err } = capture();
@@ -139,6 +105,11 @@ async function viaDefineOp(op: Op, args: string[]): Promise<Outcome> {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** commander 15.0.0's outcome for each row, recorded at 7a95812da by declaring each op through commander's own API. */
+const recorded: Record<string, Outcome> = JSON.parse(
+  readFileSync(new URL('fixtures/cli-parity.json', import.meta.url), 'utf8'),
+);
 
 test.each(
   [
@@ -292,9 +263,249 @@ test.each(
     ['worktree', 'remove', 'a', 'b'],
     ['worktree', 'help', 'remove'],
     ['worktree', 'bogus'],
+    ['ios'],
+    ['ios', '--remote', 'mini'],
+    ['ios', '--slot', 'tablet', '--remote', 'mini'],
+    ['ios', '--remote-build', 'mini', '--no-build-cache', '--json'],
+    [
+      'ios',
+      '--eas-profile',
+      'dev',
+      '--slot',
+      'phone',
+      '--remote-build',
+      'auto',
+      '--json',
+      '--plan',
+      '--scheme',
+      'App',
+      '--no-metro-check',
+      '--no-build-cache',
+      '--configuration',
+      'Release',
+      '--device-type',
+      'iPad Pro 13-inch (M5)',
+      '--runtime',
+      '26.0',
+      '--install-runtime',
+      '--simulator-app',
+      'none',
+      '--device',
+      'UDID',
+      '--remote',
+      '  mini  ',
+      '--wait',
+      '30',
+    ],
+    ['ios', '--device'],
+    ['ios', '--device', '--json'],
+    ['ios', '--device', '-5'],
+    ['ios', '--device=', '--plan'],
+    ['ios', '--device', 'UDID', 'extra'],
+    ['ios', '--no-wait'],
+    ['ios', '--wait', '0'],
+    ['ios', '--wait'],
+    ['ios', '--wait', '5', '--no-wait'],
+    ['ios', '--no-wait', '--wait', '5'],
+    ['ios', '--no-wait=1'],
+    ['ios', '--metro-check'],
+    ['ios', '--slot', 'bad/slot'],
+    ['ios', '--slot', 'web'],
+    ['ios', '--remote', 'bad name'],
+    ['ios', '--remote'],
+    ['ios', '--remote-build', ''],
+    ['ios', '--remote-build', 'bad name!'],
+    ['ios', 'extra'],
+    ['ios', '--bogus', '--slot', 'phone'],
+    ['ios', '--jsn'],
+    ['ios', '-V'],
+    ['ios', '--', '--json'],
+    ['android'],
+    ['android', '--slot', 'tablet', '--remote', 'mini'],
+    ['android', '--remote-build', 'mini', '--no-build-cache', '--json'],
+    [
+      'android',
+      '--eas-profile',
+      'dev',
+      '--variant',
+      'productionDebug',
+      '--system-image',
+      'system-images;android-36;google_apis;arm64-v8a',
+      '--device-profile',
+      'pixel_fold',
+      '--no-metro-check',
+      '--plan',
+      '--remote',
+      '  mini  ',
+      '--device',
+      '--no-wait',
+    ],
+    ['android', '--device', 'SERIAL', '--wait', '0'],
+    ['android', '--device', '--wat'],
+    ['android', '--remote', 'bad name'],
+    ['android', '--slot', 'web'],
+    ['android', '--wiat', '5'],
+    ['android', 'extra'],
+    ['reload'],
+    ['reload', 'web'],
+    ['reload', 'ios', '--json'],
+    ['reload', 'bogus'],
+    ['reload', 'a', 'b'],
+    ['reload', '--jsn'],
+    ['revive'],
+    ['revive', '--json'],
+    ['revive', 'extra'],
+    ['web'],
+    ['web', '--headed'],
+    ['web', '--headed', '--json'],
+    ['web', '--headless'],
+    ['macos'],
+    ['macos', '--remote', 'mini'],
+    ['macos', '--plan', '--json', '--remote', 'mini', '--remote-build', 'local'],
+    ['macos', '--remote-build', 'bad name!'],
+    ['macos', '--remote'],
+    ['macos', '--host', 'mini'],
+    ['macos', '--no-build-cache'],
+    ['engine'],
+    ['engine', 'use', '1.2.3', '--channel', 'next'],
+    ['engine', 'use'],
+    ['engine', 'use', 'a', 'b'],
+    ['engine', 'use', '--channel'],
+    ['engine', 'rollback', '--restore-state'],
+    ['engine', 'status', '--json'],
+    ['engine', 'stat'],
+    ['engine', 'install', 'x'],
+    ['engine', 'help', 'use'],
+    ['engine', '--json', 'status'],
+    ['pair'],
+    ['pair', '--json', '--port', '7787', '--control'],
+    ['pair', '--port'],
+    ['pair', 'x'],
+    ['pair', '--jsn'],
+    ['pairings'],
+    ['pairings', '--json'],
+    ['pairings', '--json', 'list'],
+    ['pairings', 'list', '--json'],
+    ['pairings', 'log', '--json'],
+    ['pairings', '--json', 'log'],
+    ['pairings', 'grant', 'ID', '--control'],
+    ['pairings', 'grant', 'ID', '--read'],
+    ['pairings', 'grant'],
+    ['pairings', 'rename', 'ID', 'name'],
+    ['pairings', 'rename', 'ID'],
+    ['pairings', 'revoke', 'ID'],
+    ['pairings', 'help'],
+    ['pairings', 'bogus'],
+    ['service'],
+    [
+      'service',
+      'install',
+      '--port',
+      '1',
+      '--serve',
+      '--env',
+      'A=1',
+      '--env',
+      'B=2',
+      '--path-prepend',
+      '/x',
+      '--label',
+      'l',
+    ],
+    ['service', 'install'],
+    ['service', 'status'],
+    ['service', 'status', '--json', '--label', 'x'],
+    ['service', 'uninstall'],
+    ['service', 'instal'],
+    ['service', 'status', '--port', '1'],
+    ['setup'],
+    [
+      'setup',
+      '--expires',
+      '2026-01-01',
+      '--build',
+      '--device-host',
+      '--port',
+      '1',
+      '--label',
+      'l',
+      '--env',
+      'A=1',
+      '--path-prepend',
+      '/x',
+      '--yes',
+      '--json',
+      '--verbose',
+      '--no-wait',
+    ],
+    ['setup', '--wait'],
+    ['setup', 'x'],
+    ['serve'],
+    [
+      'serve',
+      '--port',
+      '1',
+      '--loopback-only',
+      '--share',
+      '--tailnet',
+      '--service',
+      '--env',
+      'A=1',
+      '--env',
+      'B',
+      '--path-prepend',
+      '/a',
+      '--path-prepend',
+      '/b',
+    ],
+    ['serve', '--env'],
+    ['serve', 'x'],
+    ['serve', '-V'],
+    ['serve', '--service=x'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {
   const op = OPS.find((each) => each.name === name);
   if (!op) throw new Error(`no op named ${name}`);
-  expect(await viaDefineOp(op, args)).toEqual(await viaCommander(op, args));
+  expect(await viaDefineOp(op, args)).toEqual(recorded[JSON.stringify([name, ...args])]);
+});
+
+test.each([
+  [[]],
+  [['--help']],
+  [['-h']],
+  [['--version']],
+  [['-V']],
+  [['help', 'snapshot']],
+  [['--json', 'snapshot', '--slot', 'phone']],
+  [['snapshot', '--platform', 'ios', '--', '--json']],
+  [['--', '--json']],
+  [['agent-device', 'x']],
+])('agent-device %j reaches agent-device unchanged', async (args) => {
+  let passed: unknown;
+  const { out, err } = capture();
+  try {
+    const code = await runCli({ ...agentDeviceCommand, run: ({ args: given }) => void (passed = given) }, args, {
+      version: '9.9.9',
+    });
+    expect(code).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(passed).toEqual(args);
+  expect([out.join(''), err.join('')]).toEqual(['', '']);
+});
+
+test('help agent-device prints its usage instead of running it', async () => {
+  let ran = false;
+  const { out } = capture();
+  try {
+    await runCli({ ...agentDeviceCommand, run: () => void (ran = true) }, ['--help', 'snapshot'], {
+      version: '9.9.9',
+      help: true,
+    });
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(ran).toBe(false);
+  expect(out.join('')).toMatch(/^Usage: stim agent-device \[args\.\.\.\]\n/);
 });

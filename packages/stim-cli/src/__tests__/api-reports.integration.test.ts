@@ -175,7 +175,7 @@ test('device tools refuse before admission and complete an admitted multi-step c
     ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: refusal.message });
     expect(calls).toEqual([]);
     signal.abort();
-    expect(() => client.deviceTool({ request, signal: signal.signal })).toThrow(/abort/i);
+    await expect(client.deviceTool({ request, signal: signal.signal })).rejects.toThrow(/abort/i);
     expect(calls).toEqual([]);
     const probing = new AbortController();
     const admission = vi.fn<(workspace: string) => void>();

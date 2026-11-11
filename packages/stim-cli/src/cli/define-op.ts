@@ -3,7 +3,8 @@ import { parseArgs } from 'node:util';
 export interface OpOption {
   /**
    * Commander-style flags: `--json`, `--scope <scope>`, `--source <s...>`, `--name [value]` (an optional value), or
-   * `--no-name`, which sets the `--name` option's key to false and needs a `--name` option beside it.
+   * `--no-name`, which sets the `--name` option's key to false. Without a `--name` option beside it, `--no-name`'s own
+   * key defaults to true, as commander's lone negation does.
    */
   readonly flags: string;
   readonly description: string;
@@ -11,34 +12,54 @@ export interface OpOption {
   readonly mandatory?: boolean;
   /** Converts the value; a throw becomes a `STIM_BAD_ARG` usage error naming the flag and value. */
   readonly parse?: (value: string) => unknown;
+  /** Each use appends its value to a list that starts empty, as commander's collecting option. */
+  readonly repeatable?: boolean;
+  /** The value when the option is absent; help shows it as commander does. */
+  readonly default?: string;
+  /** Parsed, but left out of help. */
+  readonly hidden?: boolean;
 }
 
 type OptionValue<O extends OpOption> = O extends { parse: (value: string) => infer T }
   ? T
-  : O['flags'] extends `${string}...>`
+  : O extends { repeatable: true }
     ? string[]
-    : O['flags'] extends `${string}<${string}>`
-      ? string
-      : O['flags'] extends `${string}[${string}]`
-        ? string | true
-        : true;
+    : O['flags'] extends `${string}...>`
+      ? string[]
+      : O['flags'] extends `${string}<${string}>`
+        ? string
+        : O['flags'] extends `${string}[${string}]`
+          ? string | true
+          : true;
 
 type LongName<F extends string> = F extends `--${infer N} ${string}` ? N : F extends `--${infer N}` ? N : never;
 type Negated<O extends Record<string, OpOption>> = {
   [K in keyof O]: LongName<O[K]['flags']> extends `no-${infer P}` ? P : never;
 }[keyof O];
+type LongNames<O extends Record<string, OpOption>> = { [K in keyof O]: LongName<O[K]['flags']> }[keyof O];
+type Paired<O extends Record<string, OpOption>, F extends string> =
+  LongName<F> extends `no-${infer P}` ? (P extends LongNames<O> ? true : false) : false;
+type OptionType<O extends Record<string, OpOption>, K extends keyof O> =
+  LongName<O[K]['flags']> extends `no-${string}`
+    ? boolean
+    : OptionValue<O[K]> | (LongName<O[K]['flags']> extends Negated<O> ? false : never);
+type Defaulted<O extends OpOption> = O extends { default: string } | { repeatable: true } ? true : false;
 type OptionValues<O extends Record<string, OpOption>> = {
-  readonly [K in keyof O as LongName<O[K]['flags']> extends `no-${string}` ? never : K]?:
-    | OptionValue<O[K]>
-    | (LongName<O[K]['flags']> extends Negated<O> ? false : never);
+  readonly [
+    K in keyof O as Paired<O, O[K]['flags']> extends true ? never : Defaulted<O[K]> extends true ? never : K
+  ]?: OptionType<O, K>;
+} & {
+  readonly [K in keyof O as Defaulted<O[K]> extends true ? K : never]: OptionType<O, K>;
 };
 
 type ArgValue<S extends string> = S extends `<${string}>` ? string : string | undefined;
-type ArgValues<S extends string> = S extends `${infer Head} ${infer Tail}`
-  ? [ArgValue<Head>, ...ArgValues<Tail>]
-  : S extends ''
-    ? []
-    : [ArgValue<S>];
+type ArgValues<S extends string> = S extends `[${string}...]`
+  ? string[]
+  : S extends `${infer Head} ${infer Tail}`
+    ? [ArgValue<Head>, ...ArgValues<Tail>]
+    : S extends ''
+      ? []
+      : [ArgValue<S>];
 
 export interface OpInput<Options, Args> {
   readonly args: Args;
@@ -56,8 +77,12 @@ export interface Op {
   readonly argumentDescriptions: Readonly<Record<string, string>>;
   readonly description: string;
   readonly options: Readonly<Record<string, OpOption>>;
+  /** Help lists `-V, --version`. */
+  readonly version: boolean;
   /** Options after a subcommand's name belong to the subcommand, and the root's `-V` is not read. */
   readonly positionalOptions: boolean;
+  /** Every word after the op's name reaches `run` unparsed: no help, version, option or arity handling. */
+  readonly passThrough: boolean;
   readonly commands: readonly Op[];
   run?(input: OpInput<Readonly<Record<string, unknown>>, readonly (string | undefined)[]>): unknown;
 }
@@ -68,7 +93,9 @@ export function defineOp<const O extends Record<string, OpOption> = {}, const A 
   argumentDescriptions?: Readonly<Record<string, string>>;
   description: string;
   options?: O;
+  version?: boolean;
   positionalOptions?: boolean;
+  passThrough?: boolean;
   commands?: readonly Op[];
   run?(input: OpInput<OptionValues<O>, ArgValues<A>>): unknown;
 }): Op {
@@ -76,7 +103,9 @@ export function defineOp<const O extends Record<string, OpOption> = {}, const A 
     arguments: '',
     argumentDescriptions: {},
     options: {},
+    version: false,
     positionalOptions: false,
+    passThrough: false,
     commands: [],
     ...definition,
   };
@@ -91,9 +120,14 @@ export interface CliContext {
   readonly version: string;
   /** Runs after the command line parsed and before the op runs, with the command path. */
   readonly before?: (path: string[]) => unknown;
+  /** `stim help <op>`: a passThrough op prints its help instead of running. */
+  readonly help?: boolean;
+  /** The op is the program itself: its name heads usage and is left out of `before`'s path. */
+  readonly root?: boolean;
 }
 
 const HELP = { flags: '-h, --help', description: 'display help for command' };
+const VERSION = { flags: '-V, --version', description: 'output the version number' };
 const ROOT_FLAGS = ['--version', '--help'];
 
 interface Spec {
@@ -103,8 +137,11 @@ interface Spec {
   readonly takesValue: boolean;
   readonly optionalValue: boolean;
   readonly variadic: boolean;
+  readonly repeatable: boolean;
   /** The key a `--no-*` option sets to false. */
   readonly negates?: string;
+  /** A `--no-*` option without its positive option: its key starts true. */
+  readonly lone: boolean;
 }
 
 function specs(op: Op): Spec[] {
@@ -112,9 +149,11 @@ function specs(op: Op): Spec[] {
   return entries.map(([key, option]) => {
     const [long = '', value = ''] = option.flags.split(' ');
     let negates: string | undefined;
+    let lone = false;
     if (long.startsWith('--no-')) {
       negates = entries.find(([, other]) => other.flags.split(' ')[0] === `--${long.slice(5)}`)?.[0];
-      if (negates === undefined) throw new Error(`${op.name}: ${long} needs a --${long.slice(5)} option`);
+      lone = negates === undefined;
+      negates ??= key;
     }
     return {
       key,
@@ -123,7 +162,9 @@ function specs(op: Op): Spec[] {
       takesValue: value.startsWith('<'),
       optionalValue: value.startsWith('['),
       variadic: value.endsWith('...>'),
+      repeatable: option.repeatable === true,
       negates,
+      lone,
     };
   });
 }
@@ -158,7 +199,13 @@ function scan(op: Op, args: string[]): Scan {
     allowPositionals: true,
     tokens: true,
   });
-  const options: Record<string, unknown> = {};
+  const options: Record<string, unknown> = Object.fromEntries(
+    known.flatMap((spec): [string, unknown][] => {
+      if (spec.lone) return [[spec.key, true]];
+      if (spec.repeatable) return [[spec.key, []]];
+      return spec.option.default === undefined ? [] : [[spec.key, spec.option.default]];
+    }),
+  );
   const operands: string[] = [];
   let leading: number | undefined;
   let help = false;
@@ -231,7 +278,8 @@ function scan(op: Op, args: string[]): Scan {
           );
         }
       }
-      if (spec.variadic) {
+      if (spec.repeatable) options[spec.key] = [...[options[spec.key] ?? []].flat(), value];
+      else if (spec.variadic) {
         options[spec.key] = [...[options[spec.key] ?? []].flat(), value];
         if (!token.inlineValue) variadic = { spec, next: token.index + 2 };
       } else options[spec.key] = value;
@@ -286,7 +334,7 @@ function suggestSimilar(word: string, candidates: string[]): string {
 }
 
 function longFlags(op: Op): string[] {
-  return [...specs(op).map((spec) => spec.long), '--help'];
+  return [...specs(op).flatMap((spec) => (spec.option.hidden ? [] : [spec.long])), '--help'];
 }
 
 function unknownOption(path: Op[], op: Op, flag: string): CliUsageError {
@@ -324,13 +372,20 @@ function boxWrap(text: string, width: number): string {
     .join('\n');
 }
 
-function helpText(path: Op[], op: Op, width: number): string {
+function described(option: OpOption): string {
+  if (option.repeatable) return `${option.description} (default: [])`;
+  return option.default === undefined
+    ? option.description
+    : `${option.description} (default: ${JSON.stringify(option.default)})`;
+}
+
+function helpText(usage: string[], op: Op, width: number): string {
   const items = (heading: string, rows: [string, string][]): string[] =>
     rows.length ? [heading, ...rows.map(([term, description]) => item(term, description)), ''] : [];
-  const options: [string, string][] = [...Object.values(op.options), HELP].map((each) => [
-    each.flags,
-    each.description,
-  ]);
+  const listed = Object.values(op.options).filter((each) => !each.hidden);
+  const options: [string, string][] = (op.passThrough ? [] : [...(op.version ? [VERSION] : []), ...listed, HELP]).map(
+    (each) => [each.flags, described(each)],
+  );
   const commands: [string, string][] = op.commands.map((sub) => [
     [
       sub.name,
@@ -346,6 +401,7 @@ function helpText(path: Op[], op: Op, width: number): string {
     : [];
   const pad = Math.max(...[...args, ...options, ...commands].map(([term]) => term.length));
   const item = (term: string, description: string): string => {
+    if (!description) return `  ${term}`;
     const remaining = width - pad - 4;
     const text =
       remaining < 40 || /\n[^\S\r\n]/.test(description)
@@ -353,9 +409,13 @@ function helpText(path: Op[], op: Op, width: number): string {
         : boxWrap(description, remaining).replace(/\n/g, `\n${' '.repeat(pad + 2)}`);
     return `  ${term.padEnd(pad)}  ${text.replace(/\n/g, '\n  ')}`;
   };
-  const usage = ['[options]', ...(op.commands.length ? ['[command]'] : []), ...(op.arguments ? [op.arguments] : [])];
+  const shape = [
+    ...(op.passThrough ? [] : ['[options]']),
+    ...(op.commands.length ? ['[command]'] : []),
+    ...(op.arguments ? [op.arguments] : []),
+  ];
   return [
-    `Usage: ${['stim', ...path.map((each) => each.name), ...usage].join(' ')}`,
+    `Usage: ${[...usage, ...shape].join(' ')}`,
     '',
     ...(op.description ? [boxWrap(op.description, width), ''] : []),
     ...items('Arguments:', args),
@@ -368,13 +428,17 @@ function helpWidth(stream: NodeJS.WriteStream): number {
   return (stream.isTTY ? stream.columns : undefined) ?? 80;
 }
 
-function showHelp(path: Op[], op: Op, error: boolean): number {
+function usageNames(path: Op[], root: boolean | undefined): string[] {
+  return [...(root ? [] : ['stim']), ...path.map((each) => each.name)];
+}
+
+function showHelp(usage: string[], op: Op, error: boolean): number {
   const stream = error ? process.stderr : process.stdout;
-  stream.write(helpText(path, op, helpWidth(stream)));
+  stream.write(helpText(usage, op, helpWidth(stream)));
   return error ? 1 : 0;
 }
 
-function checkArity(op: Op, operands: string[]): void {
+function checkArity(op: Op, operands: string[], program: boolean): void {
   const declared = op.arguments ? op.arguments.split(' ') : [];
   declared.forEach((arg, index) => {
     if (arg.startsWith('<') && operands[index] === undefined)
@@ -382,8 +446,9 @@ function checkArity(op: Op, operands: string[]): void {
   });
   if (operands.length > declared.length) {
     const s = declared.length === 1 ? '' : 's';
+    const name = program ? '' : ` for '${op.name}'`;
     throw new CliUsageError(
-      `error: too many arguments for '${op.name}'. Expected ${declared.length} argument${s} but got ${operands.length}: ${operands.join(', ')}.`,
+      `error: too many arguments${name}. Expected ${declared.length} argument${s} but got ${operands.length}: ${operands.join(', ')}.`,
     );
   }
 }
@@ -394,6 +459,13 @@ function checkArity(op: Op, operands: string[]): void {
  * line the op does not accept throws {@link CliUsageError}. Resolves to the exit code.
  */
 export async function runCli(op: Op, args: string[], context: CliContext): Promise<number> {
+  const help = (path: Op[], current: Op, error: boolean) => showHelp(usageNames(path, context.root), current, error);
+  if (op.passThrough) {
+    if (context.help) return help([op], op, false);
+    await context.before?.([op.name]);
+    await op.run?.({ args, options: {}, parent: {}, version: context.version });
+    return 0;
+  }
   if (!op.positionalOptions && args.slice(0, end(args)).some((arg) => arg === '--version' || arg.startsWith('-V'))) {
     process.stdout.write(`${context.version}\n`);
     return 0;
@@ -405,7 +477,16 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
   for (;;) {
     const parsed = scan(current, rest);
     const word = parsed.leading === undefined ? undefined : rest[parsed.leading];
+    if (current === op && op.positionalOptions && op.version) {
+      const own = rest.slice(0, parsed.leading ?? end(rest));
+      if (own.some((arg) => arg === '--version' || arg === '-V')) {
+        process.stdout.write(`${context.version}\n`);
+        return 0;
+      }
+    }
     const sub = current.commands.find((each) => each.name === word);
+    if (sub?.passThrough && parsed.leading !== undefined)
+      return runCli(sub, rest.slice(parsed.leading + 1), { ...context, root: false });
     if (sub && parsed.leading !== undefined) {
       const { leading, taken } = parsed;
       parent = current.positionalOptions ? scan(current, rest.slice(0, leading)).options : parsed.options;
@@ -421,11 +502,11 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     if (group && word === 'help') {
       const named = parsed.operands[1];
       const target = current.commands.find((each) => each.name === named);
-      if (target) return showHelp([...path, target], target, false);
-      return showHelp(path, current, named !== undefined);
+      if (target) return help([...path, target], target, false);
+      return help(path, current, named !== undefined);
     }
-    if (group && rest.length === 0) return showHelp(path, current, true);
-    if (parsed.help) return showHelp(path, current, false);
+    if (group && rest.length === 0) return help(path, current, true);
+    if (parsed.help) return help(path, current, false);
     for (const spec of specs(current)) {
       if (spec.option.mandatory && parsed.options[spec.key] === undefined)
         throw new CliUsageError(`error: required option '${spec.option.flags}' not specified`);
@@ -435,9 +516,9 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
       throw new CliUsageError(`error: unknown command '${word}'${suggestSimilar(word, names)}`);
     }
     if (parsed.unknown !== undefined) throw unknownOption(path, current, parsed.unknown);
-    if (!current.run) return showHelp(path, current, true);
-    checkArity(current, parsed.operands);
-    await context.before?.(path.map((each) => each.name));
+    if (!current.run) return help(path, current, true);
+    checkArity(current, parsed.operands, context.root === true && current === op);
+    await context.before?.(path.slice(context.root ? 1 : 0).map((each) => each.name));
     await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version });
     return 0;
   }

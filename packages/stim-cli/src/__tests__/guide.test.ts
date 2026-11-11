@@ -1,8 +1,7 @@
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
-import { registerIos } from '../commands/ios.ts';
-import { registerAndroid } from '../commands/android.ts';
-import { Command } from 'commander';
+import iosCommand from '../commands/ios.ts';
+import androidCommand from '../commands/android.ts';
 import { runCli } from '../cli/define-op.ts';
 import {
   AGENT_TOOLS,
@@ -1004,10 +1003,8 @@ test('the facts topic lists every field of a running build', () => {
 test('the web topic names every web setting and every stim web flag, and the agent guide routes to it', () => {
   const body = renderTopic('web');
   assert(body);
-  const program = new Command();
-  webCommand(program);
-  const flags = program.commands.find((command) => command.name() === 'web')?.options.map((option) => option.long);
-  assert(flags?.length);
+  const flags = Object.values(webCommand.options).map((option) => option.flags.split(' ')[0]);
+  assert(flags.length);
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('web.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide web');
@@ -1071,10 +1068,8 @@ test('agents tell the user about remote machines and the phone app and never set
 test('the macos guide covers the declared command flags and project settings', () => {
   const body = renderTopic('macos');
   assert(body);
-  const program = new Command();
-  macosCommand(program);
-  const flags = program.commands.find((command) => command.name() === 'macos')?.options.map((option) => option.long);
-  assert(flags?.length);
+  const flags = Object.values(macosCommand.options).map((option) => option.flags.split(' ')[0]);
+  assert(flags.length);
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
@@ -1083,17 +1078,17 @@ test('the macos guide covers the declared command flags and project settings', (
   expect(agentActions).not.toContain('lsappinfo find');
 });
 
-test.each([registerIos, registerAndroid, macosCommand])(
-  'build command %s parses placement and rejects empty names',
-  (register) => {
-    const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
-    register(program);
-    const command = program.commands[0]!;
-    command.parseOptions(['--remote-build', 'mini']);
-    expect(command.opts().remoteBuild).toBe('mini');
-    expect(() => command.parseOptions(['--remote-build', ''])).toThrow(
-      expect.objectContaining({ code: 'commander.invalidArgument' }),
-    );
+test.each([iosCommand, androidCommand, macosCommand])(
+  'build command $name parses placement and rejects empty names',
+  async (op) => {
+    let parsed: Record<string, unknown> = {};
+    await runCli({ ...op, run: ({ options }) => void (parsed = options) }, ['--remote-build', 'mini'], {
+      version: '0.0.0',
+    });
+    expect(parsed.remoteBuild).toBe('mini');
+    await expect(runCli(op, ['--remote-build', ''], { version: '0.0.0' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
     expect(renderSection('lifecycle', 'options')).toContain('--remote-build');
   },
 );

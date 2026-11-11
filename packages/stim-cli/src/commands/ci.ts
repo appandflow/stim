@@ -1,14 +1,13 @@
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 
-export default function ciCommand(program: Command): void {
-  program
-    .command('ci')
-    .description('Build and run apps in CI')
-    .helpOption(false)
-    .allowUnknownOption()
-    .allowExcessArguments()
-    .action(async () => {
-      const { main } = await import('@stim-cli/ci/cli');
-      await main(process.argv.slice(3));
-    });
-}
+const ci: Op = defineOp({
+  name: 'ci',
+  description: 'Build and run apps in CI',
+  passThrough: true,
+  async run({ args }) {
+    const { main } = await import('@stim-cli/ci/cli');
+    await main([...args]);
+  },
+});
+
+export default ci;

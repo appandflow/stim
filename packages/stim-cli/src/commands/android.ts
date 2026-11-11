@@ -35,7 +35,7 @@ import {
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
 import { join } from 'node:path';
-import { type Command, InvalidArgumentError } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import chalk from 'chalk';
 import type { loadCacheProvider } from '@stim-cli/cache';
 import { storedAppId as cacheEntryAppId } from '../cache/build-cache.ts';
@@ -75,7 +75,7 @@ import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
+import { resolveBuildPlacement, resolveBuildMachine } from '../build-placement.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
 import { ensureDevServer, type MobileRuntimePreparation, ensureWorkspaceStorageSafely } from './native-runtime.ts';
@@ -204,82 +204,95 @@ interface AndroidCommandOptions {
   plan?: boolean;
 }
 
-export default function androidCommand(program: Command): void {
-  registerAndroid(program);
-}
-
-export function registerAndroid(program: Command): void {
-  program
-    .command('android')
-    .description(
+export function androidOp(): Op {
+  return defineOp({
+    name: 'android',
+    description:
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
-        'emulator. React Native and Expo Debug runs start the dev server when it is not running.',
-    )
-    .option(
-      '--eas-profile <name>',
-      'Download a matching EAS development build; on a miss, print the build command without running it',
-    )
-    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
-    .option(
-      '--remote-build <value>',
-      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
-      parseBuildMachineOption,
-    )
-    .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
-    .option(
-      '--plan',
-      'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
-        'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
-    )
-    .option(
-      '--no-metro-check',
-      'Skip the reserved-port Metro health check and do not start it (the app will load no bundle unless something else serves it)',
-    )
-    .option(
-      '--no-build-cache',
-      "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
-    )
-    .option(
-      '--variant <name>',
-      'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
-    )
-    .option(
-      '--system-image <id>',
-      "Android system image to create this workspace's owned AVD from, as the sdkmanager package id " +
-        '(e.g. "system-images;android-36;google_apis;arm64-v8a"). Overrides the android.systemImage setting for this ' +
-        'invocation. An unknown id refuses with STIM_BAD_ARG and prints the installed images.',
-    )
-    .option(
-      '--device-profile <id>',
-      "Hardware profile to create this workspace's owned AVD with, as an `avdmanager list device -c` id " +
-        '(e.g. "pixel_fold", "pixel_tablet"). Overrides the android.deviceProfile setting for this invocation. ' +
-        'An unknown id refuses with STIM_BAD_ARG and prints the available ids.',
-    )
-    .option(
-      '--device [serial]',
-      "Install and launch on a connected physical device instead of this workspace's owned emulator. " +
-        'With no serial, the first connected device this workspace can lease is used. Stim never creates, boots, or deletes a physical device.',
-    )
-    .option(
-      '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; remote tries remote.machines in order first and runs here only when none takes it; remote-only never runs here; local runs here, whatever android.remote says',
-      (value) => {
-        if (!parseMachine(value))
-          throw new InvalidArgumentError(
-            'expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
-          );
-        return value;
+      'emulator. React Native and Expo Debug runs start the dev server when it is not running.',
+    options: {
+      easProfile: {
+        flags: '--eas-profile <name>',
+        description: 'Download a matching EAS development build; on a miss, print the build command without running it',
       },
-    )
-    .option(
-      '--wait <seconds>',
-      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
-    )
-    .option(
-      '--no-wait',
-      "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
-    )
-    .action(async (opts: AndroidCommandOptions) => {
+      slot: {
+        flags: '--slot <name>',
+        description: 'Reusable device slot within this workspace (default: default)',
+        parse: parseDeviceSlotOption,
+      },
+      remoteBuild: {
+        flags: '--remote-build <value>',
+        description:
+          'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
+        parse: resolveBuildMachine,
+      },
+      json: {
+        flags: '--json',
+        description: 'Emit the facts as a single JSON line on stdout; every other line goes to stderr',
+      },
+      plan: {
+        flags: '--plan',
+        description:
+          'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
+          'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
+      },
+      metroCheck: {
+        flags: '--no-metro-check',
+        description:
+          'Skip the reserved-port Metro health check and do not start it (the app will load no bundle unless something else serves it)',
+      },
+      buildCache: {
+        flags: '--no-build-cache',
+        description:
+          "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
+      },
+      variant: {
+        flags: '--variant <name>',
+        description:
+          'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
+      },
+      systemImage: {
+        flags: '--system-image <id>',
+        description:
+          "Android system image to create this workspace's owned AVD from, as the sdkmanager package id " +
+          '(e.g. "system-images;android-36;google_apis;arm64-v8a"). Overrides the android.systemImage setting for this ' +
+          'invocation. An unknown id refuses with STIM_BAD_ARG and prints the installed images.',
+      },
+      deviceProfile: {
+        flags: '--device-profile <id>',
+        description:
+          "Hardware profile to create this workspace's owned AVD with, as an `avdmanager list device -c` id " +
+          '(e.g. "pixel_fold", "pixel_tablet"). Overrides the android.deviceProfile setting for this invocation. ' +
+          'An unknown id refuses with STIM_BAD_ARG and prints the available ids.',
+      },
+      device: {
+        flags: '--device [serial]',
+        description:
+          "Install and launch on a connected physical device instead of this workspace's owned emulator. " +
+          'With no serial, the first connected device this workspace can lease is used. Stim never creates, boots, or deletes a physical device.',
+      },
+      remote: {
+        flags: '--remote <target>',
+        description:
+          'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; remote tries remote.machines in order first and runs here only when none takes it; remote-only never runs here; local runs here, whatever android.remote says',
+        parse: (value: string) => {
+          if (!parseMachine(value))
+            throw new Error('expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name');
+          return value;
+        },
+      },
+      wait: {
+        flags: '--wait <seconds>',
+        description:
+          'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
+      },
+      noWait: {
+        flags: '--no-wait',
+        description:
+          "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
+      },
+    },
+    run: async ({ options: opts }) => {
       if (opts.plan) return planAndroid(opts);
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -291,8 +304,13 @@ export function registerAndroid(program: Command): void {
       );
       if (!result.ok) exitCli(interrupted ?? 1);
       else if (result.uploadsAbandoned) exitCli(0);
-    });
+    },
+  });
 }
+
+const androidCommand: Op = androidOp();
+
+export default androidCommand;
 
 export function runAndroidOperation(
   context: StimContext,

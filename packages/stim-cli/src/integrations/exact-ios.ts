@@ -8,6 +8,7 @@ import { skippedMissReason } from '../cache/miss-reason.ts';
 import { processContext } from '../cli-operation.ts';
 import { planFlagRefusal, planPayload } from '../commands/build-plan.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
+import { hostedIosSelectors } from '../commands/ios/remote.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import {
   deviceModelRefusal,
@@ -20,6 +21,7 @@ import { runCaptured } from '../engine/deps.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, HEARTBEAT_INTERVAL_MS, readBundleId } from '../engine/xcode.ts';
 import { iosToolchainAsync, type BuildTarget } from '../engine/toolchain.ts';
+import { planHostedDevice } from '../device-host/plan-placement.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -32,6 +34,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from '../workspace/settings.ts';
+import { readHostedNative } from '../workspace/placement-state.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   exactDeclaresModules,
@@ -154,7 +157,9 @@ async function compile(
         remedy:
           'Build and run it with stim ios; build-only runs (stim ci build) support Exact apps without native modules.',
       });
-    return run({ ...context.operation?.env });
+    const env = { ...context.operation?.env };
+    delete env.EXACT_SIM;
+    return run(env);
   }
   const booted = await booting;
   if (!booted.ok)
@@ -313,12 +318,21 @@ async function planExactIos(
       lines: moreShapeErrors,
     };
   const remote = options.remote !== undefined ? parseIosRemote(options.remote) : remoteIosSetting(settings);
-  if (remote && !(remote.kind === 'machine' && remote.placement === 'auto'))
+  if (remote?.kind === 'backend')
     return {
       refusal: {
         code: 'STIM_BAD_ARG',
-        message: `This project integration does not support the ${remote.kind === 'backend' ? 'remote' : 'hosted'} iOS target.`,
+        message: 'This project integration does not support the remote iOS target.',
         remedy: 'Use a local iOS simulator for this integration.',
+      },
+    };
+  const hostedUnsupported = exactHostedUnsupported(root);
+  if (remote && hostedUnsupported && (remote.machine !== 'auto' || remote.placement === 'remote-only'))
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: `This app cannot run on a hosted iOS simulator: ${hostedUnsupported}.`,
+        remedy: 'Run it on a simulator on this Mac with --remote local, or unset ios.remote.',
       },
     };
   const layers = DEFAULT_DEPS.settingsLayers(context);
@@ -332,17 +346,61 @@ async function planExactIos(
     deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
     runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
     physical: false,
+    hosted: remote !== null && !hostedUnsupported,
     remoteBackend: null,
     listRuntimes: DEFAULT_DEPS.listIosRuntimes,
     signal: operation.signal,
   });
   if (modelRefusal) return { refusal: modelRefusal };
+  let recorded;
+  try {
+    recorded = remote && hostedUnsupported ? readHostedNative(root, 'ios', slot)[slot] : undefined;
+  } catch (error) {
+    return {
+      refusal: {
+        code: 'STIM_HOSTING_REFUSED',
+        message: error instanceof Error ? error.message : String(error),
+        remedy:
+          error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+            ? error.remedy
+            : 'Run stim stop to reconcile the recorded hosted placement, then plan again.',
+      },
+    };
+  }
+  if (recorded)
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's iOS simulator runs on ${recorded.machine}; run stim stop first.`,
+        remedy: 'Run stim stop, then stim ios to run it on this Mac.',
+      },
+    };
   const configuration = resolveConfiguration(options.configuration, settings);
   const schemeProblem = exactSchemeProblem(options.scheme, configuration);
   if (schemeProblem)
     return {
       refusal: { code: schemeProblem.code, message: schemeProblem.message ?? '', remedy: schemeProblem.remedy ?? '' },
     };
+  let devicePlacement = remote && hostedUnsupported ? `this machine; ${hostedUnsupported}` : 'this machine';
+  if (remote && !hostedUnsupported) {
+    const planned = await planHostedDevice({
+      operation,
+      root,
+      slot,
+      platform: 'ios',
+      machine: remote.machine,
+      buildMachine: options.remoteBuild,
+      ...(remote.placement ? { placement: remote.placement } : {}),
+      selectors: hostedIosSelectors(
+        resolveDeviceType(options.deviceType, settings),
+        resolveRuntime(options.runtime, settings),
+      ),
+      sameKey: () => true,
+    });
+    if (planned.kind === 'refused')
+      return { refusal: { code: planned.code, message: planned.message, remedy: planned.remedy } };
+    devicePlacement = planned.kind === 'unknown' ? `unknown; ${planned.reason}` : planned.placement;
+  }
   const placement = await exactBuildPlacement(root, options.remoteBuild ?? 'auto', operation.env);
   const plan = planPayload(
     {
@@ -366,19 +424,26 @@ async function planExactIos(
   const bundleId = exactBundleId(root);
   return {
     ...plan,
-    placement: remote
-      ? 'this machine; when auto picks a hosted device instead, the run refuses, since Exact apps cannot use one'
-      : 'this machine',
+    placement: devicePlacement,
     ...(placement && 'buildPlacement' in placement ? { buildPlacement: placement.buildPlacement } : {}),
     ...(bundleId ? { bundleId } : {}),
   };
 }
 
+function exactHostedUnsupported(root: string): string | undefined {
+  const manifest = readJsonObject(join(root, 'app.json'));
+  return !manifest || !exactDeclaresModules(manifest)
+    ? undefined
+    : 'an Exact app that declares native modules builds next to its own simulator, since Exact may run code on it to read them';
+}
+
 export function exactIosProject(root: string): IosProject {
+  const hostedUnsupported = exactHostedUnsupported(root);
   return {
     plan: (options, resolved, operation) => planExactIos(root, options, resolved, operation ?? processContext(root)),
     isExpo: false,
-    targets: ['simulator'],
+    targets: hostedUnsupported ? ['simulator'] : ['simulator', 'hosted'],
+    ...(hostedUnsupported ? { hostedUnsupported } : {}),
     eas: false,
     runtimeKind: () => 'process',
     bundleId: () => exactBundleId(root),
@@ -397,7 +462,7 @@ export function exactDoctor(): ProjectDoctor {
             {
               level: 'note',
               title: 'Exact application',
-              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to that simulator.`,
+              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator, or with no simulator for a hosted one, and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to a simulator on this Mac.`,
               fix: null,
             },
             ...((options.host ?? process.platform) === 'darwin'

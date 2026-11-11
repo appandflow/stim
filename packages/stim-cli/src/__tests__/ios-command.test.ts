@@ -44,6 +44,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -53,7 +54,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedNative } from '../workspace/placement-state.ts';
@@ -87,13 +87,14 @@ import {
   phaseLine,
   podAction,
   ensureWorkspaceStorageSafely,
-  registerIos,
+  iosOp,
   runIosOperation,
   replaceCollector,
   pickDevClientScheme,
   schemesFromInfoPlist,
   writeLastBuild,
 } from '../commands/ios.ts';
+import { runCli } from '../cli/define-op.ts';
 import { collectorProcessTitle, asProcessExit, makeError, makeExecutor, makeIosSim } from './_factories.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
@@ -180,7 +181,7 @@ const PROFILE = {
   certificates: [],
 };
 
-type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
+type IosDeps = NonNullable<Parameters<typeof iosOp>[0]>;
 
 type LooseDeps = {
   [K in keyof Required<IosDeps>]?: K extends 'buildIos'
@@ -224,39 +225,17 @@ afterEach(() => {
   resetExecutor();
 });
 
-function captureAction(register: typeof registerIos, deps: LooseDeps) {
-  let captured: ((opts: Record<string, unknown>) => unknown) | undefined;
-  const stub = {
-    command() {
-      return stub;
-    },
-    description() {
-      return stub;
-    },
-    option() {
-      return stub;
-    },
-    action(fn: (opts: Record<string, unknown>) => unknown) {
-      captured = fn;
-      return stub;
-    },
-  };
-  register(stub as unknown as Parameters<typeof registerIos>[0], deps as unknown as IosDeps);
-  return (opts: Record<string, unknown> = {}) => {
-    assert(captured);
-    return captured(opts);
-  };
+function captureAction(deps: LooseDeps) {
+  const op = iosOp(deps as unknown as IosDeps);
+  assert(op.run);
+  const action = op.run;
+  return (opts: Record<string, unknown> = {}) => action({ args: [], options: opts, parent: {}, version: '0.0.0' });
 }
 
-function parseRemoteOption(args: string[]): unknown {
-  const program = new Command();
-  program.exitOverride();
-  program.configureOutput({ writeErr: () => {} });
-  registerIos(program);
-  const command = program.commands[0];
-  assert(command);
-  command.parseOptions(args);
-  return command.opts().remote;
+async function parseRemoteOption(args: string[]): Promise<unknown> {
+  let parsed: Record<string, unknown> = {};
+  await runCli({ ...iosOp(), run: ({ options }) => void (parsed = options) }, args, { version: '0.0.0' });
+  return parsed.remote;
 }
 
 function parseFirst(lines: string[]) {
@@ -565,7 +544,7 @@ async function errorRecords() {
 
 async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}, onExit?: () => void) {
   const { deps, calls, appPath } = harness(overrides);
-  const action = captureAction(registerIos, deps);
+  const action = captureAction(deps);
   const logs: string[] = [];
   const errs: string[] = [];
   const origLog = console.log;
@@ -4323,13 +4302,13 @@ describe('concurrency limits', () => {
 });
 
 describe('--remote', () => {
-  test('the CLI parser accepts only an explicit proxy or eas backend', () => {
-    expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
-    expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
-    expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
-    expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
-    expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
-    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/remote Mac name/i);
+  test('the CLI parser accepts only an explicit proxy or eas backend', async () => {
+    expect(await parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
+    expect(await parseRemoteOption(['--remote', 'eas'])).toBe('eas');
+    await expect(parseRemoteOption(['--remote'])).rejects.toThrow(/argument missing/i);
+    expect(await parseRemoteOption(['--remote', 'mini'])).toBe('mini');
+    expect(await parseRemoteOption(['--remote', 'auto'])).toBe('auto');
+    await expect(parseRemoteOption(['--remote', 'bad name'])).rejects.toThrow(/remote Mac name/i);
   });
 
   function remoteStub(createdSessionId: string | null = 'drs_42') {
@@ -7854,11 +7833,7 @@ describe('--simulator-app', () => {
     'parses %s and passes it to preparation and boot',
     async (simulatorApp) => {
       reserve();
-      const program = new Command();
-      registerIos(program);
-      const command = program.commands[0]!;
-      command.parseOptions(['--simulator-app', simulatorApp]);
-      const { calls, exitCode } = await run(command.opts());
+      const { calls, exitCode } = await run({ simulatorApp });
       expect(exitCode).toBe(null);
       expect(calls.args.ensureOwnedDevice).toMatchObject({ flags: { simulatorApp } });
       expect(calls.args.ensureBooted).toMatchObject({ simulatorApp });
@@ -11046,6 +11021,42 @@ describe('registered iOS project recipes', () => {
       expect(buildRecords().some((record) => String(record.msg).includes('embedded JS'))).toBe(false);
     },
   );
+
+  test('a recipe without the hosted target keeps an automatic placement here and refuses remote-only', async () => {
+    const projectRegistry = nativeProject();
+    compiler();
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'ios.remote', 'auto');
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const deps = { projectRegistry, readBundleId, readBundleExecutable, automaticDevicePlacement: automatic };
+    const local = await run({ json: true }, deps);
+    expect(local.exitCode).toBe(null);
+    expect(parseFirst(local.logs)).toMatchObject({ bundleId: 'org.example.native', launched: true });
+    expect(local.calls.args.installIosApp).toMatchObject({ udid: UDID });
+    const logs = readdirSync(workspaceLogsDir(root))
+      .filter((name) => name.startsWith('build-ios.ndjson'))
+      .map((name) => readFileSync(join(workspaceLogsDir(root), name), 'utf8'))
+      .join('');
+    expect(logs).toContain('"code":"hosted-unsupported"');
+    const refused = await run({ remote: 'remote-only', json: true }, deps);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.errs.join('\n')).toMatch(/cannot run on a hosted iOS simulator/);
+    writeHostedIos(root, 'default', {
+      machine: 'mini',
+      selected: 'auto',
+      session: '23456789-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device: null,
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const recorded = await run({ json: true }, deps);
+    expect(parseFirst(recorded.logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('runs on mini; run stim stop first'),
+    });
+    expect(recorded.calls.order).not.toContain('installIosApp');
+    expect(automatic).not.toHaveBeenCalled();
+  });
 
   test('a cache-ineligible native recipe compiles every run and releases its slot and install copy', async () => {
     nativeProject();
