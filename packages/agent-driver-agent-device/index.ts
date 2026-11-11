@@ -14,8 +14,6 @@ export function recover({ stateDir, host }: AgentDriverRecoveryInput): Promise<v
   return stopRecorders(host, stateDir);
 }
 
-export { resolveAgentDevice as invocation } from './agent-device-bin.ts';
-
 export const client: AgentDriverClient = {
   access({ grant, baseUrl, file, platform }) {
     if (

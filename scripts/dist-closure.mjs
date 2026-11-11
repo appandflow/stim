@@ -17,7 +17,7 @@ const shared = [
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
-  ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\//],
+  ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\/(?!agent-device-bin\.ts$)/],
   ...pluginRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];

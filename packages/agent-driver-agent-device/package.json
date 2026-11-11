@@ -23,6 +23,11 @@
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
+    "./agent-device-bin": {
+      "types": "./dist/agent-device-bin.d.mts",
+      "module-sync": "./dist/agent-device-bin.mjs",
+      "default": "./dist/agent-device-bin.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

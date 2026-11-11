@@ -1,10 +1,5 @@
 import type { PluginSource } from '@stim-cli/core/plugin-loader';
-import {
-  agentClientConfigFile,
-  loadAgentDriverModule,
-  type AgentDriverClient,
-  type AgentDriverInvocation,
-} from '@stim-cli/agent-driver';
+import { agentClientConfigFile, loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
 import type { BuiltinAgentDriver } from '@stim-cli/core/state';
 
 const DRIVERS: Record<BuiltinAgentDriver, PluginSource> = {
@@ -21,24 +16,18 @@ function registered(name: string): name is keyof typeof DRIVERS {
   return Object.hasOwn(DRIVERS, name);
 }
 
-/** The client side of a first-party driver, or a reason it is unavailable to this Stim. */
+/**
+ * The client side of a first-party driver; `unavailable` when this Stim has no client for it, `failed` with the
+ * reason when its driver module does not load.
+ */
 export async function agentDriverClient(
   name: string,
-): Promise<{ client: AgentDriverClient } | { unavailable: string }> {
+): Promise<{ client: AgentDriverClient } | { unavailable: string } | { failed: string }> {
   if (!registered(name)) return { unavailable: `this Stim has no ${name} driver` };
   const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
-  if ('unavailable' in loaded) return loaded;
+  if ('unavailable' in loaded) return { failed: loaded.unavailable };
   const { client } = loaded.module;
   return client ? { client } : { unavailable: `the ${name} driver has no client` };
-}
-
-/** How the first-party driver `name` runs its tool on this machine. Throws why it cannot. */
-export async function agentDriverInvocation(name: string, env: NodeJS.ProcessEnv): Promise<AgentDriverInvocation> {
-  if (!registered(name)) throw new Error(`this Stim has no ${name} driver`);
-  const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
-  if ('unavailable' in loaded) throw new Error(loaded.unavailable);
-  if (!loaded.module.invocation) throw new Error(`the ${name} driver has no invocation`);
-  return loaded.module.invocation(env);
 }
 
 /**

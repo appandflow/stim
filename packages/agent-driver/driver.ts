@@ -155,12 +155,6 @@ export interface AgentDriverInput {
 /** What stim-server hands a module's `recover`: the driver state and claim of one hosted session area. */
 export type AgentDriverRecoveryInput = Omit<AgentDriverInput, 'device'>;
 
-/** How to run a driver's tool on this machine. */
-export interface AgentDriverInvocation {
-  command: string;
-  args: string[];
-}
-
 export interface AgentClientAccessInput {
   /** A grant naming this driver, as the client parsed it. */
   grant: HostedAgentIssuedGrant;
@@ -200,8 +194,6 @@ export interface AgentDriverModule {
    * run left behind for a stim-server process that is gone; rejects naming what it could not resolve.
    */
   recover?(input: AgentDriverRecoveryInput): Promise<void>;
-  /** The driver's tool as the `stim` command of the same name runs it; throws with `agent-driver-unavailable` when absent. */
-  invocation?(env: NodeJS.ProcessEnv): AgentDriverInvocation;
 }
 
 export type LoadAgentDriverModuleResult = { module: AgentDriverModule } | { unavailable: string };
@@ -220,8 +212,6 @@ function moduleError(candidate: Record<string, unknown>, id: string): string | n
     return 'the client capability must implement access()';
   if (candidate.recover !== undefined && typeof candidate.recover !== 'function')
     return 'the recover capability must be a function';
-  if (candidate.invocation !== undefined && typeof candidate.invocation !== 'function')
-    return 'the invocation capability must be a function';
   return null;
 }
 

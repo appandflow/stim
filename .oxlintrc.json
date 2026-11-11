@@ -134,7 +134,13 @@
       "files": ["packages/stim-cli/src/**/*.{ts,mts,mjs,js}"],
       "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
       "rules": {
-        "stim/static-imports": ["error", { "modules": ["@stim-cli/agent-driver-agent-device"] }]
+        "stim/static-imports": [
+          "error",
+          {
+            "modules": ["@stim-cli/agent-driver-agent-device"],
+            "allow": ["@stim-cli/agent-driver-agent-device/agent-device-bin"]
+          }
+        ]
       }
     },
     {

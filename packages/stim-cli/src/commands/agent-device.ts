@@ -15,6 +15,7 @@ import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { resolveAgentDevice } from '@stim-cli/agent-driver-agent-device/agent-device-bin';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   agentActionGesture,
@@ -558,10 +559,9 @@ const COMMAND_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 async function runAgentDevice(argv: string[]): Promise<void> {
   const json = argv.includes('--json');
-  const { agentDriverInvocation } = await import('../device-host/agent-drivers.ts');
   let invocation: { command: string; args: string[] };
   try {
-    invocation = await agentDriverInvocation('agent-device', process.env);
+    invocation = resolveAgentDevice(process.env);
   } catch (error) {
     return refuse(
       {

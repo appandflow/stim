@@ -50,12 +50,21 @@ const typeOnly = (node, kind) =>
 const staticImports = {
   meta: {
     type: 'problem',
-    schema: [{ type: 'object', properties: { modules: { type: 'array', items: { type: 'string' } } } }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          modules: { type: 'array', items: { type: 'string' } },
+          allow: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    ],
   },
   create(context) {
     const modules = context.options[0]?.modules ?? [];
+    const allow = context.options[0]?.allow ?? [];
     const check = (node, spec, types) => {
-      if (!types && modules.some((name) => spec === name || spec.startsWith(`${name}/`)))
+      if (!types && !allow.includes(spec) && modules.some((name) => spec === name || spec.startsWith(`${name}/`)))
         context.report({ node, message: `Load ${spec} with await import(); a static import puts it in this closure.` });
     };
     return {
