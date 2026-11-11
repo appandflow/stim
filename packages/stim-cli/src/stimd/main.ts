@@ -78,7 +78,7 @@ import {
   stimdBuildId,
   stimdEnv,
   stimdLive,
-  unresolvedDaemonClaims,
+  unresolvedStimdStartClaims,
   unresolvedDaemonClaimsError,
   waitForStimdHello,
   type NetAnswer,
@@ -473,7 +473,7 @@ async function waitForeground(done: Promise<void> | undefined, failure: () => un
 }
 
 function refuseUnresolvedDaemonClaims(writer: { close: () => unknown }): void {
-  const blocking = unresolvedDaemonClaims();
+  const blocking = unresolvedStimdStartClaims();
   if (blocking.length === 0) return;
   writer.close();
   throw unresolvedDaemonClaimsError(blocking);

@@ -515,11 +515,12 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   identified does the engine claim record it and free itself once its process
   group has exited; otherwise it records an unknown child and waits for you.
   stimd's home and daemon claims are never kept for a child: once that stimd
-  is gone, the next one takes the home. A report child of stimd's own tick
-  that names itself does not stop stimd: it logs daemon_cleanup_unverified,
-  stays running and releases what that child held once the child has stopped.
-  A stimd that cannot start names every unresolved home, daemon and engine
-  claim at once.
+  is gone, the next one takes the home. A report child of a detached stimd's
+  own tick that names itself does not stop that stimd, for up to 8 such
+  children at once: it logs daemon_cleanup_unverified, stays running and
+  releases what that child held once the child has stopped. An attached stimd
+  still ends. A stimd that cannot start names every unresolved home, daemon
+  and engine claim at once, with the Stim home that holds each.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
   An attached daemon killed unexpectedly can also leave its engine claim

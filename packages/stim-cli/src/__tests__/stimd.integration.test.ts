@@ -850,21 +850,28 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const gone = { pid: sleeper.pid, processToken: captured.token };
     const root = join(home, 'engine');
     const build = 'aaaaaaaaaaaa';
+    const otherHome = join(home, 'other-home');
     const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
     try {
       const pending = [stimdClaimRoot(), daemonClaimRoot(), buildClaimRoot(root, build)].map((claimRoot) => {
-        const held = tryAcquireClaim({ root: claimRoot, mode: 'exclusive' }).acquired;
+        const held = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', details: { home: otherHome } }).acquired;
         assert(held);
         markClaimChildPending(held);
         const record: Record<string, unknown> = JSON.parse(readFileSync(held.path, 'utf8'));
         writeFileSync(held.path, JSON.stringify({ ...record, owner: gone }));
         return held.path;
       });
-      const refusal = await runStimd({ mode: 'on', tickMs: 60_000 }).then(
-        () => null,
-        (error: { code: string; message: string; remedy: string }) => error,
-      );
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      const refusal = await Promise.race([
+        running.then(
+          () => null,
+          (error: { code: string; message: string; remedy: string }) => error,
+        ),
+        new Promise<null>((done) => setTimeout(() => done(null), 5000)),
+      ]);
       expect(refusal?.code).toBe('STIM_CLAIM_UNAVAILABLE');
+      expect(refusal?.message).toContain(`for the Stim home ${otherHome}`);
+      expect(refusal?.remedy).toContain(otherHome);
       for (const path of pending) {
         expect(refusal?.message).toContain(path);
         expect(refusal?.remedy).toContain(path);
@@ -886,6 +893,38 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       engine.mockRestore();
     }
   }, 20_000);
+
+  test('a command still starts stimd when only a shared engine claim is unresolved, so the start can refuse it', async () => {
+    const spawned: (readonly string[])[] = [];
+    setExecutor({
+      ...getExecutor(),
+      spawn(_file, args = []) {
+        spawned.push(args);
+        throw new Error('not started in this test');
+      },
+    });
+    onTestFinished(() => resetExecutor());
+    const root = join(home, 'engine');
+    const build = 'aaaaaaaaaaaa';
+    const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+    onTestFinished(() => engine.mockRestore());
+    const held = tryAcquireClaim({ root: buildClaimRoot(root, build), mode: 'shared' }).acquired;
+    assert(held);
+    markClaimChildPending(held);
+    writeFileSync(held.path, readFileSync(held.path, 'utf8').replace(/"processToken":"[^"]*"/, '"processToken":"x"'));
+    expect(readClaimSet(held.root).unresolved).toHaveLength(1);
+
+    await ensureStimd(
+      { PATH: '/usr/bin:/bin', STIM_HOME: home, STIM_DAEMON: 'on' },
+      'linux',
+      false,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(spawned).toHaveLength(1);
+  });
 
   test.each(['passes', 'measure'])(
     'persistent %s cleanup refusal retains the engine and leaves the home claim complete',

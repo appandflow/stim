@@ -69,12 +69,18 @@ export function stimdLive(home?: string): boolean {
   }
 }
 
-/** Every claim a starting stimd takes that Stim cannot resolve: under `run/stimd`, `daemon/claim` and its engine build. */
-export function unresolvedDaemonClaims(): ClaimProblem[] {
+function unresolvedDaemonClaims(): ClaimProblem[] {
+  return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
+}
+
+/**
+ * Every claim a starting stimd takes that Stim cannot resolve: under `run/stimd`, `daemon/claim` and its engine build,
+ * whose claims every Stim home on this machine shares.
+ */
+export function unresolvedStimdStartClaims(): ClaimProblem[] {
   const engine = ownStoreEngine();
   return [
-    ...readClaimSet(stimdClaimRoot()).unresolved,
-    ...readClaimSet(daemonClaimRoot()).unresolved,
+    ...unresolvedDaemonClaims(),
     ...(engine ? readClaimSet(buildClaimRoot(engine.root, engine.build)).unresolved : []),
   ];
 }
@@ -87,12 +93,25 @@ export function unresolvedDaemonClaimsError(claims: ClaimProblem[]): Error & { c
     ),
     {
       code: 'STIM_CLAIM_UNAVAILABLE',
-      remedy: `Check that the prior daemon and its children have stopped, then run ${removeCommands(claims)} and retry.`,
+      remedy: `Check that the stimd that holds each claim${homesOf(claims)} and the children it ran have stopped, then run ${removeCommands(claims)} and retry.`,
     },
   );
 }
 
-const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
+const claimReason = (claim: ClaimProblem) =>
+  claim.pendingChild
+    ? 'its holder recorded a child it started without identifying it: it was stopped before recording the child, or it could not verify that the child stopped'
+    : claim.reason;
+
+const claimList = (claims: ClaimProblem[]) =>
+  claims
+    .map((claim) => `${claim.path} (${claimReason(claim)}${claim.home ? `, for the Stim home ${claim.home}` : ''})`)
+    .join(' and ');
+
+const homesOf = (claims: ClaimProblem[]) => {
+  const homes = [...new Set(claims.flatMap((claim) => (claim.home ? [claim.home] : [])))];
+  return homes.length ? ` (of ${homes.join(' and ')})` : '';
+};
 
 /**
  * How to remove `claims` in one round: one command for the claim files, and each directory-level problem (an
