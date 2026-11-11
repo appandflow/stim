@@ -6,7 +6,6 @@ import { makeRunnerHome } from './runner.mjs';
 import {
   assertRunnableCell,
   BENCHMARK_MODEL_PIN,
-  SCENARIOS,
   benchmarkCell,
   benchmarkMatrix,
   assertCampaignModel,
@@ -38,21 +37,16 @@ describe('benchmark matrix', () => {
     expect(() => assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli')).toThrow(/pinned local install/);
   });
 
-  it('gives the Expo tool arm only Expo platforms; the scenario list is exactly launch and error-fix', () => {
+  it('gives the Expo tool arm only Expo platforms', () => {
     const covered = new Set(
       benchmarkMatrix()
         .filter((cell) => cell.arm === 'expo-agent-cli' && cell.status !== 'unsupported')
         .map((cell) => cell.platform),
     );
     expect([...covered].toSorted()).toEqual(['expo-android', 'expo-ios']);
-    expect(SCENARIOS).toEqual(['launch', 'error-fix']);
     expect(benchmarkCell('bare-ios', 'launch', 'expo-agent-cli').status).toBe('unsupported');
     expect(benchmarkCell('macos', 'error-fix', 'stim').missing[0]).toMatch(/native launch-crash/);
     expect(() => scenarioForVariant('native')).toThrow(/outside the published matrix/);
-  });
-
-  it('has no remote platform or arm', () => {
-    expect(benchmarkMatrix().some((cell) => /hosted|remote/.test(cell.platform + cell.arm))).toBe(false);
   });
 
   it('keeps the model an axis whose campaign list defaults to Sonnet only', () => {

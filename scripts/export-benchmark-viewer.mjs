@@ -1,4 +1,4 @@
-import { ARMS, matrixPlatformForDriver } from './agent-benchmark/matrix.mjs';
+import { ARMS } from './agent-benchmark/matrix.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -84,10 +84,6 @@ function clipped(value, max = 16_000) {
 }
 
 const armOrder = ARMS.map((arm) => arm.id);
-
-function stageMatrixPlatform(meta) {
-  return meta.matrixPlatform ?? matrixPlatformForDriver(meta.platform ?? 'ios');
-}
 
 function publicRunId(record) {
   return `${record.variant}-${record.arm}`;
@@ -1257,7 +1253,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       );
     });
   if (validRecords.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
-  const dimensions = new Set(validRecords.map(({ record, meta }) => `${record.model}:${stageMatrixPlatform(meta)}`));
+  const dimensions = new Set(validRecords.map(({ record, meta }) => `${record.model}:${meta.platform ?? 'ios'}`));
   if (dimensions.size !== 1) throw new Error('benchmark stage must contain one model and platform');
   const latestByArm = new Map();
   for (const candidate of validRecords) {
@@ -1403,7 +1399,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     title: formatStage(stage),
     suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
     platform: runs[0].platform,
-    matrixPlatform: stageMatrixPlatform(readJson(join(records[0].runDir, 'meta.json'))),
     protocolVersion: 4,
     recordedOn,
     primaryMetric:

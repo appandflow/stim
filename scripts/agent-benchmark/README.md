@@ -15,15 +15,16 @@ exact bytes, so editing a helper during a run invalidates that attempt.
 ## Matrix, arms and models
 
 `matrix.mjs` defines the platforms, the two scenarios (app launch and error fix),
-the arms and the campaign model list. An arm is data: id, skills, tools on the
-PATH, prompt sentence, device allocation rule, audit rules, required pins and
-blockers. Adding the `expo-agent-cli` arm needs no driver fork; its remaining
-blockers (pinned install, `agents:setup` at preparation, audits for tool-managed
-devices) are listed in its definition and make dispatch refuse until resolved.
-`pins.env` may set `MODELS` to a comma-separated list; the default is
-`claude-sonnet-5-5`. `dispatch` takes `<model> <arm> <variant>` and refuses a
-model outside that list. Run records carry `matrixPlatform` beside the existing
-`platform` and `model` fields. Everything is local; there is no remote variant.
+the arms and the campaign model list; its data lives in
+`website/src/data/benchmark-matrix.json`, which the website also renders. Today an
+arm contributes its skills (the runner home and the profile check) and its
+blockers. `dispatch` refuses a cell that is not runnable and names the missing
+piece, and refuses a variant outside the two scenarios (the earlier `native`
+variant included; its recordings stay valid). The `expo-agent-cli` arm is
+registered but blocked: its install, skill setup and audits are planned, not
+implemented. `pins.env` may set `MODELS` to a comma-separated list; the default is
+`claude-sonnet-5-5`. `dispatch` takes `<model> <arm> <variant>` and refuses a model
+outside that list. Everything is local; there is no remote variant.
 
 ## Task prompts
 

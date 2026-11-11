@@ -5,7 +5,7 @@ import Heading from '@theme/Heading';
 import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import NativeBenchmarkResults from '@site/src/components/NativeBenchmarkResults';
-import { coveragePlatforms, coverageStatusLabels } from '@site/src/components/benchmarkCoverage';
+import { coverageArms, coveragePlatforms, coverageStatusLabels } from '@site/src/components/benchmarkCoverage';
 import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
@@ -139,9 +139,9 @@ export default function Benchmarks(): ReactNode {
                   Platforms and arms
                 </Heading>
                 <p>
-                  Each platform is compared across the arms that can run its project type. All arms run locally on one
-                  machine with the same task prompt, model, device pins and screen proof. This table lists coverage, not
-                  results.
+                  Each platform runs two tasks, app launch and error fix, across the arms that can run its project type.
+                  All arms run locally on one machine with the same task prompt, model, device pins and screen proof.
+                  This table lists coverage, not results.
                 </p>
               </div>
             </div>
@@ -150,20 +150,18 @@ export default function Benchmarks(): ReactNode {
                 <thead>
                   <tr>
                     <th>Platform</th>
-                    <th>Tasks</th>
-                    <th>Stim</th>
-                    <th>Control</th>
-                    <th>Expo agent CLI</th>
+                    {coverageArms.map((arm) => (
+                      <th key={arm.id}>{arm.label}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {coveragePlatforms.map((platform) => (
                     <tr key={platform.id}>
                       <td>{platform.label}</td>
-                      <td>{platform.scenarios}</td>
-                      <td>{coverageStatusLabels[platform.arms.stim]}</td>
-                      <td>{coverageStatusLabels[platform.arms.control]}</td>
-                      <td>{coverageStatusLabels[platform.arms['expo-agent-cli']]}</td>
+                      {coverageArms.map((arm) => (
+                        <td key={arm.id}>{coverageStatusLabels[platform.arms[arm.id]]}</td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
@@ -249,8 +247,8 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Different kinds of work</dt>
                 <dd>
-                  We test JavaScript changes, native changes, and fixing an app that fails to launch. Results stay
-                  separate by task and platform, so a quick JavaScript change is not compared with a native rebuild.
+                  We test two tasks: launching a changed app, and fixing an app that fails to launch. Results stay
+                  separate by task and platform.
                 </dd>
               </div>
               <div>

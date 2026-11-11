@@ -35,16 +35,16 @@ Arms:
   its own device.
 - Stim: the pinned published `stim` and its skill. It adopts the prepared parked
   device.
-- Expo agent CLI: the pinned `@expo/agent-cli` and the Expo skills it installs,
-  on Expo projects only. It runs its local workflow; its cloud features (`--eas`
-  builds, EAS Simulator sessions, `deploy`) are out of scope and an audit rule
-  rejects them. Its devices are tool-managed, so its device-state row is
-  disclosed rather than matched to Stim's parked device. Pin the exact version
-  and integrity, preinstall it and its skills during preparation, set
-  `EXPO_NO_TELEMETRY=1`, and give it no `EXPO_TOKEN`. Same task prompt (only the
-  tool sentence differs), pins, isolation and proof as the other arms.
+- Expo agent CLI: planned, not implemented. It is registered in the matrix but
+  blocked. The intended protocol is the pinned `@expo/agent-cli` and the Expo
+  skills for it, on Expo projects only, with its local workflow compared; its
+  cloud features (`--eas` builds, EAS Simulator sessions, `deploy`) are out of
+  scope. Planned audits reject cloud flags and `EXPO_TOKEN`; telemetry is
+  disabled with `EXPO_NO_TELEMETRY=1`. Its devices are tool-managed, so its
+  device state is disclosed rather than matched to Stim's parked device. The task
+  prompt, pins, isolation and proof match the other arms.
 
-`scripts/agent-benchmark/matrix.mjs` is the machine-readable definition. A cell
+`website/src/data/benchmark-matrix.json`, read by `scripts/agent-benchmark/matrix.mjs`, is the machine-readable definition. A cell
 is `runnable`, `not-yet-runnable` (with the missing piece named), `unsupported`
 (the arm cannot run that project type) or `not-applicable`. Dispatch refuses a
 cell that is not runnable.
