@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { projectPlugin } from '../plugin-loader.ts';
+import { kindError, projectPlugin } from '../plugin-loader.ts';
 
 test('discovers the plugin manifest above nested module-type boundaries', () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-plugin-loader-'));
@@ -18,4 +18,25 @@ test('discovers the plugin manifest above nested module-type boundaries', () => 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test.each([
+  [
+    'no stimPlugin at all',
+    { name: 'x' },
+    /^x declares no stimPlugin\.kinds in its package\.json, so it is not a Stim plugin/,
+  ],
+  [
+    'another kind only',
+    { stimPlugin: { kinds: { transport: 1 } } },
+    /^x is not a cache-provider plugin: .*declares transport$/,
+  ],
+  [
+    'another integer',
+    { stimPlugin: { kinds: { 'cache-provider': 2 } } },
+    /speaks cache-provider 2, .*stim engine update$/,
+  ],
+])('a manifest with %s is refused with a remedy that fits it', async (_, manifest, refusal) => {
+  const source = { manifest: () => manifest, load: () => Promise.resolve({}) };
+  expect(await kindError(source, 'x', 'cache-provider', 1)).toMatch(refusal);
 });
