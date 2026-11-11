@@ -54,6 +54,7 @@ export async function startKitWorker({
   moduleCapabilities = [],
   idMember = 'id',
   host,
+  disposeHost,
   timeoutMs = LOAD_TIMEOUT_MS,
 }: {
   href: string;
@@ -67,6 +68,8 @@ export async function startKitWorker({
   idMember?: string;
   /** Engine members the module calls; the factory finds them as `input.host`, and each call crosses the port. */
   host?: Record<string, unknown>;
+  /** Runs once the worker is gone; what it reports it could not resolve joins `failures`. */
+  disposeHost?: () => Promise<string[]>;
   timeoutMs?: number;
 }): Promise<KitWorker | { unavailable: string }> {
   let worker: Worker;
@@ -133,10 +136,19 @@ export async function startKitWorker({
       resolve({ type: 'failed', message: error.message });
     });
     worker.on('exit', (code) => {
+      void closeHost();
       fail(new Error(`the worker exited with code ${code}`));
       resolve({ type: 'failed', message: `the worker exited with code ${code}` });
     });
   });
+  let closing: Promise<void> | null = null;
+  function closeHost(): Promise<void> {
+    closing ??= (disposeHost?.() ?? Promise.resolve([])).then(
+      (kept) => void failures.push(...kept),
+      (error: unknown) => void failures.push(error instanceof Error ? error.message : String(error)),
+    );
+    return closing;
+  }
   async function answerHost({ seq: call, member, args }: Extract<KitReply, { type: 'host' }>): Promise<void> {
     let answer: KitRequest;
     try {
@@ -165,6 +177,7 @@ export async function startKitWorker({
   clearTimeout(timer);
   if (first === 'timeout' || first.type === 'failed') {
     await worker.terminate();
+    await closeHost();
     return { unavailable: first === 'timeout' ? `the module did not load within ${timeoutMs}ms` : first.message };
   }
   return {
@@ -190,6 +203,7 @@ export async function startKitWorker({
     },
     async terminate() {
       await worker.terminate();
+      await closeHost();
     },
   };
 }

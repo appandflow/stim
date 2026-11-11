@@ -4,7 +4,7 @@ const input = {
   env: {},
   stateDir: '/nonexistent/state',
   claimRoot: '/nonexistent/claims',
-  host: createAgentDriverHost(),
+  host: createAgentDriverHost({ stateDir: '/nonexistent/state', claimRoot: '/nonexistent/claims' }),
 };
 
 function driver(name = 'fake', start = () => Promise.reject(agentDriverUnavailable('fake is not installed.'))) {

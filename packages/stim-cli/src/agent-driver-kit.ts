@@ -175,6 +175,7 @@ export async function runAgentDriverContract(
     );
     if (mismatch) return [{ name: 'the module loads', passed: false, error: mismatch }];
     const path = createRequire(join(options.baseDir, 'package.json')).resolve(options.reference);
+    const { dispose, ...members } = createAgentDriverHost(options.unavailableInput);
     worker = await startKitWorker({
       href: pathToFileURL(path).href,
       factory: 'createAgentDriver',
@@ -182,7 +183,8 @@ export async function runAgentDriverContract(
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
       moduleCapabilities: ['client.access'],
       idMember: 'name',
-      host: { ...createAgentDriverHost() },
+      host: members,
+      disposeHost: dispose,
     });
   } catch (error) {
     return [{ name: 'the module loads', passed: false, error: error instanceof Error ? error.message : String(error) }];

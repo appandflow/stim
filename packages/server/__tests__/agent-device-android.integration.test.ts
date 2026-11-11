@@ -156,7 +156,7 @@ beforeEach(() => {
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
-    host: createAgentDriverHost(),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, serial: SERIAL, avdName: AVD },
   });
 });
@@ -588,7 +588,7 @@ test('watch detects serial reuse even while request verification is cached', asy
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
-    host: createAgentDriverHost(),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, serial: SERIAL, avdName: AVD },
     watchMs: 20,
   });

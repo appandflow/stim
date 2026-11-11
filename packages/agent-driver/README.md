@@ -20,7 +20,6 @@ export function createAgentDriver({ env, stateDir, claimRoot, device, host }) {
 }
 export const client = { access };
 export async function recover({ env, stateDir, claimRoot, host }) {}
-export function invocation(env) {}
 ```
 
 `createAgentDriver` returns a `HostedAgentDriver` named `id`, directly or
@@ -53,8 +52,12 @@ stop step signals only while the identity is the same process. Every member
 returns a promise of cloneable data, and a claim state the host cannot
 establish rejects with a message naming the claim and its remove command.
 
-`invocation` is optional: how the driver's tool runs on this machine, as
-`{ command, args }`. `stim agent-device` uses agent-device's.
+The host serves only this driver: a claim root must be `claimRoot` or a path
+inside `stateDir`, after resolving symlinks, and `inspect`, `stop` and
+`setChild` take only identities this host returned from `capture` or as a
+`previousChild`. When the driver goes away without stopping, the host stops the
+child recorded on each claim it still holds and releases the claim; a claim
+whose child it cannot stop or identify stays, reported with its remove command.
 
 `client` is optional and runs on the Mac that placed the app. `access` turns a
 grant into the contents of a mode 0600 file, which Stim writes as

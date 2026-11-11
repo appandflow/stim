@@ -59,10 +59,14 @@ while it is the same process. Claims are taken for the stim-server process, and
 liveness, survey and reaping stay in core's ownership claims; a state the host
 cannot establish rejects with a message that names the claim and its remove
 command. The driver spawns its own children and has the host capture their
-identities. In the kit worker each member call crosses the `MessagePort` as a
-request and a reply.
+identities. The host is scoped to one driver: it takes claims only at
+`claimRoot` or inside `stateDir`, and signals only identities it captured or
+found recorded on a claim it took. In the kit worker each member call crosses
+the `MessagePort` as a request and a reply; when the worker goes away, the host
+stops the children recorded on the claims it still holds and releases them,
+keeping and reporting any it cannot resolve.
 
-Three capabilities are optional:
+Two capabilities are optional:
 
 - `client`, run by the CLI on the Mac that placed the app. It turns a grant
   into the contents of the file Stim writes beside the placement as
@@ -72,8 +76,6 @@ Three capabilities are optional:
   `agent-device-remote.json` as before.
 - `recover`, which stops what a driver run left behind for a stim-server
   process that is gone.
-- `invocation(env)`, how the driver's tool runs on this machine. `stim
-agent-device` runs agent-device through it.
 
 Stim reads a driver's recorded agent actions from `<id>/sessions` in a
 workspace or archive directory itself, so existing archives read the same.

@@ -136,7 +136,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     },
     stateDir,
     claimRoot: join(home, 'claims'),
-    host: createAgentDriverHost(),
+    host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
   });
   try {

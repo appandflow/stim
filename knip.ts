@@ -48,10 +48,6 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       // https://github.com/webpro-nl/knip/pull/2218: strict mode rejects published optional peer types.
       ignoreDependencies: production ? ['stim'] : [],
     },
-    'packages/agent-driver': {
-      // The source imports @stim-cli/core types only, but the published declarations need the package installed.
-      ignoreDependencies: production ? ['@stim-cli/core'] : [],
-    },
     'packages/server': {
       ignore: ['share-viewer/**'],
       ignoreBinaries: ['plutil', 'ditto', 'mkfifo'],

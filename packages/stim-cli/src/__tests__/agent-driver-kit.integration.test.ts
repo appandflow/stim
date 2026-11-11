@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { agentRoute, createAgentDriverHost, newAgentToken, type AgentDriverProcess } from '@stim-cli/agent-driver';
 import {
   markClaimChildPending,
+  readClaimSet,
   setClaimChild,
   tryAcquireClaim,
   type ClaimHandle,
@@ -83,16 +84,21 @@ test('the agent-device driver passes through the kit', async () => {
 
 describe.skipIf(process.platform === 'win32')('host members through the kit worker', () => {
   let worker: KitWorker;
+  let state: string;
   const children: number[] = [];
 
   beforeEach(async () => {
+    state = join(root, 'state');
+    const scope = { stateDir: state, claimRoot: join(root, 'state.claims') };
+    const { dispose, ...members } = createAgentDriverHost(scope);
     const started = await startKitWorker({
       href: pathToFileURL(join(fixture('driver-host-fixture'), 'index.mjs')).href,
       factory: 'createAgentDriver',
-      input: { env: {}, stateDir: join(root, 'state'), claimRoot: join(root, 'claims') },
+      input: { env: {}, ...scope },
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
       idMember: 'name',
-      host: { ...createAgentDriverHost() },
+      host: members,
+      disposeHost: dispose,
     });
     if ('unavailable' in started) throw new Error(started.unavailable);
     worker = started;
@@ -137,19 +143,45 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
   }
 
   test('take, a held claim, release, and an unknown claim id', async () => {
-    const claims = join(root, 'daemon.claims');
+    const claims = join(root, 'state.claims');
     const result = await use('claims.take', claims, 'fixture daemon');
     expect(result).toEqual({ claim: expect.any(String), path: expect.stringContaining(claims), previousChild: null });
     const taken = claimOf(result);
     expect(await use('claims.take', claims, 'fixture daemon')).toEqual({ held: taken.path, waitingFor: null });
     expect(await use('claims.release', taken.claim)).toBe(true);
     await expect(use('claims.release', taken.claim)).rejects.toThrow(`This host holds no claim ${taken.claim}.`);
-    expect(await use('claims.take', claims, 'fixture daemon')).toMatchObject({ claim: expect.any(String) });
+    expect(await use('claims.take', join(state, 'recorder.claims'), 'fixture recorder')).toMatchObject({
+      claim: expect.any(String),
+    });
     expect(await use('claims.removeCommand', taken.path)).toMatch(/^rm -f /);
   });
 
+  test('claims outside the driver state and identities the host did not capture are refused', async () => {
+    const outside = join(root, 'elsewhere');
+    mkdirSync(outside);
+    mkdirSync(state);
+    symlinkSync(outside, join(state, 'link'));
+    for (const claims of [join(root, 'other.claims'), join(state, 'link', 'x.claims'), state, root])
+      await expect(use('claims.take', claims, 'fixture daemon')).rejects.toThrow(
+        `The claim root ${claims} is outside this driver's state.`,
+      );
+    await expect(
+      use('claims.stopStale', join(root, 'other.claims'), 'fixture recorder', { steps: [['SIGINT', 100]] }),
+    ).rejects.toThrow("is outside this driver's state.");
+    const child = await sleeper();
+    const { claim } = claimOf(await use('claims.take', join(state, 'a.claims'), 'fixture daemon'));
+    for (const call of [
+      use('processes.inspect', child.record),
+      use('processes.stop', child.record, { group: false, steps: [['SIGTERM', 100]] }),
+      use('claims.setChild', claim, child.record),
+    ])
+      await expect(call).rejects.toThrow(`This host did not capture process ${child.pid}.`);
+    expect(await use('processes.inspect', await use('processes.capture', child.pid))).toBe('same');
+  });
+
   test('a claim store the host cannot use refuses with the claim code and its whole remedy', async () => {
-    const blocked = join(root, 'blocked.claims');
+    mkdirSync(state);
+    const blocked = join(state, 'blocked.claims');
     writeFileSync(blocked, 'not a claim set');
     await expect(use('claims.take', blocked, 'fixture daemon')).rejects.toMatchObject({
       code: 'STIM_CLAIM_REFUSED',
@@ -161,7 +193,7 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     const child = await sleeper();
     const captured = await use('processes.capture', child.pid);
     expect(captured).toEqual(child.record);
-    const { claim } = claimOf(await use('claims.take', join(root, 'child.claims'), 'fixture daemon'));
+    const { claim } = claimOf(await use('claims.take', join(state, 'child.claims'), 'fixture daemon'));
     await use('claims.childPending', claim);
     await use('claims.setChild', claim, captured);
     expect(await use('processes.inspect', captured)).toBe('same');
@@ -175,11 +207,11 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
 
   test('stopStale stops the child of a claim whose owner is gone, and take reports a reaped child', async () => {
     const owner = await sleeper();
-    const recorders = join(root, 'recorder.claims');
+    const recorders = join(state, 'recorder.claims');
     const stale = claimHeldBy(recorders, 'fixture recorder', owner.record);
     const child = await sleeper();
     setClaimChild(stale, { pid: child.pid, processToken: child.record.token });
-    const daemons = join(root, 'reaped.claims');
+    const daemons = join(root, 'state.claims');
     const gone = claimHeldBy(daemons, 'fixture daemon', owner.record);
     setClaimChild(gone, { pid: child.pid, processToken: child.record.token });
     process.kill(owner.pid, 'SIGKILL');
@@ -188,12 +220,14 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     await use('claims.stopStale', recorders, 'fixture recorder', { steps: [['SIGTERM', 3000]] });
     await child.exited;
     expect(await use('claims.take', recorders, 'fixture recorder')).toMatchObject({ claim: expect.any(String) });
-    expect(await use('claims.take', daemons, 'fixture daemon')).toMatchObject({ previousChild: child.record });
+    const reaped = await use('claims.take', daemons, 'fixture daemon');
+    expect(reaped).toMatchObject({ previousChild: child.record });
+    expect(['gone', 'different']).toContain(await use('processes.inspect', child.record));
   });
 
   test('stopStale keeps a claim whose child it cannot identify and names the command that removes it', async () => {
     const owner = await sleeper();
-    const recorders = join(root, 'pending.claims');
+    const recorders = join(state, 'pending.claims');
     const stale = claimHeldBy(recorders, 'fixture recorder', owner.record);
     markClaimChildPending(stale);
     process.kill(owner.pid, 'SIGKILL');
@@ -201,5 +235,34 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     await expect(use('claims.stopStale', recorders, 'fixture recorder', { steps: [['SIGTERM', 100]] })).rejects.toThrow(
       /^The fixture recorder is unresolved; its claim .+ was kept\. Once it is gone, clear it with: rm /,
     );
+  });
+
+  test('a terminated worker stops the children on its claims and releases them, even mid-call', async () => {
+    const child = await sleeper();
+    const stubborn = await sleeper();
+    const claims = join(root, 'state.claims');
+    const { claim } = claimOf(await use('claims.take', claims, 'fixture daemon'));
+    await use('claims.childPending', claim);
+    await use('claims.setChild', claim, await use('processes.capture', child.pid));
+    const waiting = use('processes.stop', await use('processes.capture', stubborn.pid), {
+      group: false,
+      steps: [['SIGCONT', 20_000]],
+    });
+    await worker.terminate();
+    await expect(waiting).rejects.toThrow('the worker exited');
+    await child.exited;
+    expect(worker.failures).toEqual([]);
+    expect(readClaimSet(claims).live).toEqual([]);
+  });
+
+  test('a terminated worker keeps a claim whose child it cannot identify and reports it', async () => {
+    const claims = join(root, 'state.claims');
+    const { claim, path } = claimOf(await use('claims.take', claims, 'fixture daemon'));
+    await use('claims.childPending', claim);
+    await worker.terminate();
+    expect(worker.failures).toEqual([
+      `The fixture daemon is unresolved; its claim ${path} was kept. Once it is gone, clear it with: rm -f '${path}'`,
+    ]);
+    expect(readClaimSet(claims).live.map((holder) => holder.path)).toEqual([path]);
   });
 });

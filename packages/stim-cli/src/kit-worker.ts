@@ -60,6 +60,12 @@ function lookup(root: Record<string, unknown>, path: string): { owner: unknown; 
 function hostProxy(port: NonNullable<typeof parentPort>, members: string[]): Record<string, unknown> {
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   let seq = 0;
+  let closed = false;
+  port.on('close', () => {
+    closed = true;
+    for (const waiting of pending.values()) waiting.reject(new Error('the plugin host closed'));
+    pending.clear();
+  });
   port.on('message', (reply: KitRequest) => {
     if (reply.type !== 'host-result' && reply.type !== 'host-error') return;
     const waiting = pending.get(reply.seq);
@@ -84,6 +90,7 @@ function hostProxy(port: NonNullable<typeof parentPort>, members: string[]): Rec
     }
     node[last] = (...args: unknown[]) =>
       new Promise((resolve, reject) => {
+        if (closed) return reject(new Error('the plugin host closed'));
         const next = ++seq;
         pending.set(next, { resolve, reject });
         try {

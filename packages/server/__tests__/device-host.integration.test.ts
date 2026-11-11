@@ -1636,7 +1636,10 @@ describe('hosted agent control', () => {
             env: { ANDROID_HOME: sdk },
             stateDir: join(deviceHostArea(app.session), 'agent-device'),
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
-            host: createAgentDriverHost(),
+            host: createAgentDriverHost({
+              stateDir: join(deviceHostArea(app.session), 'agent-device'),
+              claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
+            }),
             device: app,
           }),
         approved: () => true,

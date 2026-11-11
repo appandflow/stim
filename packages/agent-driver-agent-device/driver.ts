@@ -196,7 +196,6 @@ interface DaemonAdmin {
   token: string;
 }
 
-/** A claim the host took for this driver: its id on the host and its path for refusal messages. */
 interface HeldClaim {
   id: string;
   path: string;
@@ -638,7 +637,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.claim = null;
   }
 
-  /** The identity of `pid`; null when it cannot be captured or `child`, the process it was spawned as, has exited since. */
   private async captured(pid: number, child?: ChildProcess): Promise<AgentDriverProcess | null> {
     const record = await this.host.processes.capture(pid);
     return child && (child.exitCode != null || child.signalCode != null) ? null : record;

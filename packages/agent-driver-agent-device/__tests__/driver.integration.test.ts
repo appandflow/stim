@@ -106,7 +106,7 @@ function driverIn(
     env: { HOME: home, PATH: '/usr/bin:/bin', FAKE_PIDS: join(home, 'daemon-pids.log'), ...env },
     stateDir: join(home, 'state'),
     claimRoot: join(home, 'agent-device.claims'),
-    host: createAgentDriverHost(),
+    host: createAgentDriverHost({ stateDir: join(home, 'state'), claimRoot: join(home, 'agent-device.claims') }),
     watchMs: 50,
     ...extra,
   });
