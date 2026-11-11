@@ -17,7 +17,7 @@ Before replacing the website's canonical datasets, archive the completed set:
 node scripts/snapshot-benchmark-times.mjs <campaign> website/src/data/benchmarks docs/benchmark-history/<campaign>.json
 ```
 
-The snapshot command requires every model/platform/scenario/arm cell the benchmark matrix lists (`website/src/data/benchmark-matrix.json`; each run record carries its `matrixPlatform`),
+The snapshot command requires every model/platform/scenario/arm cell the benchmark matrix lists (`website/src/data/benchmark-matrix.json`; a React Native dataset's `fixture` field and a native pair's platform and backend select the row),
 valid finite timings, and first-activity timing metadata. It refuses to overwrite
 an existing snapshot. Run evidence must already have passed the benchmark export
 audit; this command checks campaign completeness, not raw run validity.

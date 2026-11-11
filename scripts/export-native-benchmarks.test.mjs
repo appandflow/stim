@@ -22,10 +22,11 @@ const files = [
   'proof/coordinator-process-after.json',
 ];
 
-function pair(platform, cohort = 'standalone-native-v1') {
+function pair(directory, cohort = 'standalone-native-v1', { variant = 'standalone', runner = 'codex' } = {}) {
+  const platform = directory.replace(/^exact-/, '');
   for (const arm of ['stim', 'control']) {
-    const id = `${platform}-${arm}`;
-    const dir = join(root, 'native', platform, 'results', id);
+    const id = `${directory}-${variant}-${arm}`;
+    const dir = join(root, 'native', directory, 'results', id);
     for (const name of files) {
       mkdirSync(dirname(join(dir, name)), { recursive: true });
       writeFileSync(join(dir, name), `${id}: ${name}`);
@@ -35,6 +36,8 @@ function pair(platform, cohort = 'standalone-native-v1') {
       cohort,
       runId: id,
       platform,
+      variant,
+      runner,
       arm,
       model: 'gpt-5.6-luna',
       reasoningEffort: 'high',
@@ -42,7 +45,7 @@ function pair(platform, cohort = 'standalone-native-v1') {
       dispatchAt: '2026-10-13T00:00:00.000Z',
       finishedAt: `2026-10-13T00:0${arm === 'stim' ? 1 : 2}:00.000Z`,
       runnerResult,
-      fixture: { framework: `native-${platform}` },
+      fixture: { framework: directory === 'exact-ios' ? 'exact' : `native-${platform}` },
       compatibility: { manifestSha256: 'compat' },
       coordinatorHashes: { 'native-driver.mjs': 'a'.repeat(64), 'native-task.mjs': 'b'.repeat(64) },
       provenance: Object.fromEntries(
@@ -55,7 +58,7 @@ function pair(platform, cohort = 'standalone-native-v1') {
           'macosBuild',
           'xcodeVersion',
           'xcodeBuild',
-          'codexVersion',
+          runner === 'claude' ? 'claudeVersion' : 'codexVersion',
         ].map((key) => [key, 'same']),
       ),
     });
@@ -63,6 +66,7 @@ function pair(platform, cohort = 'standalone-native-v1') {
       cohort,
       runId: id,
       platform,
+      variant,
       arm,
       source: true,
       invalidReasons: [],
@@ -82,14 +86,19 @@ function pair(platform, cohort = 'standalone-native-v1') {
           'commandAudit',
           'processUnchanged',
           'revisionAndCountVisuallyVerified',
-        ].map((key) => [key, true]),
+        ]
+          .concat(variant === 'launch-crash' ? ['crashReproducedBeforeSource'] : [])
+          .map((key) => [key, true]),
       ),
       hashes: Object.fromEntries(files.map((name) => [name, hash(join(dir, name))])),
     });
     write(join(dir, 'cleanup.json'), { status: 'complete' });
   }
-  write(join(root, 'native', platform, 'comparison.json'), {
-    results: { stim: { runId: `${platform}-stim` }, control: { runId: `${platform}-control` } },
+  write(join(root, 'native', directory, variant === 'standalone' ? 'comparison.json' : `comparison-${variant}.json`), {
+    results: {
+      stim: { runId: `${directory}-${variant}-stim` },
+      control: { runId: `${directory}-${variant}-control` },
+    },
   });
 }
 
@@ -121,6 +130,30 @@ it('publishes accepted native pairs without local paths and adds Android only wh
   ]);
 });
 
+it('publishes error-fix pairs, an Exact row and Claude-run pairs under their own names', () => {
+  pair('ios', 'standalone-native-v1', { variant: 'launch-crash', runner: 'claude' });
+  pair('exact-ios', 'standalone-native-v1', { runner: 'claude' });
+  const result = publish();
+  expect(result.pairs.map((entry) => [entry.platform, entry.backend, entry.variant, entry.scenario])).toEqual([
+    ['ios', 'native-ios', 'standalone', 'launch'],
+    ['ios', 'native-ios', 'launch-crash', 'error-fix'],
+    ['ios', 'exact', 'standalone', 'launch'],
+  ]);
+  expect(result.pairs[1].provenance.claudeVersion).toBe('same');
+  expect(hash(join(root, 'published/proof/ios-launch-crash-stim.png'))).toBe(
+    result.pairs[1].runs[0].evidence.proofSha256,
+  );
+});
+
+it('refuses an error-fix pair whose audit never saw the crash before the source was read', () => {
+  pair('ios', 'standalone-native-v1', { variant: 'launch-crash' });
+  const path = join(root, 'native/ios/results/ios-launch-crash-stim/audit.json');
+  const audit = JSON.parse(readFileSync(path, 'utf8'));
+  audit.checks.crashReproducedBeforeSource = false;
+  write(path, audit);
+  expect(publish).toThrow(/ios launch-crash stim needs an accepted audit/);
+});
+
 it.each([
   'proof',
   'missing evidence',
@@ -135,7 +168,7 @@ it.each([
   'protocol',
   'missing protocol',
 ])('refuses %s problems before publishing any partial comparison', (failure) => {
-  const dir = join(root, 'native/ios/results/ios-control');
+  const dir = join(root, 'native/ios/results/ios-standalone-control');
   const update = (name, change) => {
     const path = join(dir, name);
     const value = JSON.parse(readFileSync(path));

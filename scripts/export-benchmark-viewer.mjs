@@ -1314,7 +1314,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         platform: meta.platform ?? 'ios',
         recordedOn: meta.dispatchAt.slice(0, 10),
         variant: record.variant,
-        matrixPlatform: record.matrixPlatform ?? null,
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
@@ -1394,9 +1393,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .toSorted()
     .at(-1)
     ?.slice(0, 10);
+  const fixtures = new Set(records.map(({ runDir }) => readJson(join(runDir, 'meta.json')).fixtureKind ?? 'trailhead'));
+  if (fixtures.size !== 1) throw new Error('A benchmark stage cannot mix fixtures');
   const payload = timeBenchmarkFromFirstActivity({
     schemaVersion: 1,
     stage,
+    fixture: [...fixtures][0],
     title: formatStage(stage),
     suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
     platform: runs[0].platform,

@@ -65,6 +65,16 @@ Dispatch refuses a cell that is not runnable.
 | Standalone native Android | Stim, control                 | app launch, error fix                | 4    |
 | Exact iOS                 | Stim, control                 | app launch, error fix                | 4    |
 
+Export: `scripts/export-native-benchmarks.mjs` publishes the native, macOS and
+Exact pairs, error-fix pairs (`native/<platform>/comparison-launch-crash.json`,
+audit check `crashReproducedBeforeSource`) and Claude-run pairs, and
+`scripts/snapshot-benchmark-times.mjs` reads them and the React Native datasets.
+The audit step that writes each native run's `audit.json` and `cleanup.json` is
+still manual, and the native results section of the website page still renders
+one fixed data file and shows no error-fix cells until the campaign data
+replaces it: native error-fix and Exact results are not yet publishable on the
+page.
+
 That is 46 runs per model, one repeat. Bare React Native Android and Exact
 iOS are data rows; remove a row from the JSON to drop it. The bare React Native
 and Exact fixtures do not exist yet; their cells stay blocked until the fixture

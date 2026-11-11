@@ -1,9 +1,43 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { benchmarkMatrix, campaignModels, scenarioForRecord } from './agent-benchmark/matrix.mjs';
+import { benchmarkMatrix, campaignModels, nativeMatrixPlatform, scenarioForRecord } from './agent-benchmark/matrix.mjs';
 
 const seconds = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+const READINESS_METRICS = [
+  'First recorded agent activity to validated Settings screenshot',
+  'First recorded agent activity to actionable diagnosis; repaired Settings screenshot reported separately',
+];
+
+function readinessCells(dataset) {
+  if (!READINESS_METRICS.includes(dataset.primaryMetric)) throw new Error('Campaign must use first-activity timings');
+  const fixturePrefix = dataset.fixture === 'bare' ? 'bare' : 'expo';
+  return dataset.runs.map((run) => ({
+    model: run.model,
+    platform: `${fixturePrefix}-${run.platform}`,
+    scenario: scenarioForRecord(run.variant),
+    arm: run.arm,
+    valid: run.valid,
+    seconds: run.settingsReadySeconds,
+    timingOrigin: 'first-agent-activity',
+    diagnosisSeconds: run.diagnosisSeconds,
+  }));
+}
+
+function nativeCells(dataset) {
+  return dataset.pairs.flatMap((pair) =>
+    pair.runs.map((run) => ({
+      model: pair.model,
+      platform: nativeMatrixPlatform(pair.platform, pair.backend),
+      scenario: scenarioForRecord(pair.variant ?? 'standalone'),
+      arm: run.arm,
+      valid: true,
+      seconds: run.taskSeconds,
+      timingOrigin: 'dispatch-to-completed-task',
+    })),
+  );
+}
 
 export function campaignTimings(label, datasets, models = campaignModels({})) {
   if (typeof label !== 'string' || !label.trim()) throw new Error('Campaign label is required');
@@ -16,34 +50,27 @@ export function campaignTimings(label, datasets, models = campaignModels({})) {
   );
   const cells = new Map();
   for (const dataset of datasets) {
-    if (
-      ![
-        'First recorded agent activity to validated Settings screenshot',
-        'First recorded agent activity to actionable diagnosis; repaired Settings screenshot reported separately',
-      ].includes(dataset.primaryMetric)
-    ) {
-      throw new Error('Campaign must use first-activity timings');
-    }
-    for (const run of dataset.runs) {
-      const platform = run.matrixPlatform ?? (run.platform ? `expo-${run.platform}` : undefined);
-      const scenario = scenarioForRecord(run.variant);
-      const key = [run.model, platform, scenario, run.arm].join('/');
+    for (const run of dataset.pairs ? nativeCells(dataset) : readinessCells(dataset)) {
+      const key = [run.model, run.platform, run.scenario, run.arm].join('/');
       if (!expected.has(key)) throw new Error('Unexpected campaign cell');
       if (
         !run.valid ||
-        !seconds(run.settingsReadySeconds) ||
-        (scenario === 'error-fix' && !seconds(run.diagnosisSeconds))
+        !seconds(run.seconds) ||
+        (run.timingOrigin === 'first-agent-activity' && run.scenario === 'error-fix' && !seconds(run.diagnosisSeconds))
       ) {
         throw new Error('Every campaign cell must have valid timings');
       }
       if (cells.has(key)) throw new Error(`Duplicate campaign cell: ${key}`);
       cells.set(key, {
         model: run.model,
-        platform,
-        scenario,
+        platform: run.platform,
+        scenario: run.scenario,
         arm: run.arm,
-        settingsReadySeconds: run.settingsReadySeconds,
-        ...(scenario === 'error-fix' ? { diagnosisSeconds: run.diagnosisSeconds } : {}),
+        timingOrigin: run.timingOrigin,
+        seconds: run.seconds,
+        ...(run.timingOrigin === 'first-agent-activity' && run.scenario === 'error-fix'
+          ? { diagnosisSeconds: run.diagnosisSeconds }
+          : {}),
       });
     }
   }
@@ -51,9 +78,8 @@ export function campaignTimings(label, datasets, models = campaignModels({})) {
     throw new Error(`Incomplete campaign: ${cells.size}/${expected.size} cells`);
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     campaign: label,
-    timingOrigin: 'first-agent-activity',
     runs: [...cells.entries()].toSorted(([a], [b]) => a.localeCompare(b)).map(([, run]) => run),
   };
 }
