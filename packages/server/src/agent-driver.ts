@@ -1,7 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import {
-  AgentDriverUnavailable,
+  AGENT_ROUTE_PREFIX,
+  agentRoute,
+  isAgentDriverUnavailable,
   type HostedAgentApp,
   type HostedAgentDevice,
   type HostedAgentDriver,
@@ -25,7 +27,7 @@ interface Entry {
 export interface HostedAgentHostOptions {
   /**
    * The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. An
-   * `AgentDriverUnavailable` rejection leaves the app without agent control and carries the reason to the client.
+   * `agent-driver-unavailable` rejection leaves the app without agent control and carries the reason to the client.
    */
   resolve: () => Resolved;
   resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => Resolved;
@@ -46,6 +48,58 @@ export interface HostedAgentHostOptions {
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
+}
+
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'host']);
+
+function endToEnd(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !HOP_BY_HOP.has(name)));
+}
+
+/** Sends an authenticated agent request to the driver's own loopback listener and streams its answer back. */
+async function proxy(
+  driver: HostedAgentDriver | null,
+  session: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const notRunning = () =>
+    void response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
+  const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
+  const url = request.url ?? '';
+  if (!url.startsWith(prefix))
+    return void response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+  let target;
+  try {
+    target = await driver?.target(session);
+  } catch (error) {
+    process.stderr.write(
+      `Hosted agent driver target failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+  if (!target) return notRunning();
+  const upstream = httpRequest(
+    {
+      host: '127.0.0.1',
+      port: target.port,
+      method: request.method,
+      path: `${target.path}${url.slice(prefix.length)}`,
+      headers: endToEnd(request.headers),
+    },
+    (answer) => {
+      response.writeHead(answer.statusCode ?? 502, endToEnd(answer.headers));
+      answer.once('error', () => response.destroy());
+      answer.pipe(response);
+    },
+  );
+  upstream.once('error', () => {
+    if (response.headersSent) response.destroy();
+    else notRunning();
+  });
+  response.once('close', () => {
+    if (!response.writableFinished) upstream.destroy();
+  });
+  request.pipe(upstream);
 }
 
 /** What agent-device shows for a command to a session with no live agent grant; it reads the JSON-RPC error body. */
@@ -154,7 +208,7 @@ export class HostedAgentHost {
   }
 
   private async issued(driver: HostedAgentDriver, app: HostedAgentApp): Promise<HostedAgentIssuedGrant> {
-    const grant = await driver.issue(app);
+    const grant = { ...(await driver.issue(app)), path: agentRoute(app.session) };
     return this.options.tokenFor ? { ...grant, token: this.options.tokenFor(app.session) } : grant;
   }
 
@@ -169,7 +223,7 @@ export class HostedAgentHost {
   }
 
   private reason(error: unknown): string {
-    if (error instanceof AgentDriverUnavailable) return error.message;
+    if (isAgentDriverUnavailable(error)) return error.message;
     process.stderr.write(`Hosted agent driver failed: ${(error as Error).message}\n`);
     return 'Agent control failed to start on the hosting Mac. Check its server log.';
   }
@@ -294,9 +348,7 @@ export class HostedAgentHost {
     const child = this.devices.get(session);
     if (child) return child.forward(session, token, request, response, from);
     const verdict = this.authorize(session, token, from);
-    if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
-    else if (verdict === 'ok')
-      response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
+    if (verdict === 'ok') void proxy(this.active, session, request, response);
     else if (verdict === 'unknown' && request.method === 'POST' && /\/rpc(?:\?|$)/.test(request.url ?? ''))
       response.writeHead(404, { 'content-type': 'application/json' }).end(
         JSON.stringify({

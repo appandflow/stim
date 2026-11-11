@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: { index: 'index.ts', driver: 'driver.ts', contract: 'contract.ts' },
+  entry: { index: 'index.ts', driver: 'driver.ts' },
   format: 'esm',
   dts: true,
   outDir: 'dist',

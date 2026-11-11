@@ -1,5 +1,6 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { agentClientConfigFile } from '@stim-cli/agent-driver';
 import {
   parseHostedAgentGrant,
   parseMachine,
@@ -48,7 +49,7 @@ export async function agentAccess(
     note(`${credential.machine} offered agent control this Stim does not support.`);
   const port = machine?.port ?? 443;
   const client = loaded && 'client' in loaded ? loaded.client : null;
-  const target = client ? join(dirname(file), client.configFile) : file;
+  const target = client && issued ? join(dirname(file), agentClientConfigFile(issued.driver)) : file;
   const access =
     client && issued
       ? client.access({

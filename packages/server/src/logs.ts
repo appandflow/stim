@@ -1,8 +1,9 @@
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AgentDriverActions } from '@stim-cli/agent-driver';
 import {
+  HOSTED_AGENT_DRIVERS,
   compileGrep,
+  createAgentActionReader,
   isJsonObject,
   queryJsonLogs,
   readLogTimeline,
@@ -64,16 +65,17 @@ export function readTargetError(params: JsonObject): string | null {
   return typeof params.workspace === 'string' ? null : 'params.workspace is required.';
 }
 
-export function archivedTimeline(dir: string, actions: readonly AgentDriverActions[]): NdjsonRecord[] {
-  return sortByTs([
-    ...readLogTimeline(join(dir, 'logs')),
-    ...actions.flatMap((reader) => reader.read({ workspaceDir: dir })),
-  ]);
+/** The workspace's logs and the agent actions every first-party driver recorded under `<dir>/<driver>/sessions`. */
+export function archivedTimeline(dir: string): NdjsonRecord[] {
+  const sessionsDirs = HOSTED_AGENT_DRIVERS.filter((name) => name !== 'none').map((name) =>
+    join(dir, name, 'sessions'),
+  );
+  return sortByTs([...readLogTimeline(join(dir, 'logs')), ...createAgentActionReader({ sessionsDirs })()]);
 }
 
-export function archivedLogs(dir: string, filter: LogFilter, actions: readonly AgentDriverActions[]): JsonObject[] {
+export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
   return queryJsonLogs({
-    records: archivedTimeline(dir, actions),
+    records: archivedTimeline(dir),
     sources: filter.sources,
     minLevel: filter.level,
     slot: filter.slot,

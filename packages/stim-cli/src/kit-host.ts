@@ -9,7 +9,12 @@ export interface KitWorker {
   id: string;
   /** The capabilities the instance has, of those asked for. */
   members: string[];
+  /** The module-level capabilities the module has, of those asked for, as dotted paths such as `client.access`. */
+  moduleMembers: string[];
+  /** Calls an instance member. A rejection keeps the thrown error's message and its string `code`. */
   call(member: string, ...args: unknown[]): Promise<unknown>;
+  /** Calls a module-level member by its dotted path. */
+  callModule(member: string, ...args: unknown[]): Promise<unknown>;
   /** Calls the member with a listener whose values arrive as messages; the result stops it. */
   subscribe(member: string, listener: (value: unknown) => void): Promise<() => Promise<void>>;
   /** Why an event the module emitted could not cross the thread boundary. */
@@ -28,6 +33,8 @@ export async function startKitWorker({
   factory,
   input,
   capabilities,
+  moduleCapabilities = [],
+  idMember = 'id',
   timeoutMs = LOAD_TIMEOUT_MS,
 }: {
   href: string;
@@ -35,12 +42,16 @@ export async function startKitWorker({
   input: unknown;
   /** The optional members of the kind's contract; one that is present and not a function fails the load. */
   capabilities: readonly string[];
+  /** The module-level members the kit may call, as dotted paths. */
+  moduleCapabilities?: readonly string[];
+  /** The instance member that holds its string id. */
+  idMember?: string;
   timeoutMs?: number;
 }): Promise<KitWorker | { unavailable: string }> {
   let worker: Worker;
   try {
     worker = new Worker(spawnEntry('kit-worker'), {
-      workerData: { stimKit: true, href, factory, input, capabilities },
+      workerData: { stimKit: true, href, factory, input, capabilities, moduleCapabilities, idMember },
     });
   } catch (error) {
     return { unavailable: `the input could not be cloned: ${error instanceof Error ? error.message : String(error)}` };
@@ -77,7 +88,9 @@ export async function startKitWorker({
         pending.get(reply.seq)?.resolve(reply.value);
         pending.delete(reply.seq);
       } else if (pending.has(reply.seq)) {
-        pending.get(reply.seq)?.reject(new Error(reply.message));
+        pending
+          .get(reply.seq)
+          ?.reject(Object.assign(new Error(reply.message), reply.code === undefined ? {} : { code: reply.code }));
         pending.delete(reply.seq);
       } else {
         failures.push(reply.message);
@@ -107,8 +120,10 @@ export async function startKitWorker({
   return {
     id: first.id,
     members: first.members,
+    moduleMembers: first.moduleMembers,
     failures,
     call: (member, ...args) => request((next) => ({ type: 'call', seq: next, member, args })),
+    callModule: (member, ...args) => request((next) => ({ type: 'call', seq: next, member, args, module: true })),
     async subscribe(member, listener) {
       const target = seq + 1;
       listeners.set(target, listener);

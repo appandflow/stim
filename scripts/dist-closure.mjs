@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const pluginRules = [
   ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
   ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
-  ['agent-driver contract', /^@stim-cli\/agent-driver\/contract\.ts$/],
+  ['agent-driver kit', /^stim\/src\/agent-driver-kit\.ts$/],
   ['plugin entry', /^stim\/src\/plugin\.ts$/],
 ];
 const shared = [

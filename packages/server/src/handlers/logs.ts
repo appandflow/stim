@@ -1,7 +1,6 @@
 import { send, readFailure, type ConnectionContext } from './context.ts';
 import type { RequestId } from '../protocol.ts';
 import { parseLogFilter, LogBatcher, archivedLogs } from '../logs.ts';
-import { agentActionReaders } from '../agent-drivers.ts';
 import { createStim } from 'stim';
 
 export function subscribeLogs(
@@ -41,10 +40,8 @@ export function subscribeLogs(
   );
   if (parsed.filter.archive !== undefined) {
     ctx.subscriptions.set(subscription, () => batcher.stop());
-    return agentActionReaders().then((actions) => {
-      for (const record of archivedLogs(cwd, parsed.filter, actions)) batcher.push(record);
-      return batcher.finish();
-    });
+    for (const record of archivedLogs(cwd, parsed.filter)) batcher.push(record);
+    return batcher.finish();
   }
   const abort = new AbortController();
   let stop: (() => void) | undefined;
@@ -115,9 +112,7 @@ export function queryLogs(ctx: ConnectionContext, id: RequestId, params: unknown
   const cwd = ctx.readDir(id, parsed.filter);
   if (!cwd) return;
   if (parsed.filter.archive !== undefined) {
-    return agentActionReaders().then((actions) =>
-      send(ctx.socket, { id, result: { records: archivedLogs(cwd, parsed.filter, actions) } }),
-    );
+    return send(ctx.socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
   }
   ctx.inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
     records: await createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).logs({

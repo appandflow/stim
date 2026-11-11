@@ -2,9 +2,10 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import type { AddressInfo } from 'node:net';
 import { parseHostedAgentGrant, type HostedAgentGrant, type HostedAgentIssuedGrant } from '@stim-cli/core/state';
 import {
-  AgentDriverUnavailable,
+  agentDriverUnavailable,
   agentRoute,
   newAgentToken,
+  type AgentDriverTarget,
   type HostedAgentApp,
   type HostedAgentDriver,
 } from '@stim-cli/agent-driver';
@@ -68,12 +69,24 @@ class FakeDriver implements HostedAgentDriver {
     this.revoked.push(session);
     return Promise.resolve();
   }
-  forward(session: string, _request: IncomingMessage, response: ServerResponse): void {
-    this.forwarded.push(session);
-    response.writeHead(200).end('forwarded');
+  private loopback: Promise<number> | null = null;
+  async target(session: string): Promise<AgentDriverTarget> {
+    this.loopback ??= new Promise((resolve) => {
+      const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+        this.forwarded.push(request.url?.split('/')[2] ?? '');
+        response.writeHead(200).end('forwarded');
+      });
+      server.listen(0, '127.0.0.1', () => {
+        server.unref();
+        const address = server.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+    return { port: await this.loopback, path: `/fake/${session}` };
   }
-  onExit(listener: () => void): void {
+  onExit(listener: () => void): () => void {
     this.listener = listener;
+    return () => undefined;
   }
   crash(): void {
     this.running = false;
@@ -100,7 +113,7 @@ async function call(
   token: string | null,
   from: AgentPeer = { node: null },
   method = 'GET',
-  path = '/x',
+  path = `${agentRoute(session)}x`,
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => {
     agents.forward(session, token, request, response, from);
@@ -142,14 +155,14 @@ describe('hosted agent driver lifecycle', () => {
 
   test('hands out none with the reason when the driver cannot scope or run, and keeps no daemon', async () => {
     const driver = new FakeDriver();
-    driver.failStart = new AgentDriverUnavailable('no scoped lease yet');
+    driver.failStart = agentDriverUnavailable('no scoped lease yet');
     const agents = host(driver);
     expect(await agents.appRunning(app(A, 10, 'client-1'))).toEqual({
       grant: { driver: 'none' },
       notice: 'no scoped lease yet',
     });
     driver.failStart = null;
-    driver.failIssue = new AgentDriverUnavailable('cannot scope');
+    driver.failIssue = agentDriverUnavailable('cannot scope');
     expect(await agents.appRunning(app(B, 11, 'client-2'))).toEqual({
       grant: { driver: 'none' },
       notice: 'cannot scope',
@@ -234,7 +247,7 @@ test('retains a partially started iOS daemon until its shutdown is verified', as
   const agents = new HostedAgentHost({ resolve: () => null, resolveDevice: () => driver, approved: () => true });
   vi.spyOn(driver, 'start').mockImplementation(() => {
     driver.running = true;
-    return Promise.reject(new AgentDriverUnavailable('policy could not be verified'));
+    return Promise.reject(agentDriverUnavailable('policy could not be verified'));
   });
   const stop = vi.spyOn(driver, 'stop').mockRejectedValue(new Error('daemon unresolved'));
   await expect(agents.appRunning({ session: A, client: 'client', udid: A, bundleId: 'dev.app' })).rejects.toThrow(

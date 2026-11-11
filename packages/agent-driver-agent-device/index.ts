@@ -1,18 +1,8 @@
-import { join } from 'node:path';
-import {
-  AGENT_DRIVER_API_VERSION,
-  type AgentDriverActions,
-  type AgentDriverClient,
-  type AgentDriverInput,
-  type AgentDriverRecoveryInput,
-} from '@stim-cli/agent-driver';
-import { createAgentActionReader } from '@stim-cli/core/state';
+import type { AgentDriverClient, AgentDriverInput, AgentDriverRecoveryInput } from '@stim-cli/agent-driver';
 import { AgentDeviceDriver, recorderClaimRoot, stopRecorders } from './driver.ts';
 
 export { AgentDeviceDriver, resolveAgentDevice, type AgentDeviceDriverOptions } from './driver.ts';
 export { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS, type DeviceCommandRule } from './device-policy.ts';
-
-export const apiVersion: typeof AGENT_DRIVER_API_VERSION = AGENT_DRIVER_API_VERSION;
 
 export const id: string = 'agent-device';
 
@@ -25,7 +15,6 @@ export function recover({ stateDir }: AgentDriverRecoveryInput): Promise<void> {
 }
 
 export const client: AgentDriverClient = {
-  configFile: 'agent-device-remote.json',
   access({ grant, baseUrl, file, platform }) {
     if (
       grant.driver !== id ||
@@ -51,9 +40,4 @@ export const client: AgentDriverClient = {
       command: `agent-device <command> --remote-config ${file}`,
     };
   },
-};
-
-export const actions: AgentDriverActions = {
-  read: ({ workspaceDir }) =>
-    createAgentActionReader({ sessionsDirs: [join(workspaceDir, 'agent-device', 'sessions')] })(),
 };
