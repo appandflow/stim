@@ -80,6 +80,7 @@ import {
   resolveIosProjectDir,
   type AndroidLayout,
   iosSimSlimProfileSetting,
+  metroCommandSetting,
   projectSettingsContext,
   remoteAndroidSetting,
   remoteIosSetting,
@@ -479,8 +480,8 @@ export async function checkMainCheckout(
   return findings;
 }
 
-function checkRepackServer(projectRoot: string): Finding | null {
-  const problem = repackServerProblem(projectRoot);
+function checkRepackServer(projectRoot: string, command: readonly string[] | null): Finding | null {
+  const problem = repackServerProblem(projectRoot, command);
   return problem
     ? finding('cost', 'stim start cannot run the Re.Pack dev server', problem.message, problem.remedy)
     : null;
@@ -1301,7 +1302,7 @@ export async function reactNativeDoctorFindings({
       androidLayout,
     }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
-    checkRepackServer(projectRoot),
+    checkRepackServer(projectRoot, metroCommandSetting(projectSettings)),
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'

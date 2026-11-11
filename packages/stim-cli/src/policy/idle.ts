@@ -112,7 +112,7 @@ export function idleKeep(facts: IdleKeepFacts): { kept: string } | { idleMs: num
     return { kept: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status === 'ours' && !facts.hmrUpdates)
     return {
-      kept: 'its dev server does not report its requests to Stim: an Expo SDK before 54, or a server an older Stim started, which stim stop and stim start restart',
+      kept: 'its dev server does not report its requests to Stim: Re.Pack, an Expo SDK before 54, or a server an older Stim started, which stim stop and stim start restart',
     };
   if (hosted.unreadable.length) return { kept: hosted.unreadable.join('; ') };
   const [placement] = hosted.placements;

@@ -55,13 +55,16 @@ An app that installs `expo` only for Expo modules but bundles with Re.Pack
 gets Re.Pack. `stim start` names the file that decided, for example
 `starting on port 8082 (repack-child from rock.config.mjs)`.
 
-Stim starts Re.Pack with `--json`, so its compile events become bundle
-records in `stim logs --source metro`. Re.Pack compiles a platform only when a
-device asks for its bundle, so `stim ios` and `stim android` use those records
-to confirm the launch. `stim start --reset-cache` passes Re.Pack's
+Stim starts Re.Pack with `--json --log-requests`, so each bundle request and
+compile becomes a record in `stim logs --source metro`, and `stim ios` and
+`stim android` use those records to confirm the launch. `stim start --reset-cache` passes Re.Pack's
 `--reset-cache`. Stim turns off Re.Pack's own `adb reverse`, because it would
 reach every connected device, and manages the reverse for its port itself.
-Re.Pack keeps listening on its own host, `localhost` by default. If the config
+Re.Pack keeps listening on its own host, `localhost` by default, because it
+also writes that host into the bundle's URLs. Simulators, emulators and
+Android phones reach it, but a physical iPhone on your network does not, so
+`stim ios --device` needs a `metro.command` that passes the project's own
+`--host`. If the config
 names Re.Pack but `rock` or `@callstack/repack` is not installed, `stim start`
 refuses with `STIM_REPACK_BIN` instead of falling back to Expo.
 
@@ -142,7 +145,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 
 After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, shut down owned devices and clear regenerable build output. The next Debug run starts Metro again.
 
-Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands and Expo SDKs before 54 do not report enough activity for idle stop.
+Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
 Set `idle.minutes` to `0` to disable idle stop. Under [disk pressure](./build-caches.md#disk-pressure), cleanup can act after two idle minutes.
 

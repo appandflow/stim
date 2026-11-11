@@ -641,7 +641,15 @@ async function start(
     }
     releaseClaim(claim);
     writer.close();
-    return { op: 'error', code: 'metro-start', message: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    const refusal =
+      error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')
+        ? {
+            code: error.code,
+            ...('remedy' in error && typeof error.remedy === 'string' ? { remedy: error.remedy } : {}),
+          }
+        : { code: 'metro-start' };
+    return { op: 'error', ...refusal, message };
   } finally {
     for (const fd of output.fds) closeSync(fd);
   }

@@ -103,8 +103,8 @@ preparing, stopping or unknown, or one with a native operation or a claim it can
 and writes the reason to the server log and the session's idleStop journal field.
 The count is per client, not per session. A dev server that may still run after its supervisor
 exited is kept until stim stop ends it. So is a dev server whose requests Stim
-does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
-adapter, or a dev server an older Stim started, until stim stop and stim start
+does not record: Re.Pack, an Expo project before SDK 54, which cannot load Stim's
+Metro config adapter, or a dev server an older Stim started, until stim stop and stim start
 restart it. A pass the stim-daemon runs can stop any workspace; a pass that
 start, ios or android runs never stops the command's own workspace, while
 \`gc --delete\`'s ladder can (THE PRESSURE LADDER).

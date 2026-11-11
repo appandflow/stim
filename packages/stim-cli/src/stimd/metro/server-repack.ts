@@ -54,6 +54,7 @@ export async function startRepackServer({
     '--no-interactive',
     '--no-reverse-port',
     '--json',
+    '--log-requests',
     ...(resetCache ? ['--reset-cache'] : []),
   ];
   // Windows shims run the package bin through another node, so Stim runs it with its own (see startExpoServer).
@@ -95,8 +96,12 @@ export async function startRepackServer({
   });
 }
 
-/** Why the Re.Pack dev server a project's config names cannot start, or null when it can or none is named. */
-export function repackServerProblem(root: string): { message: string; remedy: string } | null {
+/** Why the Re.Pack dev server a project's config names cannot start, or null when it can, none is named or metro.command replaces it. */
+export function repackServerProblem(
+  root: string,
+  command: readonly string[] | null,
+): { message: string; remedy: string } | null {
+  if (command) return null;
   const config = detectBundlerConfig(root);
   if (config?.bundler !== 'repack' || repackBin(root, config.cli)) return null;
   return repackBinRefusal(root, config);
@@ -119,19 +124,25 @@ function repackBinRefusal(root: string, config: BundlerConfig | null): { message
 }
 
 /**
- * Turns Re.Pack's `--json` log lines into records. Re.Pack compiles a platform only once a device asks for its
- * bundle, so its progress events become `bundle_build_started` and `bundle_build_done` records for that platform.
- * Other lines, such as Rock's own output, stay raw `repack_stdout` and `repack_stderr` records.
+ * Turns Re.Pack's `--json` log lines into records. Each bundle request becomes `bundle_response_started` and
+ * `bundle_response_finished` or `_failed` records, as Stim's Metro middleware writes them. Re.Pack compiles a platform
+ * only once a device asks for its bundle, so its progress events become `bundle_build_started` and
+ * `bundle_build_done` records, and a compile with errors becomes `bundle_build_failed`. Other requests are dropped,
+ * and other lines, such as Rock's own output, stay raw `repack_stdout` and `repack_stderr` records.
  */
 export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
   const building = new Set<string>();
+  const requests = new Map<string, string>();
+  let built: string | null = null;
   return (chunk, stream) => {
     const entry = parseRepackEntry(chunk);
     if (!entry) return recordFromLine(chunk, { stream, source: 'repack' });
-    const progress = entry.progress;
+    const { progress, request } = entry;
+    if (request) return requestRecord(request, requests);
     if (progress) {
       if (typeof progress.time === 'number') {
         building.delete(progress.platform);
+        built = progress.platform;
         return {
           src: 'metro',
           level: 'info',
@@ -150,6 +161,15 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
         msg: `Re.Pack compiling ${progress.platform}`,
       };
     }
+    // Re.Pack reports a compile's errors after its done event, from LoggerPlugin's afterDone hook.
+    if (built && entry.level === 'error' && entry.text === 'Failed to build bundle due to errors')
+      return {
+        src: 'metro',
+        level: 'error',
+        event: 'bundle_build_failed',
+        platform: built,
+        msg: `Re.Pack failed to build ${built}`,
+      };
     if (!entry.text) return null;
     return {
       src: 'metro',
@@ -160,14 +180,67 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
   };
 }
 
+function requestRecord(request: RepackRequest, open: Map<string, string>): NdjsonRecord | null {
+  const requestId = `repack-${request.id}`;
+  if (request.url !== null) {
+    const platform = bundlePlatform(request.url);
+    if (!platform) return null;
+    open.set(requestId, platform);
+    return {
+      src: 'metro',
+      level: 'debug',
+      event: 'bundle_response_started',
+      platform,
+      requestId,
+      url: request.url,
+      msg: `${platform} bundle response started`,
+    };
+  }
+  const platform = open.get(requestId);
+  if (!platform) return null;
+  open.delete(requestId);
+  const failed = request.status === null || request.status >= 400;
+  return {
+    src: 'metro',
+    level: failed ? 'error' : 'debug',
+    event: failed ? 'bundle_response_failed' : 'bundle_response_finished',
+    platform,
+    requestId,
+    statusCode: request.status,
+    msg: `${platform} bundle response ${failed ? 'failed' : 'finished'}`,
+  };
+}
+
+function bundlePlatform(path: string): 'ios' | 'android' | null {
+  try {
+    const url = new URL(path, 'http://localhost');
+    const platform = url.searchParams.get('platform');
+    return /\.bundle\/*$/.test(url.pathname) && (platform === 'ios' || platform === 'android') ? platform : null;
+  } catch {
+    return null;
+  }
+}
+
+interface RepackRequest {
+  id: string;
+  /** The request's path and query on `incoming request`; null on `request completed`. */
+  url: string | null;
+  status: number | null;
+}
+
 interface RepackEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   issuer: string | null;
   text: string;
   progress: { platform: string; time: number | null } | null;
+  request: RepackRequest | null;
 }
 
-/** Re.Pack's `--json` reporter writes each log entry as `{ timestamp, type, issuer, message: [...] }` on one line. */
+/**
+ * Re.Pack's `--json` reporter writes each log entry as `{ timestamp, type, issuer, message: [...] }` on one line. With
+ * `--log-requests`, Fastify's `incoming request` and `request completed` logs arrive as entries whose first message
+ * part holds `reqId` and `req.url` or `res.statusCode`.
+ */
 function parseRepackEntry(chunk: unknown): RepackEntry | null {
   const line = String(chunk ?? '').trim();
   if (!line.startsWith('{')) return null;
@@ -179,7 +252,8 @@ function parseRepackEntry(chunk: unknown): RepackEntry | null {
   }
   if (!isRecord(value) || typeof value.type !== 'string' || !Array.isArray(value.message)) return null;
   const { type, issuer, message } = value;
-  const progress = isRecord(message[0]) && isRecord(message[0].progress) ? message[0].progress : null;
+  const first = isRecord(message[0]) ? message[0] : null;
+  const progress = first && isRecord(first.progress) ? first.progress : null;
   const platform = progress?.platform;
   return {
     level: type === 'warn' || type === 'error' || type === 'debug' ? type : 'info',
@@ -189,7 +263,20 @@ function parseRepackEntry(chunk: unknown): RepackEntry | null {
       type === 'progress' && typeof platform === 'string'
         ? { platform, time: typeof progress?.time === 'number' ? progress.time : null }
         : null,
+    request: first ? parseRequest(first) : null,
   };
+}
+
+function parseRequest(part: Record<string, unknown>): RepackRequest | null {
+  const id = part.reqId;
+  if (typeof id !== 'string' && typeof id !== 'number') return null;
+  if (part.msg === 'incoming request' && isRecord(part.req) && typeof part.req.url === 'string')
+    return { id: String(id), url: part.req.url, status: null };
+  if (part.msg === 'request completed') {
+    const status = isRecord(part.res) && typeof part.res.statusCode === 'number' ? part.res.statusCode : null;
+    return { id: String(id), url: null, status };
+  }
+  return null;
 }
 
 function messageText(part: unknown): string {

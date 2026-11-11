@@ -193,14 +193,21 @@ WHO RUNS IT
     repack-child  Re.Pack: the project's own \`rock start\`, or
                  \`react-native start\` with Re.Pack's commands, runs as a
                  child with --port <port> --no-interactive --no-reverse-port
-                 --json (and --reset-cache for \`start --reset-cache\`).
-                 Re.Pack keeps its own host, localhost by default, because it
-                 also writes that host into the bundle's publicPath. Re.Pack
-                 compiles a platform only when a device requests its bundle,
-                 so its JSON progress events become bundle_build_started and
-                 bundle_build_done records, which launch verification reads
-                 as bundle evidence. Other lines arrive as repack_stdout and
-                 repack_stderr records. Re.Pack's own adb reverse, which
+                 --json --log-requests (and --reset-cache for
+                 \`start --reset-cache\`). Each bundle request becomes
+                 bundle_response_started and _finished or _failed records,
+                 and Re.Pack's compile events become bundle_build_started,
+                 _done or _failed, which launch verification reads as bundle
+                 evidence; other requests are dropped. Other lines arrive as
+                 repack_stdout and repack_stderr records. Re.Pack keeps its
+                 own host, localhost by default, because it also writes that
+                 host into the bundle's publicPath: a simulator and an
+                 emulator or Android phone (through adb reverse) reach it, a
+                 physical iPhone on the LAN does not, so \`ios --device\`
+                 needs metro.command with the project's own --host. If the
+                 reserved port is taken by the time Rock starts, Rock may wait
+                 for an answer it cannot get or exit, and \`start\` reports
+                 the dev server as not ready. Re.Pack's own adb reverse, which
                  would reach every connected device, is off: Stim passes
                  --no-reverse-port and points the child's ANDROID_HOME at
                  the null device, and manages the reverse for its port. A config that names
@@ -283,7 +290,8 @@ end the job with \`stim stop\`.
   web share of it exists, live or stopped for now (\`guide share\`; stim share stop or its
   expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
   holds its metro-start lock. A dev server whose requests Stim cannot see
-  (metro.command, or an Expo SDK before 54) never stops for being idle. The
+  (metro.command, Re.Pack, or an Expo SDK before 54) never stops for being
+  idle. The
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
   devServerStop and idleStage in state.json, so \`status\` shows the idle
   stage and
