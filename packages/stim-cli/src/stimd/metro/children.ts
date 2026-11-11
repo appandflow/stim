@@ -305,11 +305,7 @@ function watchOf(value: unknown): MetroWatchState {
     : { before: null, owned: [] };
 }
 
-/**
- * Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. Windows has no
- * process groups, and `taskkill /T` reaches only a live tree, so there the exit of the child this stimd spawned is the
- * whole tree it can establish.
- */
+/** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
 function forgetExited(child: MetroChild, code: number | null, signal: string | null): void {
   const stop = stopRecord(child, { kind: 'server-exit', mode: child.mode, code, signal });
   forget(
@@ -321,6 +317,17 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
     stop,
     child.roots,
   );
+}
+
+/**
+ * Settles a child that exited without a stop from this stimd. Windows has no process groups, and `taskkill /T` reaches
+ * only a live tree: there the exit of a node this stimd spawned is its whole tree, but a `metro.command` wrapper such as
+ * cmd or yarn can leave Metro running as an orphan, so its claim stays unresolved.
+ */
+function settleExited(child: MetroChild, code: number | null, signal: string | null): void {
+  if (!GROUPS && child.mode === MODE_COMMAND)
+    failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
+  else forgetExited(child, code, signal);
 }
 
 async function gone(alive: () => boolean, ms: number): Promise<boolean> {
@@ -671,7 +678,7 @@ async function start(
   serveLinks(child, log);
   handle.onExit((info) => {
     if (child.stopping || (GROUPS && processGroupAlive(child.pid))) return;
-    forgetExited(child, info?.code ?? null, info?.signal ?? null);
+    settleExited(child, info?.code ?? null, info?.signal ?? null);
   });
   writer.write({
     src: 'metro',
@@ -1019,7 +1026,7 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
       const decidedAt = Date.now();
       if (!running(child)) {
         if (GROUPS && processGroupAlive(child.pid)) continue;
-        forgetExited(child, null, null);
+        settleExited(child, null, null);
         continue;
       }
       // compat C6 permanent
