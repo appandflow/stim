@@ -426,9 +426,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         e.g. ["node", "../react-native/cli.js", "start",
                         "--port", "{port}"]. No shell; it runs from the app
                         directory, and {port} becomes the reserved Metro port,
-                        which the command must pass. It replaces bare-inproc
-                        and expo-child with command-child (see \`guide
-                        metro\`). Workspace or committed scope.
+                        which the command must pass. It replaces the detected
+                        mode with command-child (see \`guide metro\`).
+                        Workspace or committed scope.
                         Metro must keep running from inside the app, which
                         is how Stim proves it is this app's. Without Stim's
                         Metro reporter, launches stay UNVERIFIED. start

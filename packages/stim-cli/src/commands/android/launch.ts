@@ -259,7 +259,6 @@ export async function verifyAndroidMetroRun({
   logsDir,
   launchedAt,
   metroPort,
-  isExpo,
   physical,
   device,
   scheme,
@@ -329,7 +328,7 @@ export async function verifyAndroidMetroRun({
           since: launchedAt,
           metroPort,
           platform: 'android',
-          mode: workspaceDevServerMode(root, isExpo),
+          mode: workspaceDevServerMode(root),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
@@ -473,7 +472,7 @@ export async function verifyAndroidMetroRun({
     component,
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     devClient: Boolean(scheme),
-    mode: workspaceDevServerMode(root, isExpo),
+    mode: workspaceDevServerMode(root),
     remote: Boolean(hostedLogs),
   }))
     phase('', chalk.yellow(line));

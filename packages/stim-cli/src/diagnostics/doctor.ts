@@ -42,6 +42,7 @@ import {
 import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
 import { installedTreeIsStaleAsync } from '../workspace/worktree-refresh.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
+import { repackServerProblem } from '../stimd/metro/server-repack.ts';
 import {
   type ConcurrencyLimits,
   getConcurrencyLimits,
@@ -476,6 +477,13 @@ export async function checkMainCheckout(
   }
 
   return findings;
+}
+
+function checkRepackServer(projectRoot: string): Finding | null {
+  const problem = repackServerProblem(projectRoot);
+  return problem
+    ? finding('cost', 'stim start cannot run the Re.Pack dev server', problem.message, problem.remedy)
+    : null;
 }
 
 export function checkMetroCache(metroConfigSource: string | null): Finding | null {
@@ -1293,6 +1301,7 @@ export async function reactNativeDoctorFindings({
       androidLayout,
     }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
+    checkRepackServer(projectRoot),
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'

@@ -94,7 +94,8 @@ a seed belongs to this workflow.
   # If stale Metro transforms or file-map state require recovery:
   stim start --reset-cache
   # Restarts only this app's verified owned Metro, retaining its port/devices,
-  # with Metro's own reset (resetCache on a bare server, expo start --clear).
+  # with Metro's own reset (resetCache on a bare server, expo start --clear,
+  # Re.Pack's --reset-cache).
   # That clears every store in the app's Metro config, including this app's
   # shared transform store, so other worktrees of the SAME app rebuild their
   # transforms too. Other apps and native build caches are unchanged.

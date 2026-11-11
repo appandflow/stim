@@ -303,7 +303,7 @@ export async function verifyIosMetroRun({
           since: launchedAt,
           metroPort,
           platform: 'ios',
-          mode: workspaceDevServerMode(root, isExpo),
+          mode: workspaceDevServerMode(root),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
@@ -465,7 +465,6 @@ function reportUnverified({
   udid,
   scheme,
   lanAddress,
-  isExpo,
   remoteDevice,
   physical,
   lanOrigin,
@@ -523,7 +522,7 @@ function reportUnverified({
     devClientUrl: scheme
       ? (launched?.url ?? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined))
       : null,
-    mode: workspaceDevServerMode(root, isExpo),
+    mode: workspaceDevServerMode(root),
     remote: remoteDevice,
     physical,
     devClient: Boolean(scheme),

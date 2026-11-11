@@ -254,7 +254,7 @@ THE RECORD
              leave duplicate records.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child and command-child
-             record)
+             record, and repack-child lines that are not Re.Pack JSON)
     cdpKey   optional web page-event key used to suppress previously recorded
              DevTools replay after reattachment. Events without a timestamp are
              preserved but can repeat after reattachment.
@@ -491,9 +491,10 @@ WHAT WRITES WHAT
                        an hmr_update debug record, at most once a minute,
                        when Metro pushes a Fast Refresh change to the app
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
-                       In expo-child and command-child mode everything the
-                       dev server prints lands in metro.ndjson with raw: true,
-                       so \`--source client\` returns nothing there.
+                       In expo-child, repack-child and command-child mode
+                       everything the dev server prints lands in
+                       metro.ndjson, so \`--source client\` returns nothing
+                       there.
   device.ndjson        the device-log collector uses \`simctl log stream\`
                        predicated on the app, or \`adb logcat\` filtered to
                        the app's pid. Local iOS simulator capture starts

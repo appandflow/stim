@@ -1344,6 +1344,15 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_EXPO_BIN  (Expo)
   node_modules/.bin/expo does not exist. Install the project's dependencies.`,
     },
+    STIM_REPACK_BIN: {
+      summary: 'rock.config or react-native.config names Re.Pack, but rock or @callstack/repack is missing',
+      body: () => `STIM_REPACK_BIN  (Re.Pack)
+  The project's rock.config.* names @rock-js/plugin-repack, or its
+  react-native.config.js registers @callstack/repack's commands, but the
+  \`rock\` or \`react-native\` bin or @callstack/repack is not resolvable from
+  the app. Install the project's dependencies, or set metro.command to the
+  command that starts its dev server.`,
+    },
     STIM_METRO_TIMEOUT: {
       summary: 'Metro or the tunnel was not ready within the wait; --wait 180',
       body: () => `STIM_METRO_TIMEOUT

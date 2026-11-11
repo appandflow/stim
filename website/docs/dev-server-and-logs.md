@@ -23,8 +23,11 @@ when it is not running, so `stim start` is optional. Running it first lets
 Metro warm up while you do other work.
 
 Bare React Native runs Metro in Stim's Metro host process. Expo runs the
-project's Expo CLI. Both run on the Node the project pins. A healthy server that another process started for the
-same project can be reused, but Stim cannot capture its full output.
+project's Expo CLI. Re.Pack runs through the project's Rock CLI, or the React
+Native CLI when `react-native.config.js` registers Re.Pack's commands. All of
+them run on the Node the project pins. A healthy server that another process
+started for the same project can be reused, but Stim cannot capture its full
+output.
 
 If Expo cannot be resolved in a linked worktree, run `stim worktree warm`
 there before retrying. The refusal includes this command alongside dependency
@@ -34,6 +37,40 @@ For Expo and custom Metro commands, Stim looks for a Node pin from the app
 directory up to the repository or worktree root. The nearest `.nvmrc`,
 `.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
 When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+
+## How Stim picks the dev server
+
+Stim never asks which dev server to run and never runs a `package.json`
+script. It reads the project's config files as text and takes the first match:
+
+1. `metro.command` is set, so Stim runs that command.
+2. A `rock.config.*` file exists. Stim runs Re.Pack through Rock when the file
+   names `@rock-js/plugin-repack`, and its own Metro host otherwise.
+3. `react-native.config.js` registers `@callstack/repack/commands`, so Stim
+   runs Re.Pack through the React Native CLI.
+4. The app uses Expo, so Stim runs the Expo CLI.
+5. Otherwise Stim runs Metro in its own host.
+
+An app that installs `expo` only for Expo modules but bundles with Re.Pack
+gets Re.Pack. `stim start` names the file that decided, for example
+`starting on port 8082 (repack-child from rock.config.mjs)`.
+
+Stim starts Re.Pack with `--json`, so its compile events become bundle
+records in `stim logs --source metro`. Re.Pack compiles a platform only when a
+device asks for its bundle, so `stim ios` and `stim android` use those records
+to confirm the launch. `stim start --reset-cache` passes Re.Pack's
+`--reset-cache`. Stim turns off Re.Pack's own `adb reverse`, because it would
+reach every connected device, and manages the reverse for its port itself.
+Re.Pack keeps listening on its own host, `localhost` by default. If the config
+names Re.Pack but `rock` or `@callstack/repack` is not installed, `stim start`
+refuses with `STIM_REPACK_BIN` instead of falling back to Expo.
+
+Try it with an agent:
+
+```text
+Run stim start in this app and tell me which dev server Stim picked and which
+file decided it. Then run stim android and check that the launch is verified.
+```
 
 ## Start Metro with your own command
 

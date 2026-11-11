@@ -152,6 +152,44 @@ export function readAppJson(projectRoot: string): AnyJson | null {
   }
 }
 
+export interface BundlerConfig {
+  bundler: 'repack' | 'metro';
+  cli: 'rock' | 'react-native';
+  /** The file that decided, relative to the project root. */
+  config: string;
+}
+
+/**
+ * The bundler a Rock config or a React Native CLI config names, read as text so Stim never runs project code to
+ * decide. Null when neither file decides, leaving the choice to Expo or bare Metro detection.
+ */
+export function detectBundlerConfig(projectRoot: string): BundlerConfig | null {
+  const rock = readFirstText(projectRoot, ['rock.config.mjs', 'rock.config.js', 'rock.config.cjs', 'rock.config.ts']);
+  if (rock)
+    return {
+      bundler: rock.text.includes('@rock-js/plugin-repack') ? 'repack' : 'metro',
+      cli: 'rock',
+      config: rock.name,
+    };
+  const cli = readFirstText(projectRoot, [
+    'react-native.config.js',
+    'react-native.config.cjs',
+    'react-native.config.mjs',
+  ]);
+  return cli?.text.includes('@callstack/repack/commands')
+    ? { bundler: 'repack', cli: 'react-native', config: cli.name }
+    : null;
+}
+
+function readFirstText(projectRoot: string, names: string[]): { name: string; text: string } | null {
+  for (const name of names) {
+    try {
+      return { name, text: readFileSync(join(projectRoot, name), 'utf-8') };
+    } catch {}
+  }
+  return null;
+}
+
 export function readAppConfigText(projectRoot: string): string | null {
   for (const name of ['app.config.js', 'app.config.ts', 'app.config.cjs', 'app.config.mjs']) {
     const p = join(projectRoot, name);
