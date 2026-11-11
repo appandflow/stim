@@ -13,6 +13,14 @@ export function scenarioForVariant(variant, driver) {
   return scenario;
 }
 
+export function scenarioForRecord(variant) {
+  const scenario = Object.values(DRIVER_VARIANT_SCENARIOS)
+    .map((variants) => variants[variant])
+    .find(Boolean);
+  if (!scenario) throw new Error(`unsupported variant: ${variant}`);
+  return scenario;
+}
+
 export const ARMS = data.arms;
 
 const PLATFORMS = data.platforms;

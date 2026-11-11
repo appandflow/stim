@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeCrashPlan } from './native-crash-setup.mjs';
 
 const xcodeFixture = fileURLToPath(new URL('../../test/e2e/native/fixtures/xcode/', import.meta.url));
 export const nativeBaselineText = 'native-revision-one';
@@ -173,6 +174,17 @@ class MainActivity : ComponentActivity() {
     product: 'mobile',
     bundleId: 'dev.stim.nativebenchmark',
   };
+}
+
+export function assertExactFixture(fixture) {
+  const missing = ['fixtureDirectory', 'source', 'product', 'bundleId'].filter(
+    (key) => typeof fixture[key] !== 'string' || !fixture[key],
+  );
+  if (fixture.platform !== 'ios') missing.push('platform: ios');
+  if (!/^[0-9a-f]{40}$/.test(fixture.fixtureCommit ?? '')) missing.push('fixtureCommit');
+  if (missing.length) throw new Error(`Exact fixture.json is missing or invalid: ${missing.join(', ')}`);
+  nativeCrashPlan(fixture);
+  return fixture;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -1314,6 +1314,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         platform: meta.platform ?? 'ios',
         recordedOn: meta.dispatchAt.slice(0, 10),
         variant: record.variant,
+        matrixPlatform: record.matrixPlatform ?? null,
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),

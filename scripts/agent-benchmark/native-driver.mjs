@@ -19,6 +19,7 @@ import {
   writeClaudeGuidance,
 } from './runner.mjs';
 import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
+import { assertExactFixture } from './native-fixtures.mjs';
 import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
@@ -34,6 +35,7 @@ if (!['ios', 'android', 'macos'].includes(platform) || (platformArgument !== pla
 }
 const directory = join(root, 'native', platformArgument);
 const fixture = JSON.parse(readFileSync(join(directory, 'fixture.json'), 'utf8'));
+if (fixture.framework === 'exact') assertExactFixture(fixture);
 const stimPackage = process.env.STIM_BENCH_STIM_PACKAGE;
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
 const pins = Object.fromEntries(
@@ -399,6 +401,7 @@ async function dispatch() {
     runId,
     platform,
     platformArgument,
+    matrixPlatform: nativeMatrixPlatform(platform, fixture.framework),
     variant,
     runner: runnerKind,
     crash,
@@ -533,6 +536,7 @@ function collect(runDir) {
     runId: meta.runId,
     platform: meta.platform,
     variant: meta.variant ?? 'standalone',
+    matrixPlatform: meta.matrixPlatform ?? null,
     arm: meta.arm,
     elapsedSeconds: (Date.parse(meta.finishedAt) - Date.parse(meta.dispatchAt)) / 1000,
     usage,

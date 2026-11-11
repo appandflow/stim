@@ -22,7 +22,15 @@ node scripts/agent-benchmark/native-driver.mjs dispatch ios stim gpt-5.6-luna
 node scripts/agent-benchmark/native-driver.mjs collect ios /absolute/run-directory
 ```
 
-Repeat with `control`, `android`, and `macos`. Preparation refuses partial or
+Repeat with `control`, `android`, and `macos`. A fifth argument selects the task:
+`standalone` (app launch, the default) or `launch-crash` (error fix: the
+coordinator commits a native startup crash to a fixture checkout, see
+[`docs/benchmark-fixtures.md`](../../docs/benchmark-fixtures.md)). `exact-ios`
+replaces the platform for the Exact fixture, which has its own root entry
+`native/exact-ios`. Models whose id starts with `claude-` run through Claude's
+print mode with the arm's skills as appended guidance; other models run through
+Codex. The Claude path of this driver follows the Trailhead driver's flags but
+has not been run. Preparation refuses partial or
 existing goldens so failed native tool calls can be inspected before recovery.
 Dispatch requires two load samples at or below 3, version-matched preparation,
 isolated runner skills, and a verified filesystem boundary. Both arms receive

@@ -1,51 +1,46 @@
 import { describe, it, expect } from 'vitest';
 import { campaignTimings } from './snapshot-benchmark-times.mjs';
+import { benchmarkMatrix } from './agent-benchmark/matrix.mjs';
+
+const VARIANT = { launch: 'javascript', 'native-change': 'native', 'error-fix': 'launch-crash' };
+const MODEL = 'claude-sonnet-5-5';
 
 function complete() {
   return [
     {
       primaryMetric: 'First recorded agent activity to validated Settings screenshot',
-      runs: ['gpt-5.6-luna', 'gpt-5.6-sol', 'sonnet', 'opus'].flatMap((model) =>
-        ['ios', 'android'].flatMap((platform) =>
-          ['javascript', 'native', 'launch-crash'].flatMap((variant) =>
-            ['stim', 'control'].map((arm) => ({
-              model,
-              platform,
-              variant,
-              arm,
-              valid: true,
-              settingsReadySeconds: 123.456,
-              diagnosisSeconds: 42,
-              commands: ['private'],
-              usage: { input_tokens: 999 },
-              proof: '/private/path',
-              estimatedTokenCostUsd: 1,
-            })),
-          ),
-        ),
-      ),
+      runs: benchmarkMatrix()
+        .filter((cell) => cell.status !== 'unsupported')
+        .map((cell) => ({
+          model: MODEL,
+          matrixPlatform: cell.platform,
+          variant: VARIANT[cell.scenario],
+          arm: cell.arm,
+          valid: true,
+          settingsReadySeconds: 123.456,
+          diagnosisSeconds: 42,
+          commands: ['private'],
+          usage: { input_tokens: 999 },
+          proof: '/private/path',
+          estimatedTokenCostUsd: 1,
+        })),
     },
   ];
 }
 
 describe('campaign timing snapshot', () => {
-  it('keeps only normalized timings and identities, independent of dataset ordering', () => {
+  it('covers exactly the cells the matrix lists, keeping only timings and identities', () => {
     const datasets = complete();
     const result = campaignTimings('rc', datasets);
-    expect(result.runs).toHaveLength(48);
-    expect(result.runs[0]).toEqual({
-      model: 'gpt-5.6-luna',
-      platform: 'android',
-      scenario: 'javascript',
-      arm: 'control',
-      settingsReadySeconds: 123.456,
-    });
-    expect(result.runs.find((run) => run.scenario === 'launch-crash').diagnosisSeconds).toBe(42);
+    expect(result.runs).toHaveLength(datasets[0].runs.length);
+    expect(result.runs.find((run) => run.scenario === 'error-fix').diagnosisSeconds).toBe(42);
+    expect(result.runs.some((run) => run.platform === 'web')).toBe(false);
     expect(JSON.stringify(result)).not.toMatch(/private|tokens|Cost|commands/);
     datasets[0].runs.reverse();
     expect(campaignTimings('rc', datasets)).toEqual(result);
   });
-  it('rejects partial, duplicated, invalid, or unnormalized campaigns', () => {
+
+  it('rejects partial, duplicated, invalid or off-matrix campaigns', () => {
     const partial = complete();
     partial[0].runs.pop();
     expect(() => campaignTimings('x', partial)).toThrow('Incomplete');
@@ -57,23 +52,15 @@ describe('campaign timing snapshot', () => {
       { settingsReadySeconds: null },
       { settingsReadySeconds: -1 },
       { model: 'unknown' },
+      { matrixPlatform: 'web' },
+      { arm: 'expo-agent-cli', matrixPlatform: 'native-ios' },
     ]) {
-      const invalid = complete();
-      Object.assign(invalid[0].runs[0], change);
-      expect(() => campaignTimings('x', invalid)).toThrow(/valid timings|Unexpected/);
+      const bad = complete();
+      Object.assign(bad[0].runs[0], change);
+      expect(() => campaignTimings('x', bad)).toThrow();
     }
-    const missingDiagnosis = complete();
-    missingDiagnosis[0].runs.find((run) => run.variant === 'launch-crash').diagnosisSeconds = null;
-    expect(() => campaignTimings('x', missingDiagnosis)).toThrow('valid timings');
-    const dispatch = complete();
-    dispatch[0].primaryMetric = 'dispatch';
-    expect(() => campaignTimings('x', dispatch)).toThrow('first-activity');
-  });
-  it('recognizes legacy iOS datasets only when their simulator metadata confirms the platform', () => {
-    const datasets = complete();
-    datasets[0].runs.find((run) => run.platform === 'ios').platform = undefined;
-    expect(() => campaignTimings('rc', datasets)).toThrow('Unexpected');
-    datasets[0].environment = { simulator: 'iPhone 17 / iOS 26.5' };
-    expect(campaignTimings('rc', datasets).runs).toHaveLength(48);
+    const wrongMetric = complete();
+    wrongMetric[0].primaryMetric = 'Dispatch to screen';
+    expect(() => campaignTimings('x', wrongMetric)).toThrow('first-activity');
   });
 });

@@ -13,21 +13,26 @@ one headline number.
 
 ## Matrix
 
-The published matrix is platform first. Each platform runs two scenarios, for
+The published matrix is platform first. Each platform runs its scenarios for
 each arm that can run its project type, with each model in the campaign's model
-list. The 2.0.0 campaign lists Sonnet only (`claude-sonnet-5-5`); the model stays
-an axis, so results are keyed by model, platform, scenario and arm and other
-models can join later as extra campaigns. Everything runs locally on one
-machine: no remote builds, hosted simulators or cloud services.
+list. The 2.0.0 campaign lists Sonnet only (`claude-sonnet-5-5`) with one repeat
+per cell; the model stays an axis, so results are keyed by model, platform,
+scenario and arm. Everything runs locally on one machine: no remote builds,
+hosted simulators or cloud services. Web is not in the benchmark.
 
 Scenarios:
 
 - App launch: the readiness suite. Change the app, build and launch it, and prove
   the changed screen with `agent-device`. React Native platforms use the
-  JavaScript change (the Settings subtitle). The standalone native platforms use
-  their revision-text task (build, launch, press Increment, verify).
+  JavaScript change (the Settings subtitle). The standalone native, macOS and
+  Exact platforms use their revision-text task (build, launch, press Increment,
+  verify).
+- Native change (React Native platforms only): the compiled-code change
+  described under Fixed changes, proven on the live app.
 - Error fix: the launch-failure suite. The app fails on launch; reproduce it,
   capture the runtime error before reading source, fix it, and verify the repair.
+  React Native platforms inject a JavaScript render exception. The others inject
+  a native startup crash (see [benchmark fixtures](./benchmark-fixtures.md)).
 
 Arms:
 
@@ -35,41 +40,37 @@ Arms:
   its own device.
 - Stim: the pinned published `stim` and its skill. It adopts the prepared parked
   device.
-- Expo agent CLI: planned, not implemented. It is registered in the matrix but
-  blocked. The intended protocol is the pinned `@expo/agent-cli` and the Expo
-  skills for it, on Expo projects only, with its local workflow compared; its
-  cloud features (`--eas` builds, EAS Simulator sessions, `deploy`) are out of
-  scope. Planned audits reject cloud flags and `EXPO_TOKEN`; telemetry is
-  disabled with `EXPO_NO_TELEMETRY=1`. Its devices are tool-managed, so its
-  device state is disclosed rather than matched to Stim's parked device. The task
-  prompt, pins, isolation and proof match the other arms.
+- Expo agent CLI (Expo platforms only): the pinned `@expo/agent-cli` and the
+  Expo skills it installs, local development build, no EAS. Its cloud features
+  are audited out and telemetry is disabled with `EXPO_NO_TELEMETRY=1`. It
+  manages its own device, so its device state is disclosed rather than matched
+  to Stim's parked device. The task prompt, pins, isolation and proof match the
+  other arms. The install, audit and watcher rules are implemented but the arm
+  has never run: its first real run validates device allocation, command
+  resolution and the skills setup.
 
 `website/src/data/benchmark-matrix.json`, read by `scripts/agent-benchmark/matrix.mjs`, is the machine-readable definition. A cell
-is `runnable`, `not-yet-runnable` (with the missing piece named), `unsupported`
-(the arm cannot run that project type) or `not-applicable`. Dispatch refuses a
-cell that is not runnable.
+is `runnable`, `not-yet-runnable` (the missing harness piece or `pins.env` key is
+named), `unsupported` (the arm cannot run that project type) or `not-applicable`.
+Dispatch refuses a cell that is not runnable.
 
-| Platform                  | Arms                          | App launch                      | Error fix                                   |
-| ------------------------- | ----------------------------- | ------------------------------- | ------------------------------------------- |
-| Expo iOS simulator        | Stim, control, Expo agent CLI | runnable (Expo arm needs setup) | runnable (Expo arm needs setup)             |
-| Expo Android emulator     | Stim, control, Expo agent CLI | runnable (Expo arm needs setup) | runnable (Expo arm needs setup)             |
-| Bare React Native iOS     | Stim, control                 | needs a bare fixture            | needs a bare fixture                        |
-| Bare React Native Android | Stim, control                 | needs a bare fixture            | needs a bare fixture                        |
-| Web (`stim web`)          | Stim, control                 | needs a proof method            | needs a proof method                        |
-| macOS (`stim macos`)      | Stim, control                 | runnable (SwiftPM task)         | needs a native launch-crash fixture variant |
-| Standalone native iOS     | Stim, control                 | runnable                        | needs a native launch-crash fixture variant |
-| Standalone native Android | Stim, control                 | runnable                        | needs a native launch-crash fixture variant |
-| Exact iOS                 | Stim, control                 | needs an Exact fixture          | needs an Exact fixture and crash variant    |
+| Platform                  | Arms                          | Tasks                                | Runs |
+| ------------------------- | ----------------------------- | ------------------------------------ | ---- |
+| Expo iOS simulator        | Stim, control, Expo agent CLI | app launch, native change, error fix | 9    |
+| Expo Android emulator     | Stim, control, Expo agent CLI | app launch, native change, error fix | 9    |
+| Bare React Native iOS     | Stim, control                 | app launch, native change, error fix | 6    |
+| Bare React Native Android | Stim, control                 | app launch, native change, error fix | 6    |
+| macOS (`stim macos`)      | Stim, control                 | app launch, error fix                | 4    |
+| Standalone native iOS     | Stim, control                 | app launch, error fix                | 4    |
+| Standalone native Android | Stim, control                 | app launch, error fix                | 4    |
+| Exact iOS                 | Stim, control                 | app launch, error fix                | 4    |
 
-On platforms without JavaScript the error-fix failure is a native launch crash
-that the logs surface (a startup crash in the Swift or Kotlin app), with the same
-prompt and proof as the React Native suite. No fixture variant exists yet.
-
-The earlier native-change cell (a compiled-code change on the Expo fixture) is not
-part of the published matrix: it is a build workload, not an app-launch or
-error-fix scenario. Its dispatch is refused and earlier recordings stay valid and
-unrelabeled. Results from different platforms, scenarios, models, or deliberately
-changed pins remain separate. Never pool iOS and Android timings into one number.
+That is 46 runs per model, one repeat. Bare React Native Android and Exact
+iOS are data rows; remove a row from the JSON to drop it. The bare React Native
+and Exact fixtures do not exist yet; their cells stay blocked until the fixture
+commit is pinned (`BARE_FIXTURE_COMMIT`, `EXACT_FIXTURE_COMMIT`). Results from
+different platforms, scenarios, models, or deliberately changed pins remain
+separate. Never pool iOS and Android timings into one number.
 
 ## Cell device state
 

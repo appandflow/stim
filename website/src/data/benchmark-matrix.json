@@ -62,16 +62,8 @@
       "driver": "readiness",
       "fixture": "trailhead",
       "driverPlatform": "ios",
-      "scenarios": [
-        "launch",
-        "native-change",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim",
-        "expo-agent-cli"
-      ],
+      "scenarios": ["launch", "native-change", "error-fix"],
+      "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
       "blockers": [],
       "requires": []
@@ -82,16 +74,8 @@
       "driver": "readiness",
       "fixture": "trailhead",
       "driverPlatform": "android",
-      "scenarios": [
-        "launch",
-        "native-change",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim",
-        "expo-agent-cli"
-      ],
+      "scenarios": ["launch", "native-change", "error-fix"],
+      "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
       "blockers": [],
       "requires": []
@@ -102,15 +86,8 @@
       "driver": "readiness",
       "fixture": "bare",
       "driverPlatform": "ios",
-      "scenarios": [
-        "launch",
-        "native-change",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "native-change", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "the tool targets Expo projects only"
       },
@@ -129,15 +106,8 @@
       "driver": "readiness",
       "fixture": "bare",
       "driverPlatform": "android",
-      "scenarios": [
-        "launch",
-        "native-change",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "native-change", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "the tool targets Expo projects only"
       },
@@ -156,14 +126,8 @@
       "driver": "native",
       "fixture": "native",
       "driverPlatform": "macos",
-      "scenarios": [
-        "launch",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
@@ -177,14 +141,8 @@
       "driver": "native",
       "fixture": "native",
       "driverPlatform": "ios",
-      "scenarios": [
-        "launch",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
@@ -198,14 +156,8 @@
       "driver": "native",
       "fixture": "native",
       "driverPlatform": "android",
-      "scenarios": [
-        "launch",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "standalone native apps are not Expo projects"
       },
@@ -219,14 +171,8 @@
       "driver": "native",
       "fixture": "exact",
       "driverPlatform": "ios",
-      "scenarios": [
-        "launch",
-        "error-fix"
-      ],
-      "arms": [
-        "control",
-        "stim"
-      ],
+      "scenarios": ["launch", "error-fix"],
+      "arms": ["control", "stim"],
       "unsupportedArms": {
         "expo-agent-cli": "Exact apps are not Expo projects"
       },

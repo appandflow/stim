@@ -139,9 +139,10 @@ export default function Benchmarks(): ReactNode {
                   Platforms and arms
                 </Heading>
                 <p>
-                  Each platform runs two tasks, app launch and error fix, across the arms that can run its project type.
-                  All arms run locally on one machine with the same task prompt, model, device pins and screen proof.
-                  This table lists coverage, not results.
+                  React Native platforms, Expo and bare, run three tasks: app launch, native change and error fix. The
+                  other platforms run two: app launch and error fix. Each task runs for every arm that supports the
+                  project type. All arms run locally on one machine with the same task prompt, model, device pins and
+                  screen proof. This table lists coverage, not results.
                 </p>
               </div>
             </div>
@@ -150,6 +151,7 @@ export default function Benchmarks(): ReactNode {
                 <thead>
                   <tr>
                     <th>Platform</th>
+                    <th>Tasks</th>
                     {coverageArms.map((arm) => (
                       <th key={arm.id}>{arm.label}</th>
                     ))}
@@ -159,6 +161,7 @@ export default function Benchmarks(): ReactNode {
                   {coveragePlatforms.map((platform) => (
                     <tr key={platform.id}>
                       <td>{platform.label}</td>
+                      <td>{platform.tasks.join(', ')}</td>
                       {coverageArms.map((arm) => (
                         <td key={arm.id}>{coverageStatusLabels[platform.arms[arm.id]]}</td>
                       ))}

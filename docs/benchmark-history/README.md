@@ -17,7 +17,7 @@ Before replacing the website's canonical datasets, archive the completed set:
 node scripts/snapshot-benchmark-times.mjs <campaign> website/src/data/benchmarks docs/benchmark-history/<campaign>.json
 ```
 
-The snapshot command requires all 48 unique model/platform/scenario/arm cells,
+The snapshot command requires every model/platform/scenario/arm cell the benchmark matrix lists (`website/src/data/benchmark-matrix.json`; each run record carries its `matrixPlatform`),
 valid finite timings, and first-activity timing metadata. It refuses to overwrite
 an existing snapshot. Run evidence must already have passed the benchmark export
 audit; this command checks campaign completeness, not raw run validity.

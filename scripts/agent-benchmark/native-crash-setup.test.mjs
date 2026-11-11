@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
-import { createNativeFixture } from './native-fixtures.mjs';
+import { assertExactFixture, createNativeFixture } from './native-fixtures.mjs';
 import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 
 const dirs = [];
@@ -56,6 +56,24 @@ describe('native launch crash injection', () => {
 });
 
 const command = (text, output, offset) => ({ command: text, output, startEventOffset: offset });
+
+describe('Exact fixture description', () => {
+  const exact = {
+    platform: 'ios',
+    framework: 'exact',
+    fixtureDirectory: '/f',
+    fixtureCommit: 'a'.repeat(40),
+    source: 'src/app.ts',
+    product: 'Acceptance',
+    bundleId: 'dev.example.acceptance',
+    crash: { source: 'src/main.rs', anchor: 'fn app_start() {', language: 'rust' },
+  };
+  it('names what a missing field is before a run starts', () => {
+    expect(assertExactFixture(exact)).toBe(exact);
+    expect(() => assertExactFixture({ ...exact, fixtureCommit: 'main' })).toThrow(/fixtureCommit/);
+    expect(() => assertExactFixture({ ...exact, crash: undefined })).toThrow(/crash:/);
+  });
+});
 
 describe('native crash reproduction evidence', () => {
   it('accepts a launch whose output carries the token before the source is read', () => {
