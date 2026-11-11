@@ -106,6 +106,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** commander 15.0.0's outcome for each row, recorded at 7a95812da by declaring each op through commander's own API. */
 const recorded: Record<string, Outcome> = JSON.parse(
   readFileSync(new URL('fixtures/cli-parity.json', import.meta.url), 'utf8'),
 );

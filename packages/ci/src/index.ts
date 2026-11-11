@@ -1,8 +1,7 @@
 import { failure, prepareCI, writeJson, type CIContextOptions } from './context.ts';
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { StimRunOptions, StimRunResult, StimStopResult } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
 import { bindCIEngine, type AttachedHost } from 'stim/attached-stimd';
 import { runCommand, type CommandResult } from './command.ts';
 import { copyDiagnosticLogs } from './artifacts.ts';
