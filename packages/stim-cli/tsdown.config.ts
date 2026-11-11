@@ -66,7 +66,11 @@ export default defineConfig({
           test: (id) => /[\\/]packages[\\/]server[\\/]/.test(id) && !id.endsWith('/service-runner.ts'),
         },
         { name: 'transport-tailscale', test: /[\\/]packages[\\/]transport-tailscale[\\/]/ },
-        { name: 'agent-driver-agent-device', test: /[\\/]packages[\\/]agent-driver-agent-device[\\/]/ },
+        // rolldown 1.2.5 emits undeclared named exports for a JSON module grouped into a shared chunk (rolldown/rolldown#10020, #11392), so the manifest stays out of the group.
+        {
+          name: 'agent-driver-agent-device',
+          test: (id) => /[\\/]packages[\\/]agent-driver-agent-device[\\/]/.test(id) && !id.endsWith('package.json'),
+        },
       ],
     },
   },
