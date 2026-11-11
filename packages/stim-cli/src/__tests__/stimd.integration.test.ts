@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -22,6 +31,7 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as clonefile from '../clonefile.ts';
 import {
+  claimRemoveCommand,
   markClaimChildPending,
   readClaimSet,
   releaseClaim,
@@ -894,37 +904,61 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 20_000);
 
-  test('a command still starts stimd when only a shared engine claim is unresolved, so the start can refuse it', async () => {
-    const spawned: (readonly string[])[] = [];
-    setExecutor({
-      ...getExecutor(),
-      spawn(_file, args = []) {
-        spawned.push(args);
-        throw new Error('not started in this test');
-      },
-    });
-    onTestFinished(() => resetExecutor());
-    const root = join(home, 'engine');
-    const build = 'aaaaaaaaaaaa';
-    const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
-    onTestFinished(() => engine.mockRestore());
-    const held = tryAcquireClaim({ root: buildClaimRoot(root, build), mode: 'shared' }).acquired;
+  test('a command that meets a stuck shared engine claim refuses with every claim, its home and the remove command', async () => {
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-engine-refusal-')));
+    const root = join(scratch, 'engine');
+    const build = 'cccccccccccc';
+    const selected = join(root, build);
+    const pkg = fileURLToPath(new URL('../..', import.meta.url));
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    cpSync(join(pkg, 'dist'), join(selected, 'dist'), { recursive: true });
+    cpSync(join(pkg, 'package.json'), join(selected, 'package.json'));
+    fs.symlinkSync(join(pkg, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: 'test' }));
+    const otherHome = join(scratch, 'other-home');
+    const held = tryAcquireClaim({
+      root: buildClaimRoot(root, build),
+      mode: 'shared',
+      details: { home: otherHome },
+    }).acquired;
     assert(held);
     markClaimChildPending(held);
     writeFileSync(held.path, readFileSync(held.path, 'utf8').replace(/"processToken":"[^"]*"/, '"processToken":"x"'));
-    expect(readClaimSet(held.root).unresolved).toHaveLength(1);
-
-    await ensureStimd(
-      { PATH: '/usr/bin:/bin', STIM_HOME: home, STIM_DAEMON: 'on' },
-      'linux',
-      false,
-      undefined,
-      undefined,
-      false,
-    );
-
-    expect(spawned).toHaveLength(1);
-  });
+    const executor = getExecutor();
+    const children: ChildProcess[] = [];
+    setExecutor({
+      ...executor,
+      spawn: (_file, args = [], options) => {
+        const child = executor.spawn(process.execPath, [join(selected, 'dist', 'cli.mjs'), ...args.slice(1)], options);
+        children.push(child);
+        return child;
+      },
+    });
+    const cli = Symbol.for('stim.cli');
+    Reflect.set(globalThis, cli, true);
+    try {
+      const env = { ...process.env, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on', XDG_RUNTIME_DIR: '' };
+      const refusal = await ensureStimd(env, 'linux').then(
+        () => null,
+        (error: { code: string; message: string; remedy: string }) => error,
+      );
+      expect(refusal?.code).toBe('STIM_CLAIM_UNAVAILABLE');
+      expect(refusal?.message).toContain(held.path);
+      expect(refusal?.message).toContain(`for the Stim home ${otherHome}`);
+      expect(refusal?.remedy).toContain(claimRemoveCommand(held.path));
+      expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+    } finally {
+      Reflect.deleteProperty(globalThis, cli);
+      resetExecutor();
+      for (const child of children)
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise((done) => child.once('exit', done));
+          child.kill('SIGKILL');
+          await exited;
+        }
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   test.each(['passes', 'measure'])(
     'persistent %s cleanup refusal retains the engine and leaves the home claim complete',

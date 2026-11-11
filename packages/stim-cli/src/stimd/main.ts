@@ -476,7 +476,8 @@ function refuseUnresolvedDaemonClaims(writer: { close: () => unknown }): void {
   const blocking = unresolvedStimdStartClaims();
   if (blocking.length === 0) return;
   writer.close();
-  throw unresolvedDaemonClaimsError(blocking);
+  const refusal = unresolvedDaemonClaimsError(blocking);
+  throw Object.assign(refusal, { retentionFailure: true, remedy: refusal.remedy.replace(/ and retry\.$/, '') });
 }
 
 function logKeptWorkspaces(
