@@ -652,8 +652,17 @@ $ stim ios --plan --remote-build local
   expect      unknown: no cold run of this project is recorded yet
 ```
 
-Drive and test the app with Exact's own commands, pointed at the simulator
-`stim ios` reported:
+`stim ios --remote <mac>` runs the app on the workspace's own hosted simulator
+on a hosting Mac (see [remote machines](./remote-machines.md)): Stim builds the `.app` with no
+`EXACT_SIM`, here or on a build Mac, then installs and launches it there like
+any app without Metro, and view, input, `stim agent-device`, `stim logs` and
+`stim stop` work as for other hosted runs. An app whose `app.json` declares
+native modules cannot run hosted, because Exact may run code on a simulator
+next to the build to read them: `--remote <mac>` and `remote-only` are refused,
+and `ios.remote` `auto` or `remote` keep it on this Mac.
+
+On this Mac, drive and test the app with Exact's own commands, pointed at the
+simulator `stim ios` reported:
 
 ```sh
 EXACT_SIM=<udid> ./exact.mjs agent ios tree "screenshot out.png"
@@ -662,7 +671,7 @@ EXACT_SIM=<udid> ./exact.mjs test ios
 
 Exact limits worktrees: a worktree needs the same folder name as the checkout
 it was created in, and `EXACT2` set to the Exact checkout when it sits at
-another folder depth. Only iOS simulators are supported; macOS, web, Android
+another folder depth. Only iOS simulators, here or hosted, are supported; macOS, web, Android
 and physical devices use Exact's own commands. `stim android` (iOS
 simulators only) and `stim start` (no Metro) refuse an Exact app with `STIM_NO_PROJECT`.
 

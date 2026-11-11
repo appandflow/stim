@@ -44,6 +44,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -11046,6 +11047,42 @@ describe('registered iOS project recipes', () => {
       expect(buildRecords().some((record) => String(record.msg).includes('embedded JS'))).toBe(false);
     },
   );
+
+  test('a recipe without the hosted target keeps an automatic placement here and refuses remote-only', async () => {
+    const projectRegistry = nativeProject();
+    compiler();
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'ios.remote', 'auto');
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const deps = { projectRegistry, readBundleId, readBundleExecutable, automaticDevicePlacement: automatic };
+    const local = await run({ json: true }, deps);
+    expect(local.exitCode).toBe(null);
+    expect(parseFirst(local.logs)).toMatchObject({ bundleId: 'org.example.native', launched: true });
+    expect(local.calls.args.installIosApp).toMatchObject({ udid: UDID });
+    const logs = readdirSync(workspaceLogsDir(root))
+      .filter((name) => name.startsWith('build-ios.ndjson'))
+      .map((name) => readFileSync(join(workspaceLogsDir(root), name), 'utf8'))
+      .join('');
+    expect(logs).toContain('"code":"hosted-unsupported"');
+    const refused = await run({ remote: 'remote-only', json: true }, deps);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.errs.join('\n')).toMatch(/cannot run on a hosted iOS simulator/);
+    writeHostedIos(root, 'default', {
+      machine: 'mini',
+      selected: 'auto',
+      session: '23456789-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device: null,
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const recorded = await run({ json: true }, deps);
+    expect(parseFirst(recorded.logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('runs on mini; run stim stop first'),
+    });
+    expect(recorded.calls.order).not.toContain('installIosApp');
+    expect(automatic).not.toHaveBeenCalled();
+  });
 
   test('a cache-ineligible native recipe compiles every run and releases its slot and install copy', async () => {
     nativeProject();
