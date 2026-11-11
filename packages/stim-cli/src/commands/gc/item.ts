@@ -4,7 +4,16 @@ import { canonicalPath } from './paths.ts';
 import { emptyCaches, planCacheEmptying } from './caches.ts';
 import { archiveRefusal, collectArchives, deleteArchives, type ArchiveKind } from './archives.ts';
 import { collectGcMemory, GRADLE_DAEMONS_KIND, reclaimMemory, WATCHMAN_KIND } from './memory.ts';
-import { clearWorkspaceOutputs, collectWorkspaceOutputs, isInsideWorkspaces } from './workspaces.ts';
+import {
+  clearWorkspaceOutputs,
+  collectOrphanedWorkspaces,
+  collectWorkspaceOutputs,
+  isInsideWorkspaces,
+} from './workspaces.ts';
+import { collectProjectRecords } from './records.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { workspaceDir } from '../../workspace/paths.ts';
+import { listMountedVolumes } from '../../fs-util.ts';
 import { createGcResults, type GcOutput, type GcResult } from './results.ts';
 
 /**
@@ -67,9 +76,18 @@ export async function deleteGcItem(item: GcItem, operation?: StimContext): Promi
       break;
     }
     case 'workspace-outputs': {
+      const config = loadConfig();
+      const { orphaned } = await collectOrphanedWorkspaces(Object.keys(config?.projects ?? {}), listMountedVolumes(), {
+        measure: false,
+        operation,
+      });
       const report = await collectWorkspaceOutputs({
         olderThan: null,
         now: Date.now(),
+        exclude: [
+          ...orphaned.map((entry) => entry.dir),
+          ...collectProjectRecords(config).deadProjects.map(workspaceDir),
+        ],
         signal,
         operation,
         lighten: true,

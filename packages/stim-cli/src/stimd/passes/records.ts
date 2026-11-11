@@ -1,5 +1,5 @@
 import { configDir, type StimContext } from '@stim-cli/core';
-import { archiveRoot, type MaintenanceAction } from '@stim-cli/core/state';
+import { archiveRoot, easMachineStateRoot, type MaintenanceAction } from '@stim-cli/core/state';
 import { listMountedVolumes } from '../../fs-util.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
@@ -155,7 +155,7 @@ export async function planRecords({
 
   if (!background)
     await attempt('orphaned EAS sessions', async () => {
-      const sweep = await collectProjectEasSessions({ operation });
+      const sweep = await collectProjectEasSessions({ operation, easLedgerRoot: easMachineStateRoot(operation?.env) });
       if (!sweep) return;
       if (sweep.orphaned.length && sweep.projectScope)
         actions.push({
@@ -251,8 +251,13 @@ export async function executeRecordAction(
       return run(() => deleteParkedHostedDevices(collectParkedHostedDevices().devices, { operation }, GC_OUTPUT));
     case 'would-delete-eas-sessions':
       return run(async () => {
-        const sweep = await collectProjectEasSessions({ operation });
-        return sweep && sweep.projectScope === action.target ? deleteEasSessions(sweep, { operation }, GC_OUTPUT) : 0;
+        const sweep = await collectProjectEasSessions({
+          operation,
+          easLedgerRoot: easMachineStateRoot(operation?.env),
+        });
+        return sweep && sweep.projectScope === action.target
+          ? deleteEasSessions(sweep, { operation, easLedgerRoot: easMachineStateRoot(operation?.env) }, GC_OUTPUT)
+          : 0;
       });
     case 'would-delete-recordings':
       return run(async () => {
