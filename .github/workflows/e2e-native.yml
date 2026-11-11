@@ -224,9 +224,6 @@ jobs:
             exit 1
           fi
 
-      - name: Install SimSlim for generated iOS fixtures
-        run: brew install mobai-app/tap/simslim
-
       # The fixture is generated from the latest templates at run time, so no
       # file in this repository predicts its fingerprint. The key is the lane
       # prefix alone, which no saved entry matches exactly, so restore-keys
@@ -670,9 +667,6 @@ jobs:
         run: |
           npm install --global --prefix "$HOME/.local" agent-device@0.21.22
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Install SimSlim for the native fixture
-        if: inputs.native_ios_project != 'food-truck'
-        run: brew install mobai-app/tap/simslim
       - name: Monitor native fixture host memory and load
         shell: bash
         run: |

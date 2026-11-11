@@ -151,24 +151,21 @@ KEYS STIM READS
                         with STIM_BAD_ARG a path that escapes the app or
                         holds no .xcworkspace or .xcodeproj, and any value
                         on an Expo app, whose prebuild writes ios/.
-  ios.simslim           "on" or "off"; default "off", machine or project
+  ios.simslim           "on" or "off"; default "on", machine or project
                         layers. "on" slims every Stim-owned iOS simulator
-                        with SimSlim's default categories when no
+                        with the default service categories when no
                         ios.simslimProfile is set; a profile always wins. A
                         workspace, repo or committed "off" opts that app out
                         of a machine "on" and restores stock services. See
                         \`stim guide lifecycle simslim\`.
-  ios.simslimProfile    a SimSlim JSON profile under the app directory,
-                        at most 64 KiB. Install the
-                        external tool once with
-                        \`brew install mobai-app/tap/simslim\`. SimSlim requires
-                        iOS 18.5 or newer in SimSlim 0.8. Recommended for parallel
-                        iOS work after reviewing service tradeoffs; see
-                        \`stim guide lifecycle simslim\`. Each local \`stim ios\`
-                        reconciles the profile on its Stim-owned simulator.
-                        The first change can reboot it; an unchanged profile on
-                        the same boot is skipped. Removing the setting
-                        restores stock services when Stim applied the profile. Absolute paths, root or
+  ios.simslimProfile    a JSON profile under the app directory, at most
+                        64 KiB, that keeps categories or services enabled
+                        while slimming. iOS 18.5 or newer only. See
+                        \`stim guide lifecycle simslim\`. Each local
+                        \`stim ios\` writes the profile's overrides on its
+                        Stim-owned simulator while it is shut down; a
+                        simulator already matching is left alone. Removing the
+                        setting restores the default categories. Absolute paths, root or
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
                         never slimmed.

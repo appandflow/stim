@@ -153,7 +153,7 @@ test('the disposable Expo iOS fixture enables scenes and prepares matching Pods 
   const workDir = scratch(t);
   const tools = join(workDir, 'tools');
   mkdirSync(tools);
-  for (const name of ['npm', 'simslim']) {
+  for (const name of ['npm']) {
     const tool = join(tools, name);
     writeFileSync(tool, '#!/bin/sh\nexit 0\n');
     chmodSync(tool, 0o755);

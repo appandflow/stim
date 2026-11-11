@@ -219,7 +219,7 @@ about 35 characters a second, so no paste prompt is involved. Text with other ch
 such as accents and emoji, is pasted instead. In an app Stim installed on an owned
 simulator it lands without a prompt, because Stim allows that app's paste
 permission; another app can leave a "Paste from CoreSimulatorBridge" suggestion on
-the device to tap, which a simulator slimmed by `ios.simslimProfile` cannot show. Copy reads the device clipboard into the
+the device to tap, which a slimmed simulator (the default for owned simulators) cannot show. Copy reads the device clipboard into the
 phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
 
 Each machine the phone pairs with reports the work it started, including
