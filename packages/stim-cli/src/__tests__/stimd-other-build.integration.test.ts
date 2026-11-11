@@ -55,6 +55,12 @@ test.each([
     remedy: 'npx stim@1.0.0-other stop',
   },
   {
+    stimd: 'that hands over once the dev servers it stops on exit end',
+    reply: { version: '1.0.0-other', handover: true, heldBy: 'dev-servers', workspaces: ['/work/app'] },
+    message: 'dev servers of /work/app',
+    remedy: 'npx stim@1.0.0-other stop',
+  },
+  {
     stimd: 'that hands over once its live shares end',
     reply: { version: '1.0.0-other', handover: true, heldBy: 'shares' },
     message: 'serves live web shares',

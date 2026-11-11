@@ -1051,10 +1051,12 @@ Stim build than the running `stimd` does not use it. When that build is what
 `stimd`'s own installation now holds, as after `npm install --global stim`
 updated it in place, and a command started that `stimd` (not `stim serve`, Stim
 Desktop or a service unit), `stimd` restarts on it once no command it admitted
-remains, no share-only server runs and no device log stream runs, and the
-command waits up to 15 seconds for it. A device log stream runs until `stim stop`
-or the idle stop in its workspace; a successor does not resume it, so `stimd`
-waits. Otherwise `stim share`, `share list` and `share stop` refuse with
+remains, no share-only server runs, no device log stream runs and, on Windows,
+no dev server runs, and the command waits up to 15 seconds for it. A device log
+stream runs until `stim stop` or the idle stop in its workspace; a successor does
+not resume it, so `stimd` waits. On Windows a dev server stops with its `stimd`,
+so `stimd` waits for `stim stop` in that workspace; elsewhere the successor takes
+the dev server over. Otherwise `stim share`, `share list` and `share stop` refuse with
 `STIM_DAEMON_UNAVAILABLE`, naming the running build and what holds it, and other commands run
 without `stimd`; `stimd` keeps serving until nothing runs in the home, and the
 next command starts its own build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it

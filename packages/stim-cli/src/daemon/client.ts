@@ -130,7 +130,7 @@ let refusal: {
   version: string;
   pid: number | null;
   handover: boolean;
-  heldBy: 'shares' | 'logs' | null;
+  heldBy: 'shares' | 'logs' | 'dev-servers' | null;
   workspaces: string[];
 } | null = null;
 let opSocket: Socket | null = null;
@@ -170,7 +170,10 @@ function noteRefusal(message: Record<string, unknown>): void {
     version: String(message.version ?? message.build),
     pid: typeof message.pid === 'number' ? message.pid : null,
     handover: message.handover === true || message.build === stimdBuildId(),
-    heldBy: message.heldBy === 'shares' || message.heldBy === 'logs' ? message.heldBy : null,
+    heldBy:
+      message.heldBy === 'shares' || message.heldBy === 'logs' || message.heldBy === 'dev-servers'
+        ? message.heldBy
+        : null,
     workspaces: Array.isArray(message.workspaces)
       ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
       : [],
@@ -184,7 +187,10 @@ function noteRefusal(message: Record<string, unknown>): void {
 export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   if (!refusal) return null;
   const { version, pid, handover, heldBy, workspaces } = refusal;
-  const kill = `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves`;
+  const kill =
+    process.platform === 'win32'
+      ? `run \`npx stim@${version} stop\` in each workspace whose dev server it runs, then stop that stimd${pid === null ? '' : ` with \`taskkill /PID ${pid} /F\``}, which also ends the builds and shares it serves`
+      : `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and shares it serves; its dev servers keep running and the next stimd takes them over`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const [why, remedy] = refusedByAttached
     ? [
@@ -196,20 +202,25 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
           `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
           `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
         ]
-      : heldBy === 'shares'
+      : heldBy === 'dev-servers'
         ? [
-            `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
-            `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
+            `${stimd} runs Stim ${version} and the dev servers of ${workspaces.join(', ')}, which stop when it exits on Windows; it restarts on this build once they stop.`,
+            `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'}; then run the command again.`,
           ]
-        : handover
+        : heldBy === 'shares'
           ? [
-              `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
-              'Run the command again once those commands end.',
+              `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
+              `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
             ]
-          : [
-              `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-              `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
-            ];
+          : handover
+            ? [
+                `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+                'Run the command again once those commands end.',
+              ]
+            : [
+                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+              ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 

@@ -103,6 +103,7 @@ import {
   stopManagedMetro,
   ensureTunnel,
   metroChildrenRun,
+  metroRootsEndingWithStimd,
   metroOpFlags,
   setMetroInvocation,
   metroTick,
@@ -915,6 +916,7 @@ async function runStimdInner(
   const pinned = (): boolean =>
     Boolean(backgroundFailure) ||
     metroCleanupPending() ||
+    metroRootsEndingWithStimd().length > 0 ||
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
@@ -942,7 +944,9 @@ async function runStimdInner(
               ? { heldBy: 'logs', workspaces: logs.roots() }
               : net.running()?.shareOnly
                 ? { heldBy: 'shares' }
-                : {}),
+                : metroRootsEndingWithStimd().length > 0
+                  ? { heldBy: 'dev-servers', workspaces: metroRootsEndingWithStimd() }
+                  : {}),
           }
         : {};
     socket.end(

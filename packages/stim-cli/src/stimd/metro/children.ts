@@ -871,6 +871,11 @@ function predecessorDigest(params: unknown): string | null | undefined {
   }
 }
 
+/** The workspaces whose dev servers stop when this stimd exits: on Windows, every one it runs; elsewhere, none. */
+export function metroRootsEndingWithStimd(): string[] {
+  return GROUPS ? [] : [...new Set([...children.keys(), ...tunnels.keys()])];
+}
+
 /** Whether this stimd supervises any Metro or tunnel child, which keeps it running whatever `daemon.mode` says. */
 export function metroChildrenRun(): boolean {
   return children.size > 0 || tunnels.size > 0 || busy.size > 0;

@@ -1982,11 +1982,14 @@ not on any remote"  (worktree remove)
   it when this home's stimd runs another Stim build and no stimd of this build
   replaced it; that stimd also runs the home's Metro. The message names that
   build, its pid and what holds its restart on this build: wait for the
-  commands it serves; let its live shares expire; for device log streams, run
-  npx stim@<its version> stop in the workspaces it names. Or run the command
-  with that build, or stop that stimd with kill <pid>, which also ends the
-  builds, dev servers and shares it serves, so the next command starts one of
-  this build.`,
+  commands it serves; let its live shares expire; for device log streams, and
+  on Windows for the dev servers it runs, run npx stim@<its version> stop in
+  the workspaces it names. Or run the command with that build, or stop that
+  stimd, which also ends the builds and shares it serves, so the next command
+  starts one of this build. On macOS and Linux stop it with kill <pid>; its
+  dev servers keep running and the next stimd takes them over. On Windows its
+  dev servers stop only with it, so run npx stim@<its version> stop in their
+  workspaces first, then taskkill /PID <pid> /F.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',
