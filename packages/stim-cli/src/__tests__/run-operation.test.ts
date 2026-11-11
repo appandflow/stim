@@ -48,7 +48,7 @@ describe('runOperation', () => {
     await expect(api(null)).resolves.toEqual({ admitted: null });
   });
 
-  it('registers a resident native run without running admission passes', async () => {
+  it('admits a resident native run with device logs, without recording workspace use', async () => {
     const client = await import('../daemon/client.ts');
     await expect(api('run', 'ios', 'none')).resolves.toEqual({ admitted: null });
     expect(client.beforeCommand).toHaveBeenCalledWith(
@@ -56,7 +56,6 @@ describe('runOperation', () => {
       env,
       expect.objectContaining({
         recordUse: false,
-        passes: false,
         pin: true,
         deviceLogs: true,
         held: expect.any(Array),
