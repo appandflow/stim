@@ -1817,6 +1817,13 @@ not on any remote"  (worktree remove)
   the source checkout and run \`stim <platform>\` there, so Stim generates it
   fresh and records that.
 
+"carry       left out <app>/target: <reason>"
+  The app is an Exact app (exact.mjs sits beside target/). Exact refuses a
+  Cargo target/ that was built in another checkout and fails every build
+  until it is deleted, so warm does not copy it. The first build in this
+  worktree compiles its own target/ from scratch, which takes minutes.
+  Nothing to fix.
+
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed
   pod-install command before building.
