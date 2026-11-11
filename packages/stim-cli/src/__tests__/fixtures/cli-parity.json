@@ -95,7 +95,7 @@
     "exitCode": 0
   },
   "[\"gc\",\"--help\"]": {
-    "out": "Usage: stim gc [options]\n\nReport what Stim has left behind and what the stim-daemon's pressure ladder\nwould reclaim: dead project entries, orphaned workspace directories, clean\nStim-managed linked worktrees (ones a stim command ran in; a worktree another\ntool manages is kept) whose branch is merged or whose pull request was merged or\nclosed, orphaned owned devices and EAS sessions, records of devices that no\nlonger exist, build locks whose builder is gone, expired physical-device leases,\nthe shared build caches, the build outputs and logs of each workspace, the\nmemory of watchman, what the ladder would do at high and at critical with sizes,\nand each workspace's stage. Reports by default; pass --delete to act.\n\nOptions:\n  --worktrees          also remove clean, idle Stim-managed linked worktrees,\n                       not only merged ones: with --delete run `stim worktree\n                       remove` (never --force) on each; idle means unused for\n                       --older-than days, 7 without it\n  --delete             actually prune the reported entries, reap the reported\n                       devices, trim each workspace's Metro, client and device\n                       logs to their newest 8 MiB, shut down the shared watchman\n                       daemon (after removing its stale roots) when no client,\n                       subscription or trigger uses it, and run the pressure\n                       ladder to its end now at high whatever the machine\n                       measures: the idle stage for every workspace idle 2\n                       minutes or more, parked devices, shared caches trimmed to\n                       half their caps, the dormant stage for workspaces idle 10\n                       minutes or more, idle Gradle daemons, unpinned Gradle\n                       versions, TMPDIR leftovers and the worktree trash. With\n                       --cache all it runs the ladder at critical instead, which\n                       empties the Metro and compilation caches, makes every\n                       idle workspace dormant and deletes node_modules and Pods\n                       of idle linked worktrees. It never touches a workspace\n                       that is building, driven, leased, hosted or pinned by\n                       maintenance.keep\n  --older-than <days>  also reap owned devices whose workspace has not been used\n                       this long, trim shared cache entries nothing has used in\n                       that time and device recordings made before it, clear\n                       workspace build outputs under --cache workspaces only for\n                       workspaces idle this long, and let the pressure ladder\n                       delete parked devices only once parked this long\n  --cache <name>       act on the shared caches whose name or directory contains\n                       <name>, every cache, the workspace build outputs and the\n                       device recordings with --cache all (and the pressure\n                       ladder at critical with --delete), only the workspace\n                       build outputs with --cache workspaces, only the device\n                       recordings with --cache recordings, only the parked\n                       simulators and emulators with --cache parked, the\n                       watchman daemon and its stale roots with --cache\n                       watchman, the Gradle and Kotlin compile daemons with\n                       --cache gradle-daemons, or the Gradle version caches and\n                       wrapper distributions no registered project pins with\n                       --cache gradle-versions; archived, archived:<id>,\n                       archived-logs, archived-recordings and archived-agent\n                       select archived history explicitly, and the three kind\n                       selectors also take :<id> (archived-logs:<id>) to clear\n                       one kind of one archive; --cache all excludes archives.\n                       all, workspaces, recordings, parked, archived,\n                       archived:<id>, archived-logs, archived-recordings,\n                       archived-agent, their :<id> forms, watchman,\n                       gradle-daemons and gradle-versions are reserved names\n                       that never select a single cache, and --cache all never\n                       includes watchman, gradle-daemons or gradle-versions.\n                       With --delete they are emptied whole (a parked device is\n                       erased and stays parked, watchman loses its stale roots\n                       and shuts down only when no client uses it, and only\n                       daemons proven idle stop), which is the only way to clear\n                       an index-backed cache; add --older-than <days> to trim\n                       them by age instead. Archive ids, including the :<id> of\n                       a kind selector, ignore --older-than; archived and\n                       per-kind archive selectors without an id filter by\n                       removal age. Only those caches are reported; other\n                       devices and project entries are not inspected. Caches\n                       outside the config dir are refused while STIM_HOME is\n                       set.\n  --json               print the report as JSON on stdout; every other line goes\n                       to stderr\n  -h, --help           display help for command\n",
+    "out": "Usage: stim gc [options]\n\nRun one automatic maintenance pass now at the measured pressure level, or the\nlevel --pressure names, and delete what it takes. At every level: workspace\nbuild outputs and shared caches over their caps, what the age sweep removes,\nunused iOS simulator runtimes, registry entries and owned devices of removed\nprojects, stale records, workspace logs over their cap, finished linked\nworktrees past their grace period, and every workspace idle for idle.dormantDays\nreduced to its minimal size: build outputs, owned devices, and a linked\nworktree's node_modules and Pods. At high, the pressure ladder to its end as\nwell: idle dev servers and their build outputs, parked devices, shared caches\ntrimmed to half their caps, idle workspaces made dormant, node_modules and Pods\nof idle linked worktrees, idle Gradle daemons, unpinned Gradle versions,\ntemporary leftovers, and clean merged worktrees without the grace period. At\ncritical, every shared cache Stim registered emptied, clean pushed worktrees\nidle 7 days, every device recording and archived content, then the caches of\nother tools through their own commands (npm, Yarn, pnpm, CocoaPods, Gradle),\nwhich high also runs while free disk stays under disk.minFreeGb. It never\ntouches a workspace that is building, driven, leased, hosted or pinned by\nmaintenance.keep.\n\nOptions:\n  --dry-run           report what the run would delete, and delete nothing\n  --pressure <level>  run at this level, normal, high or critical, instead of\n                      the measured one\n  --json              print the result as JSON on stdout; every other line goes\n                      to stderr\n  -h, --help          display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -984,7 +984,7 @@
       "parent": {}
     }
   },
-  "[\"gc\",\"--json\",\"--delete\",\"--cache\",\"workspaces\"]": {
+  "[\"gc\",\"--dry-run\",\"--pressure\",\"critical\",\"--json\"]": {
     "out": "",
     "err": "",
     "exitCode": 0,
@@ -992,78 +992,48 @@
       "path": ["gc"],
       "args": [],
       "options": {
-        "json": true,
-        "delete": true,
-        "cache": "workspaces"
-      },
-      "parent": {}
-    }
-  },
-  "[\"gc\",\"--delete\",\"--cache\",\"archived:x\"]": {
-    "out": "",
-    "err": "",
-    "exitCode": 0,
-    "ran": {
-      "path": ["gc"],
-      "args": [],
-      "options": {
-        "delete": true,
-        "cache": "archived:x"
-      },
-      "parent": {}
-    }
-  },
-  "[\"gc\",\"--older-than\",\"30\",\"--worktrees\",\"--json\"]": {
-    "out": "",
-    "err": "",
-    "exitCode": 0,
-    "ran": {
-      "path": ["gc"],
-      "args": [],
-      "options": {
-        "olderThan": 30,
-        "worktrees": true,
+        "dryRun": true,
+        "pressure": "critical",
         "json": true
       },
       "parent": {}
     }
   },
-  "[\"gc\",\"--older-than\",\"lastweek\"]": {
+  "[\"gc\",\"--pressure\",\"max\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: option '--older-than <days>' argument 'lastweek' is invalid. must be a whole number of days, e.g. --older-than 30"
+    "error": "error: option '--pressure <level>' argument 'max' is invalid. must be one of normal, high, critical"
   },
-  "[\"gc\",\"--older-than=-5\"]": {
-    "out": "",
-    "err": "",
-    "exitCode": 0,
-    "ran": {
-      "path": ["gc"],
-      "args": [],
-      "options": {
-        "olderThan": -5
-      },
-      "parent": {}
-    }
-  },
-  "[\"gc\",\"--cache\",\"  \"]": {
+  "[\"gc\",\"--pressure\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: option '--cache <name>' argument '  ' is invalid. must name a cache, e.g. --cache \"compilation cache\""
+    "error": "error: option '--pressure <level>' argument missing"
   },
-  "[\"gc\",\"--cache\"]": {
+  "[\"gc\",\"--delete\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: option '--cache <name>' argument missing"
+    "error": "error: unknown option '--delete'"
   },
-  "[\"gc\",\"--delet\"]": {
+  "[\"gc\",\"--cache\",\"workspaces\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: unknown option '--delet'\n(Did you mean --delete?)"
+    "error": "error: unknown option '--cache'"
+  },
+  "[\"gc\",\"--older-than\",\"30\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: unknown option '--older-than'"
+  },
+  "[\"gc\",\"--worktrees\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: unknown option '--worktrees'"
   },
   "[\"device\"]": {
     "out": "",

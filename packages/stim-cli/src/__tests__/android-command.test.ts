@@ -2830,7 +2830,6 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/AVD stim-app.*not listed/);
     expect(result.error.message).not.toContain(DISK_FATAL);
     expect(result.error.remedy).toContain('npx stim gc');
-    expect(result.error.remedy).toContain('npx stim gc --delete');
     expect(result.error.remedy).not.toMatch(/JAVA_HOME|ANDROID_HOME|sdkmanager|rm -rf/);
   });
 

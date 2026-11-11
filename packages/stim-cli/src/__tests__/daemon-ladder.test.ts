@@ -3,7 +3,14 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { diskUsageCacheFile, IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  IDLE_STOP_KEY,
+  readDormantStage,
+  readIdleStage,
+  readJsonObject,
+  workspaceLightenedFile,
+} from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
@@ -238,7 +245,7 @@ describe('the dormant stage', () => {
       expect(loadConfig()?.parked).toEqual({ ios: [parked] });
       expect(existsSync(join(root, 'node_modules'))).toBe(true);
       expect(readDormantStage(readWorkspaceState(root))).toMatchObject({
-        dormantDays: 3,
+        dormantDays: 1,
         deletedDevices: ['stim-old (iPhone 17 26.0)'],
       });
       expect(log).toHaveBeenCalledWith('info', 'workspace_dormant', expect.stringContaining(root), expect.anything());
@@ -733,15 +740,21 @@ describe('rung 5', () => {
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
     () => {
-      test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
-        const { idle } = linkedWorktrees(['idle']);
+      test('at high it deletes node_modules and Pods of a linked worktree idle 10 minutes, and at critical of one idle 2', async () => {
+        const { idle, recent } = linkedWorktrees(['idle', 'recent']);
         register(idle);
-        await ladder('high');
-        expect(existsSync(join(idle, 'node_modules'))).toBe(true);
-        const { actions } = await ladder('critical');
+        register(recent);
+        recordWorkspaceUse(recent, new Date(Date.now() - 5 * MINUTE_MS));
+        const high = await ladder('high');
         expect(existsSync(join(idle, 'node_modules'))).toBe(false);
         expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
-        expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+        expect(existsSync(join(recent, 'node_modules'))).toBe(true);
+        expect(high.actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual([
+          'done',
+          'done',
+        ]);
+        await ladder('critical');
+        expect(existsSync(join(recent, 'node_modules'))).toBe(false);
       });
 
       test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
@@ -814,7 +827,7 @@ describe('rung 5', () => {
 describe.skipIf(process.platform === 'win32')(
   'the dormant stage for dependencies (skipped on win32, where Stim cannot list the running processes)',
   () => {
-    test('after idle.dormantDays it deletes a tree holding its own bytes and keeps a tree of unknown size and a workspace idle less long', async () => {
+    test('after idle.dormantDays it deletes trees holding their own bytes or of unknown size, even ones worktree warm cannot restore, and keeps a workspace idle less long', async () => {
       vi.setSystemTime(Date.now() + 2 * DAY_MS);
       resetExecutor();
       const real = getExecutor();
@@ -853,8 +866,9 @@ describe.skipIf(process.platform === 'win32')(
       };
       const old = worktree('old');
       const recent = worktree('recent');
+      writeFileSync(join(old, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
       recordWorkspaceUse(old, new Date(Date.now() - 4 * DAY_MS));
-      recordWorkspaceUse(recent, new Date(Date.now() - DAY_MS));
+      recordWorkspaceUse(recent, new Date(Date.now() - DAY_MS / 2));
       const cache = (path: string, privateBytes: number) =>
         writeCacheFile(diskUsageCacheFile(path), {
           path,
@@ -882,9 +896,14 @@ describe.skipIf(process.platform === 'win32')(
           outcome: 'done',
           restore: 'stim worktree warm',
         }),
+        expect.objectContaining({ kind: 'delete-dependencies', target: join(old, 'ios', 'Pods'), outcome: 'done' }),
       ]);
       expect(existsSync(join(old, 'node_modules'))).toBe(false);
-      expect(existsSync(join(old, 'ios', 'Pods'))).toBe(true);
+      expect(existsSync(join(old, 'ios', 'Pods'))).toBe(false);
+      expect(readJsonObject(workspaceLightenedFile(old))?.dirs).toEqual([
+        join(old, 'node_modules'),
+        join(old, 'ios', 'Pods'),
+      ]);
       expect(existsSync(join(recent, 'node_modules'))).toBe(true);
     }, 20_000);
   },

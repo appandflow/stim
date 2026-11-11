@@ -754,13 +754,13 @@ describe('planning workspace build output clearing', () => {
     expect(busy?.keptReason).toMatch(/^in use: .*native-run/);
   });
 
-  test('--older-than keeps a workspace used more recently, and one whose last use is unknown', () => {
+  test('an age limit keeps a workspace used more recently, and one whose last use is unknown', () => {
     const [old, recent, unknown] = planWorkspaceOutputs(
       [entry(), entry({ lastUsed: now - 2 * DAY_MS }), entry({ lastUsed: NaN })],
       { olderThan: 3, now },
     );
     expect(old?.willClear).toBe(true);
-    expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within --older-than 3' });
+    expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within 3 days' });
     expect(unknown).toMatchObject({ keptCode: 'last-use-unknown', keptReason: 'its last use is unknown' });
   });
 

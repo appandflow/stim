@@ -116,7 +116,7 @@ test('maintenance.idleStopHours 0 costs until idle.dormantDays is set, naming th
   expect(finding).toMatchObject({ level: 'cost', detail: expect.not.stringContaining('refuse') });
   for (const command of [
     'stim settings set idle.dormantDays 0',
-    'stim settings set idle.dormantDays 3',
+    'stim settings set idle.dormantDays 1',
     'stim settings unset maintenance.idleStopHours --scope machine',
   ])
     expect(finding?.fix).toContain(`\`${command}\``);
