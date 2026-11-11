@@ -26,7 +26,7 @@ const claimPath = (root: string, streamId: string) =>
 const historyPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-backfills', `${createHash('sha256').update(streamId).digest('hex')}.claim`);
 
-async function recover(path: string, expected?: string, beforeRelease?: () => void): Promise<void> {
+async function recover(path: string, expected?: string, beforeRelease?: () => void, handedOver = false): Promise<void> {
   const survey = readClaimSet(path);
   if (survey.unresolved.length) {
     const issue = survey.unresolved[0];
@@ -35,6 +35,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
   }
   if (
     expected !== undefined &&
+    !(handedOver && !survey.live.length && !survey.dead.length) &&
     ![...survey.live, ...survey.dead].some((holder) => holder.details.streamId === expected)
   )
     throw new Error(
@@ -124,9 +125,14 @@ export async function takeHistoryClaim(root: string, streamId: string): Promise<
   return attempt.acquired;
 }
 
-export async function clearStreamClaim(root: string, streamId: string, beforeRelease: () => void): Promise<void> {
+export async function clearStreamClaim(
+  root: string,
+  streamId: string,
+  beforeRelease: () => void,
+  handedOver = false,
+): Promise<void> {
   await clearHistoryClaim(root, streamId);
-  await recover(claimPath(root, streamId), streamId, beforeRelease);
+  await recover(claimPath(root, streamId), streamId, beforeRelease, handedOver);
 }
 
 export async function takeStreamClaim(root: string, streamId: string): Promise<ClaimHandle> {

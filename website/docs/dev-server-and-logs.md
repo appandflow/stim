@@ -529,6 +529,14 @@ stim logs --source agent.
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
 
+When `stimd` restarts on another Stim build, it stops each simulator and
+emulator log collector, and the new `stimd` starts it again. `device.ndjson`
+misses the lines the app logs between the two, about the time `stimd` takes to
+restart. A collector that cannot start again (the device or app is gone, or its
+workspace was stopped) is dropped and noted in `stimd`'s own log. A physical
+iPhone's console is not restarted, because that would launch the app again; it
+holds the restart until `stim stop`.
+
 ## Named server ports
 
 Allocate a port in the workspace whose server you want to isolate:
