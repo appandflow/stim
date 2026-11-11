@@ -154,8 +154,8 @@ describe('benchmark Android emulator selection', () => {
   });
 
   it('applies the same rule to simulators the Expo agent CLI manages', () => {
-    const expected = { name: 'x', deviceTypeIdentifier: 'type', runtimeIdentifier: 'rt' };
-    const options = { arm: 'expo-agent-cli', baseline: new Set(['old']), expectedControl: expected };
+    const pinned = { name: 'x', deviceTypeIdentifier: 'type', runtimeIdentifier: 'rt' };
+    const options = { arm: 'expo-agent-cli', baseline: new Set(['old']), expectedControl: pinned };
     const fresh = {
       udid: 'new',
       name: 'tool-made',
