@@ -222,11 +222,11 @@ function sourceTokens(source: string): { kind: 'code' | 'string' | 'template'; v
       at = end === -1 ? source.length : end + 2;
     } else if (char === "'" || char === '"' || char === '`') {
       let value = '';
-      at++;
-      while (at < source.length && source[at] !== char && (char === '`' || source[at] !== '\n')) {
-        if (source[at] === '\\') at++;
-        value += source[at] ?? '';
-        at++;
+      for (at++; at < source.length; at++) {
+        const next = source.charAt(at);
+        if (next === char || (next === '\n' && char !== '`')) break;
+        if (next === '\\') at++;
+        value += source.charAt(at);
       }
       at++;
       tokens.push({ kind: char === '`' ? 'template' : 'string', value });
