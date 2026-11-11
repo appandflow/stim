@@ -233,8 +233,10 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
     try {
       adoptMetroChildren(() => {});
       await stopFixture(pid, token);
-      await metroTick('on', () => {});
-      await vi.waitFor(() => expect(calls).toContainEqual(['--no-spawn', 'watch-del', root]));
+      await vi.waitFor(async () => {
+        await metroTick('on', () => {});
+        expect(calls).toContainEqual(['--no-spawn', 'watch-del', root]);
+      });
       await closeMetroChildren();
     } finally {
       await stopFixture(pid, token);
