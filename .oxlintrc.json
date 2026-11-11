@@ -201,6 +201,11 @@
             "patterns": [
               {
                 "regex": "^@stim-cli/(?!(?:agent-driver-agent-device|agent-driver|core)(?:/|$))|^stim(?:/|$)"
+              },
+              {
+                "regex": "^@stim-cli/(?:agent-driver(?:/|$)|core/state$)",
+                "allowTypeImports": true,
+                "message": "A driver reaches the engine only through the agent-driver contract; import its types only."
               }
             ]
           }
