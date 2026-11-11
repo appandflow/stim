@@ -308,6 +308,12 @@ function iosProjectTargetRefusal(
           ? 'remote'
           : 'simulator'
       : null;
+  if (target === 'hosted' && project.hostedUnsupported && !project.targets.includes(target))
+    return {
+      code: 'STIM_BAD_ARG',
+      message: `This app cannot run on a hosted iOS simulator: ${project.hostedUnsupported}.`,
+      remedy: 'Run it on a simulator on this Mac with --remote local, or unset ios.remote.',
+    };
   if (target && !project.targets.includes(target))
     return {
       code: 'STIM_BAD_ARG',
@@ -321,6 +327,11 @@ function iosProjectTargetRefusal(
       remedy: 'Use its local iOS build recipe.',
     };
   return null;
+}
+
+function iosHostedRefusal(project: IosProject): string | null {
+  if (project.targets.includes('hosted')) return null;
+  return project.hostedUnsupported ?? 'this project integration does not run on a hosted simulator';
 }
 
 function workspaceBooted(
@@ -734,6 +745,7 @@ async function runIos(
     release,
     appMode,
     supportsRemote: integration.targets.includes('remote'),
+    hostedRefusal: iosHostedRefusal(integration),
     metroCheck,
     d,
     deviceType,

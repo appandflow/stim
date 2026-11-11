@@ -249,6 +249,10 @@ client sent them, and keep `target/` warm in the checkout's own repository area.
 The worker never gives an Exact build a simulator, so apps whose `app.json`
 declares native modules build on the client.
 
+`stim ios --remote <mac>` also runs an Exact app on a hosted simulator there,
+built on the client or a build Mac; hosting needs no Exact toolchain. Apps that
+declare native modules stay on the client's own simulator.
+
 ### Worker disk
 
 Each source checkout a client builds from, including each worktree, gets its own

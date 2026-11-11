@@ -11047,6 +11047,23 @@ describe('registered iOS project recipes', () => {
     },
   );
 
+  test('a recipe without the hosted target keeps an automatic placement here and refuses remote-only', async () => {
+    const projectRegistry = nativeProject();
+    compiler();
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'ios.remote', 'auto');
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const deps = { projectRegistry, readBundleId, readBundleExecutable, automaticDevicePlacement: automatic };
+    const local = await run({ json: true }, deps);
+    expect(local.exitCode).toBe(null);
+    expect(parseFirst(local.logs)).toMatchObject({ bundleId: 'org.example.native', launched: true });
+    expect(local.calls.args.installIosApp).toMatchObject({ udid: UDID });
+    const refused = await run({ remote: 'remote-only', json: true }, deps);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.errs.join('\n')).toMatch(/cannot run on a hosted iOS simulator/);
+    expect(automatic).not.toHaveBeenCalled();
+  });
+
   test('a cache-ineligible native recipe compiles every run and releases its slot and install copy', async () => {
     nativeProject();
     const cache = vi.fn<() => never>(() => {

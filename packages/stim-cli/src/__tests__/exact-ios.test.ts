@@ -222,22 +222,33 @@ test('plans an uncached build on this machine with the bundle id from app.json',
       kind: 'cache-skipped',
       summary: 'Exact builds incrementally in its own target/ directory',
     }),
-    placement:
-      'this machine; when auto picks a hosted device instead, the run refuses, since Exact apps cannot use one',
+    placement: 'this machine',
     bundleId: 'com.example.shop',
   });
 });
 
-test.each([
-  ['janics-mac-mini', 'hosted'],
-  ['eas', 'remote'],
-])('refuses to plan the %s device the run refuses', async (remote, target) => {
-  expect(await plan({ remote })).toEqual({
+test('refuses to plan the EAS device the run refuses', async () => {
+  expect(await plan({ remote: 'eas' })).toEqual({
     refusal: expect.objectContaining({
       code: 'STIM_BAD_ARG',
-      message: `This project integration does not support the ${target} iOS target.`,
+      message: 'This project integration does not support the remote iOS target.',
     }),
   });
+});
+
+test('an app that declares native modules keeps an automatic placement here and refuses a hosted one', async () => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['camera'] }));
+  expect(exactIosProject(root).targets).not.toContain('hosted');
+  expect(await plan({ remoteBuild: 'local', remote: 'auto' })).toMatchObject({
+    placement: expect.stringMatching(/^this machine; an Exact app that declares native modules/),
+  });
+  for (const remote of ['janics-mac-mini', 'remote-only'])
+    expect(await plan({ remoteBuild: 'local', remote })).toEqual({
+      refusal: expect.objectContaining({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringMatching(/^This app cannot run on a hosted iOS simulator: /),
+      }),
+    });
 });
 
 test('names why an Exact build that cannot offload stays here, and refuses a named build machine', async () => {
