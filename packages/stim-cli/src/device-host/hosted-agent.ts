@@ -45,7 +45,11 @@ export async function agentAccess(
   }
   const issued = parsed && 'token' in parsed ? parsed : null;
   const loaded = issued ? await agentDriverClient(issued.driver) : null;
-  if ((grant !== undefined && !parsed) || (loaded && 'unavailable' in loaded))
+  if (loaded && 'failed' in loaded && issued)
+    note(
+      `This Stim could not load its ${issued.driver} driver (${loaded.failed}), so agent control of apps on ${credential.machine} is off. Update or reinstall Stim on this Mac.`,
+    );
+  else if ((grant !== undefined && !parsed) || (loaded && 'unavailable' in loaded))
     note(`${credential.machine} offered agent control this Stim does not support.`);
   const port = machine?.port ?? 443;
   const client = loaded && 'client' in loaded ? loaded.client : null;

@@ -38,7 +38,7 @@ workspace's own `AGENT_DEVICE_STATE_DIR` rather than a hosted driver.
 ## Contract
 
 A driver package declares `"stimPlugin": { "kinds": { "agent-driver": 1 } }`
-and exports `id` and `createAgentDriver({ env, stateDir, claimRoot, device })`,
+and exports `id` and `createAgentDriver({ env, stateDir, claimRoot, device, host })`,
 which returns the `HostedAgentDriver` that `HostedAgentHost` already
 reference-counts: `start`, `stop`, `issue`, `revoke`, `target` and `onExit`,
 named `id`. Every argument and result is structured-clone-safe data. `target`
@@ -47,6 +47,24 @@ authenticated request; `onExit` returns a function that stops the listener. The 
 every policy decision: which client and session may use a grant, the tailnet
 node pin, restarts and teardown order. The driver confines each forwarded
 request to the one app or device it issued the grant for.
+
+`host` holds the engine members a driver uses for ownership. `claims.take`,
+`childPending`, `setChild`, `clearChild` and `release` take and update an
+exclusive claim at a root the driver names, identified by an id; `take` also
+reports the child that a reaped holder recorded. `claims.stopStale` stops the
+recorded children of claims whose owner is gone and removes those claims, and
+`claims.removeCommand` gives the command a refusal prints. `processes.capture`,
+`inspect` and `stop` capture a process identity, check it, and signal it only
+while it is the same process. Claims are taken for the stim-server process, and
+liveness, survey and reaping stay in core's ownership claims; a state the host
+cannot establish rejects with a message that names the claim and its remove
+command. The driver spawns its own children and has the host capture their
+identities. The host is scoped to one driver: it takes claims only at
+`claimRoot` or inside `stateDir`, and signals only identities it captured or
+found recorded on a claim it took. In the kit worker each member call crosses
+the `MessagePort` as a request and a reply; when the worker goes away, the host
+stops the children recorded on the claims it still holds and releases them,
+keeping and reporting any it cannot resolve.
 
 Two capabilities are optional:
 
@@ -81,7 +99,8 @@ Drivers are machine scope. stim-server is a machine daemon bundled in Stim
 Desktop, so it resolves drivers from its own dependencies, never from a
 project. stim-server and the CLI each keep a registry of the first-party driver
 packages they depend on and import a package only when its driver is needed.
-`HOSTED_AGENT_DRIVERS` in core lists the same names for the setting's choices.
+`BUILTIN_AGENT_DRIVERS` in core lists the same names, and
+`HOSTED_AGENT_DRIVERS`, the setting's choices, is `none` followed by them.
 
 The driver for a hosted macOS app keeps its state and claim under the server
 home, at `server/<driver>` and `server/<driver>.claims`. A hosted device
@@ -168,14 +187,15 @@ tool-server run, and accept the flag from the environment.
 An Argent driver needs a tool-server mode that serves one device and leaves
 other simulators untouched, and preferably a daemon policy like
 agent-device's. With that, the driver is a package beside agent-device's, plus
-its name in the two registries and in `HOSTED_AGENT_DRIVERS`.
+its name in the two registries and in `BUILTIN_AGENT_DRIVERS`.
 
 ## Decisions
 
 - `hosting.agentDriver` stays a choice of first-party names, so validation,
   `stim settings` and the JSON Schema keep rejecting typos.
-- The contract package has no runtime dependencies; it depends on
-  `@stim-cli/core` for the payload types only.
+- The contract package depends on `@stim-cli/core` for the payload types, the
+  loader and the host members' implementation. A driver package imports only
+  its types, so it carries no engine code.
 - stim-server and the CLI depend on every first-party driver package for now.
   The dynamic import keeps the door open for optional installs.
 - A first publish of each new package needs npm to accept it from the release

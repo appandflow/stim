@@ -110,7 +110,7 @@ jobs:
       - if: github.event_name == 'merge_group'
         run: pnpm run build
       - if: github.event_name == 'merge_group'
-        run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net
+        run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver
       - if: github.event_name == 'merge_group'
         run: pnpm run typecheck
       - if: github.event_name == 'merge_group'

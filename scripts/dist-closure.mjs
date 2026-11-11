@@ -17,7 +17,7 @@ const shared = [
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
-  ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\//],
+  ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\/(?!agent-device-bin\.ts$)/],
   ...pluginRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
@@ -41,6 +41,11 @@ const deny = {
   net: [
     ['transport-tailscale', /^@stim-cli\/transport-tailscale\//],
     ['agent-driver-agent-device', /^@stim-cli\/agent-driver-agent-device\//],
+  ],
+  'agent-driver': [
+    ['engine package', /^@stim-cli\/(?!agent-driver-agent-device\/)/],
+    ['stim', /^stim(\/|$)/],
+    ['unique-pid', /^unique-pid(\/|$)/],
   ],
 };
 
@@ -161,6 +166,7 @@ export function entryFiles(dist) {
   entries.status = [join(dist, 'status.mjs')];
   entries.api = [join(dist, 'api.mjs')];
   entries.tiers = [join(dist, '../../cache/dist/tiers.mjs')];
+  entries['agent-driver'] = [join(dist, '../../agent-driver-agent-device/dist/index.mjs')];
   const stimd = /"__stimd"\)[^]{0,80}?import\("(\.\/[^"]+\.mjs)"\)/.exec(commands);
   if (!stimd) throw new Error(`${base[1]} loads no chunk for __stimd`);
   entries.daemon = [...base, join(dist, stimd[1]), join(dist, 'stimd-thread.mjs')];

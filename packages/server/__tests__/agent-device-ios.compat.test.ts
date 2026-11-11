@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
@@ -135,6 +136,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     },
     stateDir,
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
   });
   try {

@@ -134,7 +134,13 @@
       "files": ["packages/stim-cli/src/**/*.{ts,mts,mjs,js}"],
       "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
       "rules": {
-        "stim/static-imports": ["error", { "modules": ["@stim-cli/agent-driver-agent-device"] }]
+        "stim/static-imports": [
+          "error",
+          {
+            "modules": ["@stim-cli/agent-driver-agent-device"],
+            "allow": ["@stim-cli/agent-driver-agent-device/agent-device-bin"]
+          }
+        ]
       }
     },
     {
@@ -210,10 +216,11 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:agent-driver-agent-device|agent-driver|core)(?:/|$))|^stim(?:/|$)"
+                "regex": "^@stim-cli/(?:cache|cache-s3|ci|core|server|transport|transport-local|transport-tailscale)(?:/|$)|^stim(?:/|$)|^unique-pid(?:/|$)",
+                "message": "A driver reaches the engine only through the agent-driver contract and its host members."
               },
               {
-                "regex": "^@stim-cli/(?:agent-driver(?:/|$)|core/state$)",
+                "regex": "^@stim-cli/agent-driver(?:/|$)",
                 "allowTypeImports": true,
                 "message": "A driver reaches the engine only through the agent-driver contract; import its types only."
               }

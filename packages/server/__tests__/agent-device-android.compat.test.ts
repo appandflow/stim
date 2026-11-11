@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,7 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     env: process.env,
     stateDir,
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
     device: { session, serial, avdName },
   });
   try {

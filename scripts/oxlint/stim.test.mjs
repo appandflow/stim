@@ -86,6 +86,7 @@ tester.run('refusal-remedy', plugin.rules['refusal-remedy'], {
 });
 
 const lazy = [{ modules: ['@stim-cli/transport-tailscale'] }];
+const allowSmall = [{ modules: ['@stim-cli/transport-tailscale'], allow: ['@stim-cli/transport-tailscale/small'] }];
 const net = fileURLToPath(new URL('../../packages/server/src/example.ts', import.meta.url));
 
 tester.run('static-imports', plugin.rules['static-imports'], {
@@ -96,6 +97,7 @@ tester.run('static-imports', plugin.rules['static-imports'], {
     { code: "const load = () => import('@stim-cli/transport-tailscale');", options: lazy, filename: net },
     { code: "import { value } from '@stim-cli/transport-local';", options: lazy, filename: net },
     { code: "import { value } from '@stim-cli/transport-tailscale-extra';", options: lazy, filename: net },
+    { code: "import { value } from '@stim-cli/transport-tailscale/small';", options: allowSmall, filename: net },
   ],
   invalid: [
     "import { value } from '@stim-cli/transport-tailscale';",
@@ -104,5 +106,14 @@ tester.run('static-imports', plugin.rules['static-imports'], {
     "import { value, type T } from '@stim-cli/transport-tailscale';",
     "export { value } from '@stim-cli/transport-tailscale';",
     "export * from '@stim-cli/transport-tailscale';",
-  ].map((code) => ({ code, options: lazy, filename: net, errors: 1 })),
+  ]
+    .map((code) => ({ code, options: lazy, filename: net, errors: 1 }))
+    .concat([
+      {
+        code: "import { value } from '@stim-cli/transport-tailscale/small/deeper';",
+        options: allowSmall,
+        filename: net,
+        errors: 1,
+      },
+    ]),
 });

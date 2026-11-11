@@ -22,27 +22,12 @@ import {
 } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, extname, join } from 'node:path';
-import { resolveAgentDevice as resolveAgentDeviceBin, type AgentDeviceInvocation } from '@stim-cli/core';
-import {
-  claimRemoveCommand,
-  clearClaimChild,
-  markClaimChildPending,
-  readClaimSet,
-  releaseClaim,
-  setClaimChild,
-  tryAcquireClaim,
-  type ClaimHandle,
-  type ClaimOwner,
-} from '@stim-cli/core/ownership-claim';
-import {
-  captureProcessIdentity,
-  inspectProcessIdentity,
-  waitForProcessExit,
-  type ProcessRecord,
-} from '@stim-cli/core/process-identity';
 import type {
   AGENT_DRIVER_UNAVAILABLE,
   AgentDriverGrant,
+  AgentDriverHost,
+  AgentDriverProcess,
+  AgentDriverStopStep,
   AgentDriverTarget,
   HostedAgentApp,
   HostedAgentDevice,
@@ -56,6 +41,7 @@ import {
   remoteScreenshot,
   type DeviceCommandRule,
 } from './device-policy.ts';
+import { resolveAgentDevice } from './agent-device-bin.ts';
 import { listProcesses } from './processes.ts';
 
 function adbPath(env: NodeJS.ProcessEnv): string {
@@ -104,6 +90,14 @@ const DEVICE_AGENT_DEVICE =
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
 const RECORDER_LABEL = 'hosted simulator recorder';
+const DAEMON_STOP: AgentDriverStopStep[] = [
+  ['SIGTERM', 3000],
+  ['SIGKILL', 2000],
+];
+const RECORDER_STOP: AgentDriverStopStep[] = [
+  ['SIGINT', 10_000],
+  ['SIGKILL', 2000],
+];
 const CAP_RETRY_MS = 30_000;
 const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
@@ -153,8 +147,6 @@ const LEASE_METHODS = new Set([
   'agent-device.lease.release',
 ]);
 
-export type { AgentDeviceInvocation } from '@stim-cli/core';
-
 const UNAVAILABLE: typeof AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
 
 function unavailable(message: string): Error {
@@ -166,14 +158,6 @@ function newToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocation {
-  try {
-    return resolveAgentDeviceBin(env);
-  } catch (error) {
-    throw unavailable(error instanceof Error ? error.message : String(error));
-  }
-}
-
 export interface AgentDeviceDriverOptions {
   env: NodeJS.ProcessEnv;
   /** agent-device's own host or session state directory; created with mode 0700. */
@@ -181,6 +165,8 @@ export interface AgentDeviceDriverOptions {
   /** Ownership claim root held for as long as the daemon runs. */
   claimRoot: string;
   device?: HostedAgentDevice;
+  /** The engine members that take the driver's claims and check its processes' identities. */
+  host: AgentDriverHost;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   watchMs?: number;
@@ -196,8 +182,8 @@ type AndroidIdentity = 'verified' | 'lost' | 'unverified';
 interface Running {
   reported: boolean;
   proxy: ChildProcess;
-  proxyRecord: ProcessRecord;
-  daemon: ProcessRecord;
+  proxyRecord: AgentDriverProcess;
+  daemon: AgentDriverProcess;
   url: URL;
   token: string;
   admin: DaemonAdmin;
@@ -208,6 +194,11 @@ interface Running {
 interface DaemonAdmin {
   port: number;
   token: string;
+}
+
+interface HeldClaim {
+  id: string;
+  path: string;
 }
 
 interface Lease {
@@ -254,11 +245,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private readonly options: Required<Omit<AgentDeviceDriverOptions, 'env' | 'device'>> &
     Pick<AgentDeviceDriverOptions, 'env' | 'device'>;
   private running: Running | null = null;
-  private claim: ClaimHandle | null = null;
+  private claim: HeldClaim | null = null;
   private starting: Promise<void> | null = null;
   private stopping = false;
-  private daemonRecord: ProcessRecord | null = null;
-  private deviceProxy: { child: ChildProcess; record: ProcessRecord | null } | null = null;
+  private daemonRecord: AgentDriverProcess | null = null;
+  private deviceProxy: { child: ChildProcess; record: AgentDriverProcess | null } | null = null;
   private listener: (() => void) | null = null;
   private loopback: Promise<{ server: Server; port: number; secret: string }> | null = null;
   private androidProbe: Promise<AndroidIdentity> | null = null;
@@ -266,7 +257,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
   private recording: Recording | null = null;
-  private recorder: ClaimHandle | null = null;
+  private recorder: HeldClaim | null = null;
   private recordStarting: Promise<void> | null = null;
 
   constructor(options: AgentDeviceDriverOptions) {
@@ -279,6 +270,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       maxRecordingBytes: MAX_RECORDING_BYTES,
       ...options,
     };
+  }
+
+  private get host(): AgentDriverHost {
+    return this.options.host;
   }
 
   // SimRenderServer writes simulator recordings and lacks access to removable volumes (TCC), where the Stim home may live.
@@ -343,7 +338,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         await this.teardown();
       } catch {
         throw new Error(
-          `The previous agent-device daemon is unresolved. Once it is gone, clear its claim with: ${claimRemoveCommand(this.claim.path)}`,
+          `The previous agent-device daemon is unresolved. Once it is gone, clear its claim with: ${await this.host.claims.removeCommand(this.claim.path)}`,
         );
       }
     }
@@ -366,11 +361,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
-    const attempt = tryAcquireClaim({ root: this.options.claimRoot, mode: 'exclusive', label: 'agent-device daemon' });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired)
+    const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
+    if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
-    const claim = attempt.acquired;
+    const claim: HeldClaim = { id: taken.claim, path: taken.path };
     this.claim = claim;
     this.stopping = false;
     this.androidVerifiedAt = 0;
@@ -389,7 +383,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
     });
-    markClaimChildPending(claim);
+    await this.host.claims.childPending(claim.id);
     const token = newToken();
     let proxy: ChildProcess | undefined;
     try {
@@ -413,14 +407,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           stdio: ['ignore', 'pipe', 'pipe'],
         },
       );
-      if (this.options.device)
-        this.deviceProxy = { child: proxy, record: proxy.pid === undefined ? null : this.captured(proxy.pid) };
-      const url = await this.listening(proxy);
-      const { record: daemon, admin } = this.readDaemon();
+      const ready = this.listening(proxy);
+      ready.catch(() => undefined);
+      if (this.options.device) {
+        const deviceProxy: { child: ChildProcess; record: AgentDriverProcess | null } = { child: proxy, record: null };
+        this.deviceProxy = deviceProxy;
+        if (proxy.pid !== undefined) deviceProxy.record = await this.captured(proxy.pid, proxy);
+      }
+      const url = await ready;
+      const { record: daemon, admin } = await this.readDaemon();
       this.daemonRecord = daemon;
-      const proxyIdentity = proxy.pid === undefined ? null : captureProcessIdentity(proxy.pid);
-      if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
-      setClaimChild(claim, daemon);
+      const proxyRecord = proxy.pid === undefined ? null : await this.captured(proxy.pid, proxy);
+      if (!proxyRecord) throw new Error('The agent-device proxy identity could not be captured.');
+      await this.host.claims.setChild(claim.id, daemon);
       if (!(await leasesBackend(url, this.options.device ? deviceScope(this.options.device).backend : 'macos-app')))
         throw unavailable(this.options.device ? DEVICE_AGENT_DEVICE : UNSCOPED);
       const watch = setInterval(() => void this.watchDaemon(), this.options.watchMs);
@@ -428,7 +427,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       const running: Running = {
         reported: false,
         proxy,
-        proxyRecord: { pid: proxy.pid, processToken: proxyIdentity.token },
+        proxyRecord,
         daemon,
         url,
         token,
@@ -443,7 +442,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.running = null;
       if (!this.daemonRecord) {
         try {
-          this.daemonRecord = this.readDaemon().record;
+          this.daemonRecord = (await this.readDaemon()).record;
         } catch {}
       }
       await this.teardown(proxy).catch(() => undefined);
@@ -490,13 +489,12 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     });
   }
 
-  private readDaemon(): { record: ProcessRecord; admin: DaemonAdmin } {
+  private async readDaemon(): Promise<{ record: AgentDriverProcess; admin: DaemonAdmin }> {
     const value: unknown = JSON.parse(readFileSync(join(this.options.stateDir, 'daemon.json'), 'utf8'));
     if (!isJsonObject(value) || typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid < 2)
       throw new Error('The agent-device daemon record has no pid.');
-    const identity = captureProcessIdentity(value.pid);
-    if (!identity.ok) throw new Error('The agent-device daemon identity could not be captured.');
-    const record = { pid: value.pid, processToken: identity.token };
+    const record = await this.host.processes.capture(value.pid);
+    if (!record) throw new Error('The agent-device daemon identity could not be captured.');
     if (
       typeof value.httpPort !== 'number' ||
       !Number.isInteger(value.httpPort) ||
@@ -549,8 +547,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private async watchDaemon(): Promise<void> {
     const running = this.running;
     if (!running || this.stopping || running.reported) return;
-    if (inspectProcessIdentity(running.daemon) === 'gone') this.exited();
-    else if ((await this.androidIdentity()) === 'lost' && this.running === running && !this.stopping) this.exited();
+    if ((await this.host.processes.inspect(running.daemon)) === 'gone') {
+      if (this.running === running) this.exited();
+    } else if ((await this.androidIdentity()) === 'lost' && this.running === running && !this.stopping) this.exited();
   }
 
   private exited(): void {
@@ -572,7 +571,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.recording = null;
       try {
         if (this.recorder) await this.trackRecorder(this.options.device.udid);
-        await stopRecorders(recorderClaimRoot(this.options.stateDir), this.recorder);
+        await stopRecorders(this.host, this.options.stateDir, this.recorder?.id);
         this.recorder = null;
       } catch (error) {
         recorderError = error;
@@ -586,28 +585,23 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.running = null;
     if (running) clearInterval(running.watch);
     if (!this.claim && this.options.device) {
-      let attempt;
+      let taken;
       try {
-        attempt = tryAcquireClaim({
-          root: this.options.claimRoot,
-          mode: 'exclusive',
-          label: 'agent-device daemon',
-        });
+        taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
       } catch (error) {
         throw new Error(
-          `The agent-device daemon claim ${this.options.claimRoot} is unresolved: ${(error as Error).message}. Once it is gone, clear it with: ${claimRemoveCommand(this.options.claimRoot)}`,
+          `The agent-device daemon claim ${this.options.claimRoot} is unresolved: ${(error as Error).message}. Once it is gone, clear it with: ${await this.host.claims.removeCommand(this.options.claimRoot)}`,
           { cause: error },
         );
       }
-      if (attempt.pending) releaseClaim(attempt.pending);
-      if (!attempt.acquired) {
-        const path = attempt.held?.path ?? attempt.waitingFor?.[0]?.path ?? this.options.claimRoot;
+      if (!('claim' in taken)) {
+        const path = taken.held ?? taken.waitingFor ?? this.options.claimRoot;
         throw new Error(
-          `The agent-device daemon is unresolved; its claim ${path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(path)}`,
+          `The agent-device daemon is unresolved; its claim ${path} was kept. Once it is gone, clear it with: ${await this.host.claims.removeCommand(path)}`,
         );
       }
-      this.claim = attempt.acquired;
-      this.daemonRecord = attempt.reaped.find((holder) => holder.child)?.child ?? null;
+      this.claim = { id: taken.claim, path: taken.path };
+      this.daemonRecord = taken.previousChild;
     }
     clearTimeout(this.recording?.timer);
     this.recording = null;
@@ -621,13 +615,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     proxy ??= this.deviceProxy?.child;
     if (proxy?.pid !== undefined) {
       const record =
-        running?.proxyRecord ?? (this.options.device ? this.deviceProxy?.record : this.captured(proxy.pid));
+        running?.proxyRecord ??
+        (this.options.device ? this.deviceProxy?.record : await this.captured(proxy.pid, proxy));
       const stopped = record
         ? await this.signalAndWait(record, true)
         : proxy.exitCode != null || proxy.signalCode != null;
       if (this.options.device && !stopped)
         throw new Error(
-          `The agent-device proxy is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,
+          `The agent-device proxy is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${await this.host.claims.removeCommand(this.claim!.path)}`,
         );
     }
     await this.stopDaemon();
@@ -636,14 +631,15 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.daemonRecord = null;
     this.deviceProxy = null;
     if (!this.claim) return;
-    clearClaimChild(this.claim);
-    if (!releaseClaim(this.claim)) throw new Error(`The agent-device claim could not be released: ${this.claim.path}`);
+    await this.host.claims.clearChild(this.claim.id);
+    if (!(await this.host.claims.release(this.claim.id)))
+      throw new Error(`The agent-device claim could not be released: ${this.claim.path}`);
     this.claim = null;
   }
 
-  private captured(pid: number): ProcessRecord | null {
-    const identity = captureProcessIdentity(pid);
-    return identity.ok ? { pid, processToken: identity.token } : null;
+  private async captured(pid: number, child?: ChildProcess): Promise<AgentDriverProcess | null> {
+    const record = await this.host.processes.capture(pid);
+    return child && (child.exitCode != null || child.signalCode != null) ? null : record;
   }
 
   private async stopDaemon(): Promise<void> {
@@ -662,24 +658,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     if (this.deviceProxy?.child.pid !== undefined && !this.daemonRecord)
       throw new Error(
-        `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,
+        `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${await this.host.claims.removeCommand(this.claim!.path)}`,
       );
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error(`The agent-device daemon did not stop; its claim ${this.claim?.path} was kept.`);
   }
 
-  private async signalAndWait(record: ProcessRecord, group: boolean): Promise<boolean> {
-    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-      const status = inspectProcessIdentity(record);
-      if (status === 'gone' || status === 'different') return true;
-      if (status === 'same') {
-        try {
-          process.kill(group ? -(record.pid as number) : (record.pid as number), signal);
-        } catch {}
-      }
-      if (await waitForProcessExit(record, signal === 'SIGTERM' ? 3000 : 2000)) return true;
-    }
-    return false;
+  private signalAndWait(record: AgentDriverProcess, group: boolean): Promise<boolean> {
+    return this.host.processes.stop(record, { group, steps: DAEMON_STOP });
   }
 
   private async stopAndroidHelpers(): Promise<void> {
@@ -732,11 +718,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           return [];
         return [{ pid: Number(match[1]), group: Number(match[1]) === Number(match[2]) }];
       });
-    const candidates = runners(await listProcesses('pid=,pgid=,command=')).map((runner) => ({
-      pid: runner.pid,
-      group: runner.group,
-      record: this.captured(runner.pid),
-    }));
+    const candidates: { pid: number; group: boolean; record: AgentDriverProcess | null }[] = [];
+    for (const runner of runners(await listProcesses('pid=,pgid=,command=')))
+      candidates.push({ ...runner, record: await this.captured(runner.pid) });
     if (!candidates.length) return;
     const current = runners(await listProcesses('pid=,pgid=,command='));
     const failures: number[] = [];
@@ -1088,7 +1072,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     next.pending = false;
     let tracked = true;
     if (udid && (!answer || succeeded(answer.body))) tracked = await this.trackRecorder(udid);
-    else if (this.recorder && releaseClaim(this.recorder)) this.recorder = null;
+    else if (this.recorder) await this.releaseRecorder(this.recorder);
     if (udid && this.recording === next && answer && succeeded(answer.body) && !tracked) {
       await this.send(
         running,
@@ -1125,14 +1109,18 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private async claimRecorder(udid: string): Promise<void> {
     const root = recorderClaimRoot(this.options.stateDir);
     if (this.recorder) await this.trackRecorder(udid);
-    await stopRecorders(root, this.recorder);
+    await stopRecorders(this.host, this.options.stateDir, this.recorder?.id);
     this.recorder = null;
-    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired)
-      throw new Error(`The ${RECORDER_LABEL} claim is held by another process: ${attempt.held?.path ?? root}`);
-    this.recorder = attempt.acquired;
-    markClaimChildPending(this.recorder);
+    const taken = await this.host.claims.take(root, RECORDER_LABEL);
+    if (!('claim' in taken))
+      throw new Error(`The ${RECORDER_LABEL} claim is held by another process: ${taken.held ?? root}`);
+    const recorder: HeldClaim = { id: taken.claim, path: taken.path };
+    this.recorder = recorder;
+    await this.host.claims.childPending(recorder.id);
+  }
+
+  private async releaseRecorder(recorder: HeldClaim): Promise<void> {
+    if ((await this.host.claims.release(recorder.id)) && this.recorder === recorder) this.recorder = null;
   }
 
   private async trackRecorder(udid: string): Promise<boolean> {
@@ -1145,13 +1133,13 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return false;
     }
     if (pids.length === 0) {
-      if (releaseClaim(claim)) this.recorder = null;
+      await this.releaseRecorder(claim);
       return true;
     }
     const [pid, other] = pids;
-    const record = pid !== undefined && other === undefined ? this.captured(pid) : null;
+    const record = pid !== undefined && other === undefined ? await this.captured(pid) : null;
     if (!record) return false;
-    setClaimChild(claim, record);
+    await this.host.claims.setChild(claim.id, record);
     return true;
   }
 
@@ -1686,7 +1674,7 @@ function failed(response: ServerResponse, error: unknown): void {
   else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed on the hosting Mac.\n');
 }
 
-export function recorderClaimRoot(stateDir: string): string {
+function recorderClaimRoot(stateDir: string): string {
   return join(stateDir, 'recorder.claims');
 }
 
@@ -1701,48 +1689,12 @@ function recorderPids(ps: string, udid: string): number[] {
   });
 }
 
-async function stopRecorder(record: ClaimOwner): Promise<boolean> {
-  for (const [signal, ms] of [
-    ['SIGINT', 10_000],
-    ['SIGKILL', 2000],
-  ] as const) {
-    const status = inspectProcessIdentity(record);
-    if (status === 'gone' || status === 'different') return true;
-    if (status === 'unknown') return false;
-    try {
-      process.kill(record.pid, signal);
-    } catch {}
-    if (await waitForProcessExit(record, ms)) return true;
-  }
-  return false;
-}
-
-export async function stopRecorders(root: string, own: ClaimHandle | null = null): Promise<void> {
-  const survey = readClaimSet(root);
-  const kept = survey.unresolved.map((problem) => problem.path);
-  let reap = survey.dead.length > 0;
-  for (const holder of survey.live) {
-    const mine = holder.claimId === own?.claimId;
-    if (!mine) {
-      const owner = inspectProcessIdentity(holder.owner);
-      if (owner === 'unknown') kept.push(holder.path);
-      if (owner === 'same' || owner === 'unknown') continue;
-    }
-    if (holder.childDeclared && !(holder.child && (await stopRecorder(holder.child)))) {
-      kept.push(holder.path);
-      continue;
-    }
-    if (mine) releaseClaim(own);
-    else reap = true;
-  }
-  const [unresolved] = kept;
-  if (unresolved !== undefined)
-    throw new Error(
-      `The ${RECORDER_LABEL} is unresolved; its claim ${unresolved} was kept. Once it is gone, clear it with: ${claimRemoveCommand(unresolved)}`,
-    );
-  if (!reap) return;
-  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
-  releaseClaim(attempt.acquired ?? attempt.pending);
+/** Stops the recorders that claims at `stateDir`'s recorder root name, for a holder that is gone and for `own`. */
+export function stopRecorders(host: AgentDriverHost, stateDir: string, own?: string): Promise<void> {
+  return host.claims.stopStale(recorderClaimRoot(stateDir), RECORDER_LABEL, {
+    ...(own === undefined ? {} : { own }),
+    steps: RECORDER_STOP,
+  });
 }
 
 function sessionRecordings(sessions: string): string[] {

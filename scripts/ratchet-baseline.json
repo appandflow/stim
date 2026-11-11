@@ -47,7 +47,7 @@
   },
   "packages/agent-driver-agent-device": {
     "src": {
-      "as": 10,
+      "as": 8,
       "nonNull": 8,
       "refusalRemedy": 0,
       "commander": 0

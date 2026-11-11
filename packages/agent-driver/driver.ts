@@ -79,6 +79,67 @@ export function newAgentToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
+/** A process identity the host captured. Opaque: a driver passes it back to the host unchanged. */
+export interface AgentDriverProcess {
+  readonly pid: number;
+  readonly token: string;
+}
+
+export type AgentDriverProcessStatus = 'same' | 'different' | 'gone' | 'unknown';
+
+/** One step of an identity-checked stop: send `signal` while the process is the same one, then wait up to `waitMs`. */
+export type AgentDriverStopStep = readonly [signal: NodeJS.Signals, waitMs: number];
+
+/** The exclusive claim the host took for the driver, named by an id only this host resolves. */
+export interface AgentDriverClaim {
+  claim: string;
+  path: string;
+  /** The child a holder whose owner was gone had recorded, from the claims taking this one reaped. */
+  previousChild: AgentDriverProcess | null;
+}
+
+/** Why the claim was not taken: the live exclusive holder, or the first shared holder it would wait for. */
+export interface AgentDriverClaimRefusal {
+  held: string | null;
+  waitingFor: string | null;
+}
+
+/**
+ * What the engine does for a driver. Ownership claims and process identities stay in the engine: the driver names a
+ * claim root and gets ids and opaque identities back. Every argument and result is structured-clone-safe data, so a
+ * plugin host can serve these members over a `MessagePort`. A claim state the host cannot establish rejects with a
+ * message that names the claim and the command that removes it.
+ */
+export interface AgentDriverHost {
+  claims: {
+    /** Takes the exclusive claim at `root` for this process, after reaping holders whose owner is gone. */
+    take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
+    /** Declares, before the spawn, that the claim's child is about to start; until `setChild` the claim reads as held. */
+    childPending(claim: string): Promise<void>;
+    setChild(claim: string, child: AgentDriverProcess): Promise<void>;
+    clearChild(claim: string): Promise<void>;
+    /** Releases a claim this host took. Resolves false when the claim on disk is no longer that one. */
+    release(claim: string): Promise<boolean>;
+    /**
+     * Stops the recorded children of every claim at `root` whose owner is gone, and of `own`, with `steps`, then
+     * removes those claims. Rejects naming the first claim it could not resolve, which it keeps.
+     */
+    stopStale(root: string, label: string, options: { own?: string; steps: AgentDriverStopStep[] }): Promise<void>;
+    /** The shell command that removes the claim at `path`, for a refusal to print. */
+    removeCommand(path: string): Promise<string>;
+  };
+  processes: {
+    /** The identity of the live process `pid`, or null when it cannot be captured. */
+    capture(pid: number): Promise<AgentDriverProcess | null>;
+    inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
+    /**
+     * Runs `steps` in order and resolves true once the process is gone or another one holds its pid. A step signals
+     * only while the identity is the same; `group` signals its process group. Resolves false when every step ran.
+     */
+    stop(process: AgentDriverProcess, options: { group: boolean; steps: AgentDriverStopStep[] }): Promise<boolean>;
+  };
+}
+
 /**
  * What stim-server hands a driver factory. `stateDir` and `claimRoot` are the driver's own, under the server
  * home for hosted macOS apps or under the session's area for one hosted device, which `device` then names.
@@ -88,6 +149,7 @@ export interface AgentDriverInput {
   stateDir: string;
   claimRoot: string;
   device?: HostedAgentDevice;
+  host: AgentDriverHost;
 }
 
 /** What stim-server hands a module's `recover`: the driver state and claim of one hosted session area. */

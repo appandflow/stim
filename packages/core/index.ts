@@ -22,7 +22,6 @@ export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-un
 export { artifactIn, resolveArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
-export { resolveAgentDevice, type AgentDeviceInvocation } from './agent-device-bin.ts';
 export { dependencyInstall, dependencyLockfile, reusableDependencies } from './dependency-install.ts';
 export {
   createMetroBridge,

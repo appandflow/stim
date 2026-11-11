@@ -5,10 +5,16 @@ import type { HostedAppDelivery } from './hosted-app.ts';
 /** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
 export const HOSTED_MACOS_APP_SLOTS = 64;
 
-/** The drivers `hosting.agentDriver` can name: `none` and the first-party driver packages stim-server ships. */
-export const HOSTED_AGENT_DRIVERS = ['none', 'agent-device'] as const;
+/** The ids of the first-party agent driver packages stim-server ships. */
+export const BUILTIN_AGENT_DRIVERS: readonly ['agent-device'] = ['agent-device'];
 
-export type HostedAgentDriverName = (typeof HOSTED_AGENT_DRIVERS)[number];
+export type BuiltinAgentDriver = (typeof BUILTIN_AGENT_DRIVERS)[number];
+
+/** The values `hosting.agentDriver` takes: `none` or a built-in driver id. */
+export const HOSTED_AGENT_DRIVERS: readonly ['none', ...typeof BUILTIN_AGENT_DRIVERS] = [
+  'none',
+  ...BUILTIN_AGENT_DRIVERS,
+];
 
 const AGENT_DRIVER_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 

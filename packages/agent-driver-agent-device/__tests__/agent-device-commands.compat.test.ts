@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '../device-policy.ts';
-import { resolveAgentDevice } from '../driver.ts';
+import { resolveAgentDevice } from '../agent-device-bin.ts';
 
 const invocation = resolveAgentDevice(process.env);
 

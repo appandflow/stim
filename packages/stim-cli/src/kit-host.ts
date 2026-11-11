@@ -24,6 +24,24 @@ export interface KitWorker {
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The dotted paths of the functions in `host`, by own properties. */
+function hostMembers(host: Record<string, unknown>, prefix = ''): string[] {
+  return Object.entries(host).flatMap(([key, value]) =>
+    typeof value === 'function' ? [`${prefix}${key}`] : isRecord(value) ? hostMembers(value, `${prefix}${key}.`) : [],
+  );
+}
+
+function callHost(host: Record<string, unknown> | undefined, member: string, args: unknown[]): unknown {
+  let value: unknown = host;
+  for (const key of member.split('.')) value = isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+  if (typeof value !== 'function') throw new Error(`the host has no ${member}()`);
+  return Reflect.apply(value, undefined, args);
+}
+
 /**
  * Loads `href` in a worker thread, where a runtime `import 'stim'` fails, and calls its `factory` with `input`.
  * Resolves to `{ unavailable }` with the reason when the module does not load or the factory fails.
@@ -35,6 +53,8 @@ export async function startKitWorker({
   capabilities,
   moduleCapabilities = [],
   idMember = 'id',
+  host,
+  disposeHost,
   timeoutMs = LOAD_TIMEOUT_MS,
 }: {
   href: string;
@@ -46,12 +66,25 @@ export async function startKitWorker({
   moduleCapabilities?: readonly string[];
   /** The instance member that holds its string id. */
   idMember?: string;
+  /** Engine members the module calls; the factory finds them as `input.host`, and each call crosses the port. */
+  host?: Record<string, unknown>;
+  /** Runs once the worker is gone; what it reports it could not resolve joins `failures`. */
+  disposeHost?: () => Promise<string[]>;
   timeoutMs?: number;
 }): Promise<KitWorker | { unavailable: string }> {
   let worker: Worker;
   try {
     worker = new Worker(spawnEntry('kit-worker'), {
-      workerData: { stimKit: true, href, factory, input, capabilities, moduleCapabilities, idMember },
+      workerData: {
+        stimKit: true,
+        href,
+        factory,
+        input,
+        capabilities,
+        moduleCapabilities,
+        idMember,
+        hostMembers: host ? hostMembers(host) : [],
+      },
     });
   } catch (error) {
     return { unavailable: `the input could not be cloned: ${error instanceof Error ? error.message : String(error)}` };
@@ -82,7 +115,9 @@ export async function startKitWorker({
   const ready = new Promise<Extract<KitReply, { type: 'ready' | 'failed' }>>((resolve) => {
     worker.on('message', (reply: KitReply) => {
       if (reply.type === 'ready' || reply.type === 'failed') return resolve(reply);
-      if (reply.type === 'event') {
+      if (reply.type === 'host') {
+        void answerHost(reply);
+      } else if (reply.type === 'event') {
         listeners.get(reply.seq)?.(reply.value);
       } else if (reply.type === 'result') {
         pending.get(reply.seq)?.resolve(reply.value);
@@ -101,10 +136,37 @@ export async function startKitWorker({
       resolve({ type: 'failed', message: error.message });
     });
     worker.on('exit', (code) => {
+      void closeHost();
       fail(new Error(`the worker exited with code ${code}`));
       resolve({ type: 'failed', message: `the worker exited with code ${code}` });
     });
   });
+  let closing: Promise<void> | null = null;
+  function closeHost(): Promise<void> {
+    closing ??= (disposeHost?.() ?? Promise.resolve([])).then(
+      (kept) => void failures.push(...kept),
+      (error: unknown) => void failures.push(error instanceof Error ? error.message : String(error)),
+    );
+    return closing;
+  }
+  async function answerHost({ seq: call, member, args }: Extract<KitReply, { type: 'host' }>): Promise<void> {
+    let answer: KitRequest;
+    try {
+      const value: unknown = await callHost(host, member, args);
+      answer = { type: 'host-result', seq: call, value: value === undefined ? null : value };
+    } catch (error) {
+      const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+      answer = {
+        type: 'host-error',
+        seq: call,
+        message: error instanceof Error ? error.message : String(error),
+        ...(code === undefined ? {} : { code }),
+      };
+    }
+    try {
+      worker.postMessage(answer);
+    } catch {}
+  }
   let timer: NodeJS.Timeout | undefined;
   const first = await Promise.race([
     ready,
@@ -115,6 +177,7 @@ export async function startKitWorker({
   clearTimeout(timer);
   if (first === 'timeout' || first.type === 'failed') {
     await worker.terminate();
+    await closeHost();
     return { unavailable: first === 'timeout' ? `the module did not load within ${timeoutMs}ms` : first.message };
   }
   return {
@@ -140,6 +203,7 @@ export async function startKitWorker({
     },
     async terminate() {
       await worker.terminate();
+      await closeHost();
     },
   };
 }

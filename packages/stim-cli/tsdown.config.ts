@@ -69,7 +69,9 @@ export default defineConfig({
         // rolldown 1.2.5 emits undeclared named exports for a JSON module grouped into a shared chunk (rolldown/rolldown#10020, #11392), so the manifest stays out of the group.
         {
           name: 'agent-driver-agent-device',
-          test: (id) => /[\\/]packages[\\/]agent-driver-agent-device[\\/]/.test(id) && !id.endsWith('package.json'),
+          test: (id) =>
+            /[\\/]packages[\\/]agent-driver-agent-device[\\/]/.test(id) &&
+            !/(?:package\.json|agent-device-bin\.(?:ts|mjs))$/.test(id),
         },
       ],
     },

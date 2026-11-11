@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import {
   existsSync,
   lstatSync,
@@ -193,6 +194,7 @@ beforeEach(() => {
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
   });
 });
@@ -493,6 +495,7 @@ test.each([
       env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
       stateDir: join(home, 'agent'),
       claimRoot: join(home, 'claims'),
+      host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
       device: { session: SESSION, udid: UDID },
       maxRecordingBytes: 10,
       maxRecordingMs,
@@ -520,6 +523,7 @@ test('a later recording leaves an earlier one that was not downloaded yet alone'
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
     maxRecordingBytes: 10,
   });
@@ -551,6 +555,7 @@ test('stops a recording at the time limit and hands that stop to the next client
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
     maxRecordingMs: 20,
   });
@@ -601,6 +606,7 @@ test.each([
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
     device: { session: SESSION, udid: UDID },
     maxRecordingBytes: 10,
     maxRecordingMs,
@@ -770,10 +776,20 @@ test.skipIf(process.platform === 'win32')(
     const stateDir = join(home, 'agent');
     const child = keepAgentClaim(join(stateDir, 'recorder.claims'));
     try {
-      await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
+      await recover({
+        env: {},
+        stateDir,
+        claimRoot: join(home, 'claims'),
+        host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
+      });
       expect(process.kill).toHaveBeenCalledWith(child.pid, 'SIGINT');
       await vi.waitFor(() => expect(readClaimSet(join(stateDir, 'recorder.claims')).live).toEqual([]));
-      await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
+      await recover({
+        env: {},
+        stateDir,
+        claimRoot: join(home, 'claims'),
+        host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
+      });
       expect(readClaimSet(join(stateDir, 'recorder.claims'))).toMatchObject({ live: [], dead: [], unresolved: [] });
     } finally {
       await killKeptChild(child);
@@ -793,7 +809,12 @@ test.skipIf(process.platform === 'win32')(
       .join();
     try {
       await expect(
-        recover({ env: {}, stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
+        recover({
+          env: {},
+          stateDir: join(home, 'agent'),
+          claimRoot: join(home, 'claims'),
+          host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
+        }),
       ).rejects.toThrow(claimRemoveCommand(claim));
       expect(fixture.events).toEqual([]);
       delete fixture.identities[pid];
@@ -835,7 +856,12 @@ test('recovery leaves alone a recorder whose stim-server is alive', async () => 
   setClaimChild(claim, { pid: 888892, processToken: 'runner-888892' });
   fixture.identities = { 888892: 'same' };
   try {
-    await recover({ env: {}, stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') });
+    await recover({
+      env: {},
+      stateDir: join(home, 'agent'),
+      claimRoot: join(home, 'claims'),
+      host: createAgentDriverHost({ stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
+    });
     expect(fixture.events).toEqual([]);
     expect(readClaimSet(root).live).toMatchObject([{ claimId: claim.claimId }]);
   } finally {

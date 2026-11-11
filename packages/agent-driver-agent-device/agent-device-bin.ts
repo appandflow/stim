@@ -1,6 +1,7 @@
 import { accessSync, constants, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { AGENT_DRIVER_UNAVAILABLE } from '@stim-cli/agent-driver';
 
 const AGENT_DEVICE_BIN_ENV = 'STIM_AGENT_DEVICE_BIN';
 
@@ -9,6 +10,8 @@ const CANDIDATES = (home: string): string[] => [
   '/opt/homebrew/bin/agent-device',
   '/usr/local/bin/agent-device',
 ];
+
+const UNAVAILABLE: typeof AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
 
 export interface AgentDeviceInvocation {
   command: string;
@@ -36,6 +39,6 @@ export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocatio
         ? `${AGENT_DEVICE_BIN_ENV} names ${explicit}, which is not a readable agent-device on the hosting Mac.`
         : `agent-device is not installed on the hosting Mac (looked in ${candidates.join(', ')}). Install it with: npm install --global --prefix "$HOME/.local" agent-device`,
     ),
-    { code: 'AGENT_DEVICE_UNAVAILABLE' },
+    { code: UNAVAILABLE },
   );
 }

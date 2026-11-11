@@ -23,16 +23,19 @@
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
+    "./agent-device-bin": {
+      "types": "./dist/agent-device-bin.d.mts",
+      "module-sync": "./dist/agent-device-bin.mjs",
+      "default": "./dist/agent-device-bin.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsdown"
   },
-  "dependencies": {
-    "@stim-cli/core": "workspace:*"
-  },
   "devDependencies": {
-    "@stim-cli/agent-driver": "workspace:*"
+    "@stim-cli/agent-driver": "workspace:*",
+    "@stim-cli/core": "workspace:*"
   },
   "engines": {
     "node": ">=22.12.0"

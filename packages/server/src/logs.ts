@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  HOSTED_AGENT_DRIVERS,
+  BUILTIN_AGENT_DRIVERS,
   compileGrep,
   createAgentActionReader,
   isJsonObject,
@@ -67,9 +67,7 @@ export function readTargetError(params: JsonObject): string | null {
 
 /** The workspace's logs and the agent actions every first-party driver recorded under `<dir>/<driver>/sessions`. */
 export function archivedTimeline(dir: string): NdjsonRecord[] {
-  const sessionsDirs = HOSTED_AGENT_DRIVERS.filter((name) => name !== 'none').map((name) =>
-    join(dir, name, 'sessions'),
-  );
+  const sessionsDirs = BUILTIN_AGENT_DRIVERS.map((name) => join(dir, name, 'sessions'));
   return sortByTs([...readLogTimeline(join(dir, 'logs')), ...createAgentActionReader({ sessionsDirs })()]);
 }
 

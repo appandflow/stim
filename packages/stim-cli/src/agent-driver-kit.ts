@@ -3,6 +3,7 @@ import {
   AGENT_DRIVER_UNAVAILABLE,
   agentClientConfigFile,
   agentRoute,
+  createAgentDriverHost,
   newAgentToken,
   type AgentDriverInput,
   type HostedAgentApp,
@@ -26,8 +27,8 @@ export interface AgentDriverContractOptions {
   baseDir: string;
   /** The module's `id`. */
   id: string;
-  /** Factory input for a host whose driving tool is not installed. */
-  unavailableInput: AgentDriverInput;
+  /** Factory input for a host whose driving tool is not installed; the kit supplies `host`. */
+  unavailableInput: Omit<AgentDriverInput, 'host'>;
   /** An app the driver would scope a grant to. */
   app: HostedAgentApp;
   /** A grant this driver issues, for the client checks. Required when the module has a client capability. */
@@ -174,6 +175,7 @@ export async function runAgentDriverContract(
     );
     if (mismatch) return [{ name: 'the module loads', passed: false, error: mismatch }];
     const path = createRequire(join(options.baseDir, 'package.json')).resolve(options.reference);
+    const { dispose, ...members } = createAgentDriverHost(options.unavailableInput);
     worker = await startKitWorker({
       href: pathToFileURL(path).href,
       factory: 'createAgentDriver',
@@ -181,6 +183,8 @@ export async function runAgentDriverContract(
       capabilities: ['start', 'stop', 'issue', 'revoke', 'target', 'onExit'],
       moduleCapabilities: ['client.access'],
       idMember: 'name',
+      host: members,
+      disposeHost: dispose,
     });
   } catch (error) {
     return [{ name: 'the module loads', passed: false, error: error instanceof Error ? error.message : String(error) }];
