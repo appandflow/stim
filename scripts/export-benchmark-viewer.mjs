@@ -1,3 +1,4 @@
+import { ARMS, matrixPlatformForDriver } from './agent-benchmark/matrix.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -80,6 +81,12 @@ function readJson(path) {
 function clipped(value, max = 16_000) {
   const text = String(value ?? '');
   return text.length <= max ? text : `${text.slice(0, max)}\n... output clipped for the viewer`;
+}
+
+const armOrder = ARMS.map((arm) => arm.id);
+
+function stageMatrixPlatform(meta) {
+  return meta.matrixPlatform ?? matrixPlatformForDriver(meta.platform ?? 'ios');
 }
 
 function publicRunId(record) {
@@ -1250,7 +1257,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       );
     });
   if (validRecords.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
-  const dimensions = new Set(validRecords.map(({ record, meta }) => `${record.model}:${meta.platform ?? 'ios'}`));
+  const dimensions = new Set(validRecords.map(({ record, meta }) => `${record.model}:${stageMatrixPlatform(meta)}`));
   if (dimensions.size !== 1) throw new Error('benchmark stage must contain one model and platform');
   const latestByArm = new Map();
   for (const candidate of validRecords) {
@@ -1380,7 +1387,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       (a, b) =>
         ['javascript', 'native', 'launch-crash'].indexOf(a.variant) -
           ['javascript', 'native', 'launch-crash'].indexOf(b.variant) ||
-        ['stim', 'control'].indexOf(a.arm) - ['stim', 'control'].indexOf(b.arm),
+        armOrder.indexOf(a.arm) - armOrder.indexOf(b.arm),
     );
 
   const model = runs[0].model;
@@ -1396,6 +1403,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     title: formatStage(stage),
     suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
     platform: runs[0].platform,
+    matrixPlatform: stageMatrixPlatform(readJson(join(records[0].runDir, 'meta.json'))),
     protocolVersion: 4,
     recordedOn,
     primaryMetric:

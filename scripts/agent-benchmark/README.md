@@ -5,12 +5,25 @@ keeps machine-local pins, credentials, build artifacts, raw transcripts, and
 device identifiers outside the repository while keeping fixture preparation,
 dispatch, evidence collection, audit, cleanup, and reporting reviewable.
 
-The driver runs the iOS and Android readiness suites plus the JavaScript
+The driver runs the Expo iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 Standalone native iOS, Android and macOS use the separate [native cohort](./NATIVE.md).
 Freeze a copy of the coordinator before timed dispatch: proof receipts bind its
 exact bytes, so editing a helper during a run invalidates that attempt.
+
+## Matrix, arms and models
+
+`matrix.mjs` defines the platforms, the two scenarios (app launch and error fix),
+the arms and the campaign model list. An arm is data: id, skills, tools on the
+PATH, prompt sentence, device allocation rule, audit rules, required pins and
+blockers. Adding the `expo-agent-cli` arm needs no driver fork; its remaining
+blockers (pinned install, `agents:setup` at preparation, audits for tool-managed
+devices) are listed in its definition and make dispatch refuse until resolved.
+`pins.env` may set `MODELS` to a comma-separated list; the default is
+`claude-sonnet-5-5`. `dispatch` takes `<model> <arm> <variant>` and refuses a
+model outside that list. Run records carry `matrixPlatform` beside the existing
+`platform` and `model` fields. Everything is local; there is no remote variant.
 
 ## Task prompts
 
@@ -212,10 +225,10 @@ Prepare the platform golden, then dispatch, collect, and clean one cell:
 ```bash
 node scripts/agent-benchmark/driver.mjs preflight
 node scripts/agent-benchmark/driver.mjs prepare
-node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim launch-crash sol-launch-crash
+node scripts/agent-benchmark/driver.mjs dispatch claude-sonnet-5-5 stim launch-crash sonnet-launch-crash
 node scripts/agent-benchmark/driver.mjs collect /path/to/run-directory
 node scripts/agent-benchmark/driver.mjs cleanup /path/to/run-directory
-node scripts/agent-benchmark/driver.mjs report sol-launch-crash
+node scripts/agent-benchmark/driver.mjs report sonnet-launch-crash
 ```
 
 Android is selected explicitly and remains a separate result block:
@@ -223,8 +236,8 @@ Android is selected explicitly and remains a separate result block:
 ```bash
 node scripts/agent-benchmark/driver.mjs preflight android
 node scripts/agent-benchmark/driver.mjs prepare android
-node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim javascript sol-android android
-node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim launch-crash sol-android-crash android
+node scripts/agent-benchmark/driver.mjs dispatch claude-sonnet-5-5 stim javascript sonnet-android android
+node scripts/agent-benchmark/driver.mjs dispatch claude-sonnet-5-5 stim launch-crash sonnet-android-crash android
 ```
 
 Launch-error recovery uses the same injected JavaScript exception on both

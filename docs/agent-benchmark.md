@@ -11,17 +11,74 @@ to a changed Trailhead app visibly ready on its Settings screen. JavaScript and
 native changes are different workloads and are never combined into one run or
 one headline number.
 
-Each model and platform contains four sequential cells:
+## Matrix
 
-| Change     | Arm     | Device state                                       |
-| ---------- | ------- | -------------------------------------------------- |
-| JavaScript | Stim    | adopt the prepared parked simulator or Android AVD |
-| JavaScript | Control | create a new simulator or AVD                      |
-| Native     | Stim    | adopt the prepared parked simulator or Android AVD |
-| Native     | Control | create a new simulator or AVD                      |
+The published matrix is platform first. Each platform runs two scenarios, for
+each arm that can run its project type, with each model in the campaign's model
+list. The 2.0.0 campaign lists Sonnet only (`claude-sonnet-5-5`); the model stays
+an axis, so results are keyed by model, platform, scenario and arm and other
+models can join later as extra campaigns. Everything runs locally on one
+machine: no remote builds, hosted simulators or cloud services.
 
-Results from different platforms, change kinds, models, or deliberately changed
-pins remain separate. Never pool iOS and Android timings into one number.
+Scenarios:
+
+- App launch: the readiness suite. Change the app, build and launch it, and prove
+  the changed screen with `agent-device`. React Native platforms use the
+  JavaScript change (the Settings subtitle). The standalone native platforms use
+  their revision-text task (build, launch, press Increment, verify).
+- Error fix: the launch-failure suite. The app fails on launch; reproduce it,
+  capture the runtime error before reading source, fix it, and verify the repair.
+
+Arms:
+
+- Control: the project's standard tools and `agent-device`, no Stim. It creates
+  its own device.
+- Stim: the pinned published `stim` and its skill. It adopts the prepared parked
+  device.
+- Expo agent CLI: the pinned `@expo/agent-cli` and the Expo skills it installs,
+  on Expo projects only. It runs its local workflow; its cloud features (`--eas`
+  builds, EAS Simulator sessions, `deploy`) are out of scope and an audit rule
+  rejects them. Its devices are tool-managed, so its device-state row is
+  disclosed rather than matched to Stim's parked device. Pin the exact version
+  and integrity, preinstall it and its skills during preparation, set
+  `EXPO_NO_TELEMETRY=1`, and give it no `EXPO_TOKEN`. Same task prompt (only the
+  tool sentence differs), pins, isolation and proof as the other arms.
+
+`scripts/agent-benchmark/matrix.mjs` is the machine-readable definition. A cell
+is `runnable`, `not-yet-runnable` (with the missing piece named), `unsupported`
+(the arm cannot run that project type) or `not-applicable`. Dispatch refuses a
+cell that is not runnable.
+
+| Platform                  | Arms                          | App launch                      | Error fix                                   |
+| ------------------------- | ----------------------------- | ------------------------------- | ------------------------------------------- |
+| Expo iOS simulator        | Stim, control, Expo agent CLI | runnable (Expo arm needs setup) | runnable (Expo arm needs setup)             |
+| Expo Android emulator     | Stim, control, Expo agent CLI | runnable (Expo arm needs setup) | runnable (Expo arm needs setup)             |
+| Bare React Native iOS     | Stim, control                 | needs a bare fixture            | needs a bare fixture                        |
+| Bare React Native Android | Stim, control                 | needs a bare fixture            | needs a bare fixture                        |
+| Web (`stim web`)          | Stim, control                 | needs a proof method            | needs a proof method                        |
+| macOS (`stim macos`)      | Stim, control                 | runnable (SwiftPM task)         | needs a native launch-crash fixture variant |
+| Standalone native iOS     | Stim, control                 | runnable                        | needs a native launch-crash fixture variant |
+| Standalone native Android | Stim, control                 | runnable                        | needs a native launch-crash fixture variant |
+| Exact iOS                 | Stim, control                 | needs an Exact fixture          | needs an Exact fixture and crash variant    |
+
+On platforms without JavaScript the error-fix failure is a native launch crash
+that the logs surface (a startup crash in the Swift or Kotlin app), with the same
+prompt and proof as the React Native suite. No fixture variant exists yet.
+
+The earlier native-change cell (a compiled-code change on the Expo fixture) is not
+part of the published matrix: it is a build workload, not an app-launch or
+error-fix scenario. Its dispatch is refused and earlier recordings stay valid and
+unrelabeled. Results from different platforms, scenarios, models, or deliberately
+changed pins remain separate. Never pool iOS and Android timings into one number.
+
+## Cell device state
+
+Each React Native cell uses one of two device states:
+
+| Arm     | Device state                                       |
+| ------- | -------------------------------------------------- |
+| Stim    | adopt the prepared parked simulator or Android AVD |
+| Control | create a new simulator or AVD                      |
 
 ## Pins and preparation
 
