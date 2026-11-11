@@ -4,8 +4,9 @@ import { serverDir, writeJson } from './registry.ts';
 
 /**
  * `server/tailnet.json` records that this machine uses the tailnet, and why, so the net thread loads the Tailscale
- * transport at every start from then on. Stim never removes it, and a start that finds a pairing, an approved client
- * or a serve route in this home writes it again.
+ * transport at every start from then on. Stim never removes it. The first start of a home with
+ * no marker writes it when the home already holds a pairing or an approved client. A service serve route or a client
+ * approved later loads the transport for that run without writing it.
  */
 export function tailnetMarkerFile(server: string = serverDir()): string {
   return join(server, 'tailnet.json');
