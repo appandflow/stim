@@ -184,7 +184,9 @@ WHAT IT NEEDS
   removes its Funnel route on the way out (it stays up, retrying, while that
   removal fails), unless Stim Desktop, stim pair or stim serve asked for it
   meanwhile. When it cannot start, such as while an older stim-server holds
-  its port, stim share refuses with STIM_SERVER_NOT_RUNNING and the reason.
+  its port, stim share refuses with STIM_SERVER_NOT_RUNNING and the reason;
+  while a stimd of another Stim build holds the home, with
+  STIM_DAEMON_UNAVAILABLE naming that build.
 - One way to reach the share from the internet (share.exposure):
   - tailscale: Tailscale running on this Mac, with Funnel allowed for this
     node by the tailnet policy, and one free Funnel port (443, 8443 or 10000,

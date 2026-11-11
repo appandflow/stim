@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { hostedNativeRecords } from '@stim-cli/core/state';
 import { getExecutor, type ExecOptions } from '../exec.ts';
 import { androidToolCwd, androidToolPath, resolveOwnedAvdSerialAsync } from '../devices/android.ts';
@@ -587,55 +587,72 @@ const finish = (result: ToolResult | ToolFailure): void => {
   if ('code' in result) process.exit(1);
 };
 
-export function registerDeviceTools(device: Command, deps: Partial<ToolDeps> = {}): void {
-  device
-    .command('location')
-    .argument('<platform>', 'ios or android')
-    .description(
-      "Set or clear the simulated location of this workspace's own simulator or emulator. Android cannot clear one.",
-    )
-    .option('--set <lat,lng>', 'latitude and longitude in degrees, as one value such as 45.5,-73.6')
-    .option('--clear', 'stop simulating a location (iOS only)')
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the result as JSON on stdout')
-    .action(async (platform: string, opts: ToolOptions) =>
-      finish(await runDeviceTool(parseLocationRequest(platform, opts), opts, deps)),
-    );
-
-  device
-    .command('permission')
-    .argument('<platform>', 'ios or android')
-    .argument('<action>', 'grant, revoke or reset')
-    .argument('<service>', 'the permission service, such as camera, photos or location')
-    .description(
-      "Grant, revoke or reset one privacy permission for the app on this workspace's own simulator or emulator. " +
+export function deviceToolOps(deps: Partial<ToolDeps> = {}): Op[] {
+  return [
+    defineOp({
+      name: 'location',
+      arguments: '<platform>',
+      argumentDescriptions: { platform: 'ios or android' },
+      description:
+        "Set or clear the simulated location of this workspace's own simulator or emulator. Android cannot clear one.",
+      options: {
+        set: {
+          flags: '--set <lat,lng>',
+          description: 'latitude and longitude in degrees, as one value such as 45.5,-73.6',
+        },
+        clear: { flags: '--clear', description: 'stop simulating a location (iOS only)' },
+        slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+        json: { flags: '--json', description: 'print the result as JSON on stdout' },
+      },
+      run: async ({ args: [platform], options: opts }) =>
+        finish(await runDeviceTool(parseLocationRequest(platform, opts), opts, deps)),
+    }),
+    defineOp({
+      name: 'permission',
+      arguments: '<platform> <action> <service>',
+      argumentDescriptions: {
+        platform: 'ios or android',
+        action: 'grant, revoke or reset',
+        service: 'the permission service, such as camera, photos or location',
+      },
+      description:
+        "Grant, revoke or reset one privacy permission for the app on this workspace's own simulator or emulator. " +
         'Android reads the grant state back; iOS has no read.',
-    )
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the result as JSON on stdout')
-    .action(async (platform: string, action: string, service: string, opts: ToolOptions) =>
-      finish(await runDeviceTool(parsePermissionRequest(platform, action, service), opts, deps)),
-    );
-
-  device
-    .command('push')
-    .argument('<platform>', 'ios')
-    .description("Send a test push notification to the app on this workspace's own iOS simulator.")
-    .requiredOption('--payload <json>', 'the APNs payload: a JSON object with an "aps" key, at most 4096 bytes')
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the result as JSON on stdout')
-    .action(async (platform: string, opts: ToolOptions) =>
-      finish(await runDeviceTool(parsePushRequest(platform, opts), opts, deps)),
-    );
-
-  device
-    .command('network')
-    .argument('<platform>', 'android')
-    .argument('<state>', 'on or off')
-    .description("Turn Wi-Fi and mobile data on or off on this workspace's own Android emulator, and read them back.")
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the result as JSON on stdout')
-    .action(async (platform: string, state: string, opts: ToolOptions) =>
-      finish(await runDeviceTool(parseNetworkRequest(platform, state), opts, deps)),
-    );
+      options: {
+        slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+        json: { flags: '--json', description: 'print the result as JSON on stdout' },
+      },
+      run: async ({ args: [platform, action, service], options: opts }) =>
+        finish(await runDeviceTool(parsePermissionRequest(platform, action, service), opts, deps)),
+    }),
+    defineOp({
+      name: 'push',
+      arguments: '<platform>',
+      argumentDescriptions: { platform: 'ios' },
+      description: "Send a test push notification to the app on this workspace's own iOS simulator.",
+      options: {
+        payload: {
+          flags: '--payload <json>',
+          description: 'the APNs payload: a JSON object with an "aps" key, at most 4096 bytes',
+          mandatory: true,
+        },
+        slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+        json: { flags: '--json', description: 'print the result as JSON on stdout' },
+      },
+      run: async ({ args: [platform], options: opts }) =>
+        finish(await runDeviceTool(parsePushRequest(platform, opts), opts, deps)),
+    }),
+    defineOp({
+      name: 'network',
+      arguments: '<platform> <state>',
+      argumentDescriptions: { platform: 'android', state: 'on or off' },
+      description: "Turn Wi-Fi and mobile data on or off on this workspace's own Android emulator, and read them back.",
+      options: {
+        slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+        json: { flags: '--json', description: 'print the result as JSON on stdout' },
+      },
+      run: async ({ args: [platform, state], options: opts }) =>
+        finish(await runDeviceTool(parseNetworkRequest(platform, state), opts, deps)),
+    }),
+  ];
 }

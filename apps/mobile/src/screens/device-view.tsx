@@ -148,7 +148,7 @@ export function DeviceView({
   const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
   const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
   const sideBySide = book !== null;
-  const { videoQuality } = useSettings();
+  const { videoQuality, deviceFrame } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
@@ -183,7 +183,11 @@ export function DeviceView({
   const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
-  const [showsFrame, setShowsFrame] = useState(false);
+  const [showsDuoFrame, setShowsDuoFrame] = useState(false);
+  const [fullScreenChosen, setFullScreen] = useState(false);
+  const canFullScreen = !book && !table;
+  const fullScreen = fullScreenChosen && canFullScreen;
+  if (fullScreenChosen && !canFullScreen) setFullScreen(false);
   const frameSupported =
     !physical &&
     !(platform === 'android' && device?.host) &&
@@ -196,6 +200,7 @@ export function DeviceView({
     /\bDuo\b/.test(device?.model ?? '') &&
     link.kind === 'open' &&
     link.hostCapabilities.includes('duo-frames');
+  const showsFrame = duoSupported ? showsDuoFrame : deviceFrame;
   const streamOptions = {
     enabled: streams,
     fps: preset.fps,
@@ -203,7 +208,7 @@ export function DeviceView({
     video: preset.video,
     startAt: replayStart,
     deviceFrame: frameSupported,
-    duoFrame: duoSupported && showsFrame,
+    duoFrame: duoSupported && showsDuoFrame,
   };
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
@@ -296,16 +301,11 @@ export function DeviceView({
     if (!keyboardShown || !controlling) keyboard.current?.blur();
   }, [keyboardShown, controlling]);
   const rest = zoom.screenRect;
-  const headerGap = theme.space.md;
+  const headerSpace = fullScreen ? 0 : barBottom + theme.space.md;
   const lift = useAnimatedStyle(() => {
     const covered = -keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
-    const shift = liftAbove(
-      rest[1],
-      rest[3],
-      rootHeight - covered - typingBarHeight,
-      insets.top + barBottom + headerGap,
-    );
+    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - typingBarHeight, insets.top + headerSpace);
     return { transform: [{ translateY: -shift }] };
   });
   const [note, setNote] = useState<{ text: string; success: boolean } | null>(null);
@@ -471,7 +471,7 @@ export function DeviceView({
   const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
     setOpened(true);
-    if (controlling) control.end();
+    control.end();
     setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
     stream.seek(at, rate);
   };
@@ -580,7 +580,7 @@ export function DeviceView({
       />
     ) : null;
   const agentFeed =
-    (!landscape || book || table) && !physical && device?.id && streams ? (
+    (!landscape || book || table) && !fullScreen && !physical && device?.id && streams ? (
       <AgentFeed
         workspace={workspace}
         slot={slot}
@@ -627,7 +627,7 @@ export function DeviceView({
           },
         ]
       : [];
-  const primary: ViewerToolbarAction[] =
+  const controlActions: ViewerToolbarAction[] =
     controlling || readOnly
       ? [
           {
@@ -693,6 +693,17 @@ export function DeviceView({
             : []),
         ]
       : [];
+  const primary: ViewerToolbarAction[] = fullScreen
+    ? [
+        ...controlActions,
+        {
+          id: 'exit-full-screen',
+          icon: 'arrow.down.right.and.arrow.up.left',
+          label: t`Exit Full Screen`,
+          onPress: () => setFullScreen(false),
+        },
+      ]
+    : controlActions;
   const secondary: ViewerAction[] = [];
   if (controlling || readOnly) {
     if (controlling && overlayControls && !controls.shown)
@@ -749,13 +760,13 @@ export function DeviceView({
       })),
     );
   }
-  if (artwork || (duoSupported && !replaying))
+  if (duoSupported && !replaying)
     secondary.push({
       id: 'device-frame',
       icon: 'rectangle.portrait',
       label: t`Device Frame`,
-      selected: showsFrame,
-      onPress: () => setShowsFrame(!showsFrame),
+      selected: showsDuoFrame,
+      onPress: () => setShowsDuoFrame(!showsDuoFrame),
     });
   const toolbars =
     primary.length || secondary.length ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;
@@ -795,7 +806,7 @@ export function DeviceView({
             >
               <View style={styles.root}>
                 <View style={table ? { height: table.start - insets.top } : styles.root}>
-                  <View style={{ height: barBottom + headerGap }} />
+                  <View style={{ height: headerSpace }} />
                   {book || table ? null : readOnlyBanner}
                   <View
                     style={book && { width: book.start - insets.left }}
@@ -827,7 +838,7 @@ export function DeviceView({
                         styles.stage,
                         book && { flex: 0, width: book.start - insets.left },
                         table && {
-                          maxHeight: Math.max(0, table.start - insets.top - barBottom - headerGap - bannerHeight),
+                          maxHeight: Math.max(0, table.start - insets.top - headerSpace - bannerHeight),
                         },
                       ]}
                       onLayout={barBottom > 0 ? zoom.measure : undefined}
@@ -917,114 +928,135 @@ export function DeviceView({
               </View>
             </GestureDetector>
           ) : null}
-          <Animated.View
-            style={[
-              styles.header,
-              {
-                paddingTop: insets.top,
-                paddingLeft: insets.left,
-                paddingRight: book ? 0 : insets.right,
-                right: book ? rootWidth - book.start : 0,
-              },
-              zoom.fadeStyle,
-            ]}
-          >
-            {underBar ? <ViewerBackdrop /> : null}
-            <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
-              <Touch
-                onLayout={(event) => {
-                  const { width } = event.nativeEvent.layout;
-                  setBarSides(([, right]) => [width, right]);
-                }}
-                onPress={() => {
-                  Keyboard.dismiss();
-                  zoom.close();
-                }}
-                accessibilityLabel={t`Close`}
-                style={styles.barButton}
-              >
-                <Icon name="xmark" size={22} color={theme.media.text} />
-              </Touch>
-              <View
-                style={[
-                  styles.titles,
-                  {
-                    paddingLeft: Math.max(0, barSides[1] - barSides[0]),
-                    paddingRight: Math.max(0, barSides[0] - barSides[1]),
-                  },
-                ]}
-              >
-                <Text
-                  variant="body"
-                  weight="semibold"
-                  style={styles.mediaText}
-                  numberOfLines={1}
-                  maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
-                >
-                  {title}
-                </Text>
-                <View style={styles.subtitleRow}>
-                  <Text
-                    variant="caption"
-                    style={styles.subtitle}
-                    numberOfLines={1}
-                    maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+          {fullScreen ? null : (
+            <Animated.View
+              style={[
+                styles.header,
+                {
+                  paddingTop: insets.top,
+                  paddingLeft: insets.left,
+                  paddingRight: book ? 0 : insets.right,
+                  right: book ? rootWidth - book.start : 0,
+                },
+                zoom.fadeStyle,
+              ]}
+            >
+              {underBar ? <ViewerBackdrop /> : null}
+              <View onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
+                <View style={styles.bar}>
+                  <View
+                    style={styles.barStart}
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([, right]) => [width, right]);
+                    }}
                   >
-                    {subtitle}
-                  </Text>
-                  {device?.host ? (
-                    <HostLabel
-                      host={device.host}
-                      color={theme.media.textTertiary}
-                      mode={device.running ? 'running' : 'placed'}
-                    />
-                  ) : null}
-                  {range?.recording && !replayOff ? (
-                    <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
-                      <View style={styles.recordingDot} />
-                      <Text
-                        variant="caption2"
-                        weight="medium"
-                        style={styles.driverText}
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
-                      >
-                        <Trans>Recording</Trans>
-                      </Text>
-                    </View>
-                  ) : null}
-                  {driver ? (
-                    <View
-                      style={styles.driver}
-                      accessible
-                      accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
+                    <Touch
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        zoom.close();
+                      }}
+                      accessibilityLabel={t`Close`}
+                      style={styles.barButton}
                     >
-                      <Icon name="cursorarrow.rays" size={11} color={theme.colors.accent} />
+                      <Icon name="xmark" size={22} color={theme.media.text} />
+                    </Touch>
+                    {streams && canFullScreen ? (
+                      <Touch
+                        onPress={() => setFullScreen(true)}
+                        accessibilityLabel={t`Full Screen`}
+                        style={styles.barButton}
+                      >
+                        <Icon name="arrow.up.left.and.arrow.down.right" size={18} color={theme.media.text} />
+                      </Touch>
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      styles.titles,
+                      {
+                        paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                        paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                      },
+                    ]}
+                  >
+                    <Text
+                      variant="body"
+                      weight="semibold"
+                      style={styles.mediaText}
+                      numberOfLines={1}
+                      maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                    >
+                      {title}
+                    </Text>
+                    <View style={styles.subtitleRow}>
                       <Text
-                        variant="caption2"
-                        weight="medium"
-                        style={styles.driverText}
+                        variant="caption"
+                        style={styles.subtitle}
                         numberOfLines={1}
                         maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
                       >
-                        {driver}
+                        {subtitle}
                       </Text>
+                      {device?.host ? (
+                        <HostLabel
+                          host={device.host}
+                          color={theme.media.textTertiary}
+                          mode={device.running ? 'running' : 'placed'}
+                        />
+                      ) : null}
                     </View>
-                  ) : null}
+                  </View>
+                  <View
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([left]) => [left, width]);
+                    }}
+                  >
+                    {!viewOnly && control.allowed !== null && (running || replaying) ? (
+                      <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
+                    ) : null}
+                  </View>
                 </View>
-              </View>
-              <View
-                onLayout={(event) => {
-                  const { width } = event.nativeEvent.layout;
-                  setBarSides(([left]) => [left, width]);
-                }}
-              >
-                {!viewOnly && control.allowed !== null && (running || replaying) ? (
-                  <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
+                {(range?.recording && !replayOff) || driver ? (
+                  <View style={styles.badges}>
+                    {range?.recording && !replayOff ? (
+                      <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
+                        <View style={styles.recordingDot} />
+                        <Text
+                          variant="caption2"
+                          weight="medium"
+                          style={styles.driverText}
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                        >
+                          <Trans>Recording</Trans>
+                        </Text>
+                      </View>
+                    ) : null}
+                    {driver ? (
+                      <View
+                        style={styles.driver}
+                        accessible
+                        accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
+                      >
+                        <Icon name="cursorarrow.rays" size={11} color={theme.colors.accent} />
+                        <Text
+                          variant="caption2"
+                          weight="medium"
+                          style={styles.driverText}
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                        >
+                          {driver}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
-            </View>
-          </Animated.View>
+            </Animated.View>
+          )}
           {overlayControls && rest ? (
             <Animated.View
               pointerEvents={controls.shown ? 'box-none' : 'none'}
@@ -1182,6 +1214,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.xs,
   },
   titles: { flex: 1, alignItems: 'center' },
+  barStart: { flexDirection: 'row', alignItems: 'center' },
   mediaText: { color: theme.media.text },
   subtitle: { color: theme.media.textTertiary, flexShrink: 1 },
   subtitleRow: {
@@ -1191,6 +1224,14 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     columnGap: theme.space.md,
     maxWidth: '100%',
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.xl,
+    paddingBottom: theme.space.xs,
   },
   driver: {
     flexDirection: 'row',

@@ -491,13 +491,22 @@ struct NextBuildView: View {
           .foregroundStyle(
             plan.refusal != nil
               ? Palette.warning
-              : plan.platform == "macos" ? Palette.text : plan.cacheHit == .none ? Palette.warning : Palette.success
+              : plan.platform == "macos" || plan.uncached
+                ? Palette.text : plan.cacheHit == .none ? Palette.warning : Palette.success
           )
           .help(plan.detail ?? "")
         if let placement = plan.placement {
           Text(placement.prefix(1).uppercased() + placement.dropFirst())
             .foregroundStyle(Palette.secondary)
             .fixedSize(horizontal: false, vertical: true)
+        }
+        if let build = plan.buildPlacement {
+          Text("Build \(build.preference): \(build.reason)")
+            .foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if let bundleId = plan.bundleId {
+          Text(bundleId).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
         if inlineDetails, let detail = plan.detail {
           Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)

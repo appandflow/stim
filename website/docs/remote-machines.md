@@ -242,9 +242,9 @@ user that runs its Stim service:
   `bun scripts/exact.mjs setup` there. A setup line about Chrome or Android does
   not matter for iOS builds.
 
-A worker that lacks one is skipped: the placement line, and the refusal of a
-named `--remote-build`, name the missing piece and the command that installs it
-there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
+A worker that lacks one is skipped: the placement line, the refusal of a
+named `--remote-build` and `stim doctor` in the app name the missing piece and
+the command that installs it there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
 client sent them, and keep `target/` warm in the checkout's own repository area.
 The worker never gives an Exact build a simulator, so apps whose `app.json`
 declares native modules build on the client.

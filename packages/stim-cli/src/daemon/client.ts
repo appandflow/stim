@@ -22,19 +22,20 @@ import {
   userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
-import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { getExecutor } from '../exec.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
+const HANDOVER_WAIT_MS = 15_000;
 const ATTACH_AFTER_MS = 2000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
@@ -67,13 +68,37 @@ export function stimdLive(home?: string): boolean {
   }
 }
 
+function unresolvedDaemonClaims(): ClaimProblem[] {
+  return [...readClaimSet(stimdClaimRoot()).unresolved, ...readClaimSet(daemonClaimRoot()).unresolved];
+}
+
+const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.path} (${claim.reason})`).join(' and ');
+
+/**
+ * How to remove `claims` in one round: one command for the claim files, and each directory-level problem (an
+ * unreadable claim directory or root, whose command removes the whole directory) on its own.
+ */
+function removeCommands(claims: ClaimProblem[]): string {
+  const files = claims.filter((claim) => claim.path.endsWith('.claim'));
+  const directories = claims.filter((claim) => !claim.path.endsWith('.claim'));
+  return [
+    ...(files.length > 0 ? [files.map((claim) => claimRemoveCommand(claim.path)).join('; ')] : []),
+    ...directories.map((claim) => `separately, once you checked ${claim.path}, ${claimRemoveCommand(claim.path)}`),
+  ].join(', then ');
+}
+
 function requireResolvedStimdHome(): void {
-  const [claim] = readClaimSet(stimdClaimRoot()).unresolved;
-  if (!claim) return;
-  throw Object.assign(new Error(`The Stim daemon claim at ${claim.path} cannot be resolved (${claim.reason}).`), {
-    code: 'STIM_CLAIM_UNAVAILABLE',
-    remedy: `Check that the prior daemon and its children have stopped, then run ${claimRemoveCommand(claim.path)} and retry.`,
-  });
+  if (readClaimSet(stimdClaimRoot()).unresolved.length === 0) return;
+  const claims = unresolvedDaemonClaims();
+  throw Object.assign(
+    new Error(
+      `The Stim daemon ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved.`,
+    ),
+    {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: `Check that the prior daemon and its children have stopped, then run ${removeCommands(claims)} and retry.`,
+    },
+  );
 }
 
 async function admitExisting(
@@ -100,6 +125,14 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
+let successorMissed = false;
+let refusal: {
+  version: string;
+  pid: number | null;
+  handover: boolean;
+  heldBy: 'shares' | 'logs' | null;
+  workspaces: string[];
+} | null = null;
 let opSocket: Socket | null = null;
 const opTokens = new WeakMap<Socket, string>();
 let following: Promise<never> | null = null;
@@ -128,6 +161,56 @@ function sandboxBlocked(path = stimdSocket()): Error {
 /** Whether a stimd of another build refused this process's connection. */
 export function stimdRefused(): boolean {
   return refusedBuild !== null;
+}
+
+function noteRefusal(message: Record<string, unknown>): void {
+  refusedByAttached = message.attached === true;
+  refusedBuild ??= String(message.build);
+  refusal = {
+    version: String(message.version ?? message.build),
+    pid: typeof message.pid === 'number' ? message.pid : null,
+    handover: message.handover === true || message.build === stimdBuildId(),
+    heldBy: message.heldBy === 'shares' || message.heldBy === 'logs' ? message.heldBy : null,
+    workspaces: Array.isArray(message.workspaces)
+      ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+  };
+}
+
+/**
+ * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
+ * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
+ */
+export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+  if (!refusal) return null;
+  const { version, pid, handover, heldBy, workspaces } = refusal;
+  const kill = `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves`;
+  const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
+  const [why, remedy] = refusedByAttached
+    ? [
+        `${stimd} runs Stim ${version} as the child of another command.`,
+        'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
+      ]
+    : heldBy === 'logs'
+      ? [
+          `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
+          `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
+        ]
+      : heldBy === 'shares'
+        ? [
+            `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
+            `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
+          ]
+        : handover
+          ? [
+              `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+              'Run the command again once those commands end.',
+            ]
+          : [
+              `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+              `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+            ];
+  return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 
 /**
@@ -180,10 +263,9 @@ function openStimd(
       }
       buffer = buffer.slice(end + 1);
       if (!isJsonObject(message)) continue;
-      if (message.op === 'engine-changed') refusedByAttached = message.attached === true;
+      if (message.op === 'engine-changed') noteRefusal(message);
       // compat C26 permanent
       if (message.op === 'engine-changed') {
-        refusedBuild ??= String(message.build);
         const next = switchedEngine();
         if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
       }
@@ -471,10 +553,10 @@ export async function ensureStimd(
     return false;
   }
   try {
-    const [claim] = [...readClaimSet(daemonClaimRoot()).unresolved, ...readClaimSet(stimdClaimRoot()).unresolved];
-    if (claim) {
+    const claims = unresolvedDaemonClaims();
+    if (claims.length > 0) {
       console.error(
-        `Stim: the claim at ${claim.path} cannot be resolved (${claim.reason}), so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
+        `Stim: the ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved, so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, run ${removeCommands(claims)}.`,
       );
       return true;
     }
@@ -567,8 +649,8 @@ export async function ensurePersistentStimd(env: NodeJS.ProcessEnv = process.env
 
 /**
  * Begins this command's op with the live stimd: again while it has its claim but does not listen yet (up to five
- * seconds), and once more after a stimd of this build replaced one of an older build that refused it, which an
- * attached stimd never does. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
+ * seconds), and once more after a stimd of this build replaced one of an older build that refused it, when one can
+ * (`successorExpected`). Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
  */
 async function admit(
   held: Socket[] | undefined,
@@ -580,7 +662,7 @@ async function admit(
     if (await beginOp(held, command, invocation)) return true;
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
     if (stimdRefused()) {
-      if (!refusedByAttached && (await successorBound())) return beginOp(held, command, invocation);
+      if (successorExpected() && (await successorBound())) return beginOp(held, command, invocation);
       return false;
     }
     if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return false;
@@ -835,15 +917,32 @@ export async function holdExistingStimd(ownedInstance: string | null, signal?: A
   return () => held.forEach((socket) => socket.destroy());
 }
 
-/** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
+/**
+ * Whether the stimd of another build that refused this process may be replaced by one of this build: one that said
+ * it hands over and is not held by live shares or device log streams, or any but an attached one when this build runs
+ * from the engine store, whose stimds follow the engine pointer.
+ */
+function successorExpected(): boolean {
+  return !refusedByAttached && !refusal?.heldBy && (refusal?.handover === true || ownStoreEngine() !== null);
+}
+
+/**
+ * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
+ * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once a wait
+ * ran out, it answers false at once for the rest of this process.
+ */
 async function successorBound(): Promise<boolean> {
-  for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
+  if (successorMissed) return false;
+  const waitMs = refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS;
+  for (const deadline = Date.now() + waitMs; Date.now() < deadline;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
+      refusal = null;
       return true;
     }
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
+  successorMissed = true;
   return false;
 }
 
@@ -927,6 +1026,23 @@ export async function publishPresence(params: PresencePublishParams, timeoutMs: 
 const OBSERVE_MS = 30_000;
 
 /**
+ * Sends `ask` to the stimd that holds this home: again while it has its claim but does not listen yet (up to five
+ * seconds), and once more after a stimd of this build replaced one of another build that refused it.
+ */
+async function askHeldStimd(
+  ask: () => Promise<Record<string, unknown> | null>,
+): Promise<Record<string, unknown> | null> {
+  let reply = await ask();
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (!reply && !stimdRefused() && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+    reply = await ask();
+  }
+  if (!reply && stimdRefused() && successorExpected() && (await successorBound())) reply = await ask();
+  return reply;
+}
+
+/**
  * Asks this home's stimd to observe what the op at `root` launched through `spawnOwned`: the owned Chrome's DevTools
  * session. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
  * records that output. Resolves to null once stimd observes it, or to why it does not.
@@ -938,14 +1054,7 @@ async function ownedRequest(
   target?: { pid: number; token: string },
 ): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const ask = () => askStimd(op, OBSERVE_MS, { params: { root, ...target } });
-  let reply = await ask();
-  const deadline = Date.now() + CLAIM_WAIT_MS;
-  while (!reply && !stimdRefused() && Date.now() < deadline) {
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
-    reply = await ask();
-  }
-  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  const reply = await askHeldStimd(() => askStimd(op, OBSERVE_MS, { params: { root, ...target } }));
   const expected =
     op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained';
   if (reply?.op !== expected)
@@ -992,7 +1101,9 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
 export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
-  return netAnswer(await askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {}));
+  return netAnswer(
+    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {})),
+  );
 }
 
 /**
@@ -1011,9 +1122,16 @@ export function serveThroughStimd(
 
 /**
  * A connection to this home's net thread through stimd's CLI socket, past its `net.connected` answer, on which the
- * caller speaks stim-server's WebSocket protocol as a local client. Null when no stimd or no net thread answers.
+ * caller speaks stim-server's WebSocket protocol as a local client, asked once more when a stimd of another build
+ * refused it and handed the home over to one of this build. Null when no stimd or no net thread answers.
  */
-export function connectNet(timeoutMs: number): Promise<Socket | null> {
+export async function connectNet(timeoutMs: number): Promise<Socket | null> {
+  const socket = await openNet(timeoutMs);
+  if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
+  return openNet(timeoutMs);
+}
+
+function openNet(timeoutMs: number): Promise<Socket | null> {
   if (!stimdLive()) return Promise.resolve(null);
   return new Promise((resolve) => {
     const socket = connect(stimdSocket());
@@ -1034,6 +1152,10 @@ export function connectNet(timeoutMs: number): Promise<Socket | null> {
           message = JSON.parse(buffer.subarray(0, end).toString('utf8'));
         } catch {}
         buffer = buffer.subarray(end + 1);
+        if (isJsonObject(message) && message.op === 'engine-changed') {
+          noteRefusal(message);
+          return finish(false);
+        }
         if (++lines === 2) return finish(isJsonObject(message) && message.op === 'net.connected');
       }
     };

@@ -548,9 +548,11 @@ a tunnel does not keep the outputs. They stay while a `stim ios` or
 `stim android` run holds the workspace, a build names it, or its macOS app or
 build runs or cannot be verified. Clearing them also clears the
 project's own `android/app/build`, `android/build`, `android/.gradle`, `.build`,
-the CMake directories `android/.cxx` and `android/<module>/.cxx`, and a `.dd`
+the CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd`
 directory laid out as Xcode DerivedData (a `Build/` directory beside
-`ModuleCache.noindex` or `Logs/`) when git ignores every file in the
+`ModuleCache.noindex` or `Logs/`), and an Exact app's Cargo `target/` (kept while
+another process, such as a shell or an `exact.mjs` command, runs from or works in
+the app, and on Windows) when git ignores every file in the
 directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that
 only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches

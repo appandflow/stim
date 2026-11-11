@@ -254,6 +254,14 @@ describe('build cache outcome', () => {
     expect(
       nextBuild({ ...miss, missReason: reason('no earlier build of this project in the cache to compare with') }),
     ).toBe('cold build, regenerates the native dir, no earlier build of this project in the cache to compare with');
+    expect(
+      nextBuild({
+        ...miss,
+        fingerprint: null,
+        prebuild: null,
+        missReason: { ...reason('Exact builds incrementally in its own target/ directory'), kind: 'cache-skipped' },
+      }),
+    ).toBe('uncached build, Exact builds incrementally in its own target/ directory');
     const pending = {
       ...reason('Podfile.lock changed (before prebuild regenerates ios/)'),
       kind: 'prebuild-pending' as const,

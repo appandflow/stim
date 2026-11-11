@@ -12,8 +12,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
-import gcCommand from '../commands/gc.ts';
+import { runCli } from '../cli/define-op.ts';
+import gcOp from '../commands/gc.ts';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { collectGradleVersions, deleteGradleVersions } from '../commands/gc/gradle-versions.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -55,9 +55,7 @@ async function gc(...args: string[]) {
   const log = vi.spyOn(console, 'log').mockImplementation((...line) => void stdout.push(line.join(' ')));
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    const program = new Command();
-    gcCommand(program);
-    await program.parseAsync(['node', 'stim', 'gc', '--cache', 'gradle-versions', ...args, '--json']);
+    await runCli(gcOp, ['--cache', 'gradle-versions', ...args, '--json'], { version: '9.9.9' });
   } finally {
     log.mockRestore();
     error.mockRestore();
@@ -343,12 +341,10 @@ test('a scoped STIM_HOME never deletes a Gradle home outside it', async () => {
 });
 
 test('--delete --cache all leaves Gradle versions alone', async () => {
-  const program = new Command();
-  gcCommand(program);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    await program.parseAsync(['node', 'stim', 'gc', '--cache', 'all', '--delete', '--json']);
+    await runCli(gcOp, ['--cache', 'all', '--delete', '--json'], { version: '9.9.9' });
   } finally {
     log.mockRestore();
     error.mockRestore();

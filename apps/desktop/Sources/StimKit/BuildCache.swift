@@ -204,6 +204,13 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var refusal: CommandRefusal?
   /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
   public var placement: String?
+  /// The build placement preference and what it means for this build.
+  public var buildPlacement: BuildPlacementPreview?
+  /// The app's bundle id when the integration knows it before building, such as an Exact app.
+  public var bundleId: String?
+
+  /// Whether the build keeps no artifact cache and always compiles, such as an Exact app's.
+  public var uncached: Bool { platform != "macos" && fingerprint == nil }
 
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
@@ -214,6 +221,7 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
     case .local: return "cache hit (local)\(took)"
     case .remote: return "cache hit (remote)\(took)"
     case .none:
+      if uncached { return "uncached build\(took)" }
       let off = cacheSkipped ? " (cache reads off)" : ""
       let native = prebuild == "generate" || prebuild == "regenerate" ? ", \(prebuild!)s the native dir" : ""
       return "cold build\(off)\(native)\(took)"
@@ -233,6 +241,12 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
       : "Median of \(basis) \(outcome) run\(basis == 1 ? "" : "s")"
     return cacheHit == .remote ? "From \(provider ?? "the cache provider"). \(runs)" : runs
   }
+}
+
+/// Where the next build compiles: the resolved `--remote-build` preference and what it means for this build.
+public struct BuildPlacementPreview: Decodable, Hashable, Sendable {
+  public var preference: String
+  public var reason: String
 }
 
 /// A refusal the CLI printed as `{ code, message, remedy }`.

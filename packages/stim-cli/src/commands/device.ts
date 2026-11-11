@@ -1,9 +1,9 @@
 import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { clockTime } from '../command-output.ts';
-import { registerDeviceTools } from './device-tools.ts';
-import { runProvision, type ProvisionOptions } from './device-provision.ts';
+import { deviceToolOps } from './device-tools.ts';
+import { runProvision } from './device-provision.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import {
   fileLeaseIo,
@@ -424,75 +424,92 @@ export async function runUnlock(
   return released;
 }
 
-export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {}): void {
-  const device = program
-    .command('device')
-    .description(
-      "Lease a connected physical device to this workspace, give it back, provision iOS signing for it, or change the workspace's own simulator or emulator",
-    );
-
-  device
-    .command('lock')
-    .argument('<platform>', 'ios or android')
-    .argument(
-      '[id]',
-      "the UDID or serial to lease, a connected device or this workspace's own simulator or emulator; without one, the first free connected device is used",
-    )
-    .description(
+export function deviceOp(deps: Partial<DeviceDeps> = {}): Op {
+  const lockCommand = defineOp({
+    name: 'lock',
+    arguments: '<platform> [id]',
+    argumentDescriptions: {
+      platform: 'ios or android',
+      id: "the UDID or serial to lease, a connected device or this workspace's own simulator or emulator; without one, the first free connected device is used",
+    },
+    description:
       "Lease a connected physical device, or this workspace's own simulator or emulator, to this workspace for a " +
-        "declared time, so another workspace's `--device` run waits and agents see the device as driven. Nothing but " +
-        'this command and a `--device` run moves the expiry.',
-    )
-    .option(
-      '--for <duration>',
-      `How long to hold it: a whole number of seconds or minutes from 10s to 30m (default ${DEFAULT_FOR})`,
-    )
-    .option(
-      '--wait <seconds>',
-      'How long to wait for a device another workspace holds, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once)',
-    )
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the lease as JSON on stdout')
-    .action(async (platform: string, id: string | undefined, opts: LockOptions) => {
+      "declared time, so another workspace's `--device` run waits and agents see the device as driven. Nothing but " +
+      'this command and a `--device` run moves the expiry.',
+    options: {
+      for: {
+        flags: '--for <duration>',
+        description: `How long to hold it: a whole number of seconds or minutes from 10s to 30m (default ${DEFAULT_FOR})`,
+      },
+      wait: {
+        flags: '--wait <seconds>',
+        description:
+          'How long to wait for a device another workspace holds, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once)',
+      },
+      slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+      json: { flags: '--json', description: 'print the lease as JSON on stdout' },
+    },
+    run: async ({ args: [platform, id], options: opts }) => {
       const result = await runLock(platform, id, opts, deps);
       if ('code' in result) process.exit(1);
-    });
+    },
+  });
 
-  device
-    .command('unlock')
-    .argument('[platform]', 'ios or android; without one, every lease this workspace holds is released')
-    .description('Release the device lease or leases this workspace holds. Releasing nothing is not an error.')
-    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
-    .option('--json', 'print the released leases as JSON on stdout')
-    .action(async (platform: string | undefined, opts: UnlockOptions) => {
+  const unlockCommand = defineOp({
+    name: 'unlock',
+    arguments: '[platform]',
+    argumentDescriptions: { platform: 'ios or android; without one, every lease this workspace holds is released' },
+    description: 'Release the device lease or leases this workspace holds. Releasing nothing is not an error.',
+    options: {
+      slot: { flags: '--slot <name>', description: 'Use this workspace device slot', parse: parseDeviceSlotOption },
+      json: { flags: '--json', description: 'print the released leases as JSON on stdout' },
+    },
+    run: async ({ args: [platform], options: opts }) => {
       const result = await runUnlock(platform, opts, deps);
       if (!Array.isArray(result)) process.exit(1);
-    });
+    },
+  });
 
-  device
-    .command('provision')
-    .argument('<platform>', 'ios')
-    .argument('[udid]', 'the connected iPhone or iPad to provision for; required when more than one is connected')
-    .description(
+  const provisionCommand = defineOp({
+    name: 'provision',
+    arguments: '<platform> [udid]',
+    argumentDescriptions: {
+      platform: 'ios',
+      udid: 'the connected iPhone or iPad to provision for; required when more than one is connected',
+    },
+    description:
       "Register a connected iPhone with the project's Apple Developer team and create or refresh its iOS App " +
-        'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
-        'first; no build ever does this.',
-    )
-    .option('--scheme <name>', 'Xcode scheme whose signed targets to provision (default: ios.scheme, then detected)')
-    .option('--configuration <name>', 'build configuration to provision (default: ios.configuration, then Debug)')
-    .option('--yes', 'confirm the listed Apple Developer account changes without a prompt')
-    .option('--json', 'print the plan and result, or the refusal, as JSON on stdout')
-    .action(async (platform: string, udid: string | undefined, opts: ProvisionOptions) => {
+      'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
+      'first; no build ever does this.',
+    options: {
+      scheme: {
+        flags: '--scheme <name>',
+        description: 'Xcode scheme whose signed targets to provision (default: ios.scheme, then detected)',
+      },
+      configuration: {
+        flags: '--configuration <name>',
+        description: 'build configuration to provision (default: ios.configuration, then Debug)',
+      },
+      yes: { flags: '--yes', description: 'confirm the listed Apple Developer account changes without a prompt' },
+      json: { flags: '--json', description: 'print the plan and result, or the refusal, as JSON on stdout' },
+    },
+    run: async ({ args: [platform, udid], options: opts }) => {
       const root = findProjectRoot(process.cwd()) ?? process.cwd();
       const { value: result, interrupted } = await runProcessOperation(root, (operation) =>
         runProvision(platform, udid, opts, { operation }),
       );
       if ('code' in result) process.exit(interrupted ?? 1);
-    });
+    },
+  });
 
-  registerDeviceTools(device);
+  return defineOp({
+    name: 'device',
+    description:
+      "Lease a connected physical device to this workspace, give it back, provision iOS signing for it, or change the workspace's own simulator or emulator",
+    commands: [lockCommand, unlockCommand, provisionCommand, ...deviceToolOps()],
+  });
 }
 
-export default function deviceCommand(program: Command): void {
-  registerDevice(program);
-}
+const device: Op = deviceOp();
+
+export default device;

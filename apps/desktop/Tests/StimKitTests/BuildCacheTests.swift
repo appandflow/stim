@@ -189,6 +189,21 @@ import Testing
     #expect(refused.refusal?.code == "STIM_EAS_BUILD_MISSING" && refused.outcome == nil)
   }
 
+  @Test func uncachedPlanSaysItAlwaysCompiles() throws {
+    let plan = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"ios","fingerprint":null,"cacheKey":null,"cacheHit":false,"provider":null,"cacheSkipped":false,
+       "prebuild":null,"outcome":"cold","expectedMs":42000,"basis":2,
+       "missReason":{"kind":"cache-skipped","summary":"Exact builds incrementally in its own target/ directory",
+         "changes":[],"changeCount":0,"baseline":null,"rekeyedBy":[]},
+       "placement":"this machine","bundleId":"com.example.app",
+       "buildPlacement":{"preference":"local","reason":"builds on this machine"}}
+      """)
+    #expect(plan.uncached && plan.nextBuild == "uncached build, ~0m 42s")
+    #expect(plan.bundleId == "com.example.app" && plan.buildPlacement?.preference == "local")
+  }
+
   @Test func macosPlanDoesNotClaimAColdBuildOrCacheMiss() throws {
     let plan = try decode(
       BuildPlan.self,

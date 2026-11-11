@@ -35,7 +35,8 @@ export type IosCompileResult = Pick<BuildIosResult, 'durationMs' | 'transcriptLi
 export interface IosArtifactRecipe {
   /** The tool named in build progress and failures; xcodebuild when absent. */
   buildTool?: string;
-  identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
+  /** `incremental` says whether an uncached build compiles on output an earlier build left. */
+  identity(): Promise<IosArtifactIdentity | { cacheIneligible: string; incremental?: boolean }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
   cache(): BuildCacheCapability;

@@ -93,7 +93,8 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
-Metro, CocoaPods and fingerprint parity. Shared findings appear before
+Metro, CocoaPods and fingerprint parity; [Exact](#exact-apps) checks cover
+Bun, rustup and the exact2 checkout. Shared findings appear before
 framework findings. Each run in a supported native app is recorded for the
 inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
@@ -625,10 +626,27 @@ An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
 `./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
 simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
-directory, so Stim keeps no artifact cache for it. `--configuration Release`
+directory, so Stim keeps no artifact cache for it. `target/` is build output:
+the idle stage and `gc --delete` clear it from an idle workspace, never while
+another process, such as a shell or an `exact.mjs` command, runs from or works in
+the app, nor on Windows, and the next build then compiles from scratch. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
 has booted the simulator, and build-only runs (`stim ci build`) are refused.
+
+`stim ios --plan` and Stim Desktop's Next Build show the next run as an
+uncached build with the app's bundle id from `app.json`, where it builds, and an
+estimate from recorded runs:
+
+```text
+$ stim ios --plan --remote-build local
+  plan        ios -> no build cache: compiles
+  app         com.example.shop
+  device      this machine
+  build       local: builds on this machine
+  cache       miss: Exact builds incrementally in its own target/ directory
+  expect      unknown: no cold run of this project is recorded yet
+```
 
 Drive and test the app with Exact's own commands, pointed at the simulator
 `stim ios` reported:
@@ -643,6 +661,22 @@ it was created in, and `EXACT2` set to the Exact checkout when it sits at
 another folder depth. Only iOS simulators are supported; macOS, web, Android
 and physical devices use Exact's own commands.
 
+`stim doctor --platform ios` checks what `./exact.mjs ios` needs on this Mac,
+where the launcher looks for it:
+
+- Bun at the version `exact.mjs` pins or newer: `$BUN`, else
+  `~/.bun-<version>`, else the Bun the launcher names, `bun` on `PATH` or the
+  path of the Bun that created the app.
+- The exact2 checkout `EXACT2` or the launcher's default path names, set up with
+  Exact's setup.
+- rustup with `RUSTUP_TOOLCHAIN` or the app's Rust toolchain and its
+  `aarch64-apple-ios-sim` target,
+  which Exact's setup does not add.
+
+Each missing piece is an `exact-tools` finding with the command that installs
+it. Doctor reads files and runs only `bun --version`, `rustup` and `git`; it
+never runs the app's code.
+
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
 runs the same `./exact.mjs ios --no-install` in a checkout folder named like
@@ -653,7 +687,8 @@ shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
 `app.json` declares native modules, an `exact2` checkout with local changes and
 an app folder name that is not a plain ASCII file name build here. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
-what the worker needs.
+what the worker needs; `stim doctor` reports what each machine in
+`remote.machines` lacks.
 
 Copy this request to your agent:
 
@@ -868,7 +903,9 @@ the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints
-`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, refusal? }`.
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, buildPlacement?, bundleId?, refusal? }`.
+`fingerprint` and `cacheKey` are `null` for an integration with no build cache,
+such as an [Exact app](#exact-apps), whose next build always compiles.
 `missReason` has the shape of `lastBuilds.<platform>.missReason` in
 [`stim status --json`](#status).
 `cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of
@@ -1196,7 +1233,9 @@ token and needs a password. Viewers see each other's touches live. Every share e
 `stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
 you rebuild or relaunch the app, only stops it for now: it shows as stopped and comes back by itself. It refuses with
-`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
+`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server,
+`STIM_DAEMON_UNAVAILABLE` naming the build when a `stimd` of another Stim build
+holds the home, and
 `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
 that target again, until it expires, or a new share with a warning when nothing
 is saved, and `stop --forget` also deletes the saved links. See
@@ -1888,8 +1927,10 @@ The run estimates twice: when it starts, and once its outcome is known. The
 second estimate uses only runs that created, adopted or cold-booted their
 device the way this run did, so a new worktree is not estimated from reruns
 that reused a booted device. Runs recorded before Stim tagged them also count
-for a run that reuses its device until three tagged ones exist. Runs that
-finish while this one is running do not change its estimate.
+for a run that reuses its device until three tagged ones exist. An Exact app's iOS
+build says whether its `target/` already held simulator output for its
+configuration; its estimate then uses only runs of the same kind, so a first
+build is not estimated from incremental ones. Runs that finish while this one is running do not change its estimate.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
 in the shape of `lastBuilds.<platform>.missReason` below. When prebuild or
@@ -1968,6 +2009,13 @@ and Gradle project files in `android/`.
 bare app has no other route to web. macOS needs `Package.swift`,
 `macos.product` and `macos.infoPlist`. Detection never runs project scripts or
 executes app config code.
+
+Each environment also carries `devServer: boolean`: `true` when the app has a
+dev server that `stim start` and `stim reload` act on (React Native and Expo),
+`false` for Exact, native Xcode and Gradle apps, SwiftPM and web-only apps, and
+for a folder inside another project. An unreadable `package.json` keeps it `true`. Stim
+Desktop gives a workspace without one Stop and Show Logs instead of Start Dev
+Server and Reload, and no Metro section.
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
@@ -2094,7 +2142,10 @@ estimate of the time the cache saved. The aggregates are kept in
 same project bucket. The same file keeps the last 10 successful runs per
 project, platform and cache outcome (and the last 10 that created, adopted or
 cold-booted their device), with their phase durations, for the
-estimates `stim status` shows; `stats` does not print them. Outside a project only the
+estimates `stim status` shows; `stats` does not print them. An iOS run whose
+build skips the artifact cache (an Exact app's, or one the cache cannot key)
+keeps only that sample, an Exact app's tagged as a first or incremental build,
+and counts in none of the aggregates; such an Android run is not recorded. Outside a project only the
 machine section prints. There is no reset flag: delete that file to start over.
 
 `--json` prints one line:
@@ -2349,8 +2400,8 @@ simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
 `cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories, and the project's
 git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
-`android/.cxx`, `android/<module>/.cxx` and `.dd` (a directory laid out as
-Xcode DerivedData). They print the bytes freed per workspace. Plain `--delete` clears them
+`android/.cxx`, `android/<module>/.cxx`, `.dd` (a directory laid out as
+Xcode DerivedData) and an Exact app's Cargo `target/`. They print the bytes freed per workspace. Plain `--delete` clears them
 only through the pressure ladder, for a workspace with nothing running idle 2
 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,

@@ -64,36 +64,36 @@ afterEach(() => {
 test('RN admission is independent of advertised platforms and composes with SwiftPM and configured web', () => {
   packageAt(dir);
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual([]);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
   write(join(dir, 'Package.swift'));
   const settings = { macos: { product: 'App', infoPlist: 'Info.plist' }, web: { url: 'http://localhost:8000' } };
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: settings,
-    }),
+    }).platforms,
   ).toEqual(['macos', 'web']);
   expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
 
   write(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
   write(join(dir, 'app.json'), JSON.stringify({ expo: { platforms: ['web'] } }));
   expect(
-    projectRegistry.detectPlatforms(dir, {
+    projectRegistry.detectProject(dir, {
       context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual(['web']);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
 });
 
-test('an Exact app selects the exact integration for iOS while an Expo app.json stays React Native', () => {
+test('an Exact app selects the exact integration for iOS and has no dev server, while an Expo app.json stays React Native', () => {
   const exact = join(dir, 'exact');
   write(join(exact, 'package.json'), JSON.stringify({ name: 'shop', private: true }));
   write(join(exact, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, host: { ios: {} } }));
@@ -107,6 +107,16 @@ test('an Exact app selects the exact integration for iOS while an Expo app.json 
   write(join(expo, 'app.json'), JSON.stringify({ expo: {} }));
   const expoIos = projectRegistry.selectIos(expo);
   expect('id' in expoIos ? expoIos.id : expoIos.problem.message).toBe('react-native');
+
+  const detect = (root: string) =>
+    projectRegistry.detectProject(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    });
+  expect(detect(exact)).toEqual({ platforms: ['ios'], devServer: false });
+  expect(detect(expo).devServer).toBe(true);
+  write(join(expo, 'package.json'), '{ "dependencies": ');
+  expect(detect(expo).devServer).toBe(true);
 });
 
 test('symlinks resolve native ownership and workspace identity by canonical paths', () => {

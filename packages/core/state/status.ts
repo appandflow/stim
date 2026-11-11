@@ -256,7 +256,8 @@ export interface BuildMissReason {
 export interface BuildPlanPayload {
   platform: StatsPlatform;
   slot?: string;
-  fingerprint: string;
+  /** Null when the integration keeps no build cache, such as Exact: the next build always compiles. */
+  fingerprint: string | null;
   cacheKey: string | null;
   cacheHit: BuildCacheHit;
   provider: string | null;
@@ -272,6 +273,8 @@ export interface BuildPlanPayload {
   placement?: string;
   /** Resolved build preference; automatic worker availability and compatibility are checked at run time. */
   buildPlacement?: { preference: string; reason: string };
+  /** The app's bundle id when the integration reads it before building, such as from an Exact app's `app.json`. */
+  bundleId?: string;
 }
 
 /** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
@@ -671,6 +674,8 @@ export interface EnvironmentState {
   workspaceId?: string;
   /** Statically detected app platforms; always set by status, empty when none are detected. */
   platforms?: string[];
+  /** Whether the app has a dev server (Metro) that `stim start` and `stim reload` act on; always set by status. */
+  devServer?: boolean;
   /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */
   tutorial?: { version: number };
   /** When `stim doctor` last ran in this workspace, per platform; absent until it has run. */

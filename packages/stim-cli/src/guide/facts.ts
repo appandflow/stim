@@ -636,7 +636,8 @@ leased until <time>" for each one.`,
                   simulator unless --platform android, Android emulator when
                   --platform android or the app has android/ or uses Expo,
                   plus macOS SwiftPM when Package.swift exists and no platform
-                  is selected on a Mac; a platform the machine cannot build at
+                  is selected on a Mac, and an Exact app's simulator build with
+                  its pins unless it builds only here; a platform the machine cannot build at
                   all, such as iOS on Linux, is left out while it can build
                   another), and reasons, each reason it would not,
                   prefixed "iOS: ", "Android: " or "macOS: " when only one platform
@@ -644,9 +645,9 @@ leased until <time>" for each one.`,
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
-                  build-tools, compile-sdk, disk, busy or platform). problems lists the same
+                  build-tools, compile-sdk, disk, busy, platform or exact). problems lists the same
                   reasons as { code, reason } with that code; an ndk, build-tools,
-                  compile-sdk, jdk, xcode or runtime problem can also carry commands and a
+                  compile-sdk, jdk, xcode, runtime or exact problem can also carry commands and a
                   lead, the lines to run on that machine (sdkmanager, the JDK install,
                   xcode-select, xcodebuild or xcodes) and what they do, or followsFrom, the
                   code of the problem whose fix also clears it. notes lists what a build there does without stopping:
@@ -664,6 +665,7 @@ leased until <time>" for each one.`,
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
                   offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Connections > This machine uses > Add
+                  exact-tools is a costs-time finding in an Exact app on a Mac for each piece of Exact's toolchain ./exact.mjs ios lacks here (Bun, the exact2 checkout or its setup, rustup, the Rust toolchain or its aarch64-apple-ios-sim target), with the command that installs it; see stim guide lifecycle exact-ios
                   readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE
@@ -978,7 +980,8 @@ RULES
                               clears (android/app/build, android/build,
                               android/.gradle, .build, android/.cxx,
                               android/<module>/.cxx, a .dd laid out as
-                              DerivedData, node_modules,
+                              DerivedData, an Exact app's target/,
+                              node_modules,
                               ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
@@ -1122,7 +1125,8 @@ RULES
                               lists the project's android/app/build,
                               android/build,
                               android/.gradle, .build, android/.cxx,
-                              android/<module>/.cxx and .dd that --delete
+                              android/<module>/.cxx, .dd and an Exact
+                              app's target/ that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
@@ -1662,8 +1666,12 @@ RULES
                    runs that created, adopted or cold-booted their device
                    the way this run did count; a run that reuses a booted
                    device also counts runs recorded before Stim tagged them
-                   until 3 tagged ones exist. Runs that finish meanwhile do
-                   not change the estimate.
+                   until 3 tagged ones exist. An Exact app's iOS build
+                   says whether its target/ already held simulator output
+                   for its configuration; its estimate then counts only
+                   runs of the same kind, so a first build is not
+                   estimated from incremental ones. Runs that finish meanwhile do not change the
+                   estimate.
   expectedPhaseMs  the median duration of this phase in those runs, or null
                    when none of them entered it
   completedPhaseMs  milliseconds spent in each phase the run already left,
@@ -1671,7 +1679,8 @@ RULES
                    its phase appears only if visited earlier. Absent before
                    any phase completes and on older Stim versions
   basis            how many runs the expectedMs median comes from (at most
-                   10 per kind: device-setup runs keep their own 10)
+                   10 per kind: device-setup runs, and first and
+                   incremental uncached builds, keep their own 10)
   plannedPhases    [{ phase, expectedMs }] in phase order: the phases at
                    least half of those runs entered, each with its median
                    in them; null with no such run. The current phase can be
@@ -2063,10 +2072,12 @@ RULES
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
     cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
-    placement?, refusal? }
+    placement?, buildPlacement?, bundleId?, refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
-                --eas-profile, the one EAS CLI computes
+                --eas-profile, the one EAS CLI computes; null for an
+                integration with no build cache (Exact), whose next build
+                always compiles
   cacheKey      the key under that fingerprint; null for an EAS miss
   cacheHit      "local", "remote", or false for a miss
   provider      the remote tier that answered, "eas" with --eas-profile,
@@ -2084,7 +2095,8 @@ RULES
                 cache has no app, in the shape of lastBuilds.<platform>
                 .missReason (\`guide facts status\`), compared with the same
                 baseline the run would use. kind is "changed",
-                "no-baseline", "same-sources" or "prebuild-pending": a
+                "no-baseline", "same-sources", "cache-skipped" (an
+                integration with no build cache) or "prebuild-pending": a
                 baseline exists and the run would prebuild first, which the
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
@@ -2093,6 +2105,10 @@ RULES
                 remote-only or a Mac, where the plan assumes the device runs:
                 "on <machine>" or "this machine; <word> may use <machines>";
                 absent otherwise
+  buildPlacement  { preference, reason }: the resolved --remote-build
+                preference and what it means for this build
+  bundleId      the app's bundle id when the integration reads it before
+                building (Exact's app.json app.id)
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -2209,7 +2225,11 @@ HOW A RUN IS COUNTED (\`stats\`)
   aggregates it keeps the last 10 successful runs per project, platform and
   outcome (hit or cold), plus the last 10 that created, adopted or cold-booted
   their device, that did not wait for another workspace's build: each
-  one's duration and per-phase durations. \`stim status\` estimates a running
+  one's duration and per-phase durations. An iOS run whose build skips the
+  artifact cache (an Exact app's, or one the cache cannot key) keeps only
+  that sample, as a cold one (an Exact app's tagged first or incremental),
+  and counts in none of the aggregates above; such an Android run is not
+  recorded. \`stim status\` estimates a running
   build from them (see \`guide facts status\`); \`stats --json\` does not
   print them.
 

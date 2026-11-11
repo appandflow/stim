@@ -129,10 +129,10 @@ test.each([
   );
   expect(projectRegistry.findProjectRoot(root)).toBe(root);
   expect(
-    projectRegistry.detectPlatforms(root, {
+    projectRegistry.detectProject(root, {
       context: { projectPath: root, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual(['ios']);
   for (const configuration of ['Debug', 'Release', 'Staging']) {
     expect(selectNativeXcodeProject(root, undefined, configuration).platform).toBe('ios');
@@ -264,10 +264,10 @@ test('macOS applications and libraries do not become runnable iOS projects', () 
   writeNativeXcodeProject(root, 'Library', 'iphoneos', 'framework');
   expect(projectRegistry.projectProblem(root, 'ios')?.kind).toBe('not-an-app');
   expect(
-    projectRegistry.detectPlatforms(root, {
+    projectRegistry.detectProject(root, {
       context: { projectPath: root, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual([]);
 });
 

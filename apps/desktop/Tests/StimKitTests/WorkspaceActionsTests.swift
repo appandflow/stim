@@ -30,6 +30,17 @@ import Testing
     #expect(!items.contains(.startDevServer))
   }
 
+  @Test func workspaceWithoutDevServerOffersStopAndNoReloadOrStart() {
+    let items = workspaceMenuItems(
+      for: .workspace(metroRunning: false, platforms: ["ios"], linkedWorktree: true, devServer: false)
+    ).compactMap { $0 }
+    #expect(items.contains(.run(platform: "ios")))
+    #expect(items.contains(.stopDevServer))
+    #expect(items.contains(.showLogs))
+    #expect(!items.contains(.startDevServer))
+    #expect(!items.contains(.reload))
+  }
+
   @Test func worktreeRowSkipsServerActionsAndOffersWarm() {
     let items = workspaceMenuItems(for: .worktree).compactMap { $0 }
     #expect(items.contains(.warmWorktree))

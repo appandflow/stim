@@ -466,9 +466,9 @@ The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on
 **Back** on Android and web, and both rotation directions on simulators and
 emulators. **More** (the ellipsis button) opens
 a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device Frame** appears in More when matching frame artwork
-is available; this display toggle does not require control permission. Unavailable
-device commands stay disabled.
+and simulator options. Unavailable device commands stay disabled. A viewer that
+is only watching shows no toolbar, except on a read-only pairing, which keeps the
+disabled Control buttons, and on an iPhone Duo, which keeps More.
 
 On iOS simulators whose server advertises them, **More** includes
 **Shake** and **Slow Animations**. Slow animations shows its confirmed state;
@@ -601,7 +601,7 @@ of footage (see `packages/server/README.md`, Recording).
 - **Stopped devices.** A device that is not running can still be replayed:
   the first scrub opens the stream on its recording, with no live screen to go
   back to.
-- **Indicators.** A red **Recording** chip next to the model shows while the
+- **Indicators.** A red **Recording** chip under the title bar shows while the
   machine records the device. A **Replay off** pill replaces the bar when
   `recording.enabled` is off for the workspace. If the timeline goes away
   while you replay, the bar keeps only **Live**.
@@ -658,6 +658,13 @@ A phone tile streams only when the connected machine lists that platform,
 `physical-ios` or `physical-android`, in its hello `host.capabilities`; only a Mac
 lists `physical-ios`.
 
+The **Full Screen** button in the viewer's title bar, beside Close, hides the
+title bar and the agent actions, and the screen grows into the freed space. The
+bottom toolbar stays and gains **Exit Full Screen**, so the Control buttons stay
+reachable; a viewer that is only watching shows that button alone. The mode lasts
+until the viewer closes or the phone takes a book or tabletop fold layout, where
+the button is absent.
+
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
 top, and the Control toolbar stays below the screen. Turning the phone does not restart the stream, and
@@ -688,9 +695,9 @@ comes from the reserved regions. The hinge readings need the same iOS SDK
 support. Without both readings, the viewer keeps its default layout. Every
 control stays available in every posture.
 
-The **Device Frame** button in the bottom toolbar shows installed iPhone or
-Android emulator housing around the live screen. Frames start off and do not
-require Control. The paired machine supplies PNG layers from its installed DeviceKit
+The **Device Frame** switch in Settings, under Device View, shows installed iPhone or
+Android emulator housing around the live screen. It is saved on the phone, starts
+off and does not require Control. The paired machine supplies PNG layers from its installed DeviceKit
 or Android skin; artwork is not bundled in the app or repository. Touches stay
 inside the screen aperture, and taps on the bezel send no device input. Rotation
 metadata must match the current capture; otherwise the viewer shows the screen
@@ -701,8 +708,9 @@ viewer.
 Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
 
 For a live iPhone Duo, a server advertising `duo-frames` composes Xcode's installed
-V68 hardware model and both screen surfaces on the machine. **Device Frame** starts
-off. The composed JPEG follows the observed hinge angle and rotation; without
+V68 hardware model and both screen surfaces on the machine. A Duo viewer has its
+own **Device Frame** entry in More, which starts off each time and does not follow
+the Settings switch, because the composed frame gives up replay. The composed JPEG follows the observed hinge angle and rotation; without
 the model or a current angle reading, the raw screen remains visible. The app
 waits until the image is displayed before accepting a touch, then holds that
 image and pose throughout the drag. Bezel and hinge taps send no input. Leaving
@@ -734,7 +742,10 @@ has a hinge, posture buttons follow: **Fold**, **Half Open** and **Unfold**, as 
 posture is selected and disabled. On an unfolded Duo, touches go
 to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
-input; the banner says why.
+input; the banner says why. A session lost with the connection, as when the app
+goes to the background, starts again once the phone reconnects, joining whoever
+else controls the device. Only a device leased by another workspace by then shows
+the banner with **Take Over** instead.
 
 On an iOS simulator, an Android emulator or an Android phone, **More** also has **Paste from Phone** and **Copy Device
 Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
@@ -756,7 +767,7 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. On a server with `shared-control`,
+cursor icon under the title bar names it, beside the Recording chip. On a server with `shared-control`,
 **Control** starts at once while others drive the device: the phone, Stim
 Desktop, web share viewers and agents all send input to it together. The chip
 stays while you have control, because that driver still sends input too. The
@@ -774,6 +785,10 @@ the workspace **...** menu shows **Reload** and **Stop**:
 - **Reload** runs `stim reload` at once. When the workspace has both a running
   owned iOS simulator and a running owned Android emulator, it asks which app
   to reload, because `stim reload` without a platform refuses to choose.
+  It is not offered for an app whose status reports `devServer` false, such as
+  an Exact or native Xcode app, because `stim reload` refuses without Metro; in
+  a worktree with several apps it chooses only among apps with a dev server.
+  Status from a Stim that predates `devServer` keeps Reload.
 - **Stop** asks for confirmation, then runs `stim stop`.
 
 A toast shows the action while it runs, then its result or the server's error
@@ -1080,6 +1095,8 @@ has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
 running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
 lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
 the machine's usage, `machine.details` and notifications stay the captured machine's.
+`exact.json` adds `exact-app`, an Exact app running on its owned iOS simulator with no Metro and
+`devServer` false, as `stim status --json` reports it; its menu offers Stop and no Reload.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another machine, added by hand in the
 `macos.host` shape.

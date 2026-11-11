@@ -447,7 +447,18 @@ adds --release (Exact's shipping build; its first build takes minutes); any othe
 configuration and --scheme are refused. The build starts once Stim has booted
 that simulator, and build-only runs (stim ci build) are refused. Exact
 compiles incrementally in the checkout's target/ directory, so Stim keeps no
-artifact cache for it; a one-line Contract edit rebuilds in seconds.
+artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
+is build output: the idle stage and gc --delete clear it from an idle
+workspace (never while another process, such as a shell or an exact.mjs
+command, runs from or works in the app, nor on Windows), and the next build
+then compiles from scratch.
+
+stim ios --plan (and Stim Desktop's Next Build) predicts that build without
+running it: fingerprint and cacheKey are null, cacheHit is false, missReason
+is cache-skipped, bundleId is app.json's app.id, placement is this machine,
+and buildPlacement names why a build that cannot offload stays here.
+ios.remote other than auto or local is refused, as the run refuses it; with
+auto the run still refuses when auto picks a hosted device.
 
 Drive and test the app with Exact's own commands, with EXACT_SIM set to the
 simulator stim ios reported. Without it Exact picks a simulator by its own
@@ -459,6 +470,15 @@ target"), and EXACT2 set to the Exact checkout when it sits at another folder
 depth (otherwise "no exact2 at ..."). Stim reports these Exact failures as
 they come.
 
+stim doctor --platform ios checks what ./exact.mjs ios needs on this Mac,
+where the launcher looks: Bun at the version exact.mjs pins or newer ($BUN,
+else ~/.bun-<version>, else the Bun the launcher names: bun on PATH or the
+creating Bun's path), the exact2 checkout EXACT2 or the launcher default names,
+set up with Exact's setup, and rustup with RUSTUP_TOOLCHAIN or the app's Rust
+toolchain and its aarch64-apple-ios-sim target. Each missing piece is a
+finding with the command that installs it. Doctor reads files and runs only
+bun --version, rustup and git; it never runs the app's code.
+
 Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
 runs the same ./exact.mjs ios --no-install [--release] in a checkout folder
@@ -468,7 +488,7 @@ worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
 Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
 commit this app uses, set up with Exact's setup. A machine that lacks one is
 skipped and the placement line names the missing piece and the command that
-installs it. The values of the settings app.json env declares travel with the
+installs it; stim doctor lists the same for each machine in remote.machines. The values of the settings app.json env declares travel with the
 build: this shell's, else .env.local's, else .env's, as Exact reads them. These
 build here: apps whose app.json declares native modules (Exact may read them on
 a simulator), an exact2 checkout with local changes, and an app folder name

@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
-import gcCommand, { runGc } from '../commands/gc.ts';
-import { Command } from 'commander';
+import gcOp, { runGc } from '../commands/gc.ts';
+import { runCli } from '../cli/define-op.ts';
 import * as cliOperation from '../cli-operation.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
@@ -649,9 +649,7 @@ test.each(
     const result = trackRead((signal) =>
       cli
         ? withAmbientContext(context, async () => {
-            const program = new Command();
-            gcCommand(program);
-            await program.parseAsync(['node', 'stim', 'gc', '--cache', 'fixture', '--delete', '--json']);
+            await runCli(gcOp, ['--cache', 'fixture', '--delete', '--json'], { version: '9.9.9' });
           })
         : createStim({
             projectRoot: item.root,

@@ -143,6 +143,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var doctorRuns: DoctorRuns?
   public var agentDevice: AgentDevice?
   public var platforms: [String]?
+  /// False when the app has no dev server for `stim start` and `stim reload`, as for Exact and native Xcode apps;
+  /// absent from a `stim` that does not report it.
+  public var devServer: Bool?
   public var live: Bool
   public var hidden: Bool?
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
@@ -192,7 +195,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var titleOverride: String?
 
   enum CodingKeys: String, CodingKey {
-    case path, workspaceId, platforms, live, hidden, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios,
+    case path, workspaceId, platforms, devServer, live, hidden, phase, phaseSince, warmStep, memoryMb, memorySource, warnings,
+      issues, ios,
       android,
       web, metro
     case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build

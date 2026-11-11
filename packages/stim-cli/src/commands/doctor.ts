@@ -11,7 +11,7 @@ import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../dae
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import chalk from 'chalk';
-import { InvalidArgumentError, type Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -82,7 +82,7 @@ interface DoctorOptions {
 
 export function parseDoctorPlatform(value: string): DoctorPlatform {
   if (value === 'ios' || value === 'android') return value;
-  throw new InvalidArgumentError('expected one of: ios, android');
+  throw new Error('expected one of: ios, android');
 }
 
 /**
@@ -732,29 +732,29 @@ async function assembleDoctorReport(
   };
 }
 
-export default function doctorCommand(
-  program: Command,
-  version: string,
+export function doctorOp(
   inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport> = inspectStimVersions,
   host: NodeJS.Platform = process.platform,
   registry: Pick<ProjectRegistry, 'findProjectRoot' | 'selectDoctor'> = projectRegistry,
-): void {
-  program
-    .command('doctor')
-    .description(
+): Op {
+  return defineOp({
+    name: 'doctor',
+    description:
       'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a supported native app is recorded in Stim state so guide can say when doctor is due.',
-    )
-    .option('--json', 'print the findings as JSON')
-    .option(
-      '--platform <platform>',
-      'report shared findings plus only this native platform: ios or android',
-      parseDoctorPlatform,
-    )
-    .option(
-      '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; in a terminal, after asking about each step and its cost, bring the source checkout to a state worktrees can clone (reinstall a stale or missing dependency tree, run pod install --clean-install and, for a conflict with a gitignored Podfile.lock, pod update of only the named pods, and run the prebuild Stim has no current record of, without compiling); ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
-    )
-    .action(async (opts: DoctorOptions) => {
+    options: {
+      json: { flags: '--json', description: 'print the findings as JSON' },
+      platform: {
+        flags: '--platform <platform>',
+        description: 'report shared findings plus only this native platform: ios or android',
+        parse: parseDoctorPlatform,
+      },
+      fix: {
+        flags: '--fix',
+        description:
+          'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; in a terminal, after asking about each step and its cost, bring the source checkout to a state worktrees can clone (reinstall a stale or missing dependency tree, run pod install --clean-install and, for a conflict with a gitignored Podfile.lock, pod update of only the named pods, and run the prebuild Stim has no current record of, without compiling); ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      },
+    },
+    run: async ({ options: opts, version }) => {
       const root = registry.findProjectRoot(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
@@ -845,5 +845,10 @@ export default function doctorCommand(
         ),
       );
       recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
-    });
+    },
+  });
 }
+
+const doctor: Op = doctorOp();
+
+export default doctor;
