@@ -1,5 +1,4 @@
 {
-  "scenarios": ["launch", "error-fix"],
   "arms": [
     {
       "id": "stim",

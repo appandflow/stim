@@ -2,14 +2,14 @@ import data from '../../website/src/data/benchmark-matrix.json' with { type: 'js
 
 export const BENCHMARK_MODEL_PIN = 'claude-sonnet-5-5';
 
-const SCENARIOS = data.scenarios;
+const DRIVER_VARIANT_SCENARIOS = {
+  readiness: { javascript: 'launch', 'launch-crash': 'error-fix' },
+  native: { standalone: 'launch' },
+};
 
-const VARIANT_SCENARIOS = { javascript: 'launch', standalone: 'launch', 'launch-crash': 'error-fix' };
-
-export function scenarioForVariant(variant) {
-  const scenario = VARIANT_SCENARIOS[variant];
-  if (!scenario)
-    throw new Error(`variant ${variant} is outside the published matrix (scenarios: ${SCENARIOS.join(', ')})`);
+export function scenarioForVariant(variant, driver) {
+  const scenario = DRIVER_VARIANT_SCENARIOS[driver]?.[variant];
+  if (!scenario) throw new Error(`unsupported variant for the ${driver} driver: ${variant}`);
   return scenario;
 }
 

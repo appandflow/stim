@@ -155,6 +155,7 @@ jobs:
         run: |
           benchmark_paths=(
             scripts/agent-benchmark/
+            website/src/data/benchmark-matrix.json
             scripts/launch-crash-benchmark.mjs
             test/e2e/native/fixtures/xcode/
             packages/stim-cli/package.json

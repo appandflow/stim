@@ -1164,7 +1164,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     );
   }
   assertCampaignModel(model, pins);
-  assertRunnableCell(matrixPlatformForDriver(platform), scenarioForVariant(variant), arm);
+  assertRunnableCell(matrixPlatformForDriver(platform), scenarioForVariant(variant, 'readiness'), arm);
   const preflightReport = preflight(platform);
   const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
   preflightReport.loadGate = await waitForLoadGate();

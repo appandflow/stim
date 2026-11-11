@@ -46,7 +46,9 @@ describe('benchmark matrix', () => {
     expect([...covered].toSorted()).toEqual(['expo-android', 'expo-ios']);
     expect(benchmarkCell('bare-ios', 'launch', 'expo-agent-cli').status).toBe('unsupported');
     expect(benchmarkCell('macos', 'error-fix', 'stim').missing[0]).toMatch(/native launch-crash/);
-    expect(() => scenarioForVariant('native')).toThrow(/outside the published matrix/);
+    expect(() => scenarioForVariant('native', 'readiness')).toThrow(/unsupported variant/);
+    expect(() => scenarioForVariant('standalone', 'readiness')).toThrow(/unsupported variant/);
+    expect(scenarioForVariant('standalone', 'native')).toBe('launch');
   });
 
   it('keeps the model an axis whose campaign list defaults to Sonnet only', () => {
