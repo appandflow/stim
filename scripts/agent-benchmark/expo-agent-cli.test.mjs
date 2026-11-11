@@ -31,15 +31,21 @@ describe('Expo agent CLI cloud audit', () => {
     ['expo-agent-cli docs sync', 'cloud-command-docs'],
     ['npx --yes eas-cli simulator:stop', 'eas-cli-invoked'],
     ['EXPO_TOKEN=abc expo-agent-cli status', 'expo-token-referenced'],
-    ['npx @expo/agent-cli@latest status', 'floating-version-requested'],
+    ['npx @expo/agent-cli@latest status', 'package-run-through-package-runner'],
+    ['npx -y @expo/agent-cli@1.0.99 status', 'package-run-through-package-runner'],
+    ['npx --yes @expo/agent-cli@1.0.27 status', 'package-run-through-package-runner'],
+    ['npx @expo/agent-cli status', 'package-run-through-package-runner'],
+    ['bunx @expo/agent-cli status', 'package-run-through-package-runner'],
+    ['pnpm dlx @expo/agent-cli@1.0.99 status', 'package-run-through-package-runner'],
+    ['yarn dlx @expo/agent-cli status', 'package-run-through-package-runner'],
+    ['node node_modules/@expo/agent-cli/bin/cli.js deploy', 'cloud-command-deploy'],
+    ['node /x/node_modules/@expo/agent-cli/bin/cli.js dev --eas', 'eas-flag'],
   ])('rejects %s', (command, reason) => {
     expect(reasons(command)).toContain(reason);
   });
 
-  it('flags an unpinned npx resolution for review without rejecting it', () => {
-    const result = audit('npx @expo/agent-cli status');
-    expect(result.violations).toEqual([]);
-    expect(result.warnings.map((warning) => warning.reason)).toEqual(['npx-resolution-unverified']);
+  it('counts a direct node run of the package as using the tool', () => {
+    expect(audit('node /x/node_modules/@expo/agent-cli/bin/cli.js status').toolInvoked).toBe(true);
   });
 
   it('rejects project config that routes builds or devices to EAS', () => {

@@ -95,14 +95,13 @@ function toolInvocation(segmentWords) {
     (word) =>
       word === EXPO_AGENT_CLI_BIN ||
       word.split('/').at(-1) === EXPO_AGENT_CLI_BIN ||
-      word.startsWith(EXPO_AGENT_CLI_PACKAGE),
+      word.includes(EXPO_AGENT_CLI_PACKAGE),
   );
   return at === -1 ? null : { at, word: segmentWords[at] };
 }
 
 export function expoAgentCliCommandAudit(commands) {
   const violations = [];
-  const warnings = [];
   let toolInvoked = false;
   for (const { command } of commands) {
     const text = String(command ?? '');
@@ -114,11 +113,10 @@ export function expoAgentCliCommandAudit(commands) {
       const tool = toolInvocation(segmentWords);
       if (!tool) continue;
       toolInvoked = true;
-      const pinned = /^@expo\/agent-cli@(.+)$/.exec(tool.word)?.[1];
-      if (pinned === 'latest' || pinned === 'canary')
-        violations.push({ reason: 'floating-version-requested', command: segment });
-      else if (tool.word.startsWith(EXPO_AGENT_CLI_PACKAGE) && !pinned)
-        warnings.push({ reason: 'npx-resolution-unverified', command: segment });
+      const viaRunner =
+        segmentWords.some((word) => word === 'npx' || word === 'bunx' || word === 'dlx') &&
+        tool.word.startsWith(EXPO_AGENT_CLI_PACKAGE);
+      if (viaRunner) violations.push({ reason: 'package-run-through-package-runner', command: segment });
       const args = segmentWords.slice(tool.at + 1);
       if (args.some((word) => word === '--eas' || word.startsWith('--eas='))) {
         violations.push({ reason: 'eas-flag', command: segment });
@@ -132,7 +130,7 @@ export function expoAgentCliCommandAudit(commands) {
       }
     }
   }
-  return { violations, warnings, toolInvoked };
+  return { violations, toolInvoked };
 }
 
 export function expoAgentCliConfigViolations(packageJson) {

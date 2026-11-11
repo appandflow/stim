@@ -73,7 +73,16 @@ the run invalid. After the capture, nothing stops an agent from restoring the
 file with `git checkout HEAD~1 -- <file>`; the exact-repair proof checks the
 result, not how the agent reached it.
 
-The Expo agent CLI arm rejects `agents:setup`, `agents`, `docs:sync` and
+The Expo agent CLI arm allows only the pinned local copy: any run of the
+package through `npx`, `bunx` or `dlx`, with or without a version, invalidates the
+run. This is the stricter choice; the shim `expo-agent-cli` replaces the README's
+`npx @expo/agent-cli` form. A direct `node .../@expo/agent-cli/...` call is
+audited like the shim. The audit reads literal invocations only: indirection
+such as `X=deploy; expo-agent-cli $X`, a script file or environment-provided
+arguments is not seen. Those cases fail because `EXPO_TOKEN` is removed and no
+Expo login exists. The recorded evidence holds command text and output only; it
+has no network record, so a cloud call can be detected afterwards only if the
+tool's own output names it. The arm also rejects `agents:setup`, `agents`, `docs:sync` and
 `docs sync` during a timed run (they write into the user home, run other tools
 or fetch from the network); skills are installed at preparation and pinned. The
 pinned install in `expo-agent-cli.mjs` is written from the npm metadata and has
