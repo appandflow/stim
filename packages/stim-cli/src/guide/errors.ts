@@ -511,7 +511,11 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   command for each retained claim.
   When a Metro, tunnel, maintenance child or server worker cannot be verified
   stopped, Stim also retains the home, shared daemon and engine claims and
-  refuses new work in that home.
+  refuses new work in that home. When the child is identified, those claims
+  record it and free themselves once it has exited. A child of stimd's own
+  tick does not stop stimd: it logs daemon_cleanup_unverified, stays running
+  and releases what that child held once the child has stopped. A stimd that
+  cannot start names every unresolved home, daemon and engine claim at once.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
   An attached daemon killed unexpectedly can also leave home, shared daemon

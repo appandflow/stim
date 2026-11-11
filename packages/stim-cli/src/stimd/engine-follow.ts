@@ -5,6 +5,7 @@ import {
   readClaimSet,
   releaseClaim,
   markClaimChildPending,
+  setClaimChild,
   tryAcquireClaim,
   updateClaimDetails,
   type ClaimHandle,
@@ -39,7 +40,11 @@ export interface EngineFollower {
   admit(): Promise<{ build: string; version: string } | null>;
   /** The build the engine points at once it is not this one, else flips a staged build when every claim drained. */
   check(pinned: () => boolean): Promise<{ build: string; version: string } | null>;
-  retainUnknown(): string | null;
+  /**
+   * Keeps the claim past this stimd's exit for a child whose cleanup was not verified: it records `child` when the child
+   * is identified, so the claim frees once that child's process group is gone, and an unknown child otherwise.
+   */
+  retainUnknown(child?: { pid: number; processToken: string } | null): string | null;
   release(): void;
 }
 
@@ -149,9 +154,10 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
       }
       return switchedEngine(engine);
     },
-    retainUnknown() {
+    retainUnknown(child) {
       if (!claim) return null;
-      markClaimChildPending(claim);
+      if (child) setClaimChild(claim, child);
+      else markClaimChildPending(claim);
       return claim.path;
     },
     release() {

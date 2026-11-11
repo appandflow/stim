@@ -47,6 +47,8 @@ import {
   claimFailure,
   claimRemoveCommand,
   markClaimChildPending,
+  processGroupAlive,
+  setClaimChild,
   isClaimRefusal,
   isClaimUnavailable,
   readClaimSet,
@@ -56,6 +58,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
+import { reportChildOf, soleReportChild, WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -77,6 +80,8 @@ import {
   stimdBuildId,
   stimdEnv,
   stimdLive,
+  unresolvedDaemonClaims,
+  unresolvedDaemonClaimsError,
   waitForStimdHello,
   type NetAnswer,
 } from '../daemon/client.ts';
@@ -240,7 +245,13 @@ function writeAtomic(file: string, value: unknown): void {
  * What keeps the daemon running: a dev server, a build, a held build slot, a booted owned device, an owned Chrome or
  * a macOS app. Owned simulators that could not be listed keep it running.
  */
-function homeAlive(config: Config | null, measured: TickMeasurement, active = false): string | null {
+function homeAlive(
+  config: Config | null,
+  measured: TickMeasurement,
+  active = false,
+  unverified: string | null = null,
+): string | null {
+  if (unverified) return unverified;
   if (active) return 'a command is running';
   for (const [path, project] of Object.entries(config?.projects ?? {})) {
     const supervisor = resolveSupervisorTarget({
@@ -463,14 +474,93 @@ async function waitForeground(done: Promise<void> | undefined, failure: () => un
   if (error) throw error;
 }
 
-function isUnverifiedCleanup(error: unknown): boolean {
+function refuseUnresolvedDaemonClaims(writer: { close: () => unknown }): void {
+  const blocking = unresolvedDaemonClaims();
+  if (blocking.length === 0) return;
+  writer.close();
+  throw unresolvedDaemonClaimsError(blocking);
+}
+
+function logKeptWorkspaces(
+  kept: Map<string, string>,
+  workspaces: HomePasses['workspaces'],
+  log: (level: Level, event: string, msg: string, fields?: Record<string, unknown>) => void,
+): void {
+  for (const { path: workspace, outcome, detail } of workspaces) {
+    if (outcome !== 'kept') kept.delete(workspace);
+    else if (kept.get(workspace) !== detail) {
+      kept.set(workspace, detail);
+      log('info', 'workspace_kept', `${workspace}: ${detail}`, { workspace });
+    }
+  }
+}
+
+/**
+ * The children whose cleanup a tick could not verify. Each keeps stimd up until a later tick finds it stopped, which
+ * releases the claims its failure retained.
+ */
+function createCleanupWatch(log: (level: Level, event: string, msg: string) => void) {
+  let unsettled: { error: ClaimUnavailableError; settled: (() => boolean) | null; claims: readonly ClaimHandle[] }[] =
+    [];
+  return {
+    contain(error: unknown, ending: boolean): boolean {
+      if (ending || !isUnverifiedCleanup(error)) return false;
+      unsettled.push({
+        error,
+        settled: cleanupCheck(error),
+        claims: error instanceof WorkspaceProcessCleanupError ? error.claims : [],
+      });
+      log(
+        'error',
+        'daemon_cleanup_unverified',
+        `the tick goes on, and stimd stays up until the child has stopped: ${error.message} ${error.remedy ?? ''}`.trim(),
+      );
+      return true;
+    },
+    settle(): void {
+      const stopped = unsettled.filter((entry) => entry.settled?.());
+      unsettled = unsettled.filter((entry) => !stopped.includes(entry));
+      for (const entry of stopped) {
+        const released = entry.claims.filter((held) => releaseClaim(held)).map((held) => held.path);
+        log(
+          'info',
+          'daemon_cleanup_settled',
+          `a child whose cleanup was not verified has stopped${released.length ? `; released ${released.join(', ')}` : ''}`,
+        );
+      }
+    },
+    pending: () => unsettled.length > 0,
+    reason: () => (unsettled.length > 0 ? 'a child whose cleanup was not verified may still run' : null),
+    errors: () => unsettled.map((entry) => entry.error),
+  };
+}
+
+/** How a later tick learns that a child whose cleanup was not verified has stopped, or null when nothing can tell. */
+function cleanupCheck(error: object): (() => boolean) | null {
+  for (const key of ['cleanupSettled', 'reportResourceSettled']) {
+    const check: unknown = Reflect.get(error, key);
+    if (typeof check === 'function') return () => check() === true;
+  }
+  const child = reportChildOf(error);
+  return child && process.platform !== 'win32' ? () => !processGroupAlive(child.pid) : null;
+}
+
+function isUnverifiedCleanup(error: unknown): error is ClaimUnavailableError {
   return isClaimUnavailable(error) && 'reportCleanup' in error;
 }
 
-function markHomePending(home: ClaimHandle | null, cleanup: () => void = () => {}, enabled = true): void {
+type IdentifiedChild = { pid: number; processToken: string };
+
+function markHomePending(
+  home: ClaimHandle | null,
+  cleanup: () => void = () => {},
+  enabled = true,
+  child: IdentifiedChild | null = null,
+): void {
   if (!enabled || !home) return;
   try {
-    markClaimChildPending(home);
+    if (child) setClaimChild(home, child);
+    else markClaimChildPending(home);
   } catch (error) {
     cleanup();
     throw Object.assign(
@@ -480,20 +570,27 @@ function markHomePending(home: ClaimHandle | null, cleanup: () => void = () => {
   }
 }
 
+/**
+ * Keeps stimd's home, daemon and engine claims past its exit for children whose cleanup was not verified. When every one
+ * of `unverified` names the same identified child, the claims record that child and free themselves once its process
+ * group is gone; otherwise they record an unknown child, which only a person can clear.
+ */
 function retainUnverifiedForeground(
   error: unknown,
   home: ClaimHandle,
   retention: ReturnType<typeof followEngine>,
   daemon: ClaimHandle | null,
+  unverified: readonly unknown[] = [error],
 ): unknown {
   if (!isClaimUnavailable(error)) return undefined;
   if (!('reportCleanup' in error)) return error;
   if ('retentionFailure' in error) return error;
-  markHomePending(home);
-  if (daemon) markHomePending(daemon);
-  const enginePath = retention?.retainUnknown();
+  const child = soleReportChild(unverified);
+  markHomePending(home, undefined, true, child);
+  if (daemon) markHomePending(daemon, undefined, true, child);
+  const enginePath = retention?.retainUnknown(child);
   const paths = [home.path, ...(daemon ? [daemon.path] : []), ...(enginePath ? [enginePath] : [])];
-  error.message += ` Stimd ownership remains held at ${paths.join(', ')}.`;
+  error.message += ` Stimd ownership remains held at ${paths.join(', ')}${child ? ` until process group ${child.pid} has exited` : ''}.`;
   return Object.assign(error, {
     retentionFailure: true,
     remedy: `${error.remedy} After verifying the child and descendants have stopped, remove these claims: ${paths.map(claimRemoveCommand).join('; ')}`,
@@ -601,8 +698,10 @@ interface RunStimdOptions {
  * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
  * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
  * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
- * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
- * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
+ * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. A tick that
+ * cannot verify a child's cleanup does not end it: stimd logs `daemon_cleanup_unverified`, stays up and checks the child
+ * again each tick, and releases the claims that child held once it has stopped. During shutdown it cancels the
+ * dependency size scan and waits for its cleanup and for any slow pass already running.
  */
 export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
   const controller = new AbortController();
@@ -670,6 +769,7 @@ async function runStimdInner(
   };
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
+  refuseUnresolvedDaemonClaims(writer);
   let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
@@ -842,6 +942,7 @@ async function runStimdInner(
   const logs = createStreams((message) => log('warn', 'device_logs', message), log);
   const threads = createThreadTable(log);
   let backgroundFailure: unknown;
+  const cleanups = createCleanupWatch(log);
   const lane = createPassesLane(threads, log, (error) => {
     failBackground(error, 'background cleanup could not be verified');
   });
@@ -883,6 +984,7 @@ async function runStimdInner(
   const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
+      cleanups.pending() ||
       logs.running() ||
       logs.ownedRunning() ||
       keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
@@ -908,6 +1010,7 @@ async function runStimdInner(
   let sealed = false;
   let attachedWatchdog: NodeJS.Timeout | undefined;
   const maintenanceAllowed = () => !closing && !ending;
+  const endingNow = () => attached !== undefined || !maintenanceAllowed();
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -935,6 +1038,7 @@ async function runStimdInner(
   const hasActiveCommands = () => ops.size > 0;
   const pinned = (): boolean =>
     Boolean(backgroundFailure) ||
+    cleanups.pending() ||
     metroCleanupPending() ||
     metroRootsEndingWithStimd().length > 0 ||
     [...ops.values()].includes('pinned') ||
@@ -1433,12 +1537,18 @@ async function runStimdInner(
       closeNetAndLogs(),
     ])
       .then(async (results) => {
-        const error = attachedCleanupError(undefined, backgroundFailure, results);
-        if (isUnverifiedCleanup(error)) {
+        cleanups.settle();
+        const failures = [
+          backgroundFailure,
+          ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+          ...cleanups.errors(),
+        ].filter(isUnverifiedCleanup);
+        const [error] = failures;
+        if (error) {
           unverified = true;
           keepOwn = true;
           keepDaemon = true;
-          retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
+          retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim, [...new Set(failures)]);
         }
         await threads.close();
         return undefined;
@@ -1529,6 +1639,7 @@ async function runStimdInner(
     hasten = null;
     if (!maintenanceAllowed()) break;
     tickRequested = false;
+    cleanups.settle();
     const mode = effectiveMode();
     const retentionError = refreshRetention(retention);
     if (retentionError) {
@@ -1606,7 +1717,7 @@ async function runStimdInner(
           ? 'a run waits for a build slot or a device boot'
           : net.running()
             ? 'the net thread serves'
-            : homeAlive(config, measured, hasActiveCommands());
+            : homeAlive(config, measured, hasActiveCommands(), cleanups.reason());
       pending = alive
         ? null
         : maintaining
@@ -1616,13 +1727,7 @@ async function runStimdInner(
             : await pendingWork(config, measured, slowTickMs, mode === 'on', operation);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
-      for (const { path: workspace, outcome, detail } of workspaces) {
-        if (outcome !== 'kept') kept.delete(workspace);
-        else if (kept.get(workspace) !== detail) {
-          kept.set(workspace, detail);
-          log('info', 'workspace_kept', `${workspace}: ${detail}`, { workspace });
-        }
-      }
+      logKeptWorkspaces(kept, workspaces, log);
       const tickAt = new Date(now).toISOString();
       const taken = [
         ...workspaces.flatMap((entry) =>
@@ -1670,6 +1775,7 @@ async function runStimdInner(
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
       for (const socket of replying) socket.destroy();
+      if (cleanups.contain(error, endingNow())) continue;
       foregroundFailure = handleForegroundError(error, ending, attached !== undefined, requestEnd, shutdown);
       break;
     } finally {
@@ -1817,7 +1923,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)
-        ? error.message
+        ? `${error.message}${'remedy' in error && typeof error.remedy === 'string' ? ` ${error.remedy}` : ''}`
         : error instanceof Error
           ? (error.stack ?? error.message)
           : String(error);
