@@ -358,13 +358,8 @@ export async function ensureMetroThroughStimd(
         true,
       );
       opToken = admittedOpToken(held);
-      if (!opToken && stimdRefused())
-        return {
-          op: 'error',
-          code: 'STIM_DAEMON_UNAVAILABLE',
-          message: `This Stim home's stimd runs another Stim build (${refusedBuild}), which runs its workspaces' Metro.`,
-          remedy: `Run the command with that Stim build (${refusedBuild}), or set STIM_HOME to a separate home for this build.`,
-        };
+      const refused = opToken ? null : otherBuildRefusal();
+      if (refused) return { op: 'error', ...refused };
       if (!opToken) return null;
     }
     const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
@@ -452,7 +447,8 @@ export async function stopMetroTree(
   }
   const ask = () => askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
   let answer = await ask();
-  if (!answer && stimdRefused() && !signal?.aborted && (await successorBound())) answer = await ask();
+  if (!answer && stimdRefused() && !signal?.aborted && successorExpected() && (await successorBound()))
+    answer = await ask();
   if (signal?.aborted) return { stopped: false, reason: 'the stop was cancelled', remedy: 'Run `stim stop` again.' };
   if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return { stopped: true };
   if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return viaFallback();
@@ -462,13 +458,10 @@ export async function stopMetroTree(
   }
   const after = held();
   if (after && !after.daemon && !after.metro) return viaFallback();
-  if (stimdRefused()) {
+  const refused = otherBuildRefusal();
+  if (refused) {
     if (after && !after.metro) return viaFallback();
-    return {
-      stopped: false,
-      reason: `this Stim home's stimd runs another Stim build (${refusedBuild}), which supervises this workspace's Metro`,
-      remedy: `Run \`stim stop\` here with the Stim build that started it (build ${refusedBuild}).`,
-    };
+    return { stopped: false, reason: refused.message, remedy: refused.remedy };
   }
   if (after?.daemon && !launchError)
     return {

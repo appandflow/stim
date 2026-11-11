@@ -2,6 +2,7 @@ const state = vi.hoisted(() => {
   const result: {
     reply: Record<string, unknown> | null;
     refuse: boolean;
+    refusal: Record<string, unknown>;
     daemon: boolean;
     close: boolean;
     live: unknown[];
@@ -10,6 +11,7 @@ const state = vi.hoisted(() => {
   } = {
     reply: null,
     refuse: false,
+    refusal: {},
     daemon: true,
     close: true,
     live: [],
@@ -27,7 +29,7 @@ vi.mock('node:net', async () => {
         setEncoding() {}
         write() {
           if (state.refuse) {
-            this.emit('data', `${JSON.stringify({ op: 'engine-changed', build: 'otherbuild00' })}\n`);
+            this.emit('data', `${JSON.stringify({ op: 'engine-changed', build: 'otherbuild00', ...state.refusal })}\n`);
             this.emit('close');
           } else if (state.reply)
             this.emit('data', `${JSON.stringify({ op: 'hello' })}\n${JSON.stringify(state.reply)}\n`);
@@ -57,6 +59,7 @@ import { stopMetroTree } from '../daemon/client.ts';
 beforeEach(() => {
   state.reply = null;
   state.refuse = false;
+  state.refusal = {};
   state.daemon = true;
   state.close = true;
   state.live = [{ path: '/home/workspaces/w/metro.claim/exclusive/a.claim' }];
@@ -148,4 +151,15 @@ test('leaves a Metro claimed under a stimd of another build to that build, namin
   await vi.advanceTimersByTimeAsync(6000);
   expect(await stopping).toMatchObject({ stopped: false, remedy: expect.stringContaining('otherbuild00') });
   expect(fallback).not.toHaveBeenCalled();
+});
+
+test('a stimd of another build whose handover live shares hold names them at once, as other commands do', async () => {
+  state.refuse = true;
+  state.refusal = { handover: true, heldBy: 'shares', pid: 4242 };
+  const stopped = await stopMetroTree('/project', 42, 'token', () => true);
+  expect(stopped).toMatchObject({
+    stopped: false,
+    reason: expect.stringContaining('live web shares'),
+    remedy: expect.stringContaining('kill 4242'),
+  });
 });
