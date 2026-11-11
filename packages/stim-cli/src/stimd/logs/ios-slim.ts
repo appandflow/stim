@@ -150,6 +150,7 @@ async function readRuntimePlists(root: string): Promise<unknown[]> {
     }
   };
   await Promise.all(Array.from({ length: PLUTIL_PARALLEL }, worker));
+  if (plists.length === 0) throw new Error(`no launchd plist could be read under ${root}`);
   return plists;
 }
 
@@ -204,6 +205,7 @@ export function watchSlimDenials({
   let filter: ((event: LaunchdEvent) => SlimDenial | null) | null = null;
   const pending: LaunchdEvent[] = [];
   const report = (event: LaunchdEvent) => {
+    if (signal.aborted) return;
     const denial = filter?.(event);
     if (!denial) return;
     const { msg, ...fields } = denial;
@@ -217,6 +219,7 @@ export function watchSlimDenials({
   };
   void slimServiceMap(udid).then(
     (services) => {
+      if (signal.aborted) return undefined;
       filter = createSlimDenialFilter({
         bundleId,
         executable,
