@@ -97,3 +97,12 @@ image for private content before committing it.
 The benchmark overview displays these pilots separately as total task time,
 including retries and evidence capture. Keep the one-pair limitation visible.
 Native Android joins that section only after an accepted comparison is exported.
+
+## Matrix mapping
+
+In the published matrix the standalone task is the app-launch scenario for
+macOS, native iOS and native Android: it builds, launches and verifies the app.
+The error-fix scenario there is a native launch crash the logs surface; no
+fixture variant exists, so `matrix.mjs` marks those cells not-yet-runnable.
+Dispatch takes the model first-class, as before, and refuses one outside the
+campaign model list.

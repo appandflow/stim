@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertCampaignModel, assertRunnableCell, isBenchmarkArm } from './matrix.mjs';
 import { makeRunnerHome, spawnStamped } from './runner.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
@@ -186,7 +187,9 @@ function prepare() {
 }
 
 async function dispatch() {
-  if (!['stim', 'control'].includes(arm) || !model) throw new Error('dispatch <platform> <stim|control> <model>');
+  if (!isBenchmarkArm(arm) || !model) throw new Error('dispatch <platform> <control|stim> <model>');
+  assertCampaignModel(model, pins);
+  assertRunnableCell(`${platform === 'macos' ? '' : 'native-'}${platform}`, 'launch', arm);
   const actual = provenance();
   const ready = JSON.parse(readFileSync(join(directory, 'READY.json'), 'utf8'));
   for (const key of Object.keys(actual))

@@ -5,6 +5,7 @@ import Heading from '@theme/Heading';
 import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import NativeBenchmarkResults from '@site/src/components/NativeBenchmarkResults';
+import { coverageArms, coveragePlatforms, coverageStatusLabels } from '@site/src/components/benchmarkCoverage';
 import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
@@ -43,6 +44,9 @@ function OverviewChart({
       <div className={styles.overviewLegend} aria-hidden="true">
         <span className={styles.stimKey}>Stim</span>
         <span className={styles.controlKey}>Control</span>
+        {overview.rows.some((row) => row.arms.some((arm) => arm.arm === 'expo-agent-cli')) ? (
+          <span className={styles.agentCliKey}>Expo agent CLI</span>
+        ) : null}
       </div>
       {overview.rows.map((row) => {
         const label =
@@ -75,7 +79,7 @@ function OverviewChart({
                     <span>{arm.label}</span>
                     <span className={styles.overviewTrack} aria-hidden="true">
                       <span
-                        className={`${styles.overviewBar} ${arm.arm === 'control' ? styles.controlBar : ''}`}
+                        className={`${styles.overviewBar} ${arm.arm === 'control' ? styles.controlBar : ''} ${arm.arm === 'expo-agent-cli' ? styles.agentCliBar : ''}`}
                         style={{ width: `${arm.widthPercent}%` }}
                       />
                     </span>
@@ -103,9 +107,10 @@ export default function Benchmarks(): ReactNode {
             <div className={styles.eyebrow}>Agent benchmark</div>
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
-              Compare coding agents using Stim and local platform tools. React Native results measure Settings-ready
-              time and link to command-level audits. Standalone native pilots below measure complete task time and
-              include verified screen proof. Platforms and tasks are measured separately.
+              Compare coding agents using Stim, local platform tools, and Expo's agent CLI where it supports the project
+              type. Every platform is measured separately, and the 2.0.0 campaign runs Sonnet only. React Native results
+              measure Settings-ready time and link to command-level audits. Standalone native pilots measure complete
+              task time and include verified screen proof.
             </p>
           </header>
 
@@ -114,7 +119,7 @@ export default function Benchmarks(): ReactNode {
               <div className={styles.sectionHeading}>
                 <div>
                   <Heading as="h2" id={`${platform}-overview-title`}>
-                    {platform === 'ios' ? 'iOS' : 'Android'} performance across models
+                    {platform === 'ios' ? 'iOS' : 'Android'} performance
                   </Heading>
                   <p>Each bar is one valid run; missing or invalid cells are labeled. Lower time is better.</p>
                 </div>
@@ -126,6 +131,43 @@ export default function Benchmarks(): ReactNode {
               </div>
             </section>
           ))}
+
+          <section className={styles.overview} aria-labelledby="coverage-title">
+            <div className={styles.sectionHeading}>
+              <div>
+                <Heading as="h2" id="coverage-title">
+                  Platforms and arms
+                </Heading>
+                <p>
+                  Each platform runs two tasks, app launch and error fix, across the arms that can run its project type.
+                  All arms run locally on one machine with the same task prompt, model, device pins and screen proof.
+                  This table lists coverage, not results.
+                </p>
+              </div>
+            </div>
+            <div className={styles.coverageScroll}>
+              <table className={styles.coverage}>
+                <thead>
+                  <tr>
+                    <th>Platform</th>
+                    {coverageArms.map((arm) => (
+                      <th key={arm.id}>{arm.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {coveragePlatforms.map((platform) => (
+                    <tr key={platform.id}>
+                      <td>{platform.label}</td>
+                      {coverageArms.map((arm) => (
+                        <td key={arm.id}>{coverageStatusLabels[platform.arms[arm.id]]}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           {launchCrashBenchmarks.length ? (
             <section className={styles.overview} aria-labelledby="launch-crash-title">
@@ -174,9 +216,10 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Same task, same agent</dt>
                 <dd>
-                  Each comparison uses the same app task, AI model, and model settings. The agent works with Stim in one
-                  run and without it in the other. Both arms use the same fixture, including recommended app readiness
-                  logs for the launch-error task.
+                  Each comparison uses the same app task and the same model and settings. The agent works with Stim in
+                  one run, with the project's standard tools in another and, on Expo projects, with Expo's agent CLI in
+                  a third. Both arms use the same fixture, including recommended app readiness logs for the launch-error
+                  task.
                 </dd>
               </div>
               <div>
@@ -204,9 +247,8 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Different kinds of work</dt>
                 <dd>
-                  We test JavaScript changes, native changes, and fixing an app that fails to launch. Results stay
-                  separate by task, model, and platform, so a quick JavaScript change is not compared with a native
-                  rebuild.
+                  We test two tasks: launching a changed app, and fixing an app that fails to launch. Results stay
+                  separate by task and platform.
                 </dd>
               </div>
               <div>

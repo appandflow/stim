@@ -1,6 +1,7 @@
+import { ARMS } from './matrix.mjs';
 const platforms = new Set(['ios', 'android']);
 const variants = new Set(['javascript', 'native', 'launch-crash']);
-const arms = new Set(['stim', 'control']);
+const arms = new Set(ARMS.map((arm) => arm.id));
 
 function positiveSeconds(value, field, key) {
   if (!Number.isFinite(value) || value <= 0) {
