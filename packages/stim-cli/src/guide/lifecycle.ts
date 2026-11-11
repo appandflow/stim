@@ -3463,9 +3463,12 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   workspaces at once. Stim does this itself; nothing is installed. The
   overrides are written while the simulator is shut down, then it boots once,
   already slim. A new, stopped, or adopted simulator is slimmed as part of its
-  boot. A running simulator whose overrides differ (a changed profile, or
-  \`ios.simslim off\`) is shut down, rewritten and booted once on the next
-  \`stim ios\`; one that already matches is left alone. After the boot Stim
+  boot. A simulator that is already running and that Stim never slimmed is
+  not shut down: it keeps stock services, with a one-line note, and runs slim
+  from its next shut-down boot. A running simulator Stim already slimmed whose
+  overrides differ (a changed profile, or \`ios.simslim off\`) is shut down,
+  rewritten and booted once on the next \`stim ios\`, under one boot slot;
+  one that already matches is left alone. After the boot Stim
   reads the overrides back from the simulator.
 
   Features the default profile turns off: ${slimmedFeatureNames().join(', ')}.

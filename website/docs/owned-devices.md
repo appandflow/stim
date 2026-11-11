@@ -218,9 +218,11 @@ opts that app out and restores stock services.
 
 Stim writes the overrides while the simulator is shut down, then boots it
 once, already slim. A new, stopped, or parked and adopted simulator is slimmed
-as part of its boot. A running simulator whose overrides differ (a changed
-profile, or `ios.simslim off`) is shut down, rewritten and booted once on the
-next `stim ios`; one that already matches is left alone. After the boot Stim
+as part of its boot. A simulator that is already running and that Stim never
+slimmed keeps stock services until its next shut-down boot. A running simulator
+Stim already slimmed whose overrides differ (a changed profile, or
+`ios.simslim off`) is shut down, rewritten and booted once on the next
+`stim ios`; one that already matches is left alone. After the boot Stim
 reads the overrides back. Overrides persist only on iOS 18.5 and newer, so on
 an older runtime, or when the simulator does not honour them, Stim prints one
 line and runs stock services.

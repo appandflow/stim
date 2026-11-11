@@ -87,3 +87,18 @@ test('print-disabled output parses in both launchd spellings', () => {
     'disabled services = {\n\t"com.apple.a" => disabled\n\t"com.apple.b" => enabled\n\t"com.apple.c" => true\n}';
   expect([...parsePrintDisabled(output)].toSorted()).toEqual(['com.apple.a', 'com.apple.c']);
 });
+
+test('a store Stim cannot parse is refused and left untouched', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-simslim-'));
+  try {
+    const dir = join(root, `com.apple.CoreSimulator.SimDevice.${UDID}`);
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'disabled.plist'), 'bplist00\u0001binary');
+    expect(() => writeSlimStore(UDID, { toDisable: ['com.apple.searchd'], toEnable: [] }, root)).toThrow(
+      /property list/,
+    );
+    expect(readFileSync(join(dir, 'disabled.plist'), 'utf8')).toBe('bplist00\u0001binary');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

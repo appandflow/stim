@@ -1832,14 +1832,17 @@ describe('ensureOwnedDevice: ios', () => {
   );
 
   describe('SimSlim overrides', () => {
-    function fakeSlim(stored: Record<string, boolean> = {}) {
+    function fakeSlim(stored: Record<string, boolean> = {}, readFails = false) {
       const writes: { toDisable: string[]; toEnable: string[] }[] = [];
       const events: string[] = [];
       return {
         writes,
         events,
         ops: {
-          readStore: () => new Map(Object.entries(stored)),
+          readStore: () => {
+            if (readFails) throw new Error('unreadable store');
+            return new Map(Object.entries(stored));
+          },
           writeStore: (_udid: string, delta: { toDisable: string[]; toEnable: string[] }) => {
             events.push('write');
             writes.push(delta);
@@ -1913,15 +1916,53 @@ describe('ensureOwnedDevice: ios', () => {
       }
     });
 
-    test('shuts a booted simulator down and boots it once when its overrides differ', async () => {
+    test('leaves a booted simulator Stim never slimmed running stock', async () => {
       const { root, run, ensure } = prepare('Booted');
       try {
         const slim = fakeSlim();
+        await ensure(slim);
+        expect(slim.writes).toEqual([]);
+        expect(run.some((c) => /simctl (shutdown|boot)/.test(c))).toBe(false);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('shuts a booted simulator Stim manages down and boots it once when its profile changes', async () => {
+      const { root, run, ensure } = prepare('Booted');
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          simslimManaged: true,
+        });
+        const slim = fakeSlim({ 'com.apple.searchd': true });
         const device = await ensure(slim);
         await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 });
         expect(slim.writes).toHaveLength(1);
         expect(run.some((c) => /simctl shutdown U1/.test(c))).toBe(true);
         expect(run.filter((c) => /simctl boot/.test(c))).toHaveLength(1);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('keeps the managed flag when ios.simslim off cannot read the store of a booted simulator', async () => {
+      const { root, run, ensure } = prepare('Booted');
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          simslimManaged: true,
+        });
+        const slim = fakeSlim({}, true);
+        await ensure(slim, { ios: { simslim: 'off' } });
+        expect(slim.writes).toEqual([]);
+        expect(run.some((c) => /simctl shutdown/.test(c))).toBe(false);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

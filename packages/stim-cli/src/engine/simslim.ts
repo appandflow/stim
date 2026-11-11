@@ -108,7 +108,12 @@ export function slimChangeNeeded(stored: ReadonlyMap<string, boolean>, desired: 
   return toDisable.length + toEnable.length > 0;
 }
 
+export function storeDisablesManagedLabel(stored: ReadonlyMap<string, boolean>): boolean {
+  return [...stored].some(([label, disabled]) => disabled && MANAGED.has(label));
+}
+
 export function parseSlimStore(xml: string): Map<string, boolean> {
+  if (!/<plist[\s>]/.test(xml) || !/<\/plist>/.test(xml)) throw new Error('disabled.plist is not an XML property list');
   const entries = new Map<string, boolean>();
   let label: string | null = null;
   for (const token of xml.matchAll(/<key>([^<]*)<\/key>|<(true|false)\s*\/>/g)) {
@@ -181,7 +186,7 @@ export function writeSlimStore(udid: string, delta: SlimDelta, root: string = SI
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const temp = join(dir, `disabled.plist.${process.pid}.${Date.now()}`);
   try {
-    writeFileSync(temp, encodeSlimStore(merged));
+    writeFileSync(temp, encodeSlimStore(merged), { flag: 'wx' });
     chmodSync(temp, 0o644);
     renameSync(temp, join(dir, 'disabled.plist'));
   } finally {

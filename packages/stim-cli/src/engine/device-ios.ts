@@ -46,6 +46,7 @@ import {
   parseSlimProfile,
   realSimSlimOps,
   slimChangeNeeded,
+  storeDisablesManagedLabel,
   verifyOverrides,
   writeOfflineOverrides,
   type SimSlimOps,
@@ -315,6 +316,20 @@ export async function ensureOwnedIosDevice({
           ...(record.parkedCacheKey ? { parkedCacheKey: record.parkedCacheKey } : {}),
           ...(record.schemeApprovals ? { schemeApprovals: record.schemeApprovals } : {}),
         };
+        const action =
+          sim.state === 'Booted'
+            ? bootedSlimAction({ record: updated, desired, runtime: model.runtime, slimOps })
+            : 'leave';
+        if (action === 'defer') {
+          out(
+            chalk.dim(
+              phaseLine(
+                'device',
+                `${sim.udid} keeps running stock services; it runs slim from its next shut-down boot`,
+              ),
+            ),
+          );
+        }
         const configure = async (boot?: IosBootStart) => {
           if (record.adoptionPending && !boot) await resetAdoptedSim(sim.udid, out);
           return configureOwnedIosSim({
@@ -323,6 +338,7 @@ export async function ensureOwnedIosDevice({
             slot,
             desired,
             runtime: model.runtime,
+            shutdownFirst: action === 'rewrite' ? () => shutDownForSlimRewrite(sim.udid, projectPath, out) : undefined,
             boot:
               boot &&
               (async (beforeBoot) => {
@@ -337,11 +353,7 @@ export async function ensureOwnedIosDevice({
           deviceType: model.model,
           runtime: model.runtime,
         };
-        const rewriteBooted =
-          sim.state === 'Booted' &&
-          bootedSimNeedsSlimRewrite({ record: updated, desired, runtime: model.runtime, slimOps }) &&
-          (await shutDownForSlimRewrite(sim.udid, projectPath, out));
-        if (sim.state !== 'Booted' || rewriteBooted) {
+        if (sim.state !== 'Booted' || action === 'rewrite') {
           return {
             ...updated,
             booting: startIosBoot(
@@ -399,11 +411,20 @@ export async function ensureOwnedIosDevice({
       : null;
   if (taken) {
     const adopted = taken.device;
-    const rewriteBooted =
-      taken.booted &&
-      bootedSimNeedsSlimRewrite({ record: adopted, desired, runtime: choice.runtime, slimOps }) &&
-      (await shutDownForSlimRewrite(adopted.deviceUdid, projectPath, out));
-    if (taken.booted && !rewriteBooted) {
+    const action = taken.booted
+      ? bootedSlimAction({ record: adopted, desired, runtime: choice.runtime, slimOps })
+      : 'leave';
+    if (action === 'defer') {
+      out(
+        chalk.dim(
+          phaseLine(
+            'device',
+            `${adopted.deviceUdid} keeps running stock services; it runs slim from its next shut-down boot`,
+          ),
+        ),
+      );
+    }
+    if (taken.booted && action !== 'rewrite') {
       await resetAdoptedSim(adopted.deviceUdid, out);
       const configured = await configureOwnedIosSim({
         record: adopted,
@@ -430,6 +451,8 @@ export async function ensureOwnedIosDevice({
           slot,
           desired,
           runtime: choice.runtime,
+          shutdownFirst:
+            action === 'rewrite' ? () => shutDownForSlimRewrite(adopted.deviceUdid, projectPath, out) : undefined,
           boot: async (beforeBoot) => {
             await boot(beforeBoot);
             await resetAdoptedSim(adopted.deviceUdid, out);
@@ -664,8 +687,13 @@ function slimManaged(record: OwnedDeviceRecord, desired: ReadonlySet<string>): b
   return desired.size > 0 || Boolean(record.simslimManaged);
 }
 
-/** Whether a booted simulator holds overrides that differ from the wanted ones, so it needs a shutdown, rewrite and boot. */
-function bootedSimNeedsSlimRewrite({
+type BootedSlimAction = 'leave' | 'defer' | 'rewrite';
+
+/**
+ * What a booted simulator needs: a simulator Stim already manages whose wanted state changed is rewritten
+ * (shutdown, write, boot); one Stim never slimmed keeps running stock until its next shut-down boot.
+ */
+function bootedSlimAction({
   record,
   desired,
   runtime,
@@ -675,12 +703,14 @@ function bootedSimNeedsSlimRewrite({
   desired: ReadonlySet<string>;
   runtime: string | null;
   slimOps: SimSlimOps;
-}): boolean {
-  if (!slimManaged(record, desired) || !iosRuntimeKeepsOverrides(runtime)) return false;
+}): BootedSlimAction {
+  if (!slimManaged(record, desired) || !iosRuntimeKeepsOverrides(runtime)) return 'leave';
   try {
-    return slimChangeNeeded(slimOps.readStore(record.deviceUdid), desired);
+    const stored = slimOps.readStore(record.deviceUdid);
+    if (!record.simslimManaged && !storeDisablesManagedLabel(stored)) return desired.size > 0 ? 'defer' : 'leave';
+    return slimChangeNeeded(stored, desired) ? 'rewrite' : 'leave';
   } catch {
-    return false;
+    return 'leave';
   }
 }
 
@@ -706,6 +736,7 @@ async function configureOwnedIosSim({
   desired,
   runtime,
   boot,
+  shutdownFirst,
   out,
   slimOps,
 }: {
@@ -715,10 +746,15 @@ async function configureOwnedIosSim({
   desired: ReadonlySet<string>;
   runtime: string | null;
   boot?: IosBootStart;
+  shutdownFirst?: () => Promise<boolean>;
   out: Notify;
   slimOps: SimSlimOps;
 }): Promise<OwnedDeviceRecord> {
   const udid = record.deviceUdid;
+  if (!boot) {
+    await withConfigLockAsync(() => setDevice(projectPath, 'ios', { ...record }, slot));
+    return record;
+  }
   const supported = iosRuntimeKeepsOverrides(runtime);
   const configured = slimManaged(record, desired);
   const say = (line: string) => out(chalk.dim(phaseLine('device', line)));
@@ -733,19 +769,22 @@ async function configureOwnedIosSim({
     );
   }
   const target = supported ? desired : new Set<string>();
+  const wasManaged = Boolean(record.simslimManaged);
   if (configured && supported && target.size > 0 && !record.simslimManaged) {
     record = { ...record, simslimManaged: true };
     await withConfigLockAsync(() => setDevice(projectPath, 'ios', { ...record }, slot));
   }
+  const stopped = shutdownFirst ? await shutdownFirst() : true;
   let written: ReturnType<typeof writeOfflineOverrides> | undefined;
   const writeOverrides =
-    configured && supported
+    configured && supported && stopped
       ? async () => void (written = writeOfflineOverrides(slimOps, udid, target, say))
       : undefined;
-  if (boot) await boot(writeOverrides);
+  await boot(writeOverrides);
   if (written === 'written') await verifyOverrides(slimOps, udid, target, say);
   const updated = { ...record };
-  const managed = written === 'failed' ? Boolean(record.simslimManaged) : supported && desired.size > 0;
+  const wrote = written === 'written' || written === 'unchanged';
+  const managed = wrote || !configured || !supported ? supported && desired.size > 0 : wasManaged;
   if (managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
   await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));
