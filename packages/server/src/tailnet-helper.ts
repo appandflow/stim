@@ -114,21 +114,33 @@ export function createTailnet(env: NodeJS.ProcessEnv, given: TailscaleTransport 
     load(reason) {
       if (transport) return Promise.resolve(transport);
       if (closed) return Promise.resolve(null);
+      const failed = (message: string): null => {
+        if (failure !== message) console.error(`stim-server: ${message}`);
+        failure = message;
+        loading = null;
+        return null;
+      };
       return (loading ??= (async () => {
         if (failure === null) console.log(`stim-server: loading the Tailscale transport (${reason}).`);
-        const loaded = await loadTailscale(env);
-        if (typeof loaded === 'string') {
-          if (failure !== loaded) console.error(`stim-server: ${loaded}`);
-          failure = loaded;
-          loading = null;
-          return null;
+        let loaded: TailscaleTransport | string;
+        try {
+          loaded = await loadTailscale(env);
+        } catch (error) {
+          return failed(`the Tailscale transport failed to load: ${String(error)}`);
         }
+        if (typeof loaded === 'string') return failed(loaded);
         if (closed) {
           void loaded.close?.();
           return null;
         }
         transport = loaded;
-        for (const listener of listeners) listener(loaded);
+        for (const listener of listeners) {
+          try {
+            listener(loaded);
+          } catch (error) {
+            console.error(`stim-server: a Tailscale load listener failed: ${String(error)}`);
+          }
+        }
         return loaded;
       })());
     },
