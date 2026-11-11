@@ -444,10 +444,12 @@ the workspace's owned simulator, installs the .app it reports, and launches it
 as a native process without Metro (metroPort: null). --configuration Release
 adds --release (Exact's shipping build; its first build takes minutes); any other
 configuration and --scheme are refused. The build starts once Stim has booted
-that simulator, and build-only runs (stim ci build) are refused. stim android
-and stim start refuse an Exact app with STIM_NO_PROJECT: Stim runs it on iOS
-simulators only, without Metro; use Exact's own commands for Android. Exact
-compiles incrementally in the checkout's target/ directory, so Stim keeps no
+that simulator. Build-only runs (stim ci build) build without a simulator,
+except for apps whose app.json declares native modules: Exact may run code on
+a simulator to read them, so those are refused and build only with stim ios.
+stim android and stim start refuse an Exact app with STIM_NO_PROJECT: Stim runs
+it on iOS simulators only, without Metro; use Exact's own commands for Android.
+Exact compiles incrementally in the checkout's target/ directory, so Stim keeps no
 artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
 is build output: the idle stage and gc --delete clear it from an idle
 workspace (never while another process, such as a shell or an exact.mjs
