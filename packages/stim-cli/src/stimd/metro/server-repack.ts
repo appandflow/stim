@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { devNull } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
@@ -108,8 +109,20 @@ export function repackServerProblem(
 }
 
 function repackBin(root: string, cli: BundlerConfig['cli']): string | null {
-  if (!resolvePackageJson(root, '@callstack/repack')) return null;
+  const repack = resolvePackageJson(root, '@callstack/repack');
+  // Re.Pack 4's start command has neither --no-reverse-port nor --log-requests, and the CLI rejects unknown options.
+  if (!repack || repackMajor(repack) < 5) return null;
   return expoBinFromPackage(resolvePackageJson(root, cli), cli);
+}
+
+function repackMajor(packageJsonPath: string): number {
+  try {
+    const pkg: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+    const version = isRecord(pkg) ? pkg.version : null;
+    return typeof version === 'string' ? Number.parseInt(version, 10) || 0 : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function repackBinRefusal(root: string, config: BundlerConfig | null): { message: string; remedy: string } {
@@ -117,7 +130,7 @@ function repackBinRefusal(root: string, config: BundlerConfig | null): { message
   return {
     message:
       `Cannot start the Re.Pack dev server ${config ? `${config.config} names ` : ''}for ${root}: ` +
-      `\`${cli}\` or \`@callstack/repack\` is not resolvable from it.`,
+      `\`${cli}\` or \`@callstack/repack\` 5 or later is not resolvable from it.`,
     remedy:
       "Install the project's dependencies (in a monorepo, from the workspace root), or set metro.command to the command that starts this project's dev server.",
   };

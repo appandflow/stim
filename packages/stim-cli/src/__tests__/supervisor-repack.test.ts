@@ -2,7 +2,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { isBundleProof } from '../engine/launch-verify.ts';
+import { verifyLaunch } from '../engine/launch-verify.ts';
 import { closeMetroChildren, ensureMetro, openMetroChildren } from '../stimd/metro/children.ts';
 import { repackRecords, repackServerProblem, startRepackServer } from '../stimd/metro/server-repack.ts';
 import { detectDevServer } from '../stimd/metro/state.ts';
@@ -20,8 +20,11 @@ const file = (name: string, contents = '') => {
   mkdirSync(dirname(join(root, name)), { recursive: true });
   writeFileSync(join(root, name), contents);
 };
-const installed = (name: string, bin?: string) => {
-  file(`node_modules/${name}/package.json`, JSON.stringify({ name, ...(bin ? { bin: { [name]: bin } } : {}) }));
+const installed = (name: string, bin?: string, version = '5.4.1') => {
+  file(
+    `node_modules/${name}/package.json`,
+    JSON.stringify({ name, version, ...(bin ? { bin: { [name]: bin } } : {}) }),
+  );
   if (!bin) return;
   file(`node_modules/${name}/${bin}`, '#!/usr/bin/env node\n');
   chmodSync(join(root, 'node_modules', name, bin), 0o755);
@@ -107,6 +110,15 @@ describe('startRepackServer', () => {
     expect(repackServerProblem(root, ['node', 'start.js', '{port}'])).toBeNull();
   });
 
+  test('refuses Re.Pack 4, whose start command rejects the flags Stim passes', () => {
+    file('react-native.config.js', "module.exports = { commands: require('@callstack/repack/commands') };\n");
+    installed('react-native', 'cli.js');
+    installed('@callstack/repack', undefined, '4.4.1');
+    expect(repackServerProblem(root, null)?.message).toContain('@callstack/repack` 5 or later');
+    installed('@callstack/repack', undefined, '5.0.0');
+    expect(repackServerProblem(root, null)).toBeNull();
+  });
+
   test('stimd answers start with STIM_REPACK_BIN and its remedy, not a generic dev server failure', async () => {
     const previousHome = process.env.STIM_HOME;
     process.env.STIM_HOME = join(root, 'home');
@@ -170,9 +182,33 @@ describe('repackRecords', () => {
       msg: "[DevServer] Module not found: Can't resolve './missing'",
     });
     expect(records[8]).toMatchObject({ raw: true });
-    const proof = { ...records[4], ts: 10 };
-    expect(isBundleProof(proof, 5, 'android')).toBe(true);
-    expect(isBundleProof(proof, 5, 'ios')).toBe(false);
+  });
+
+  test("a warm bundle request verifies the launch, which waits for Stim's bundle response records", async () => {
+    let t = 1000;
+    const toRecord = repackRecords();
+    const records = [incoming('req-9', '/index.bundle?platform=android&dev=true'), completed('req-9', 200)].flatMap(
+      (line) => {
+        const record = toRecord(line, 'stdout');
+        return record ? [Object.assign(record, { ts: 1001 })] : [];
+      },
+    );
+    const result = await verifyLaunch({
+      platform: 'android',
+      requireBundleResponse: true,
+      since: 1000,
+      timeoutMs: 100,
+      pollMs: 25,
+      stabilityMs: 0,
+      now: () => t,
+      sleep: async (ms: number) => {
+        t += ms;
+      },
+      readRecords: () => records,
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: true });
   });
 
   test('an error response fails its bundle request', () => {

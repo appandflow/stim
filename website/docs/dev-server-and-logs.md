@@ -57,7 +57,11 @@ gets Re.Pack. `stim start` names the file that decided, for example
 
 Stim starts Re.Pack with `--json --log-requests`, so each bundle request and
 compile becomes a record in `stim logs --source metro`, and `stim ios` and
-`stim android` use those records to confirm the launch. `stim start --reset-cache` passes Re.Pack's
+`stim android` use the bundle requests to confirm the launch. In development
+Re.Pack still serves a bundle that compiled with errors, so a launch can
+succeed while the app shows a red box. The compile errors are in
+`stim logs --source metro`. Stim needs Re.Pack 5 or later; set
+`metro.command` for Re.Pack 4. `stim start --reset-cache` passes Re.Pack's
 `--reset-cache`. Stim turns off Re.Pack's own `adb reverse`, because it would
 reach every connected device, and manages the reverse for its port itself.
 Re.Pack keeps listening on its own host, `localhost` by default, because it

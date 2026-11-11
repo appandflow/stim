@@ -196,14 +196,16 @@ WHO RUNS IT
                  --json --log-requests (and --reset-cache for
                  \`start --reset-cache\`). Each bundle request becomes
                  bundle_response_started and _finished or _failed records,
-                 and Re.Pack's compile events become bundle_build_started and
-                 _done, which launch verification reads as bundle evidence;
-                 other requests are dropped. Other lines arrive as
-                 repack_stdout and repack_stderr records. In development
-                 Re.Pack serves a bundle that compiled with errors, so a
-                 launch can report true while the app shows a redbox; its
-                 compile errors are error-level repack_stdout records in
-                 \`stim logs --errors\`. Re.Pack keeps its
+                 which launch verification reads as bundle evidence; other
+                 requests are dropped. Re.Pack's compile events become
+                 bundle_build_started and _done progress records. Other
+                 lines, including the compile errors Re.Pack prints as text,
+                 arrive as repack_stdout and repack_stderr records. In
+                 development Re.Pack serves a bundle that compiled with
+                 errors, so a launch can report true while the app shows a
+                 redbox; read \`stim logs --source metro\` for the errors.
+                 Re.Pack 5 or later is required; Re.Pack 4 needs
+                 metro.command. Re.Pack keeps its
                  own host, localhost by default, because it also writes that
                  host into the bundle's publicPath: a simulator and an
                  emulator or Android phone (through adb reverse) reach it, a

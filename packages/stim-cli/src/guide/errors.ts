@@ -1349,9 +1349,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_REPACK_BIN  (Re.Pack)
   The project's rock.config.* names @rock-js/plugin-repack, or its
   react-native.config.js registers @callstack/repack's commands, but the
-  \`rock\` or \`react-native\` bin or @callstack/repack is not resolvable from
-  the app. Install the project's dependencies, or set metro.command to the
-  command that starts its dev server.`,
+  \`rock\` or \`react-native\` bin or @callstack/repack 5 or later is not
+  resolvable from the app. Install the project's dependencies, or set
+  metro.command to the command that starts its dev server (Re.Pack 4 needs
+  that, because its start command lacks the flags Stim passes).`,
     },
     STIM_METRO_TIMEOUT: {
       summary: 'Metro or the tunnel was not ready within the wait; --wait 180',
