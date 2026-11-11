@@ -42,7 +42,6 @@ import {
   compareVersions,
   DEFAULT_LABEL,
   DEFAULT_PORT,
-  planServe,
   ServiceError,
   validateLabel,
   validatePort,
@@ -54,13 +53,9 @@ import { run, serviceManagerOrNull, serviceRoot } from './service-manager.ts';
 import { SetupPrinter, setupDisplayFor, type SetupDisplay, type StepText } from './setup-output.ts';
 import { pruneSetupJournals, writeSetupJournal } from './setup-journal.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import {
-  findTailscale,
-  readRawTailscaleStatus,
-  serveRoute,
-  tailscaleInstall,
-  type TailscaleInstall,
-} from '@stim-cli/transport-tailscale';
+import type { TailscaleInstall } from '@stim-cli/transport-tailscale';
+import { tailscalePackage } from './tailnet-helper.ts';
+import { markTailnet } from './tailnet-marker.ts';
 
 /** The protocol whose Noise authentication setup tickets rely on; a reused server must speak it. */
 const SETUP_PROTOCOL = 2;
@@ -302,7 +297,7 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', finish, { once: true });
     if (signal?.aborted) finish();
   });
-const binary = () => findTailscale(process.env);
+const binary = async () => (await tailscalePackage()).findTailscale(process.env);
 
 async function interruptible<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work;
@@ -392,7 +387,8 @@ export function defaultSetupDeps(): SetupDeps {
       if (!manager) throw new SetupRefusal('setup runs only on macOS, Linux and Windows.');
       if (compareVersions(process.versions.node, '22.12.0') < 0)
         throw new SetupRefusal('setup needs Node 22.12 or later.');
-      const status = await readRawTailscaleStatus(binary(), process.env);
+      const { readRawTailscaleStatus, tailscaleInstall } = await tailscalePackage();
+      const status = await readRawTailscaleStatus(await binary(), process.env);
       const dnsName =
         isJsonObject(status) && isJsonObject(status.Self) && typeof status.Self.DNSName === 'string'
           ? status.Self.DNSName.replace(/\.$/, '')
@@ -426,17 +422,22 @@ export function defaultSetupDeps(): SetupDeps {
     installHost: installHostApp,
     installJob,
     async route(port) {
-      const raw = await readRawTailscaleStatus(binary(), process.env);
+      const { readRawTailscaleStatus, serveRoute } = await tailscalePackage();
+      const raw = await readRawTailscaleStatus(await binary(), process.env);
       const ips =
         isJsonObject(raw) && Array.isArray(raw.TailscaleIPs)
           ? raw.TailscaleIPs.filter((ip): ip is string => typeof ip === 'string')
           : [];
-      return serveRoute(binary(), process.env, port, ips);
+      return serveRoute(await binary(), process.env, port, ips);
     },
-    prepareRoute,
+    async prepareRoute(port, previous) {
+      const prepared = await prepareRoute(port, previous);
+      markTailnet('setup route');
+      return prepared;
+    },
     recordRoute: recordServiceRoute,
     async createRoute(args) {
-      const result = await run(binary() ?? 'tailscale', args, tailscaleEnv(process.env));
+      const result = await run((await binary()) ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     records: () => [...readBuildClients(), ...readDeviceHostClients()],
@@ -983,7 +984,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       const route = await wait(deps.route(opts.port));
       output.route.state = route.state;
       output.route.port = route.port;
-      const plan = planServe(route, opts.port, previous?.serve ?? null);
+      const plan = (await tailscalePackage()).planServe(route, opts.port, previous?.serve ?? null);
       if ('refusal' in plan)
         throw new SetupRefusal(
           plan.refusal,

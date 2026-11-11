@@ -347,10 +347,11 @@ export async function runMaintenance(
       level: MaintenanceRecord['level'],
       msg: string,
       fields: Record<string, unknown> = {},
+      machine = true,
     ) => {
       let entry: MaintenanceRecord | null = null;
       try {
-        entry = logger?.write(event, level, msg, fields) ?? null;
+        entry = logger?.write(event, level, msg, fields, machine) ?? null;
       } catch (error) {
         noteWriteError(error);
       }
@@ -510,22 +511,35 @@ export async function runMaintenance(
             action.kind === 'would-remove-worktree' ? 'warn' : 'info',
             `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.kind === 'would-remove-worktree' ? outcome.detail : action.reason}`,
             fields,
+            false,
           );
         else if (outcome.status === 'failed') {
           failures.push(`${describeDone(action)} failed: ${outcome.detail}`);
-          record('maintenance_failure', 'error', `Could not process ${action.target}: ${outcome.detail}`, {
-            target: action.target,
-            error: outcome.detail,
-            ...(fields.workspace ? { workspace: fields.workspace } : {}),
-          });
+          record(
+            'maintenance_failure',
+            'error',
+            `Could not process ${action.target}: ${outcome.detail}`,
+            {
+              target: action.target,
+              error: outcome.detail,
+              ...(fields.workspace ? { workspace: fields.workspace } : {}),
+            },
+            false,
+          );
         } else if (!loggedSkips.has(action.target)) {
           loggedSkips.add(action.target);
           gcLog?.record(maintenanceItem(action, outcome));
-          record('maintenance_skip', 'info', `Kept ${action.target}: ${outcome.detail}`, {
-            target: action.target,
-            reason: outcome.detail,
-            ...(fields.workspace ? { workspace: fields.workspace } : {}),
-          });
+          record(
+            'maintenance_skip',
+            'info',
+            `Kept ${action.target}: ${outcome.detail}`,
+            {
+              target: action.target,
+              reason: outcome.detail,
+              ...(fields.workspace ? { workspace: fields.workspace } : {}),
+            },
+            false,
+          );
         }
       }
       return results;

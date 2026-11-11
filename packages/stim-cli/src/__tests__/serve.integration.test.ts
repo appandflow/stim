@@ -34,6 +34,15 @@ test('the router reports its package version, and serve its help', async () => {
     for (const args of [['--help'], ['serve', '--help']]) {
       await execute(process.execPath, [join(root, 'packages/stim-cli/bin/stim.mjs'), ...args], { env });
     }
+    for (const narrower of ['--loopback-only', '--share']) {
+      const refused = await execute(
+        process.execPath,
+        [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--tailnet', narrower],
+        { env },
+      ).catch((error: { code: number; stderr: string }) => error);
+      expect(refused).toMatchObject({ code: 1, stderr: expect.stringContaining('STIM_BAD_ARG') });
+    }
+    expect(existsSync(join(home, 'server', 'tailnet.json'))).toBe(false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

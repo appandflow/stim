@@ -121,6 +121,13 @@
       }
     },
     {
+      "files": ["packages/server/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "stim/static-imports": ["error", { "modules": ["@stim-cli/transport-tailscale"] }]
+      }
+    },
+    {
       "files": ["packages/transport/**/*.{ts,mts,mjs,js}"],
       "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
       "rules": {

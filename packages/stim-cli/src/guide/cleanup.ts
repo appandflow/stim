@@ -52,7 +52,7 @@ are the daemon's activity pass (guide metro), and memory pressure its ladder,
 not a maintenance check; the idle check stops only a workspace whose device is
 hosted on a remote Mac (IDLE STOP). While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
-status's maintenance block and the maintenance log.
+status's maintenance block and the cleanup log.
 
 IDLE STOP: the idle check, while daemon.mode is on, stops a workspace whose
 device is hosted on a remote Mac once it has had no real activity for
@@ -80,7 +80,7 @@ device driver other than agent-device, a live agent-device claim with no session
 device activity, an emulator list or an emulator's AVD name that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
-is a maintenance_action line naming the idle time, each workspace kept past
+is a gc_item record naming the idle time, each workspace kept past
 the window a maintenance_skip line with the reason. The port is released, so
 status shows the workspace idle as after stim stop, and the supervisor_stopped
 line in metro.ndjson names the idle time and the requester, automatic
@@ -204,13 +204,18 @@ DISK PRESSURE
   stim settings set daemon.mode off --scope machine     turn automatic cleanup off
   stim settings set daemon.mode report --scope machine  plan and log, delete nothing
 
-The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
-maintenance.logMaxMb with the old generation retained for
-maintenance.logRetentionDays. A pass that crashes writes maintenance/child.log.
-In report mode actions and explaining skips are logged only when newly
-planned; in on mode every action taken, failure and explaining skip is logged
-with its bytes, and a pass record carries the bytes freed. Removal of a
-worktree or orphaned directory is logged to the machine log only.
+A pass writes to the one machine cleanup log, $STIM_HOME/gc/gc.ndjson (WHAT
+WAS CLEARED), with trigger maintenance, runId the pass id and via the command
+that started it. A pass that crashes writes maintenance/child.log.
+In report mode planned actions (maintenance_action) and explaining skips
+(maintenance_skip) are logged only when newly planned; in on mode every action
+taken, failed or kept is one gc_item record with its bytes, a skip the planner
+explains is a maintenance_skip record, and a maintenance_pass record carries
+the bytes freed. maintenance_failure records the failures that are not an
+item. Each fact is written once. A workspace's own
+maintenance.ndjson, which stim logs --source maintenance reads, also gets
+the maintenance_action, maintenance_failure and maintenance_skip records that
+name it.
 A merged or ended worktree the worktree check keeps, and with
 maintenance.removeIdleWorktrees any other linked worktree it keeps, gets a
 maintenance_skip line with its path, the reason, and a code (locked, dirty,
@@ -234,14 +239,15 @@ pass writes it again at its end.
 
 WHAT WAS CLEARED
 Every run that deletes or changes something appends one record per item to
-the machine gc log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags,
+the machine cleanup log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags,
 including the pressure ladder actions it runs, gc --cache --delete, and each
-maintenance action taken. The stim-daemon's own pressure ladder logs its
+maintenance action taken. Maintenance passes also write their pass summaries,
+explaining skips, failures and (with maintenance.logChecks) checks there. The stim-daemon's own pressure ladder logs its
 actions to daemon.ndjson instead. Records the removed budget gate wrote keep
 trigger budget. A dry run writes nothing, and a
 gc run that only kept items writes nothing. Failed and kept items carry their
 reason. The file rotates at maintenance.logMaxMb and its old generation is
-kept for maintenance.logRetentionDays, like the maintenance log.
+kept for maintenance.logRetentionDays.
   stim logs --source gc           the retained records, oldest first
   stim logs --source gc --json    one record per line
   stim logs --source gc --errors  only the items that failed
@@ -249,7 +255,9 @@ gc works from any directory because the log is machine-wide; it cannot be
 combined with other --source values and --source all leaves it out. Fields
 (\`guide logs\`, GC LOG): runId, trigger (manual, desktop, maintenance or
 budget), options, kind, status (done, kept or failed), label, id, path,
-bytes, detail.
+bytes, detail. Records with event maintenance_pass, maintenance_skip,
+maintenance_failure, maintenance_check or maintenance_action carry no status,
+kind or label.
 
 CLEANUP AND DISK
 

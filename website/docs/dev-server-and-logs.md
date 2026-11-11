@@ -265,6 +265,8 @@ Console redirection uses the app's writable cache, including when `STIM_HOME` is
 on an external volume; captured crash evidence is retained in the workspace logs.
 OS crash reports can take about a minute or longer to arrive: rerunning
 `stim logs --errors` collects them before you stop or release the simulator.
+An OS report of an abort carries the Rust panic messages, such as an Exact
+app's, that the app wrote to stderr.
 Reports are matched to the app, simulator, and launch time. Existing source locations
 and symbol names are retained, and app addresses are resolved with
 `atos` only when the local binary's UUID matches the report. Android reads the
@@ -528,6 +530,17 @@ stim logs --source agent.
 
 `stim stop` has stimd stop the dev server, and ends the log collectors. It also frees the reserved
 port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
+
+When `stimd` restarts on another Stim build, it stops each simulator and
+emulator log collector, and the new `stimd` starts it again. `device.ndjson`
+misses the lines the app logs between the two, about the time `stimd` takes to
+restart. The new `stimd` skips a collector whose workspace was stopped after the
+restart began, and notes it in its own log. One whose device or app is gone
+starts and then ends, as any collector does: `device.ndjson` records it as
+stopped or failed. A `stimd` attached to a command (CI, sandboxes) starts none
+and leaves them to the next detached `stimd`. A physical
+iPhone's console is not restarted, because that would launch the app again; it
+holds the restart until `stim stop`.
 
 ## Named server ports
 

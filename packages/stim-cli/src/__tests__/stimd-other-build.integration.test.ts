@@ -19,6 +19,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { stimBuildId, stimdClaimRoot, stimdRecordFile, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
+import { parseNdjsonText } from '../ndjson.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { machineCopy } from './fixtures/machine-copy.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
@@ -212,7 +216,7 @@ function replaceDist(dist: string, next: string): void {
 }
 
 test.skipIf(process.platform === 'win32')(
-  'a stimd whose own installation was updated in place hands the home to a stimd of the new build',
+  'a stimd whose own installation was updated in place hands the home and its log streams to a stimd of the new build',
   async () => {
     const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-in-place-')));
     const bin = join(tmp, 'bin');
@@ -221,6 +225,31 @@ test.skipIf(process.platform === 'win32')(
       writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n');
       chmodSync(join(bin, tool), 0o755);
     }
+    const app = join(tmp, 'app');
+    mkdirSync(app);
+    upsertProject(app, {});
+    const streamPids = join(tmp, 'stream-pids');
+    writeFileSync(
+      join(bin, 'xcrun'),
+      `#!/bin/sh\necho $$ >> '${streamPids}'\nprintf '{"eventType":"logEvent","eventMessage":"line from %s"}\\n' $$\nexec sleep 600\n`,
+    );
+    chmodSync(join(bin, 'xcrun'), 0o755);
+    const childPids = () => {
+      try {
+        return readFileSync(streamPids, 'utf8').trim().split('\n').map(Number);
+      } catch {
+        return [];
+      }
+    };
+    const deviceLines = () => {
+      try {
+        return parseNdjsonText(readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8')).map((line) =>
+          String(line.msg),
+        );
+      } catch {
+        return [];
+      }
+    };
     const env = {
       ...process.env,
       HOME: tmp,
@@ -258,7 +287,7 @@ test.skipIf(process.platform === 'win32')(
         socket.once('error', reject);
         socket.once('connect', () => socket.write(`${JSON.stringify({ kind: 'cli', build })}\n`));
       });
-    const admitted = (build: string) =>
+    const admitted = (build: string, params?: Record<string, unknown>) =>
       new Promise<Socket>((resolve, reject) => {
         const socket = connect(stimdSocket());
         socket.setEncoding('utf8');
@@ -269,7 +298,7 @@ test.skipIf(process.platform === 'win32')(
         });
         socket.once('error', reject);
         socket.once('connect', () =>
-          socket.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin' })}\n`),
+          socket.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params })}\n`),
         );
       });
     const stimds: ChildProcess[] = [];
@@ -286,6 +315,27 @@ test.skipIf(process.platform === 'win32')(
       assert(before);
       await until('the stimd of the installed build', () => record()?.build === before);
       const pid = record()?.pid;
+
+      const streamOp = await admitted(before, {
+        workspace: app,
+        forwarded: { cwd: app, env: { PATH: env.PATH, HOME: tmp, STIM_HOME: home } },
+      });
+      const started = await new Promise<Record<string, unknown>>((resolve) => {
+        let buffer = '';
+        streamOp.on('data', (chunk: string) => {
+          buffer += chunk;
+          const line = buffer.split('\n').find((entry) => entry.includes('"logs.'));
+          if (line) resolve(JSON.parse(line));
+        });
+        streamOp.write(
+          `${JSON.stringify({ op: 'logs.start', params: { root: app, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' } })}\n`,
+        );
+      });
+      expect(started).toMatchObject({ op: 'logs.started' });
+      await until('the first device log line', () => childPids().length === 1 && deviceLines().length > 0);
+      const [firstChild] = childPids();
+      assert(firstChild !== undefined);
+      streamOp.destroy();
 
       const next = nextDist(dist);
       const after = stimBuildId(next);
@@ -311,8 +361,21 @@ test.skipIf(process.platform === 'win32')(
       expect(waitingOp.closed).toBe(false);
       waitingOp.destroy();
       await until('the stimd of the updated build', () => record()?.build === after && record()?.pid !== pid);
+      await until('the resumed device log stream', () => childPids().length === 2);
+      const [, resumedChild] = childPids();
+      await until('the resumed stream writing the workspace log', () =>
+        deviceLines().includes(`line from ${resumedChild}`),
+      );
+      expect(deviceLines()).toContain(`line from ${firstChild}`);
+      expect(() => process.kill(firstChild, 0)).toThrow('ESRCH');
+      expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({
+        kind: 'stream',
+        streamId: started.streamId,
+      });
     } finally {
-      const pids = [record()?.pid, ...stimds.map((stimd) => stimd.pid)].filter((pid) => pid !== undefined);
+      const pids = [record()?.pid, ...stimds.map((stimd) => stimd.pid), ...childPids()].filter(
+        (pid) => pid !== undefined,
+      );
       const alive = (pid: number) => {
         try {
           process.kill(pid, 0);

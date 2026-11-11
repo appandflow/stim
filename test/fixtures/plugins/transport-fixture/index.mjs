@@ -33,6 +33,15 @@ class FixtureTransport {
     return { unresolved: `no machine named ${name} for ${credential.machine}` };
   }
 
+  async expose({ port }) {
+    if (!this.options.exposable) throw new Error('the kit exposed a port it was not asked to');
+    return this.options.break === 'expose'
+      ? { state: 'routed', port, url: new URL('https://fixture') }
+      : { state: 'routed', port };
+  }
+
+  async unexpose() {}
+
   close() {}
 }
 

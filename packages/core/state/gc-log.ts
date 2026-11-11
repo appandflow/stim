@@ -20,7 +20,7 @@ export interface GcLogRecord extends NdjsonRecord {
   level: 'info' | 'error';
   msg: string;
   event: 'gc_item';
-  /** The invocation for `stim gc` and budget runs; the `pass` id of `maintenance.ndjson` for maintenance. */
+  /** The invocation for `stim gc` and budget runs; the pass id for maintenance. */
   runId: string;
   trigger: GcLogTrigger;
   /** For maintenance, the command whose invocation started the pass. */
@@ -33,6 +33,22 @@ export interface GcLogRecord extends NdjsonRecord {
   path: string | null;
   bytes: number | null;
   detail: string | null;
+}
+
+/**
+ * A record of a maintenance pass in the machine cleanup log that is not an item: the pass summary, a skip with its
+ * reason, a failure, a check, or, in report mode, a planned action. It carries no `status`, `kind` or `label`.
+ */
+export interface GcLogEntry extends NdjsonRecord {
+  ts: number;
+  src: 'gc';
+  level: 'debug' | 'info' | 'warn' | 'error';
+  msg: string;
+  event: 'maintenance_pass' | 'maintenance_action' | 'maintenance_skip' | 'maintenance_failure' | 'maintenance_check';
+  runId: string;
+  trigger: 'maintenance';
+  via: string;
+  mode: 'report' | 'on';
 }
 
 const TRIGGERS: readonly string[] = ['manual', 'desktop', 'maintenance', 'budget'];
@@ -53,8 +69,8 @@ export function isGcLogRecord(record: NdjsonRecord): record is GcLogRecord {
   );
 }
 
-export function readGcLog(file: string = gcLogFile()): GcLogRecord[] {
+export function readGcLog(file: string = gcLogFile()): (GcLogRecord | GcLogEntry)[] {
   return readNdjsonGenerations(file)
-    .filter(isGcLogRecord)
+    .filter((record): record is GcLogRecord | GcLogEntry => record.src === 'gc' && typeof record.ts === 'number')
     .toSorted((a, b) => a.ts - b.ts);
 }

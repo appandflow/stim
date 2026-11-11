@@ -40,7 +40,6 @@ import {
 } from '../tailscale-status.ts';
 export { tailscaleStatusAsync } from '../tailscale-status.ts';
 import { localTransport } from '@stim-cli/transport-local';
-import { tailscaleTransport } from '@stim-cli/transport-tailscale';
 import { readAccessTicket } from './access-ticket.ts';
 import {
   classifyTransport,
@@ -464,7 +463,7 @@ export async function resolveEndpoint(
   const transport =
     parsed.transport === 'local'
       ? localTransport({ entries: () => [] })
-      : tailscaleTransport({
+      : (await import('@stim-cli/transport-tailscale')).tailscaleTransport({
           env: {},
           snapshot: { binary: null, state: { state: 'unavailable', reason: 'status is read by the caller' } },
           status: async () => (current = await status()),

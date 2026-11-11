@@ -1,13 +1,6 @@
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
-import {
-  clientIdentity,
-  isJsonObject,
-  machineEndpoint,
-  parseMachine,
-  readDeviceHostMachines,
-  type Endpoint,
-} from '@stim-cli/core/state';
+import { clientIdentity, isJsonObject, readDeviceHostMachines, type Endpoint } from '@stim-cli/core/state';
 import {
   initiateNoise,
   MAX_SERVER_MESSAGE_BYTES,
@@ -15,6 +8,7 @@ import {
   type NoiseSocket,
 } from '@stim-cli/core/noise-session';
 import type { AuditRecord } from './actions.ts';
+import { dialEndpoint } from './tailnet-helper.ts';
 import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { presenceKey, type PresenceHub } from './presence.ts';
@@ -300,10 +294,7 @@ export class HostConnections {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
       if (!credential || credential.state !== 'approved' || !credential.serverKey)
         throw new FatalHostError('no approved device-host credential');
-      const found = machineEndpoint(
-        credential.machine,
-        parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
-      );
+      const found = await dialEndpoint(credential.machine, this.options.status);
       if (typeof found === 'string') throw new Error(found);
       const endpoint = this.options.endpoint?.(found) ?? found;
       const key = JSON.stringify([

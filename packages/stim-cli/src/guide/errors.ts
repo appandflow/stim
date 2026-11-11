@@ -233,7 +233,7 @@ Branch on the code, never on the message.`,
   Stim empties the whole cache at once, the way
   \`gc --delete --cache "compilation cache"\` does, and fails the build. It
   does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
-  cache, so it is a cold one. The emptying is recorded in the maintenance log.
+  cache, so it is a cold one. The emptying is recorded in the cleanup log (stim logs --source gc).
   Every iOS build that compiles with the cache holds a shared claim on it,
   <cache>.claims beside the cache directory, while xcodebuild runs. Stim
   empties the cache only under that set's exclusive claim, here, in gc and in
@@ -431,6 +431,13 @@ pending or denied, unreachable, changed pinned server key, a stim-server
 too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
+A worker listens on its tailnet address only after a pairing, an approval, its
+setup route or a request forwarded by tailscale serve reached it; when an
+unreachable worker had none of these, run stim serve --tailnet on it once.
+--tailnet is remembered in STIM_HOME/server/tailnet.json on the worker, refuses
+with --loopback-only or --share (STIM_BAD_ARG), and warns when Tailscale is not
+installed or not running. To undo it, delete that file and restart the server;
+a start that finds a pairing or an approved client writes it again.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
 refusal. For stim android, a known toolchain refusal on the named machine stops
 before prebuild; busy, low disk and unreachable are checked again afterward.

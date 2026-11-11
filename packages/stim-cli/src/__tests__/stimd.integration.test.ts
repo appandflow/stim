@@ -13,7 +13,7 @@ import {
   stimdRecordFile,
   stimdSocket,
   diskUsageWalkClaims,
-  maintenanceNdjsonFile,
+  gcLogFile,
   readDaemonSnapshot,
   readDiskUsage,
   readMaintenanceState,
@@ -906,7 +906,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         delete process.env.STIM_DAEMON;
       });
       await runStimd({ tickMs: 50 });
-      expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
+      expect(readFileSync(gcLogFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
       expect(maintenanceMs()).toBeGreaterThanOrEqual(600);
       expect(Math.max(...loopDelays())).toBeLessThan(500);
     },

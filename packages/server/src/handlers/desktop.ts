@@ -1,5 +1,6 @@
 import { readFailure, send, auditSafely, type ConnectionContext } from './context.ts';
 import type { RequestId, Methods, ErrorCode, DesktopReportTarget } from '../protocol.ts';
+import type { ServeRoute } from '@stim-cli/core/protocol';
 import type { PairedDevice } from '../registry.ts';
 import {
   isJsonObject,
@@ -27,6 +28,7 @@ import {
   subscribeStart,
   subscribeStop,
 } from './lifecycle.ts';
+import { markTailnet } from '../tailnet-marker.ts';
 import { queuePlan } from './build.ts';
 import { subscribeLogs } from './logs.ts';
 
@@ -571,7 +573,7 @@ async function setupRoute(ctx: ConnectionContext, id: RequestId, params: unknown
   if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
     return ctx.error(id, 'bad-request', 'route.setup takes no parameters.');
   }
-  ctx.settingUpRoute ??= ctx.tailscale.setupRoute(ctx.addresses[0]!.port).finally(() => {
+  ctx.settingUpRoute ??= exposeServer(ctx).finally(() => {
     ctx.settingUpRoute = null;
   });
   try {
@@ -579,6 +581,13 @@ async function setupRoute(ctx: ConnectionContext, id: RequestId, params: unknown
   } catch (cause) {
     return ctx.error(id, 'action-failed', (cause as Error).message);
   }
+}
+
+async function exposeServer(ctx: ConnectionContext): Promise<ServeRoute> {
+  markTailnet('route.setup');
+  const transport = await ctx.tailnet.load('route.setup');
+  if (!transport) throw new Error('The Tailscale transport could not load; see the stim-server log.');
+  return transport.expose({ port: ctx.addresses[0]!.port });
 }
 
 async function updateMachine(ctx: ConnectionContext, id: RequestId, method: string, params: unknown): Promise<void> {

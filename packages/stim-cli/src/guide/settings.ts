@@ -705,10 +705,14 @@ run waiting to boot, and automatic maintenance.
           When that build is what stimd's own installation now holds (an
           npm update in place) and stimd was started by a command, not by
           stim serve, Stim Desktop or a service unit, stimd restarts on it
-          once no command it admitted remains, no share-only server runs and
-          no device log stream runs, and the command waits up to 15 s for
-          it. A device log stream runs until stim stop or the idle stop in
-          its workspace; a successor does not resume it, so stimd waits.
+          once no command it admitted remains, no share-only server runs,
+          no physical iPhone's console is streamed and, on Windows, no dev
+          server runs, and the command waits up to 15 s for it. The new
+          stimd resumes the simulator and emulator log streams the old one
+          ran (stim guide logs); an iPhone console runs until stim stop or
+          the idle stop in its workspace, because resuming it would launch
+          the app again. On Windows a dev server stops with its stimd; on
+          macOS and Linux the new stimd takes it over.
           Otherwise stim share, share list and share stop refuse with
           STIM_DAEMON_UNAVAILABLE, naming the running build and what holds
           it, and other commands run without stimd;

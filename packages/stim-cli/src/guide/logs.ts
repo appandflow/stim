@@ -295,17 +295,22 @@ Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance
 Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
-status and maintenance/maintenance.ndjson; this command reads workspace logs.
+status and in the cleanup log (GC LOG); this source reads workspace logs.
 
 GC LOG
-stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
-record per item that a gc run or a maintenance action cleared, kept or
-failed to clear. The pressure ladder's actions are in
+stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: the
+machine cleanup log. It has one gc_item record per item that a gc run or a
+maintenance action cleared, kept or failed to clear, and the records of a
+maintenance pass that are not an item: maintenance_pass (the summary),
+maintenance_skip (a kept target and its reason), maintenance_failure,
+maintenance_check (only with maintenance.logChecks) and, in report mode,
+maintenance_action (a planned action). These carry runId, trigger
+maintenance, via, mode, msg and event but no status, kind or label. The pressure ladder's actions are in
 $STIM_HOME/daemon/daemon.ndjson and each workspace's metro.ndjson as
 pressure_action records. It cannot be combined with other sources,
-and --source all does not include it. --errors shows the failed items.
+and --source all does not include it. --errors shows the failed items and maintenance_failure records.
 Each record has src: gc, level (info, or error for a failed item), msg and
-  runId    the stim invocation, or the pass id of maintenance.ndjson
+  runId    the stim invocation, or the maintenance pass id
   trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
            or maintenance (budget in records written before the pressure
            ladder replaced the per-command budget)
@@ -453,9 +458,10 @@ device-count-unknown, no-host-admits, eas-fallback (machine eas). Machine names 
 they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
-  maintenance.ndjson   workspace maintenance actions, failures and explaining skips
+  maintenance.ndjson   this workspace's maintenance actions, failures and explaining skips
   $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc and
-                       maintenance cleared (stim logs --source gc)
+                       maintenance cleared, kept or failed, and each pass's
+                       summary, skips and failures (stim logs --source gc)
   $STIM_HOME/builds/builds.ndjson  machine-wide: the last 500 native builds
                        (stim logs --source builds)
   metro.ndjson         the bundler, in every supervisor mode. Stim's
@@ -539,7 +545,9 @@ WHAT WRITES WHAT
                        passes Expo's initial URL directly. Fatal output is available
                        before delayed OS reports, which can take about a minute
                        or longer to appear; rerun logs --errors for those
-                       before stopping or releasing the device. Collection requires
+                       before stopping or releasing the device. An OS report of an
+                       abort carries the Rust panic messages (an Exact app) the app
+                       wrote to stderr. Collection requires
                        this workspace's current launch and device ownership or lease;
                        afterward only already-captured reports remain available.
                        The app cache holds console files, so external STIM_HOME
@@ -652,5 +660,14 @@ WHAT WRITES WHAT
   \`ios\` / \`android\` produce them.
 
   A collector is killed and replaced on the next \`ios\` / \`android\` run for
-  that platform, and reaped by \`stop\`.`,
+  that platform, and reaped by \`stop\`. When stimd restarts on another Stim
+  build, it stops each simulator and emulator collector and the new stimd
+  starts it again, so device.ndjson misses the lines the app logs between the
+  two, about the time stimd takes to restart. The new stimd skips a collector
+  whose workspace was stopped after the restart began, and notes it in its own
+  log. One whose device or app is gone starts and then ends, as any collector
+  does: device.ndjson records it as stopped or failed. A stimd attached to a
+  command (CI, sandboxes) starts none and leaves them to the next detached
+  stimd. A physical iPhone's console is not restarted: it holds stimd's
+  restart until \`stop\`.`,
 };

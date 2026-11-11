@@ -502,7 +502,7 @@ own corruption error, such as `OnDiskCAS: corrupt internal reference` or
 `CAS operation failed`, Stim empties the cache the same way and fails with
 `STIM_COMPILATION_CACHE_CORRUPT`. Run the command again; that build is a cold
 one. Stim leaves the cache alone while another build is compiling with it, and
-the error says so. The emptying is recorded in the maintenance log. A build
+the error says so. The emptying is recorded in the machine cleanup log (`stim logs --source gc`). A build
 worker does the same for its own cache. A build sent there with
 `--remote-build <machine>` fails with that code; one placed there
 automatically builds here instead.

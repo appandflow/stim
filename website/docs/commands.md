@@ -130,7 +130,7 @@ critical, and why, against the
 what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
 `pressure`. Doctor also prints the [`stim-daemon`](./settings.md#stim-daemon)
 line with its mode, whether it runs and when it last ticked, its last action
-(or its snapshot file before the first), the daemon log and the maintenance
+(or its snapshot file before the first), the daemon log and the cleanup
 log with the last pass. It reports a daemon that stopped ticking, a daemon
 claim it cannot resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
@@ -1270,11 +1270,12 @@ result.
 - `--source maintenance` shows maintenance actions, planned (report mode) or taken (on mode),
   and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
-- `--source gc` shows the machine-wide gc log: one record per item that
+- `--source gc` shows the machine-wide cleanup log: one record per item that
   `stim gc` or automatic maintenance cleared, kept or failed to
-  clear, with the trigger, size and reason. It works from any directory, stands
+  clear, with the trigger, size and reason, plus each maintenance pass's summary,
+  explaining skips and failures. It works from any directory, stands
   alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
-  and `--follow`; `--errors` shows only failed items.
+  and `--follow`; `--errors` shows only failed items and maintenance failures.
 - `--source builds` shows the machine-wide build ledger: one record per native
   `ios`, `android` or `macos` build run, newest 500, whether it compiled here, was
   offloaded to a build machine or came from a cache, and whether it succeeded,

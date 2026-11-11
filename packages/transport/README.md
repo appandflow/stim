@@ -30,6 +30,9 @@ transport can run in a worker thread, and the transport kit (`runContract('trans
 - `identify({ address, headers })`: the machine a connection comes from, given the request headers as a plain object.
   stim-server binds a device token to it at pairing and refuses the token from any other machine.
 - `expose({ port })` and `unexpose({ port })`: make a local port reachable from outside this machine and stop doing so.
+  `expose` answers the port it serves on and whether the port is `routed`, `funneled`, `missing` or `unknown`. The kit
+  calls them only when its caller passes `expose: { port }`, because on a real transport they change the machine's
+  routes; pass it for a fixture, or for options that point the transport at a test environment.
 - `resolve({ name })`: the endpoint to dial a machine of this transport, or `{ unresolved }` with the reason.
 - `close()`: stops any background work.
 
