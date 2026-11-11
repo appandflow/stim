@@ -88,5 +88,5 @@ export function hostMemoryPressureAdvice(
 ): string | null {
   if (pressure === null || pressure === 'normal') return null;
   const named = memoryCulpritAdvice(culprits);
-  return `macOS reports ${pressure} host memory pressure.${named ? ` ${named}` : ''} Simulator processes can stall even when the device is Booted. Free memory before retrying: use \`stim stop\` only in workspaces you own, and ask before closing other apps or devices. For parallel iOS work, consider a reviewed SimSlim profile (\`stim guide lifecycle simslim\`). This observation does not establish an OOM crash.`;
+  return `macOS reports ${pressure} host memory pressure.${named ? ` ${named}` : ''} Simulator processes can stall even when the device is Booted. Free memory before retrying: use \`stim stop\` only in workspaces you own, and ask before closing other apps or devices. Owned iOS simulators already run slim by default; \`stim guide lifecycle simslim\` lists what that turns off. This observation does not establish an OOM crash.`;
 }

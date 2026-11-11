@@ -1,6 +1,6 @@
 import * as hostMemory from '../host-memory.ts';
 import { deviceSlotPlatforms } from '../devices/device-slots.ts';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -15,6 +15,7 @@ import {
 } from '../engine/device-capacity.ts';
 import { ClaimRefusedError, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import { desiredSlimLabels } from '../engine/simslim.ts';
 import {
   allConsolePortsAndSerials,
   getProject,
@@ -1749,67 +1750,6 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('applies the configured SimSlim profile to an owned simulator and records management', async () => {
-    const root = projectDir();
-    try {
-      const profilePath = join(root, 'simslim.json');
-      writeFileSync(profilePath, '{}\n');
-      const profile = realpathSync(profilePath);
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
-      setExecutor(exec);
-      const calls: unknown[] = [];
-
-      await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: { ios: { simslimProfile: 'simslim.json' } },
-        reconcileIosSimulator: async (args) => {
-          calls.push(args);
-          return { managed: true, profile };
-        },
-      });
-
-      expect(calls).toMatchObject([{ udid: 'U1', profile, previouslyManaged: false }]);
-      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('records SimSlim management before profile application can fail', async () => {
-    const root = projectDir();
-    try {
-      const profilePath = join(root, 'simslim.json');
-      writeFileSync(profilePath, '{}\n');
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
-      setExecutor(exec);
-      let managedBeforeRun = false;
-
-      await expect(
-        ensureOwnedDevice({
-          platform: 'ios',
-          project: getProject(root),
-          projectPath: root,
-          label: 'app',
-          settings: { ios: { simslimProfile: 'simslim.json' } },
-          reconcileIosSimulator: async () => {
-            managedBeforeRun = getProject(root)?.platforms?.ios?.simslimManaged === true;
-            throw new Error('partial SimSlim failure');
-          },
-        }),
-      ).rejects.toThrow('partial SimSlim failure');
-
-      expect(managedBeforeRun).toBe(true);
-      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test.each(['before setup', 'during admission', 'during privacy reset'])(
     'ownership loss %s stops later simulator boot and reset commands',
     async (when) => {
@@ -1891,176 +1831,173 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
-  describe('SimSlim rerun on a running simulator', () => {
-    function prepareRunning(springBoardPids: number[]) {
-      const root = projectDir();
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+  describe('SimSlim overrides', () => {
+    function fakeSlim(stored: Record<string, boolean> = {}, readFails = false) {
+      const writes: { toDisable: string[]; toEnable: string[] }[] = [];
       const events: string[] = [];
-      const pids = [...springBoardPids];
+      return {
+        writes,
+        events,
+        ops: {
+          readStore: () => {
+            if (readFails) throw new Error('unreadable store');
+            return new Map(Object.entries(stored));
+          },
+          writeStore: (_udid: string, delta: { toDisable: string[]; toEnable: string[] }) => {
+            events.push('write');
+            writes.push(delta);
+          },
+          readLive: async () => new Set(['com.apple.searchd']),
+        },
+      };
+    }
+
+    function prepare(state: string) {
+      const root = projectDir();
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
+      const sims: SimEntry[] = [
+        {
+          udid: 'U1',
+          name: 'stim-app (iPhone 17 Pro 26.2)',
+          state,
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO?.identifier,
+        },
+      ];
+      const { run, exec } = iosExecutor(sims);
+      const shutdown = (args: readonly string[] = []) => {
+        run.push(['xcrun', ...args].join(' '));
+        for (const sim of sims) sim.state = 'Shutdown';
+        return '';
+      };
       setExecutor({
         ...exec,
+        runFileQuietAsync: async (_file: string, args?: readonly string[]) => shutdown(args),
         runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'simctl' && args[1] === 'shutdown') {
+            run.push(['xcrun', ...args].join(' '));
+            for (const sim of sims) sim.state = 'Shutdown';
+            return '';
+          }
           if (file === 'xcrun' && args[0] === 'devicectl') {
-            events.push('mute');
             return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
           }
-          if (file === 'xcrun' && args.includes('notifyutil')) {
-            return `com.apple.springboard.finishedstartup ${pids.length > 1 ? pids.shift() : pids[0]}`;
-          }
+          if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
           return exec.runFile(file, args);
         },
       });
-      const notes: string[] = [];
-      const run = (settings: Record<string, unknown>) =>
+      const ensure = (slim: ReturnType<typeof fakeSlim>, settings: Record<string, unknown> = {}) =>
         ensureOwnedDevice({
           platform: 'ios',
           project: getProject(root),
           projectPath: root,
           label: 'app',
           settings,
-          out: (line) => notes.push(line),
-          reconcileIosSimulator: async (args) => {
-            events.push(`reconcile ${args.profile ?? (args.slimByDefault ? 'default' : 'off')}`);
-            return { managed: Boolean(args.profile) || Boolean(args.slimByDefault), profile: args.profile ?? null };
-          },
+          slimOps: slim.ops,
         });
-      return { root, events, notes, run };
+      return { root, run, ensure };
     }
 
-    test('records the SpringBoard pids when SimSlim reboots the simulator', async () => {
-      const { root, run } = prepareRunning([1111, 4242]);
+    test('writes the overrides before the only boot of a shut-down simulator', async () => {
+      const { root, run, ensure } = prepare('Shutdown');
       try {
-        await run({ ios: { simslim: 'on' } });
-        expect(deviceLog(root).filter((record) => record.phase === 'simslim_reboot')).toMatchObject([
-          { event: 'ios_boot', deviceId: 'U1', pidBefore: 1111, pidAfter: 4242 },
-        ]);
+        const slim = fakeSlim();
+        slim.ops.writeStore = (...args) => {
+          slim.events.push(`write after ${run.filter((c) => /simctl boot/.test(c)).length} boots`);
+          void args;
+        };
+        const device = await ensure(slim);
+        await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 });
+        expect(slim.events).toEqual(['write after 0 boots']);
+        expect(run.filter((c) => /simctl boot/.test(c))).toHaveLength(1);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     });
 
-    test('restores stock services when SimSlim is turned off after a skipped rerun', async () => {
-      const { root, events, run } = prepareRunning([4242]);
+    test('leaves a booted simulator Stim never slimmed running stock', async () => {
+      const { root, run, ensure } = prepare('Booted');
       try {
-        await run({ ios: { simslim: 'on' } });
-        await run({ ios: { simslim: 'on' } });
-        expect(events).toEqual(['reconcile default']);
-        events.length = 0;
-        await run({ ios: { simslim: 'off' } });
-        expect(events).toEqual(['reconcile off']);
-        const ios = getProject(root)?.platforms?.ios;
-        expect(ios?.simslimManaged).toBeUndefined();
-        expect(ios?.simslimApplied).toBeUndefined();
+        const slim = fakeSlim();
+        await ensure(slim);
+        expect(slim.writes).toEqual([]);
+        expect(run.some((c) => /simctl (shutdown|boot)/.test(c))).toBe(false);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     });
-  });
 
-  test.each([
-    {
-      name: 'slims a shut-down simulator as its boot',
-      settings: { ios: { simslim: 'on' } },
-      missing: false,
-      recorded: { profile: 'default', springBoardPid: 4242 },
-    },
-    {
-      name: 'boots stock when SimSlim is not installed',
-      settings: { ios: { simslim: 'on' } },
-      missing: true,
-      recorded: undefined,
-    },
-    {
-      name: 'applies a changed profile to a stopped simulator as its boot',
-      settings: { ios: { simslimProfile: 'simslim.json' } },
-      missing: false,
-      applied: { simslimManaged: true, simslimApplied: { profile: 'default', springBoardPid: 1111 } },
-      recorded: { profile: expect.stringMatching(/^profile:/), springBoardPid: 4242 },
-    },
-  ])('$name', async ({ settings, missing, applied, recorded }) => {
-    const root = projectDir();
-    try {
-      writeFileSync(join(root, 'simslim.json'), '{}\n');
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', ...applied });
-      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
-      const events: string[] = [];
-      setExecutor({
-        ...exec,
-        runFile(file, args = []) {
-          if (file === 'xcrun' && args[0] === 'devicectl') {
-            events.push('mute');
-            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
-          }
-          if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
-          return exec.runFile(file, args);
-        },
-        spawn(cmd, args = []) {
-          if (args[1] === 'boot') events.push('simctl boot');
-          return exec.spawn(cmd, args);
-        },
-      });
-      const device = await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings,
-        reconcileIosSimulator: async (args) => {
-          const phases = deviceLog(root).map((record) => record.phase);
-          events.push(`reconcile after ${phases.join(',')}`);
-          if (missing) return { managed: false, profile: null, notInstalled: true };
-          return { managed: true, profile: args.profile ?? null };
-        },
-      });
-      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
-        ok: true,
-        udid: 'U1',
-      });
+    test('shuts a booted simulator Stim manages down and boots it once when its profile changes', async () => {
+      const { root, run, ensure } = prepare('Booted');
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          simslimManaged: true,
+        });
+        const slim = fakeSlim({ 'com.apple.searchd': true });
+        const device = await ensure(slim);
+        await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 });
+        expect(slim.writes).toHaveLength(1);
+        expect(run.some((c) => /simctl shutdown U1/.test(c))).toBe(true);
+        expect(run.filter((c) => /simctl boot/.test(c))).toHaveLength(1);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
 
-      expect(events).toEqual(['reconcile after boot_requested', 'simctl boot', 'mute']);
-      expect(run.filter((command) => /simctl boot/.test(command))).toHaveLength(1);
-      const phases = deviceLog(root).map((record) => record.phase);
-      expect(phases.filter((phase) => phase === 'boot_requested')).toHaveLength(1);
-      expect(phases).not.toContain('simslim_reboot');
-      expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual(recorded);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+    test('keeps the managed flag when ios.simslim off cannot read the store of a booted simulator', async () => {
+      const { root, run, ensure } = prepare('Booted');
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          simslimManaged: true,
+        });
+        const slim = fakeSlim({}, true);
+        await ensure(slim, { ios: { simslim: 'off' } });
+        expect(slim.writes).toEqual([]);
+        expect(run.some((c) => /simctl shutdown/.test(c))).toBe(false);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
 
-  test('a SimSlim claim refusal before boot keeps its code and remedy', async () => {
-    const root = projectDir();
-    try {
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
-      setExecutor(exec);
-      const refusal = new ClaimRefusedError({
-        root: join(tmpHome, 'simslim-locks', 'U1.lock'),
-        claimPath: join(tmpHome, 'simslim-locks', 'U1.lock', 'claim'),
-        label: 'SimSlim for U1',
-        reason: 'another SimSlim operation is still using this simulator',
-      });
-      const device = await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: { ios: { simslim: 'on' } },
-        reconcileIosSimulator: async () => {
-          throw refusal;
-        },
-      });
-      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
-        failed: true,
-        code: 'STIM_CLAIM_REFUSED',
-        reason: refusal.message,
-        remedy: expect.stringContaining(refusal.removeCommand),
-      });
-      expect(run.some((command) => /simctl boot/.test(command))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    test('leaves a booted simulator alone when its overrides already match', async () => {
+      const { root, run, ensure } = prepare('Booted');
+      try {
+        const slim = fakeSlim(Object.fromEntries([...desiredSlimLabels()].map((label) => [label, true])));
+        await ensure(slim);
+        expect(slim.writes).toEqual([]);
+        expect(run.some((c) => /simctl (shutdown|boot)/.test(c))).toBe(false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('ios.simslim off restores stock services on a simulator Stim slimmed', async () => {
+      const { root, ensure } = prepare('Booted');
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          simslimManaged: true,
+        });
+        const slim = fakeSlim({ 'com.apple.searchd': true, 'com.apple.foreign': true });
+        const device = await ensure(slim, { ios: { simslim: 'off' } });
+        await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 });
+        expect(slim.writes).toEqual([{ toDisable: [], toEnable: ['com.apple.searchd'] }]);
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   test('a legacy shut-down sim (no owned flag) is reported, never booted', async () => {

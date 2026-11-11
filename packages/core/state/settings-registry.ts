@@ -253,15 +253,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'ios.simslim',
     type: { kind: 'choice', choices: ['on', 'off'] },
     scopes: EVERY,
-    default: 'off',
+    default: 'on',
     description:
-      "Slim every Stim-owned iOS simulator with SimSlim's default categories when no ios.simslimProfile is set; off in a project opts that app out",
+      'Slim every Stim-owned iOS simulator by disabling background services when no ios.simslimProfile is set; off in a project opts that app out and restores stock services',
   },
   {
     key: 'ios.simslimProfile',
     type: { ...RELATIVE_PATH, patternHelp: 'a relative JSON file path inside the app directory' },
     scopes: PROJECT,
-    description: 'SimSlim JSON profile under the app',
+    description: 'JSON profile under the app that keeps simulator service categories or labels enabled when slimming',
   },
   {
     key: 'ios.signingIdentity',

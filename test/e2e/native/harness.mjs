@@ -164,7 +164,6 @@ function withDir(tmplStr, appDir) {
 }
 
 export function createFixture({ framework, platform, workDir, h }) {
-  if (platform === 'ios') h.requireTool('simslim', ['--version']);
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);

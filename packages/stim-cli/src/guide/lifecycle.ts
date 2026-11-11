@@ -1,3 +1,5 @@
+import { SIM_SLIM_CATEGORIES } from '../engine/simslim-data.ts';
+import { slimmedFeatureNames } from '../engine/simslim.ts';
 import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
@@ -146,12 +148,9 @@ Metro while other work happens.
 
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
 simulators to volume zero through Xcode's devicectl, and Android 15 and later
-emulators to media volume zero. The iOS mute runs after SimSlim has applied its
-profile and once SpringBoard has finished starting, because both a SimSlim
-reboot and SpringBoard's startup reset the volume. A device that is already
-running keeps its volume, except that a running simulator SimSlim reboots (a
-first slim, a profile change, or restoring stock services) is muted again once
-SpringBoard is back; an already slim simulator is not touched. Turn sound on
+emulators to media volume zero. The iOS mute runs once SpringBoard has finished
+starting, because its startup resets the volume. A device that is already
+running keeps its volume. Turn sound on
 for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
 options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
@@ -2393,8 +2392,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
   critical, or warning with under 2 GB available. A boot that needs a new
-  simulator or emulator creates it inside its slot, and a SimSlim reboot stays
-  in that slot.
+  simulator or emulator creates it inside its slot, and the shutdown and boot
+  that change a simulator's slimming stay in that slot.
 
   A run past a cap WAITS in arrival order per resource: builds in
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
@@ -3457,72 +3456,53 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`.ipa\` export, store signing and distribution stay out of scope.`,
     },
     simslim: {
-      summary: 'recommended SimSlim profiles and recovery from host memory pressure',
-      body: () => `SIMSLIM FOR PARALLEL IOS WORK
-  SimSlim is recommended as an optional way to reduce simulator background
-  services and memory use, especially with several workspaces. Review which
-  services your app and tests need; a slim profile can disable those features.
-  It does not guarantee that a memory stall or crash will be fixed.
+      summary: 'slim iOS simulators, profiles, and recovery from host memory pressure',
+      body: () => `SLIM IOS SIMULATORS
+  Stim slims every simulator it owns by default (\`ios.simslim\` is "on"):
+  it disables background system services through launchd overrides, which
+  cuts the memory of each simulator several times over and helps with several
+  workspaces at once. Stim does this itself; nothing is installed. The
+  overrides are written while the simulator is shut down, then it boots once,
+  already slim. A new, stopped, or adopted simulator is slimmed as part of its
+  boot. A simulator that is already running and that Stim never slimmed is
+  not shut down: it keeps stock services, with a one-line note, and runs slim
+  from its next shut-down boot. A running simulator Stim already slimmed whose
+  overrides differ (a changed profile, or \`ios.simslim off\`) is shut down,
+  rewritten and booted once on the next \`stim ios\`, under one boot slot;
+  one that already matches is left alone. After the boot Stim
+  reads the overrides back from the simulator.
 
-  Install SimSlim once on each Mac:
+  Features the default profile turns off: ${slimmedFeatureNames().join(', ')}.
 
-    brew install mobai-app/tap/simslim
+  Categories, with what each one costs:
+${SIM_SLIM_CATEGORIES.map((category) => `    ${category.id.padEnd(13)} ${category.downside}`).join('\n')}
 
-  Review the categories and create a profile in an interactive terminal:
-
-    simslim profiles
-    mkdir -p .simslim
-    simslim profile .simslim/dev.json
-
-  Selected categories in the wizard stay enabled. The wizard writes the
-  profile without applying it. Review and commit it, then select it in .stim.json:
+  An app that needs a feature keeps it with a profile in .stim.json:
 
     { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
-  To slim every Stim-owned iOS simulator on a Mac without a profile per app,
-  set it on the machine layer:
+  The profile is JSON with two optional lists, "except" (category ids above
+  that stay fully enabled) and "keep" (individual launchd labels that stay
+  enabled). Unknown fields, categories or labels are refused. For example,
+  an app that uses push notifications and StoreKit:
 
-    stim settings set ios.simslim on --scope machine
+    { "except": ["store"] }
 
-  With \`ios.simslim\` on and no \`ios.simslimProfile\`, Stim runs
-  \`simslim on <udid>\` with SimSlim's default categories. A project profile
-  always applies in place of the defaults. A workspace, repo or committed
-  \`ios.simslim off\` opts that app out and restores stock services on its
-  simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
-  Calendar and Contacts services, among others; move an app that needs them
-  to a profile that keeps those categories, or to \`off\`. A shut-down
-  simulator (a new one, a stopped one, or a parked one Stim adopts) is
-  slimmed as part of its boot: SimSlim writes its settings while it is shut
-  down and boots it once, already slim. A running simulator is slimmed on the
-  next \`stim ios\` without a boot first, which reboots it. An already slim
-  simulator is left alone.
-  Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
-  the simulator unslimmed with a one-line note. Hosted simulators on a named
-  Mac are never slimmed, whatever either Mac's setting says.
+  A project profile always applies in place of the defaults. A workspace,
+  repo or committed \`ios.simslim off\` opts that app out and restores stock
+  services on its simulator; \`stim settings set ios.simslim off --scope machine\` turns
+  slimming off everywhere.
 
-  SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
-  Stim reconciles that profile on the owned simulator: on a shut-down
-  simulator as its boot, alongside the app build, and on a running one before
-  the app build, where a change reboots the simulator. Stim records
-  the applied profile (the default categories, or a hash of the profile file)
-  and the boot of the simulator it was applied on, so a later launch on the
-  same boot with the same profile skips the \`simslim\` call. A changed
-  profile, a reboot, or a missing record reconciles again. A manual
-  \`simslim off\` on a running simulator is not noticed until the simulator
-  reboots or the profile changes. The settings persist across normal
-  shutdowns and reboots. Removing the setting restores stock services when
-  Stim applied the profile. Stim never changes an unowned or remote simulator.
-  Each SimSlim operation has a 12-minute outer deadline, including discovery
-  and a boot SimSlim runs; Stim's own boot wait starts after it.
-  This cap also applies when SimSlim's own timeout is increased. On timeout,
-  Ctrl-C, or SIGTERM, Stim attempts to stop only its verified process group, then waits up to
-  10 seconds to confirm termination before returning or exiting.
-  An unconfirmed process group keeps its claim and blocks another reconciliation;
-  inspect the named processes before removing the exact claim in the error.
-  The simulator's managed settings record is retained, so retrying reconciles an
-  interrupted apply or restore. Stim does not assume partial changes rolled back.
-  Doctor recommends this setup but never installs SimSlim or applies a profile.
-  Profile schema and service tradeoffs: https://github.com/MobAI-App/simslim
+  Overrides persist across a boot only on iOS 18.5 and newer. On an older
+  runtime, or when the booted simulator did not honour them, Stim prints one
+  line and runs the simulator with stock services; the run does not fail.
+  Hosted simulators on a named Mac are never slimmed, whatever either Mac's
+  setting says. Stim writes the overrides only for a simulator it owns, in
+  /private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist,
+  keeping every other entry in the file. Deleting an owned simulator removes
+  that folder. Stim never changes an unowned or remote simulator.
+  The service list comes from SimSlim (MIT license) and follows new iOS
+  runtimes only when Stim updates it.
 
 HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Booted and a working screenshot do not prove that simulator processes can
@@ -3579,7 +3559,7 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   never opened a window for and ones other workspaces or agents are using.
   Rebooting a simulator under the same pressure
   can repeat the stall. Consider fewer concurrent builds/devices (guide lifecycle
-  concurrency) and a reviewed SimSlim profile for future runs.`,
+  concurrency) and, when a simulator runs stock (older than iOS 18.5 or opted out), a slim profile for future runs.`,
     },
   },
 };

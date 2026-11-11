@@ -1108,14 +1108,8 @@ test('the signing note applies only to workspaces that build for a phone or set 
   expect(deviceWorkflowPlausible(null, { ios: { lanHost: '192.168.1.42' } })).toBe(true);
 });
 
-test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {
-  expect(checkSimSlim()).toMatchObject({ level: 'note', fix: expect.stringContaining('stim guide lifecycle simslim') });
-  expect(checkSimSlim({ configured: true, onPath: true })).toBeNull();
-  const missing = checkSimSlim({ configured: true, onPath: false });
-  assert(missing);
-  expect(missing.level).toBe('cost');
-  expect(missing.fix).toMatch(/brew install/);
-
+test('checkSimSlim reports an invalid profile and nothing otherwise', () => {
+  expect(checkSimSlim()).toBeNull();
   const invalid = checkSimSlim({ profileError: 'missing profile.json' });
   assert(invalid);
   expect(invalid.title).toMatch(/invalid/i);
@@ -1135,7 +1129,6 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
         detail: expect.stringContaining('critical host memory pressure'),
       }),
     );
-    expect(ios).toContainEqual(expect.objectContaining({ level: 'note', title: expect.stringContaining('SimSlim') }));
     expect(existsSync(join(project, '.stim.json'))).toBe(false);
     memoryPressure.mockClear();
     const android = await runDoctor(project, { ...options, host: 'darwin', platform: 'android' });
@@ -1150,39 +1143,16 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
   }
 });
 
-test('runDoctor reports a configured SimSlim profile when the binary is missing', async () => {
+test('runDoctor reports a SimSlim profile with an unknown category', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(project, 'simslim.json'), '{"except":["nope"]}\n');
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
-    const findings = await runDoctor(project, {
-      host: 'darwin',
-      concurrency: { maxBuilds: 0, maxDevices: 0 },
-      lookupSimSlim: () => false,
-    });
-    expect(findings.some((finding) => /SimSlim/.test(finding.title) && finding.level === 'cost')).toBe(true);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
-test('runDoctor reports ios.simslim on without the binary, and says nothing once it is installed', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-default-'));
-  try {
-    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslim: 'on' } }));
-    const options = { host: 'darwin' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
-    const missing = await runDoctor(project, { ...options, lookupSimSlim: () => false });
-    expect(missing).toContainEqual(
-      expect.objectContaining({
-        level: 'cost',
-        title: expect.stringContaining('SimSlim is not installed'),
-        fix: expect.stringContaining('brew install'),
-      }),
+    const findings = await runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ level: 'cost', title: expect.stringContaining('SimSlim profile is invalid') }),
     );
-    const installed = await runDoctor(project, { ...options, lookupSimSlim: () => true });
-    expect(installed.some((finding) => /SimSlim/.test(finding.title))).toBe(false);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
@@ -1548,7 +1518,6 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
       },
       lookupAgentDevice: () => true,
       lookupEasCli: () => false,
-      lookupSimSlim: () => false,
       lookupCcache: () => true,
     };
 
@@ -1559,7 +1528,6 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
       expect(findings.some((finding) => finding.title.includes('metro.config.js'))).toBe(true);
     }
     expect(ios.some((finding) => finding.title.includes('Stim leaves Xcode compilation caching off'))).toBe(true);
-    expect(ios.some((finding) => finding.title.includes('SimSlim'))).toBe(true);
     expect(ios.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(true);
     expect(ios.some((finding) => finding.title.includes('simulator pool bound'))).toBe(true);
     expect(ios.some((finding) => finding.title.includes('no eas-cli'))).toBe(false);
@@ -1616,10 +1584,8 @@ test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo ro
     const findings = await runDoctor(project, {
       host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
-      lookupSimSlim: () => false,
     });
 
-    expect(findings.some((finding) => finding.title.includes('SimSlim is not installed'))).toBe(true);
     expect(findings.some((finding) => finding.title === 'The SimSlim profile is invalid')).toBe(false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -1768,7 +1734,6 @@ test.each(['win32', 'linux'] as const)(
         platform: 'ios' as const,
         concurrency: { maxBuilds: 0, maxDevices: 0 },
         lookupCcache: () => false,
-        lookupSimSlim: () => false,
         memoryPressure: () => 'critical' as const,
       };
       const titles = (await runProjectDoctor(project, { ...options, host })).map((finding) => finding.title);

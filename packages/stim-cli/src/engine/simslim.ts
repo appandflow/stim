@@ -1,204 +1,274 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { StimContext } from '@stim-cli/core';
-import { isTermination, operationState } from './operation-state.ts';
-import { getConfigDir } from '../workspace/config.ts';
-import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
-import {
-  ClaimRefusedError,
-  claimRemoveCommand,
-  markClaimChildPending,
-  processGroupAlive,
-  releaseClaim,
-  setClaimChild,
-  tryAcquireClaim,
-} from '../ownership-claim.ts';
+import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { createLineReader, stripAnsi, waitForChild, type ChildResult } from '../process-output.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { SIM_SLIM_CATEGORIES, SIM_SLIM_FEATURES, SIM_SLIM_REQUIRED_LABELS } from './simslim-data.ts';
 
-type SpawnFn = (cmd: string, args: readonly string[], opts: SpawnOptions) => ChildProcess;
+const UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
+const MIN_PERSISTENT_IOS = { major: 18, minor: 5 };
+const SPAWN_TIMEOUT_MS = 60_000;
+const READ_RETRY_DELAYS_MS = [1000, 2000, 4000];
 
-export interface SimSlimResult {
-  managed: boolean;
-  profile: string | null;
-  notInstalled?: true;
+/** launchd_sim keeps a simulator's disable overrides in the host directory CoreSimulator creates per UDID. */
+const SIM_SLIM_STORE_ROOT = '/private/var/tmp';
+
+const SLIMMABLE: ReadonlySet<string> = new Set(SIM_SLIM_CATEGORIES.flatMap((category) => category.labels));
+const MANAGED: ReadonlySet<string> = new Set([...SLIMMABLE, ...SIM_SLIM_REQUIRED_LABELS]);
+
+export interface SimSlimProfile {
+  except: readonly string[];
+  keep: readonly string[];
 }
 
-export async function reconcileSimSlim(options: Parameters<typeof applySimSlim>[0]): Promise<SimSlimResult> {
+export interface SlimDelta {
+  toDisable: string[];
+  toEnable: string[];
+}
+
+export function desiredSlimLabels(profile: SimSlimProfile = { except: [], keep: [] }): Set<string> {
+  const desired = new Set(SLIMMABLE);
+  for (const category of SIM_SLIM_CATEGORIES) {
+    if (!profile.except.includes(category.id)) continue;
+    for (const label of category.labels) desired.delete(label);
+  }
+  for (const label of profile.keep) desired.delete(label);
+  return desired;
+}
+
+/** Names of the system features the default profile turns off. */
+export function slimmedFeatureNames(): string[] {
+  const desired = desiredSlimLabels();
+  return SIM_SLIM_FEATURES.filter((feature) => feature.labels.some((label) => desired.has(label))).map(
+    (feature) => feature.name,
+  );
+}
+
+const PROFILE_FIELDS = new Set(['name', 'description', 'except', 'keep']);
+
+export function parseSlimProfile(text: string, path: string): SimSlimProfile {
+  if (text.trim() === '') throw new Error(`SimSlim profile ${path} is empty; write {} for the default profile.`);
+  let value: unknown;
   try {
-    return await applySimSlim(options);
+    value = JSON.parse(text);
   } catch (error) {
-    const cause = error instanceof Error ? error.cause : undefined;
-    const missing = cause instanceof Error && 'code' in cause && cause.code === 'ENOENT';
-    if (options.profile || !options.slimByDefault || !missing) throw error;
-    options.out?.(
-      'SimSlim: ios.simslim is on but the `simslim` command is not installed; continuing without it. Run `brew install mobai-app/tap/simslim`.',
-    );
-    return { managed: Boolean(options.previouslyManaged), profile: null, notInstalled: true };
+    throw new Error(`Could not parse SimSlim profile ${path}: ${error instanceof Error ? error.message : error}`, {
+      cause: error,
+    });
+  }
+  if (!isJsonObject(value)) throw new Error(`SimSlim profile ${path} must be a JSON object.`);
+  const record = value;
+  for (const key of Object.keys(record)) {
+    if (!PROFILE_FIELDS.has(key)) throw new Error(`SimSlim profile ${path}: unknown field "${key}".`);
+  }
+  const list = (key: 'except' | 'keep'): string[] => {
+    const entry = record[key];
+    if (entry === undefined) return [];
+    const items = Array.isArray(entry) ? entry.filter((item): item is string => typeof item === 'string') : null;
+    if (!Array.isArray(entry) || items?.length !== entry.length) {
+      throw new Error(`SimSlim profile ${path}: "${key}" must be an array of strings.`);
+    }
+    return items.map((item) => item.trim()).filter((item) => item !== '');
+  };
+  const except = list('except');
+  for (const id of except) {
+    if (!SIM_SLIM_CATEGORIES.some((category) => category.id === id)) {
+      throw new Error(`SimSlim profile ${path}: unknown category "${id}". Run \`stim guide lifecycle simslim\`.`);
+    }
+  }
+  const keep = list('keep');
+  for (const label of keep) {
+    if (!MANAGED.has(label)) {
+      throw new Error(`SimSlim profile ${path}: "${label}" is not a slimmable service.`);
+    }
+  }
+  return { except, keep };
+}
+
+/** Whether the iOS runtime keeps launchd disable overrides across a boot. Accepts `27.0`, `18.5.1`, `18` or a runtime id. */
+export function iosRuntimeKeepsOverrides(runtime: string | null | undefined): boolean {
+  const match = /(\d+)(?:[.-](\d+))?(?:[.-]\d+)*$/.exec(runtime ?? '');
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major > MIN_PERSISTENT_IOS.major || (major === MIN_PERSISTENT_IOS.major && minor >= MIN_PERSISTENT_IOS.minor);
+}
+
+/** The transitions that move `stored` to `desired`, scoped to managed labels; every other entry stays untouched. */
+export function slimDelta(stored: ReadonlyMap<string, boolean>, desired: ReadonlySet<string>): SlimDelta {
+  const toDisable = [...desired].filter((label) => MANAGED.has(label) && stored.get(label) !== true);
+  const toEnable = [...stored]
+    .filter(([label, disabled]) => disabled && MANAGED.has(label) && !desired.has(label))
+    .map(([label]) => label);
+  return { toDisable: toDisable.toSorted(), toEnable: toEnable.toSorted() };
+}
+
+export function slimChangeNeeded(stored: ReadonlyMap<string, boolean>, desired: ReadonlySet<string>): boolean {
+  const { toDisable, toEnable } = slimDelta(stored, desired);
+  return toDisable.length + toEnable.length > 0;
+}
+
+export function storeDisablesManagedLabel(stored: ReadonlyMap<string, boolean>): boolean {
+  return [...stored].some(([label, disabled]) => disabled && MANAGED.has(label));
+}
+
+export function parseSlimStore(xml: string): Map<string, boolean> {
+  if (!/<plist[\s>]/.test(xml) || !/<\/plist>/.test(xml)) throw new Error('disabled.plist is not an XML property list');
+  const entries = new Map<string, boolean>();
+  let label: string | null = null;
+  for (const token of xml.matchAll(/<key>([^<]*)<\/key>|<(true|false)\s*\/>/g)) {
+    if (token[1] !== undefined) label = unescapeXml(token[1]);
+    else if (label !== null) {
+      entries.set(label, token[2] === 'true');
+      label = null;
+    }
+  }
+  return entries;
+}
+
+export function encodeSlimStore(entries: ReadonlyMap<string, boolean>): string {
+  const body = [...entries.keys()]
+    .toSorted()
+    .map((label) => `\t<key>${escapeXml(label)}</key>\n\t<${entries.get(label) ? 'true' : 'false'}/>\n`)
+    .join('');
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+    `<plist version="1.0">\n<dict>\n${body}</dict>\n</plist>\n`
+  );
+}
+
+function mergeSlimStore(
+  stored: ReadonlyMap<string, boolean>,
+  { toDisable, toEnable }: SlimDelta,
+): Map<string, boolean> {
+  const merged = new Map(stored);
+  for (const label of toDisable) merged.set(label, true);
+  for (const label of toEnable) merged.set(label, false);
+  return merged;
+}
+
+export function parsePrintDisabled(output: string): Set<string> {
+  const disabled = new Set<string>();
+  for (const line of output.split('\n')) {
+    const match = /"([^"]+)"\s*=>\s*(disabled|true)\b/.exec(line);
+    if (match?.[1] !== undefined) disabled.add(match[1]);
+  }
+  return disabled;
+}
+
+function escapeXml(text: string): string {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function unescapeXml(text: string): string {
+  return text.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+}
+
+function storeDir(udid: string, root: string): string {
+  if (!UDID.test(udid)) throw new Error(`Refusing to touch launchd overrides for ${JSON.stringify(udid)}.`);
+  return join(root, `com.apple.CoreSimulator.SimDevice.${udid}`);
+}
+
+function readSlimStore(udid: string, root: string = SIM_SLIM_STORE_ROOT): Map<string, boolean> {
+  try {
+    return parseSlimStore(readFileSync(join(storeDir(udid, root), 'disabled.plist'), 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
+    throw error;
   }
 }
 
-async function applySimSlim({
-  udid,
-  profile,
-  slimByDefault = false,
-  previouslyManaged = false,
-  out = () => {},
-  spawn,
-  timeoutMs = 12 * 60 * 1000,
-  cleanupMs = 10000,
-  context,
-}: {
-  context: StimContext | undefined;
-  udid: string;
-  profile?: string | null;
-  slimByDefault?: boolean;
-  previouslyManaged?: boolean;
-  out?: (line: string) => void;
-  spawn?: SpawnFn;
-  timeoutMs?: number;
-  cleanupMs?: number;
-}): Promise<SimSlimResult> {
-  if (!profile && !slimByDefault && !previouslyManaged) return { managed: false, profile: null };
-
-  const slim = Boolean(profile) || slimByDefault;
-  const action = slim ? 'on' : 'off';
-  const args = profile ? ['on', udid, '--profile', profile] : slim ? ['on', udid] : ['off', udid];
-  const lines: string[] = [];
-  const onLine = (raw: string) => {
-    const line = stripAnsi(raw).trim();
-    if (!line) return;
-    lines.push(line);
-    if (lines.length > 20) lines.shift();
-    out(`SimSlim: ${line}`);
-  };
-  const stdout = createLineReader(onLine);
-  const stderr = createLineReader(onLine);
-
-  const root = join(getConfigDir(), 'simslim-locks', `${encodeURIComponent(udid.toLowerCase())}.lock`);
-  const label = `SimSlim for ${udid}`;
-  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label });
-  if (attempt.pending) releaseClaim(attempt.pending);
-  const claim = attempt.acquired;
-  if (!claim) {
-    throw new ClaimRefusedError({
-      root,
-      claimPath: attempt.held?.path ?? root,
-      label,
-      reason: 'another SimSlim operation is still using this simulator',
-    });
-  }
-
-  let child: ChildProcess | undefined;
-  let result: ChildResult | undefined;
-  let identity: ProcessRecord | undefined;
-  let cancellation: 'SIGINT' | 'SIGTERM' | undefined;
-  const stopGroup = () => {
-    if (child?.pid !== undefined && identity && inspectProcessIdentity(identity) === 'same') {
-      try {
-        process.kill(-child.pid, 'SIGKILL');
-      } catch {}
-    }
-  };
-  const cancel = (signal: 'SIGINT' | 'SIGTERM') => {
-    cancellation ??= signal;
-    stopGroup();
-  };
-  const state = operationState(context);
-  const onAbort = () => {
-    state.handled = true;
-    state.draining = true;
-    cancel(isTermination(context?.signal.reason) ? 'SIGTERM' : 'SIGINT');
-  };
-  const groupAlive = () => child?.pid !== undefined && processGroupAlive(child.pid);
-  const settled = () => result !== undefined && !groupAlive();
-  const waitUntil = async (deadline: number, cancellable = false) => {
-    while (!settled() && Date.now() < deadline) {
-      if (cancellable && cancellation) break;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
-    }
-    return settled();
-  };
-  context?.signal.addEventListener('abort', onAbort);
-  state.exitCleanups.add(stopGroup);
+/** Merges the transitions into the store with an atomic rename, so launchd_sim never reads a partial file. */
+export function writeSlimStore(udid: string, delta: SlimDelta, root: string = SIM_SLIM_STORE_ROOT): void {
+  const dir = storeDir(udid, root);
+  const merged = mergeSlimStore(readSlimStore(udid, root), delta);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = join(dir, `disabled.plist.${process.pid}.${Date.now()}`);
   try {
-    if (context?.signal.aborted) onAbort();
-    markClaimChildPending(claim);
-    try {
-      child = (spawn ?? ((cmd, childArgs, opts) => getExecutor().spawn(cmd, childArgs, opts)))('simslim', args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
-      });
-    } catch (error) {
-      throw simslimLaunchError(error);
-    }
-    child.stdout?.on('data', (chunk) => stdout.push(chunk));
-    child.stderr?.on('data', (chunk) => stderr.push(chunk));
-    void waitForChild(child).then((value) => {
-      result = value;
-      return undefined;
-    });
-    if (child.pid !== undefined) {
-      const captured = captureProcessIdentity(child.pid);
-      if (captured.ok) {
-        identity = { pid: child.pid, processToken: captured.token };
-        try {
-          setClaimChild(claim, identity);
-        } catch {}
-      }
-    }
-    const completed = await waitUntil(Date.now() + timeoutMs, true);
-    if (cancellation || !completed) {
-      stopGroup();
-      const stopped = await waitUntil(Date.now() + cleanupMs);
-      const detail = lines.length ? ` ${lines.join(' | ')}` : '';
-      const recovery = stopped
-        ? 'Its process group has stopped. Retry stim ios to reconcile the retained simulator settings.'
-        : `Its process group could not be confirmed stopped. The claim remains at ${claim.path}. ` +
-          `Inspect the SimSlim process group ${child.pid ?? 'unknown'} before retrying. ` +
-          `Only when nothing is using it, remove the claim: ${claimRemoveCommand(claim.path)}`;
-      const reason = cancellation ? `interrupted by ${cancellation}` : `exceeded ${Math.round(timeoutMs / 1000)}s`;
-      const message = `SimSlim ${action} ${reason}. ${recovery}${detail}`;
-      if (cancellation) out(message);
-      throw Object.assign(new Error(message), { code: cancellation ? 'EINTR' : 'ETIMEDOUT' });
-    }
+    writeFileSync(temp, encodeSlimStore(merged), { flag: 'wx' });
+    chmodSync(temp, 0o644);
+    renameSync(temp, join(dir, 'disabled.plist'));
   } finally {
-    if (!child || settled()) releaseClaim(claim);
-    else {
-      child.stdout?.destroy?.();
-      child.stderr?.destroy?.();
-      child.unref();
+    rmSync(temp, { force: true });
+  }
+}
+
+async function readLiveDisabled(udid: string): Promise<Set<string>> {
+  let failure: unknown;
+  for (let attempt = 0; attempt <= READ_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return parsePrintDisabled(
+        await getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'print-disabled', 'system'], {
+          timeoutMs: SPAWN_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        }),
+      );
+    } catch (error) {
+      failure = error;
+      const delay = READ_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) break;
+      await cancellableSleep(delay);
     }
-    context?.signal.removeEventListener('abort', onAbort);
-    state.exitCleanups.delete(stopGroup);
   }
-
-  stdout.flush();
-  stderr.flush();
-
-  if (result?.error) throw simslimLaunchError(result.error);
-  if (result?.code !== 0) {
-    const detail = lines.length ? ` ${lines.join(' | ')}` : '';
-    throw new Error(`SimSlim ${action} failed with exit code ${result?.code ?? 'unknown'}.${detail}`);
-  }
-  return { managed: slim, profile: profile ?? null };
+  throw failure;
 }
 
-function simslimLaunchError(error: unknown): Error {
-  const cause = error as NodeJS.ErrnoException;
-  if (cause?.code === 'ENOENT') {
-    return new Error(
-      'SimSlim is configured but the `simslim` command is not installed. Run `brew install mobai-app/tap/simslim`.',
-      { cause },
-    );
-  }
-  return new Error(`Could not start SimSlim: ${String((cause as Error)?.message || cause)}`, { cause });
+export interface SimSlimOps {
+  readStore(udid: string): Map<string, boolean>;
+  writeStore(udid: string, delta: SlimDelta): void;
+  readLive(udid: string): Promise<Set<string>>;
 }
 
-export function simslimIsOnPath(): boolean {
+export const realSimSlimOps: SimSlimOps = {
+  readStore: (udid) => readSlimStore(udid),
+  writeStore: (udid, delta) => writeSlimStore(udid, delta),
+  readLive: readLiveDisabled,
+};
+
+/**
+ * Writes the overrides while the simulator is shut down. Never throws: a store Stim cannot write leaves the
+ * simulator stock.
+ */
+export function writeOfflineOverrides(
+  ops: SimSlimOps,
+  udid: string,
+  desired: ReadonlySet<string>,
+  out: (line: string) => void,
+): 'unchanged' | 'written' | 'failed' {
   try {
-    return Boolean(getExecutor().findExecutable('simslim'));
-  } catch {
+    const delta = slimDelta(ops.readStore(udid), desired);
+    if (delta.toDisable.length + delta.toEnable.length === 0) return 'unchanged';
+    out(
+      desired.size > 0
+        ? `slimming ${udid}: disabling ${delta.toDisable.length} background services before its boot`
+        : `restoring stock services on ${udid} before its boot`,
+    );
+    ops.writeStore(udid, delta);
+    return 'written';
+  } catch (error) {
+    out(
+      `could not write the launchd overrides for ${udid}: ${error instanceof Error ? error.message : error}; running stock services`,
+    );
+    return 'failed';
+  }
+}
+
+/** Reads the overrides back from the booted simulator. Never throws. */
+export async function verifyOverrides(
+  ops: SimSlimOps,
+  udid: string,
+  desired: ReadonlySet<string>,
+  out: (line: string) => void,
+): Promise<boolean> {
+  try {
+    const live = await ops.readLive(udid);
+    const stored = new Map([...live].map((label): [string, boolean] => [label, true]));
+    if (!slimChangeNeeded(stored, desired)) return true;
+    out(`this simulator did not honour the launchd overrides at boot; running stock services`);
+    return false;
+  } catch (error) {
+    out(`could not read back the launchd overrides on ${udid}: ${error instanceof Error ? error.message : error}`);
     return false;
   }
 }

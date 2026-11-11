@@ -8,7 +8,7 @@ import { avdStorageExists, configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
-import { reconcileSimSlim } from './simslim.ts';
+import { realSimSlimOps, type SimSlimOps } from './simslim.ts';
 import type { DeviceSlotWaitPolicy } from './device-capacity.ts';
 import { ensureIosBooted, ensureOwnedIosDevice, type IosBoot } from './device-ios.ts';
 import { ANDROID_BOOT_TIMEOUT_MS, ensureAndroidBooted, ensureOwnedAndroidDevice } from './device-android.ts';
@@ -24,7 +24,6 @@ export interface OwnedDeviceRecord {
   setupIncomplete?: boolean;
   bootPending?: boolean;
   simslimManaged?: boolean;
-  simslimApplied?: { profile: string; springBoardPid: number };
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
@@ -153,7 +152,7 @@ export async function ensureOwnedDevice({
   alive = pidExists,
   configureAvd = configureNewOwnedAvd,
   teardownAvd = teardownOwnedAvd,
-  reconcileIosSimulator = reconcileSimSlim,
+  slimOps = realSimSlimOps,
   simSnapshot,
 }: {
   platform: string;
@@ -168,7 +167,7 @@ export async function ensureOwnedDevice({
   out?: Notify;
   configureAvd?: typeof configureNewOwnedAvd;
   teardownAvd?: typeof teardownOwnedAvd;
-  reconcileIosSimulator?: typeof reconcileSimSlim;
+  slimOps?: SimSlimOps;
   simSnapshot?: IosSimSnapshot;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
@@ -189,7 +188,7 @@ export async function ensureOwnedDevice({
           flags,
           note,
           out,
-          reconcileIosSimulator,
+          slimOps,
           simSnapshot,
         })
       : await ensureOwnedAndroidDevice({
