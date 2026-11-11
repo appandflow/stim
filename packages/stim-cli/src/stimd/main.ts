@@ -984,7 +984,7 @@ async function runStimdInner(
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.running());
+      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.holdsRelaunch());
       next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
