@@ -693,7 +693,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 20_000);
 
-  test('a start refuses once and names every unresolved home, daemon and engine claim', async () => {
+  test('a start refuses once and names every unresolved home, daemon and engine claim, and starts once each records an exited child', async () => {
     const sleeper = spawnChild('sleep', ['30'], { stdio: 'ignore' });
     assert(sleeper.pid);
     const captured = captureProcessIdentity(sleeper.pid);
@@ -722,6 +722,16 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         expect(refusal?.message).toContain(path);
         expect(refusal?.remedy).toContain(path);
       }
+
+      for (const path of pending)
+        writeFileSync(`${path.slice(0, -'.claim'.length)}.child`, JSON.stringify({ record: gone }));
+      const before = new Set(process.listeners('SIGTERM'));
+      const running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await running;
       expect(existsSync(stimdRecordFile())).toBe(false);
     } finally {
       engine.mockRestore();

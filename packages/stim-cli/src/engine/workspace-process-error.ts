@@ -15,9 +15,12 @@ export function reportChildOf(error: unknown): ReportChild | null {
 
 /**
  * The one identified child behind every one of `errors`, which a retained claim can record instead of an unknown child,
- * or null when any error names no child, a child without an identity token, or a different child.
+ * or null when any error names no child, a child without an identity token, or a different child. Always null on
+ * Windows, which has no process groups: a recorded child there frees the claim when the child exits, before its
+ * descendants do.
  */
 export function soleReportChild(errors: readonly unknown[]): { pid: number; processToken: string } | null {
+  if (process.platform === 'win32') return null;
   let sole: { pid: number; processToken: string } | null = null;
   for (const error of errors) {
     const child = reportChildOf(error);
