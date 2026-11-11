@@ -11,18 +11,20 @@ const PROC_NAME_CHARS = 15;
 const POLL_MS = 1000;
 const READ_LIMIT = 4 * 1024 * 1024;
 const PENDING_LIMIT = 1000;
+const REPORTED_LIMIT = 256;
+const POLL_FAILURE_LIMIT = 3;
 const PLUTIL_PARALLEL = 8;
 const SIMCTL_TIMEOUT_MS = 30_000;
 const PLUTIL_TIMEOUT_MS = 10_000;
 
 export type LaunchdEvent =
   | { kind: 'lookup'; service: string; proc: string; pid: number }
-  | { kind: 'spawn'; bundleId: string; pid: number };
+  | { kind: 'spawn' | 'exit'; bundleId: string; pid: number };
 
-/** One line of a simulator's launchd.log: a failed Mach lookup (error 3, no such process) or an app's spawn. */
+/** One line of a simulator's launchd.log: a failed Mach lookup (error 3, no such process), an app's spawn or its exit. */
 export function parseLaunchdLine(line: string): LaunchdEvent | null {
   const lookup =
-    /failed lookup: name = (?<service>[^,\s]+),.*?\brequestor = (?<proc>.+?)\[(?<pid>\d+)\], error = 3:/.exec(
+    /failed lookup: name = (?<service>[^,\s]+),.*\brequestor = (?<proc>[^[\]]+)\[(?<pid>\d+)\], error = 3:/.exec(
       line,
     )?.groups;
   if (lookup?.service && lookup.proc)
@@ -31,6 +33,11 @@ export function parseLaunchdLine(line: string): LaunchdEvent | null {
     line,
   )?.groups;
   if (spawn?.bundleId) return { kind: 'spawn', bundleId: spawn.bundleId, pid: Number(spawn.pid) };
+  const exit =
+    /\(\S*UIKitApplication:(?<bundleId>[^[\s]+)\[[^)]* \[(?<pid>\d+)\]\) <\w+>: internal event: EXITED\b/.exec(
+      line,
+    )?.groups;
+  if (exit?.bundleId) return { kind: 'exit', bundleId: exit.bundleId, pid: Number(exit.pid) };
   return null;
 }
 
@@ -71,8 +78,8 @@ export function nextLogOffset(
 
 /**
  * Decides, line by line, which failed lookups to report: the app's own process (its pid from the spawn line for
- * `bundleId`; before one is seen, its executable name) asking for a service of a label in `disabled`, once per
- * feature (or label) per launch.
+ * `bundleId`, until its exit line; before any spawn is seen, its executable name) asking for a service of a label in
+ * `disabled`, once per feature (or label) per launch.
  */
 export function createSlimDenialFilter({
   bundleId,
@@ -86,23 +93,29 @@ export function createSlimDenialFilter({
   services: ReadonlyMap<string, string>;
 }): (event: LaunchdEvent) => SlimDenial | null {
   const name = executable.slice(0, PROC_NAME_CHARS);
+  let spawned = false;
   let appPid: number | null = null;
   const reported = new Set<string>();
   return (event) => {
-    if (event.kind === 'spawn') {
-      if (event.bundleId === bundleId && event.pid !== appPid) {
+    if (event.kind !== 'lookup') {
+      if (event.bundleId !== bundleId) return null;
+      if (event.kind === 'exit') {
+        if (event.pid === appPid) appPid = null;
+      } else if (event.pid !== appPid) {
+        spawned = true;
         appPid = event.pid;
         reported.clear();
       }
       return null;
     }
-    if (appPid === null ? event.proc !== name : event.pid !== appPid) return null;
+    if (spawned ? event.pid !== appPid : event.proc !== name) return null;
     const label = services.get(event.service);
     if (label === undefined || !disabled.has(label)) return null;
     const features = SIM_SLIM_FEATURES.filter((feature) => feature.labels.includes(label));
     const category = SIM_SLIM_CATEGORIES.find((entry) => entry.labels.includes(label)) ?? null;
     const key = `${event.pid}\0${features.length > 0 ? features.map((feature) => feature.id).join(',') : label}`;
     if (reported.has(key)) return null;
+    if (reported.size >= REPORTED_LIMIT) reported.clear();
     reported.add(key);
     const keep = category ? `"except": ["${category.id}"]` : `"keep": ["${label}"]`;
     const asked = `the app asked for ${event.service}, which slimming turned off`;
@@ -128,11 +141,9 @@ export function createSlimDenialFilter({
 
 const serviceMaps = new Map<string, Promise<Map<string, string>>>();
 
-async function runtimeOf(udid: string): Promise<{ build: string; root: string }> {
+async function runtimeOf(udid: string, signal: AbortSignal): Promise<{ build: string; root: string }> {
   const listed: unknown = JSON.parse(
-    await getExecutor().runFileAsync('xcrun', ['simctl', 'list', '-j'], {
-      timeoutMs: SIMCTL_TIMEOUT_MS,
-    }),
+    await getExecutor().runFileAsync('xcrun', ['simctl', 'list', '-j'], { timeoutMs: SIMCTL_TIMEOUT_MS, signal }),
   );
   if (!isJsonObject(listed) || !isJsonObject(listed.devices) || !Array.isArray(listed.runtimes))
     throw new Error('simctl list returned no devices or runtimes');
@@ -145,7 +156,7 @@ async function runtimeOf(udid: string): Promise<{ build: string; root: string }>
   return { build: runtime.buildversion, root: runtime.runtimeRoot };
 }
 
-async function readRuntimePlists(root: string): Promise<unknown[]> {
+async function readRuntimePlists(root: string, signal: AbortSignal): Promise<unknown[]> {
   const files = ['LaunchDaemons', 'LaunchAgents'].flatMap((dir) => {
     const path = join(root, 'System', 'Library', dir);
     try {
@@ -159,12 +170,13 @@ async function readRuntimePlists(root: string): Promise<unknown[]> {
   const plists: unknown[] = [];
   let next = 0;
   const worker = async () => {
-    for (let file = files[next++]; file !== undefined; file = files[next++]) {
+    for (let file = files[next++]; file !== undefined && !signal.aborted; file = files[next++]) {
       try {
         plists.push(
           JSON.parse(
             await getExecutor().runFileAsync('plutil', ['-convert', 'json', '-o', '-', file], {
               timeoutMs: PLUTIL_TIMEOUT_MS,
+              signal,
             }),
           ),
         );
@@ -172,24 +184,39 @@ async function readRuntimePlists(root: string): Promise<unknown[]> {
     }
   };
   await Promise.all(Array.from({ length: PLUTIL_PARALLEL }, worker));
+  signal.throwIfAborted();
   if (plists.length === 0) throw new Error(`no launchd plist could be read under ${root}`);
   return plists;
 }
 
-async function slimServiceMap(udid: string): Promise<Map<string, string>> {
-  const runtime = await runtimeOf(udid);
+async function slimServiceMap(udid: string, signal: AbortSignal): Promise<Map<string, string>> {
+  const runtime = await runtimeOf(udid, signal);
   let map = serviceMaps.get(runtime.build);
   if (!map) {
-    map = readRuntimePlists(runtime.root).then((plists) => machServiceLabels(plists, SIM_SLIM_MANAGED));
+    map = readRuntimePlists(runtime.root, signal).then((plists) => machServiceLabels(plists, SIM_SLIM_MANAGED));
     serviceMaps.set(runtime.build, map);
     map.catch(() => serviceMaps.delete(runtime.build));
   }
   return map;
 }
 
+function holdPending(pending: LaunchdEvent[], event: LaunchdEvent): void {
+  if (pending.length >= PENDING_LIMIT) {
+    const oldestLookup = pending.findIndex((held) => held.kind === 'lookup');
+    if (event.kind === 'lookup' && oldestLookup === -1) return;
+    if (oldestLookup !== -1) pending.splice(oldestLookup, 1);
+  }
+  pending.push(event);
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
- * Follows the host launchd.log of an owned, slimmed simulator from its current end, and writes a warn record when
- * the app asks for a service slimming turned off. Starts nothing for any other simulator.
+ * Follows the host launchd.log of an owned, slimmed simulator from its current end, and writes a slim_service_denied
+ * record (warn for a listed feature, debug otherwise) when the app asks for a service slimming turned off. Starts
+ * nothing for any other simulator, and never throws: a failure stops the reader with one line to `stderr`.
  */
 export function watchSlimDenials({
   udid,
@@ -206,15 +233,16 @@ export function watchSlimDenials({
   write: (record: NdjsonRecord) => void;
   stderr: (line: string) => void;
 }): void {
-  if (signal.aborted || !readCreatedDevices().ios.has(udid)) return;
   let disabled: Set<string>;
+  let path: string;
   try {
+    if (signal.aborted || !readCreatedDevices().ios.has(udid)) return;
     disabled = storedSlimLabels(udid);
+    path = launchdLogPath(udid);
   } catch {
     return;
   }
   if (disabled.size === 0) return;
-  const path = launchdLogPath(udid);
   const position = (() => {
     try {
       const stat = statSync(path);
@@ -225,39 +253,25 @@ export function watchSlimDenials({
   })();
   let partial = '';
   let filter: ((event: LaunchdEvent) => SlimDenial | null) | null = null;
+  let stopped = false;
+  let failures = 0;
   const pending: LaunchdEvent[] = [];
+  const stop = (error?: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    pending.length = 0;
+    if (error !== undefined && !signal.aborted) stderr(`slim service report off for ${udid}: ${describe(error)}`);
+  };
   const report = (event: LaunchdEvent) => {
-    if (signal.aborted) return;
+    if (stopped) return;
     const denial = filter?.(event);
     if (!denial) return;
     const { msg, ...fields } = denial;
     write({ src: 'device', event: 'slim_service_denied', ...fields, msg });
   };
-  void slimServiceMap(udid).then(
-    (services) => {
-      if (signal.aborted) return undefined;
-      filter = createSlimDenialFilter({
-        bundleId,
-        executable,
-        disabled,
-        services,
-      });
-      for (const event of pending.splice(0)) report(event);
-      return undefined;
-    },
-    (error: unknown) => {
-      clearInterval(timer);
-      pending.length = 0;
-      stderr(`slim service report off for ${udid}: ${error instanceof Error ? error.message : String(error)}`);
-    },
-  );
-  const poll = () => {
-    let fd: number;
-    try {
-      fd = openSync(path, 'r');
-    } catch {
-      return;
-    }
+  const readNew = () => {
+    const fd = openSync(path, 'r');
     try {
       const stat = fstatSync(fd);
       const next = nextLogOffset(position, stat);
@@ -275,13 +289,31 @@ export function watchSlimDenials({
         const event = parseLaunchdLine(line);
         if (!event) continue;
         if (filter) report(event);
-        else if (pending.length < PENDING_LIMIT) pending.push(event);
+        else holdPending(pending, event);
       }
     } finally {
       closeSync(fd);
     }
   };
+  const poll = () => {
+    if (stopped) return;
+    try {
+      readNew();
+      failures = 0;
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+      if (++failures >= POLL_FAILURE_LIMIT) stop(error);
+    }
+  };
   const timer = setInterval(poll, POLL_MS);
   timer.unref();
-  signal.addEventListener('abort', () => clearInterval(timer), { once: true });
+  signal.addEventListener('abort', () => stop(), { once: true });
+  slimServiceMap(udid, signal)
+    .then((services) => {
+      if (stopped) return undefined;
+      filter = createSlimDenialFilter({ bundleId, executable, disabled, services });
+      for (const event of pending.splice(0)) report(event);
+      return undefined;
+    })
+    .catch(stop);
 }

@@ -38,6 +38,14 @@ test.each([
     '2026-11-10 22:45:35.7 (user/501/UIKitApplication:com.example.app[dba4][rb-legacy] [59389]) <Notice>: Successfully spawned App[59389] because launch job demand',
     null,
   ],
+  [
+    '2026-11-11 00:35:52.1 (user/501/UIKitApplication:com.example.app[3819][rb-legacy] [59389]) <Notice>: internal event: EXITED, code = 0',
+    { kind: 'exit', bundleId: 'com.example.app', pid: 59389 },
+  ],
+  [
+    '2026-11-11 00:35:52.1 (user/501) <Warning>: failed lookup: name = com.x, requestor = App[1], error = 3: x, requestor = Mallory[42], error = 3: No such process',
+    { kind: 'lookup', service: 'com.x', proc: 'Mallory', pid: 42 },
+  ],
 ])('parses %s', (line, expected) => {
   expect(parseLaunchdLine(line)).toEqual(expected);
 });
@@ -115,6 +123,9 @@ test('reports the app process asking for a disabled service once per feature per
 
   expect(filter({ kind: 'spawn', bundleId: 'com.example.app', pid: 11 })).toBeNull();
   expect(filter(lookup('com.apple.healthd.server', 'ExampleApplicat', 11))).not.toBeNull();
+
+  expect(filter({ kind: 'exit', bundleId: 'com.example.app', pid: 11 })).toBeNull();
+  expect(filter(lookup('com.apple.itunesstored.xpc', 'ExampleApplicat', 11))).toBeNull();
 });
 
 test.each([
