@@ -93,7 +93,8 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
-Metro, CocoaPods and fingerprint parity. Shared findings appear before
+Metro, CocoaPods and fingerprint parity; [Exact](#exact-apps) checks cover
+Bun, rustup and the exact2 checkout. Shared findings appear before
 framework findings. Each run in a supported native app is recorded for the
 inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
@@ -660,6 +661,22 @@ it was created in, and `EXACT2` set to the Exact checkout when it sits at
 another folder depth. Only iOS simulators are supported; macOS, web, Android
 and physical devices use Exact's own commands.
 
+`stim doctor --platform ios` checks what `./exact.mjs ios` needs on this Mac,
+where the launcher looks for it:
+
+- Bun at the version `exact.mjs` pins or newer: `$BUN`, else
+  `~/.bun-<version>`, else the Bun the launcher names, `bun` on `PATH` or the
+  path of the Bun that created the app.
+- The exact2 checkout `EXACT2` or the launcher's default path names, set up with
+  Exact's setup.
+- rustup with `RUSTUP_TOOLCHAIN` or the app's Rust toolchain and its
+  `aarch64-apple-ios-sim` target,
+  which Exact's setup does not add.
+
+Each missing piece is an `exact-tools` finding with the command that installs
+it. Doctor reads files and runs only `bun --version`, `rustup` and `git`; it
+never runs the app's code.
+
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
 runs the same `./exact.mjs ios --no-install` in a checkout folder named like
@@ -670,7 +687,8 @@ shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
 `app.json` declares native modules, an `exact2` checkout with local changes and
 an app folder name that is not a plain ASCII file name build here. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
-what the worker needs.
+what the worker needs; `stim doctor` reports what each machine in
+`remote.machines` lacks.
 
 Copy this request to your agent:
 

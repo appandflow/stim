@@ -182,6 +182,45 @@ export function exactCheckoutDir(pins: Pick<ExactPins, 'exact2'>, home: string =
   return join(home, '.exact', 'exact2', pins.exact2);
 }
 
+function bunInstall(pin: string): string {
+  return `curl -fsSL https://bun.sh/install | BUN_INSTALL="$HOME/.bun-${pin}" bash -s "bun-v${pin}"`;
+}
+
+function rustProblems(rust: string | null, rustup: string | null, env: NodeJS.ProcessEnv): ExactToolProblem[] {
+  const installToolchain = `rustup toolchain install ${rust ?? 'stable'} --profile minimal --target ${EXACT_SIM_TARGET}`;
+  if (!rustup)
+    return [
+      {
+        reason: 'no rustup',
+        commands: [
+          "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none",
+          `~/.cargo/bin/${installToolchain}`,
+        ],
+      },
+    ];
+  if (rust === null) return [];
+  const targets = getExecutor().runFileQuiet(rustup, ['target', 'list', '--installed', '--toolchain', rust], {
+    timeoutMs: 20_000,
+    env: { ...env, RUSTUP_AUTO_INSTALL: '0' },
+  });
+  if (targets === null) return [{ reason: `no Rust ${rust}`, commands: [installToolchain] }];
+  if (!targets.split('\n').includes(EXACT_SIM_TARGET))
+    return [
+      {
+        reason: `no Rust ${rust} target ${EXACT_SIM_TARGET}`,
+        commands: [`rustup target add --toolchain ${rust} ${EXACT_SIM_TARGET}`],
+      },
+    ];
+  return [];
+}
+
+function setupRan(checkout: string, cargoHome: string): boolean {
+  return existsSync(join(checkout, 'node_modules')) && existsSync(join(cargoHome, 'hermes-lean-sys'));
+}
+
+const shownPath = (path: string, home: string): string =>
+  path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+
 export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): ExactToolProblem[] {
   const home = env.HOME ?? homedir();
   const problems: ExactToolProblem[] = [];
@@ -191,30 +230,11 @@ export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): Exac
   if (bunVersion !== pins.bun)
     problems.push({
       reason: `no Bun ${pins.bun} at ${bunDir}${bunVersion ? ` (it runs ${bunVersion})` : ''}`,
-      commands: [`curl -fsSL https://bun.sh/install | BUN_INSTALL="$HOME/.bun-${pins.bun}" bash -s "bun-v${pins.bun}"`],
+      commands: [bunInstall(pins.bun)],
     });
   const cargoHome = env.CARGO_HOME ?? join(home, '.cargo');
   const rustup = join(cargoHome, 'bin', 'rustup');
-  const installToolchain = `rustup toolchain install ${pins.rust} --profile minimal --target ${EXACT_SIM_TARGET}`;
-  if (!existsSync(rustup)) {
-    problems.push({
-      reason: 'no rustup',
-      commands: [
-        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none",
-        `~/.cargo/bin/${installToolchain}`,
-      ],
-    });
-  } else {
-    const targets = getExecutor().runFileQuiet(rustup, ['target', 'list', '--installed', '--toolchain', pins.rust], {
-      timeoutMs: 20_000,
-    });
-    if (targets === null) problems.push({ reason: `no Rust ${pins.rust}`, commands: [installToolchain] });
-    else if (!targets.split('\n').includes(EXACT_SIM_TARGET))
-      problems.push({
-        reason: `no Rust ${pins.rust} target ${EXACT_SIM_TARGET}`,
-        commands: [`rustup target add --toolchain ${pins.rust} ${EXACT_SIM_TARGET}`],
-      });
-  }
+  problems.push(...rustProblems(pins.rust, existsSync(rustup) ? rustup : null, env));
   const checkout = exactCheckoutDir(pins, home);
   const shown = `~/.exact/exact2/${pins.exact2}`;
   const setup = `cd ${shown} && ~/.bun-${pins.bun}/bin/bun scripts/exact.mjs setup`;
@@ -234,7 +254,90 @@ export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): Exac
       reason: `${shown} has local changes; Stim builds only a clean checkout of the pin`,
       commands: [`git -C ${shown} status`],
     });
-  else if (!existsSync(join(checkout, 'node_modules')) || !existsSync(join(cargoHome, 'hermes-lean-sys')))
+  else if (!setupRan(checkout, cargoHome))
     problems.push({ reason: `Exact's setup has not run for exact2 ${pins.exact2.slice(0, 10)}`, commands: [setup] });
+  return problems;
+}
+
+function launcherFallbackBun(launcher: string): string {
+  const fallback = /else exec ('(?:[^']|'\\'')*'|\S+) "\$0"/.exec(launcher)?.[1] ?? 'bun';
+  return fallback.startsWith("'") ? fallback.slice(1, -1).replaceAll("'\\''", "'") : fallback;
+}
+
+function olderVersion(have: string, want: string): boolean {
+  const a = have.split('.').map(Number);
+  const b = want.split('.').map(Number);
+  if (a.length < 3 || a.some((n) => !Number.isFinite(n))) return true;
+  const different = b.findIndex((n, i) => n !== a[i]);
+  return different >= 0 && (a[different] ?? 0) < (b[different] ?? 0);
+}
+
+/**
+ * What this Mac lacks for `./exact.mjs ios` in the Exact app at `root`, found the way its launcher looks: Bun from
+ * `$BUN`, then `~/.bun-<pin>`, then the launcher's fallback, at the pinned version or newer; exact2 at `EXACT2` or
+ * the launcher's default, set up; and rustup with `RUSTUP_TOOLCHAIN` or the app's Rust toolchain and the simulator
+ * target. Runs only `bun --version` and
+ * `rustup`.
+ */
+export function exactLocalToolProblems(root: string, env: NodeJS.ProcessEnv): ExactToolProblem[] {
+  let launcher: string;
+  try {
+    launcher = readFileSync(join(root, 'exact.mjs'), 'utf8');
+  } catch {
+    return [];
+  }
+  const { bun: pin, exact2Default } = exactLauncherPins(launcher);
+  const exact2Path = env.EXACT2 ?? exact2Default;
+  if (!pin || exact2Path === null) return [];
+  const executor = getExecutor();
+  const home = env.HOME ?? homedir();
+  const problems: ExactToolProblem[] = [];
+  let bunCommand = `~/.bun-${pin}/bin/bun`;
+  const versioned = join(home, `.bun-${pin}`, 'bin', 'bun');
+  const fallback = launcherFallbackBun(launcher);
+  const bun =
+    env.BUN ||
+    (existsSync(versioned)
+      ? versioned
+      : fallback.includes('/')
+        ? fallback
+        : executor.findExecutable(fallback, { env }));
+  const version = bun ? executor.runFileQuiet(bun, ['--version'], { timeoutMs: 20_000 }) : null;
+  if (!bun || version === null)
+    problems.push({
+      reason: `no Bun ${pin} (exact.mjs runs ${env.BUN ? `$BUN (${env.BUN})` : `~/.bun-${pin}/bin/bun, else ${fallback.includes('/') ? shownPath(fallback, home) : `${fallback} on PATH`}`})`,
+      commands: [bunInstall(pin)],
+    });
+  else if (olderVersion(version, pin))
+    problems.push({
+      reason: `Bun ${version} at ${shownPath(bun, home)} is older than the ${pin} exact.mjs pins`,
+      commands: [bunInstall(pin), ...(env.BUN ? ['unset BUN'] : [])],
+    });
+  else bunCommand = shownPath(bun, home);
+  const exact2Dir = resolve(root, exact2Path);
+  const shown = shownPath(exact2Dir, home);
+  const cargoHome = env.CARGO_HOME ?? join(home, '.cargo');
+  const setup = `cd ${shown} && ${bunCommand} scripts/exact.mjs setup`;
+  if (!existsSync(join(exact2Dir, 'scripts', 'app-cli.mjs'))) {
+    const pinned = basename(exact2Dir);
+    problems.push({
+      reason: `no exact2 checkout at ${shown} (exact.mjs reads EXACT2, else ${exact2Default ?? 'nothing'}); set EXACT2 to an exact2 checkout, or clone one there`,
+      commands: [
+        `git clone https://github.com/expo/exact ${shown}`,
+        ...(SHA.test(pinned) ? [`git -C ${shown} checkout ${pinned}`] : []),
+        setup,
+      ],
+    });
+  } else if (!setupRan(exact2Dir, cargoHome))
+    problems.push({ reason: `Exact's setup has not run for the exact2 checkout at ${shown}`, commands: [setup] });
+  let rust: string | null = env.RUSTUP_TOOLCHAIN ?? null;
+  for (const dir of rust ? [] : [root, exact2Dir]) {
+    try {
+      rust = exactRustChannel(readFileSync(join(dir, 'rust-toolchain.toml'), 'utf8'));
+    } catch {}
+    if (rust) break;
+  }
+  const rustup = join(cargoHome, 'bin', 'rustup');
+  problems.push(...rustProblems(rust, existsSync(rustup) ? rustup : executor.findExecutable('rustup', { env }), env));
   return problems;
 }

@@ -636,7 +636,8 @@ leased until <time>" for each one.`,
                   simulator unless --platform android, Android emulator when
                   --platform android or the app has android/ or uses Expo,
                   plus macOS SwiftPM when Package.swift exists and no platform
-                  is selected on a Mac; a platform the machine cannot build at
+                  is selected on a Mac, and an Exact app's simulator build with
+                  its pins unless it builds only here; a platform the machine cannot build at
                   all, such as iOS on Linux, is left out while it can build
                   another), and reasons, each reason it would not,
                   prefixed "iOS: ", "Android: " or "macOS: " when only one platform
@@ -644,9 +645,9 @@ leased until <time>" for each one.`,
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
-                  build-tools, compile-sdk, disk, busy or platform). problems lists the same
+                  build-tools, compile-sdk, disk, busy, platform or exact). problems lists the same
                   reasons as { code, reason } with that code; an ndk, build-tools,
-                  compile-sdk, jdk, xcode or runtime problem can also carry commands and a
+                  compile-sdk, jdk, xcode, runtime or exact problem can also carry commands and a
                   lead, the lines to run on that machine (sdkmanager, the JDK install,
                   xcode-select, xcodebuild or xcodes) and what they do, or followsFrom, the
                   code of the problem whose fix also clears it. notes lists what a build there does without stopping:
@@ -664,6 +665,7 @@ leased until <time>" for each one.`,
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
                   offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Connections > This machine uses > Add
+                  exact-tools is a costs-time finding in an Exact app on a Mac for each piece of Exact's toolchain ./exact.mjs ios lacks here (Bun, the exact2 checkout or its setup, rustup, the Rust toolchain or its aarch64-apple-ios-sim target), with the command that installs it; see stim guide lifecycle exact-ios
                   readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE

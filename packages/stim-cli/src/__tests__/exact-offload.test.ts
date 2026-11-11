@@ -7,9 +7,11 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import {
   EXACT_SIM_TARGET,
   exactOffloadParam,
+  exactLocalToolProblems,
   exactOffloadPlan,
   exactToolProblems,
 } from '../integrations/exact-offload.ts';
+import { exactDoctor } from '../integrations/exact-ios.ts';
 
 let root: string;
 let app: string;
@@ -142,6 +144,78 @@ test("a machine reports each missing piece of Exact's toolchain with the command
     },
   ]);
 
-  script(join(home, '.cargo', 'bin', 'rustup'), `printf 'aarch64-apple-darwin\\n${EXACT_SIM_TARGET}\\n'`);
+  script(
+    join(home, '.cargo', 'bin', 'rustup'),
+    `[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 9; printf 'aarch64-apple-darwin\\n${EXACT_SIM_TARGET}\\n'`,
+  );
   expect(exactToolProblems(pins, { HOME: home })).toEqual([]);
+});
+
+test("doctor finds this Mac's Bun, exact2 and Rust where the app's launcher looks, at or above the pins", () => {
+  const home = join(root, 'home');
+  const path = join(root, 'path');
+  mkdirSync(path);
+  const env = { HOME: home, PATH: path };
+  expect(exactLocalToolProblems(app, { ...env, EXACT2: join(root, 'missing') }).map((each) => each.reason)).toEqual([
+    'no Bun 1.4.2 (exact.mjs runs ~/.bun-1.4.2/bin/bun, else bun on PATH)',
+    expect.stringMatching(/^no exact2 checkout at .*missing \(exact.mjs reads EXACT2, else \.\.\/\.\.\/pins\/exact2\)/),
+    'no rustup',
+  ]);
+
+  script(join(path, 'bun'), 'echo 1.3.9');
+  mkdirSync(join(exact2, 'scripts'));
+  writeFileSync(join(exact2, 'scripts', 'app-cli.mjs'), '');
+  mkdirSync(join(exact2, 'node_modules'));
+  mkdirSync(join(home, '.cargo', 'hermes-lean-sys'), { recursive: true });
+  script(join(path, 'rustup'), '[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 9; echo aarch64-apple-darwin');
+  expect(exactLocalToolProblems(app, env)).toEqual([
+    {
+      reason: `Bun 1.3.9 at ${join(path, 'bun')} is older than the 1.4.2 exact.mjs pins`,
+      commands: ['curl -fsSL https://bun.sh/install | BUN_INSTALL="$HOME/.bun-1.4.2" bash -s "bun-v1.4.2"'],
+    },
+    {
+      reason: `no Rust 1.97.0 target ${EXACT_SIM_TARGET}`,
+      commands: [`rustup target add --toolchain 1.97.0 ${EXACT_SIM_TARGET}`],
+    },
+  ]);
+
+  script(join(path, 'bun'), 'echo 1.5.0');
+  writeFileSync(join(app, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.98.0"\n');
+  script(
+    join(path, 'rustup'),
+    `[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 9; [ "$5" = 1.98.0 ] && printf '${EXACT_SIM_TARGET}\\n'`,
+  );
+  expect(exactLocalToolProblems(app, env)).toEqual([]);
+
+  const creator = join(root, "creator's bun");
+  writeFileSync(
+    join(app, 'exact.mjs'),
+    [
+      `':' //; if [ -n "$BUN" ]; then exec "$BUN" "$0" "$@"; else exec '${creator.replaceAll("'", "'\\''")}' "$0" "$@"; fi`,
+      `const EXACT2 = resolve(import.meta.dir, process.env.EXACT2 ?? "../../pins/exact2");`,
+      'ensureBun("1.4.2");',
+    ].join('\n'),
+  );
+  expect(exactLocalToolProblems(app, env).map((each) => each.reason)).toEqual([
+    `no Bun 1.4.2 (exact.mjs runs ~/.bun-1.4.2/bin/bun, else ${creator})`,
+  ]);
+  script(creator, 'echo 1.4.2');
+  expect(exactLocalToolProblems(app, env)).toEqual([]);
+});
+
+test('doctor asks build machines about the pins only for an Exact app they could build', async () => {
+  const context = {
+    root: app,
+    options: {},
+    settings: {},
+    optimizations: null,
+    platforms: ['ios' as const],
+    repoRoot: null,
+  };
+  const inspect = exactDoctor().offloadTargets?.(context, async () => null);
+  expect((await inspect?.())?.map((target) => target.platform === 'ios' && target.exact)).toEqual([
+    { exact2: sha, bun: '1.4.2', rust: '1.97.0' },
+  ]);
+  writeFileSync(join(app, 'app.json'), JSON.stringify({ modules: ['shop-map'] }));
+  expect(exactDoctor().offloadTargets?.(context, async () => null)).toBeNull();
 });
