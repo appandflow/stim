@@ -14,7 +14,7 @@ const READ_RETRY_DELAYS_MS = [1000, 2000, 4000];
 const SIM_SLIM_STORE_ROOT = '/private/var/tmp';
 
 const SLIMMABLE: ReadonlySet<string> = new Set(SIM_SLIM_CATEGORIES.flatMap((category) => category.labels));
-const MANAGED: ReadonlySet<string> = new Set([...SLIMMABLE, ...SIM_SLIM_REQUIRED_LABELS]);
+export const SIM_SLIM_MANAGED: ReadonlySet<string> = new Set([...SLIMMABLE, ...SIM_SLIM_REQUIRED_LABELS]);
 
 export interface SimSlimProfile {
   except: readonly string[];
@@ -78,7 +78,7 @@ export function parseSlimProfile(text: string, path: string): SimSlimProfile {
   }
   const keep = list('keep');
   for (const label of keep) {
-    if (!MANAGED.has(label)) {
+    if (!SIM_SLIM_MANAGED.has(label)) {
       throw new Error(`SimSlim profile ${path}: "${label}" is not a slimmable service.`);
     }
   }
@@ -96,9 +96,9 @@ export function iosRuntimeKeepsOverrides(runtime: string | null | undefined): bo
 
 /** The transitions that move `stored` to `desired`, scoped to managed labels; every other entry stays untouched. */
 export function slimDelta(stored: ReadonlyMap<string, boolean>, desired: ReadonlySet<string>): SlimDelta {
-  const toDisable = [...desired].filter((label) => MANAGED.has(label) && stored.get(label) !== true);
+  const toDisable = [...desired].filter((label) => SIM_SLIM_MANAGED.has(label) && stored.get(label) !== true);
   const toEnable = [...stored]
-    .filter(([label, disabled]) => disabled && MANAGED.has(label) && !desired.has(label))
+    .filter(([label, disabled]) => disabled && SIM_SLIM_MANAGED.has(label) && !desired.has(label))
     .map(([label]) => label);
   return { toDisable: toDisable.toSorted(), toEnable: toEnable.toSorted() };
 }
@@ -109,7 +109,7 @@ export function slimChangeNeeded(stored: ReadonlyMap<string, boolean>, desired: 
 }
 
 export function storeDisablesManagedLabel(stored: ReadonlyMap<string, boolean>): boolean {
-  return [...stored].some(([label, disabled]) => disabled && MANAGED.has(label));
+  return [...stored].some(([label, disabled]) => disabled && SIM_SLIM_MANAGED.has(label));
 }
 
 export function parseSlimStore(xml: string): Map<string, boolean> {
@@ -168,6 +168,18 @@ function unescapeXml(text: string): string {
 function storeDir(udid: string, root: string): string {
   if (!UDID.test(udid)) throw new Error(`Refusing to touch launchd overrides for ${JSON.stringify(udid)}.`);
   return join(root, `com.apple.CoreSimulator.SimDevice.${udid}`);
+}
+
+/** The host file launchd_sim writes its own log to for the simulator `udid`. */
+export function launchdLogPath(udid: string, root: string = SIM_SLIM_STORE_ROOT): string {
+  return join(storeDir(udid, root), 'launchd.log');
+}
+
+/** The managed labels the stored overrides disable on the simulator `udid`. */
+export function storedSlimLabels(udid: string, root: string = SIM_SLIM_STORE_ROOT): Set<string> {
+  return new Set(
+    [...readSlimStore(udid, root)].filter(([label, off]) => off && SIM_SLIM_MANAGED.has(label)).map(([label]) => label),
+  );
 }
 
 function readSlimStore(udid: string, root: string = SIM_SLIM_STORE_ROOT): Map<string, boolean> {

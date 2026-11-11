@@ -3495,6 +3495,18 @@ ${SIM_SLIM_CATEGORIES.map((category) => `    ${category.id.padEnd(13)} ${categor
   services on its simulator; \`stim settings set ios.simslim off --scope machine\` turns
   slimming off everywhere.
 
+  When a system feature misbehaves on a slim simulator (a call that fails or
+  never calls back), look for a warn record with event slim_service_denied:
+
+    stim logs --source device --level warn --grep "slimming turned off"
+
+  Stim writes one when the app Stim launched asks for a service of a feature
+  slimming turned off, once per feature per launch, naming the service, the
+  feature and the category to keep (\`stim guide logs\`). Lookups of services
+  no listed feature depends on, which system frameworks make in every app,
+  are recorded at debug (\`--level debug\`) without a remedy. Only the app's own
+  process is watched, so a lookup by one of its extensions is not reported.
+
   Overrides persist across a boot only on iOS 18.5 and newer. On an older
   runtime, or when the booted simulator did not honour them, Stim prints one
   line and runs the simulator with stock services; the run does not fail.
