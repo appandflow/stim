@@ -305,7 +305,11 @@ function watchOf(value: unknown): MetroWatchState {
     : { before: null, owned: [] };
 }
 
-/** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
+/**
+ * Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. Windows has no
+ * process groups, and `taskkill /T` reaches only a live tree, so there the exit of the child this stimd spawned is the
+ * whole tree it can establish.
+ */
 function forgetExited(child: MetroChild, code: number | null, signal: string | null): void {
   const stop = stopRecord(child, { kind: 'server-exit', mode: child.mode, code, signal });
   forget(
@@ -661,10 +665,6 @@ async function start(
   serveLinks(child, log);
   handle.onExit((info) => {
     if (child.stopping || (GROUPS && processGroupAlive(child.pid))) return;
-    if (!GROUPS) {
-      failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
-      return;
-    }
     forgetExited(child, info?.code ?? null, info?.signal ?? null);
   });
   writer.write({
@@ -1008,10 +1008,6 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
       const decidedAt = Date.now();
       if (!running(child)) {
         if (GROUPS && processGroupAlive(child.pid)) continue;
-        if (!GROUPS) {
-          failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
-          continue;
-        }
         forgetExited(child, null, null);
         continue;
       }

@@ -37,7 +37,7 @@ function write(path: string, text: string, mode?: number): void {
 }
 
 /** A bare React Native project whose `metro` answers `/status`, pinned by `.nvmrc` to a Node that records its pids. */
-function bareProject({ listens = true } = {}): string {
+function bareProject({ listens = true, exitsAfterMs = 0 } = {}): string {
   const root = join(dir, 'bare');
   write(join(root, 'package.json'), JSON.stringify({ name: 'bare', dependencies: { 'react-native': '0.0.0' } }));
   write(join(root, '.nvmrc'), '1.2.3\n');
@@ -53,7 +53,12 @@ exports.runServer = ${
       listens
         ? `(config) => new Promise((resolve) => {
   const httpServer = http.createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''));
-  httpServer.listen(config.server.port, () => resolve({ httpServer }));
+  httpServer.listen(config.server.port, () => resolve({ httpServer }));${
+    exitsAfterMs
+      ? `
+  setTimeout(() => process.exit(3), ${exitsAfterMs});`
+      : ''
+  }
 })`
         : '() => new Promise(() => setInterval(() => {}, 1000))'
     };`,
@@ -228,6 +233,27 @@ test.skipIf(process.platform !== 'win32')(
   },
   30_000,
 );
+
+test('a Metro that exits by itself releases its claim and stimd keeps serving', async () => {
+  const root = bareProject({ exitsAfterMs: 1500 });
+  rmSync(join(root, '.nvmrc'));
+  const pid = await startStimd();
+  const port = await freePort();
+  await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
+  await vi.waitFor(
+    () => {
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect([...claims.live, ...claims.unresolved]).toEqual([]);
+    },
+    { timeout: 15_000, interval: 100 },
+  );
+  expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).devServerStop).toMatchObject({
+    reason: 'server-exited',
+    code: 3,
+  });
+  expect(alive(pid)).toBe(true);
+  await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+}, 40_000);
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
   test('an attached stimd hands over when only a tunnel is running', async () => {
