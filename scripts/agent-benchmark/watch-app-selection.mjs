@@ -51,7 +51,7 @@ export function selectAndroidCandidate(devices, { arm, baseline, expectedControl
   if (candidates.length > 1) return { error: 'multiple-candidate-emulators', candidates };
   const candidate = candidates[0] ?? null;
   const expected = arm === 'stim' ? expectedStim : expectedControl;
-  if (candidate && !matchesExpectedAndroidEmulator(candidate, expected)) {
+  if (arm !== 'expo-agent-cli' && candidate && !matchesExpectedAndroidEmulator(candidate, expected)) {
     return { error: `${arm}-emulator-mismatch`, candidates, expected };
   }
   return { candidate };

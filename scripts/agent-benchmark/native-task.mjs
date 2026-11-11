@@ -9,6 +9,7 @@ export function nativeTaskPrompt({
   proofDirectory,
   session,
   stateDirectory,
+  variant = 'standalone',
 }) {
   if (!['stim', 'control'].includes(arm) || !['ios', 'android', 'macos'].includes(platform)) {
     throw new Error('Unsupported native benchmark arm or platform');
@@ -20,7 +21,9 @@ export function nativeTaskPrompt({
       : 'Use the native platform tools directly. Do not use Stim or read its implementation, state, documentation or skill.';
   return [
     `Create a new git worktree at ${JSON.stringify(worktree)} on branch ${JSON.stringify(branch)} from ${JSON.stringify(fixture)}.`,
-    `In this standalone native ${platform} app, change the visible revision text to ${JSON.stringify(marker)}. Build and launch the Debug app, press Increment once, and verify that the app displays the new revision and Count: 1.`,
+    variant === 'launch-crash'
+      ? `In this standalone native ${platform} app, the app fails on launch. Reproduce it and capture the runtime error before inspecting application source, fix it, then build and launch the Debug app, press Increment once, and verify that the app displays Count: 1.`
+      : `In this standalone native ${platform} app, change the visible revision text to ${JSON.stringify(marker)}. Build and launch the Debug app, press Increment once, and verify that the app displays the new revision and Count: 1.`,
     tool,
     `Target: ${device}. Dependencies and untimed native build outputs are available in the source checkout. Do not install or upgrade dependencies.`,
     'Keep finite shell commands attached to the current turn. Retain each running session handle and poll it to a terminal exit status before dependent commands. Preserve failing exit codes in pipelines.',

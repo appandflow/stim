@@ -127,6 +127,15 @@ describe('benchmark Android emulator selection', () => {
     ).toMatchObject({ error: 'control-emulator-mismatch' });
   });
 
+  it('takes the one new emulator the Expo agent CLI manages under its own name, but not two', () => {
+    const options = { arm: 'expo-agent-cli', baseline: new Set(), expectedControl: expectedAndroid, expectedStim: {} };
+    const managed = { ...androidDevice, name: 'expo-managed-device' };
+    expect(selectAndroidCandidate([managed], options)).toEqual({ candidate: managed });
+    expect(selectAndroidCandidate([managed, { ...managed, udid: 'emulator-5556' }], options)).toMatchObject({
+      error: 'multiple-candidate-emulators',
+    });
+  });
+
   it('rejects a different Stim AVD even when its image and profile match the prepared pool', () => {
     const expectedStim = { ...expectedAndroid, name: 'stim-seed' };
     const options = { arm: 'stim', baseline: new Set(), expectedControl: expectedAndroid, expectedStim };

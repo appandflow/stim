@@ -1,10 +1,25 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertCampaignModel, assertRunnableCell, isBenchmarkArm } from './matrix.mjs';
-import { makeRunnerHome, spawnStamped } from './runner.mjs';
+import {
+  armSkillNames,
+  assertCampaignModel,
+  assertRunnableCell,
+  isBenchmarkArm,
+  nativeMatrixPlatform,
+  scenarioForVariant,
+} from './matrix.mjs';
+import {
+  claudeRunnerArguments,
+  makeRunnerHome,
+  runnerKindForModel,
+  spawnStamped,
+  writeClaudeGuidance,
+} from './runner.mjs';
+import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
+import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
@@ -12,9 +27,12 @@ import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from 
 
 if (!process.env.STIM_BENCH_ROOT) throw new Error('STIM_BENCH_ROOT is required');
 const root = resolve(process.env.STIM_BENCH_ROOT);
-const [command, platform, arm, model] = process.argv.slice(2);
-if (!['ios', 'android', 'macos'].includes(platform)) throw new Error('Expected ios, android or macos');
-const directory = join(root, 'native', platform);
+const [command, platformArgument, arm, model, variant = 'standalone'] = process.argv.slice(2);
+const platform = platformArgument?.replace(/^exact-/, '');
+if (!['ios', 'android', 'macos'].includes(platform) || (platformArgument !== platform && platform !== 'ios')) {
+  throw new Error('Expected ios, android, macos or exact-ios');
+}
+const directory = join(root, 'native', platformArgument);
 const fixture = JSON.parse(readFileSync(join(directory, 'fixture.json'), 'utf8'));
 const stimPackage = process.env.STIM_BENCH_STIM_PACKAGE;
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
@@ -49,6 +67,8 @@ const coordinatorHashes = () =>
       'shell-environment.mjs',
       'runner-isolation.mjs',
       'command-evidence.mjs',
+      'native-crash-setup.mjs',
+      'matrix.mjs',
     ].map((name) => [name, sha256(fileURLToPath(new URL(name, import.meta.url)))]),
   );
 const save = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
@@ -64,7 +84,7 @@ const run = (file, args, options = {}) =>
   })?.trim() ?? '';
 const git = (...args) => run('git', args);
 
-function provenance() {
+function provenance(runnerKind = null) {
   const xcode = run('xcodebuild', ['-version']).split('\n');
   const actual = {
     nodeVersion: process.version.slice(1),
@@ -75,10 +95,17 @@ function provenance() {
     fixtureCommit: git('rev-parse', 'HEAD'),
     stimVersion: JSON.parse(readFileSync(join(stimPackage, 'package.json'), 'utf8')).version,
     stimCliSha256: sha256(stimCli),
-    codexVersion: run(process.env.STIM_BENCH_CODEX_BIN, ['--version']).replace(/^codex-cli /, ''),
+    ...(runnerKind === 'codex'
+      ? { codexVersion: run(process.env.STIM_BENCH_CODEX_BIN, ['--version']).replace(/^codex-cli /, '') }
+      : {}),
+    ...(runnerKind === 'claude'
+      ? { claudeVersion: run(process.env.STIM_BENCH_CLAUDE_BIN ?? 'claude', ['--version']).split(/\s+/)[0] }
+      : {}),
   };
   if (actual.fixtureCommit !== fixture.fixtureCommit || git('status', '--short'))
     throw new Error('Native fixture changed');
+  if (fixture.framework === 'exact' && actual.fixtureCommit !== pins.EXACT_FIXTURE_COMMIT)
+    throw new Error('Native benchmark pin changed: EXACT_FIXTURE_COMMIT');
   for (const [field, pin] of Object.entries({
     nodeVersion: 'NODE_VERSION',
     macosVersion: 'MACOS_VERSION',
@@ -87,8 +114,9 @@ function provenance() {
     xcodeBuild: 'XCODE_BUILD',
     stimVersion: 'STIM_VERSION',
     codexVersion: 'CODEX_VERSION',
+    claudeVersion: 'CLAUDE_VERSION',
   })) {
-    if (actual[field] !== pins[pin]) throw new Error(`Native benchmark pin changed: ${pin}`);
+    if (field in actual && actual[field] !== pins[pin]) throw new Error(`Native benchmark pin changed: ${pin}`);
   }
   return actual;
 }
@@ -150,30 +178,39 @@ function prepare() {
   invoke(['stop']);
   invoke(['worktree', 'remove', '--force']);
   const controlArgs =
-    platform === 'ios'
-      ? [
-          '-project',
-          'NativeAcceptance.xcodeproj',
-          '-scheme',
-          'NativeAcceptance',
-          '-configuration',
-          'Debug',
-          '-sdk',
-          'iphonesimulator',
-          '-destination',
-          'generic/platform=iOS Simulator',
-          '-derivedDataPath',
-          '.build-control',
-          'CODE_SIGNING_ALLOWED=NO',
-          'build',
-        ]
-      : platform === 'android'
-        ? [':mobile:assembleDebug', '--console=plain']
-        : ['build', '--disable-sandbox', '--product', fixture.product, '--configuration', 'debug'];
-  run(platform === 'ios' ? 'xcodebuild' : platform === 'android' ? './gradlew' : 'swift', controlArgs, {
-    timeout: 20 * 60_000,
-    stdio: 'inherit',
-  });
+    fixture.framework === 'exact'
+      ? ['ios', '--no-install']
+      : platform === 'ios'
+        ? [
+            '-project',
+            'NativeAcceptance.xcodeproj',
+            '-scheme',
+            'NativeAcceptance',
+            '-configuration',
+            'Debug',
+            '-sdk',
+            'iphonesimulator',
+            '-destination',
+            'generic/platform=iOS Simulator',
+            '-derivedDataPath',
+            '.build-control',
+            'CODE_SIGNING_ALLOWED=NO',
+            'build',
+          ]
+        : platform === 'android'
+          ? [':mobile:assembleDebug', '--console=plain']
+          : ['build', '--disable-sandbox', '--product', fixture.product, '--configuration', 'debug'];
+  run(
+    fixture.framework === 'exact'
+      ? './exact.mjs'
+      : platform === 'ios'
+        ? 'xcodebuild'
+        : platform === 'android'
+          ? './gradlew'
+          : 'swift',
+    controlArgs,
+    { timeout: 20 * 60_000, stdio: 'inherit' },
+  );
   const ready = {
     ...before,
     platform,
@@ -186,14 +223,55 @@ function prepare() {
   process.stdout.write(JSON.stringify(ready, null, 2) + '\n');
 }
 
+const prepared = ['.build', '.build-control', 'build', 'mobile/build', '.gradle', 'target'];
+const crashReadPaths = () =>
+  prepared.map((name) => join(fixture.fixtureDirectory, name)).filter((path) => existsSync(path));
+
+function prepareCrashFixture(runId, environment) {
+  const plan = nativeCrashPlan(fixture);
+  const checkout = join(directory, 'worktrees', `fixture-${runId}`);
+  git('worktree', 'add', '-b', `bench-fixture/${runId}`, checkout, 'HEAD');
+  if (arm === 'stim') {
+    run(process.execPath, [stimCli, 'worktree', 'warm'], { cwd: checkout, env: environment, timeout: 20 * 60_000 });
+  } else {
+    for (const name of crashReadPaths()) {
+      const target = join(checkout, name.slice(fixture.fixtureDirectory.length + 1));
+      mkdirSync(dirname(target), { recursive: true });
+      run('cp', ['-cR', name, target], { timeout: 10 * 60_000 });
+    }
+  }
+  const absolute = realpathSync(checkout);
+  const sourcePath = join(absolute, plan.source);
+  const original = readFileSync(sourcePath, 'utf8');
+  const token = launchCrashToken(runId);
+  writeFileSync(sourcePath, injectNativeCrash(original, plan, token));
+  run('git', ['add', plan.source], { cwd: absolute });
+  run('git', ['commit', '-m', 'test: prepare launch failure fixture'], { cwd: absolute });
+  return {
+    fixtureCheckout: absolute,
+    fixtureCommit: run('git', ['rev-parse', 'HEAD'], { cwd: absolute }),
+    kind: plan.kind,
+    sourceRelative: plan.source,
+    token,
+    originalSha256: createHash('sha256').update(original).digest('hex'),
+  };
+}
+
 async function dispatch() {
-  if (!isBenchmarkArm(arm) || !model) throw new Error('dispatch <platform> <control|stim> <model>');
+  if (!isBenchmarkArm(arm) || !model)
+    throw new Error('dispatch <platform> <control|stim> <model> [standalone|launch-crash]');
   assertCampaignModel(model, pins);
-  assertRunnableCell(`${platform === 'macos' ? '' : 'native-'}${platform}`, 'launch', arm);
-  const actual = provenance();
+  assertRunnableCell(
+    nativeMatrixPlatform(platform, fixture.framework),
+    scenarioForVariant(variant, 'native'),
+    arm,
+    pins,
+  );
+  const runnerKind = runnerKindForModel(model);
+  const actual = provenance(runnerKind);
   const ready = JSON.parse(readFileSync(join(directory, 'READY.json'), 'utf8'));
   for (const key of Object.keys(actual))
-    if (actual[key] !== ready[key]) throw new Error(`Native golden pin mismatch: ${key}`);
+    if (key in ready && actual[key] !== ready[key]) throw new Error(`Native golden pin mismatch: ${key}`);
   if (ready.sourceSha256 !== sha256(join(fixture.fixtureDirectory, fixture.source)))
     throw new Error('Prepared native source changed');
   const toolBin = join(directory, `tools-${coordinatorHashes()['native-driver.mjs'].slice(0, 12)}`);
@@ -203,7 +281,7 @@ async function dispatch() {
     '#!/bin/sh\nif [ "$1" = build ]; then shift; exec /usr/bin/swift build --disable-sandbox -Xswiftc -disable-sandbox "$@"; fi\nexec /usr/bin/swift "$@"\n';
   writeFileSync(swiftWrapper, swiftScript, { mode: 0o755 });
   const samples = await loadGate();
-  const runId = `native-${platform}-${arm}-${Date.now()}`;
+  const runId = `native-${platformArgument}-${arm}-${Date.now()}`;
   const runDir = join(directory, 'results', runId);
   const worktree = join(directory, 'worktrees', runId);
   const proofDirectory = join(runDir, 'proof');
@@ -242,6 +320,9 @@ async function dispatch() {
         : run('ps', ['-axo', 'pid=,lstart=,command=']);
   save(join(runDir, 'devices-before.json'), devicesBefore);
   if (arm === 'stim') run('cp', ['-cR', join(directory, 'golden-stim-home') + '/.', runnerEnv.STIM_HOME]);
+  const crash = variant === 'launch-crash' ? prepareCrashFixture(runId, runnerEnv) : null;
+  const taskFixture = crash?.fixtureCheckout ?? fixture.fixtureDirectory;
+  const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
   const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { env: runnerEnv });
   if (arm === 'control' && resolved) throw new Error('Control resolved Stim');
   if (arm === 'stim' && resolved !== join(root, 'bin', 'stim')) throw new Error('Stim shim mismatch');
@@ -250,13 +331,14 @@ async function dispatch() {
       protectedRoots: [root],
       reservedRoots: [join(directory, 'results'), join(directory, 'worktrees'), join(directory, 'golden-stim-home')],
       readPaths: [
-        fixture.fixtureDirectory,
+        ...(crash ? crashReadPaths() : [fixture.fixtureDirectory]),
         toolBin,
         join(root, 'allowed-bin'),
         ...(arm === 'stim' ? [join(root, 'bin'), join(root, 'runtime')] : []),
       ],
       writePaths: [join(fixture.fixtureDirectory, '.git'), runnerEnv.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
+        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
         writePaths: [
           worktree,
           join(runDir, 'runner-home'),
@@ -274,21 +356,22 @@ async function dispatch() {
     probeParent: runnerEnv.TMPDIR,
     execute: (file, args) => run(file, args, { env: runnerEnv }),
   });
-  const profileInvocation = isolatedRunnerInvocation(isolation, process.env.STIM_BENCH_CODEX_BIN, [
-    'debug',
-    'prompt-input',
-    'native benchmark profile',
-  ]);
-  const profile = JSON.parse(run(profileInvocation.command, profileInvocation.args, { env: runnerEnv }));
-  save(join(runDir, 'prompt-input.json'), profile);
-  const skillText =
-    profile
-      .flatMap((item) => item.content ?? [])
-      .map((item) => item.text ?? '')
-      .find((text) => text.includes('<skills_instructions>')) ?? '';
-  const skills = [...skillText.matchAll(/^- ([a-zA-Z0-9:_-]+):/gm)].map((match) => match[1]).toSorted();
-  if (JSON.stringify(skills) !== JSON.stringify(arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device']))
-    throw new Error('Native runner skill mismatch');
+  if (runnerKind === 'codex') {
+    const profileInvocation = isolatedRunnerInvocation(isolation, process.env.STIM_BENCH_CODEX_BIN, [
+      'debug',
+      'prompt-input',
+      'native benchmark profile',
+    ]);
+    const profile = JSON.parse(run(profileInvocation.command, profileInvocation.args, { env: runnerEnv }));
+    save(join(runDir, 'prompt-input.json'), profile);
+    const skillText =
+      profile
+        .flatMap((item) => item.content ?? [])
+        .map((item) => item.text ?? '')
+        .find((text) => text.includes('<skills_instructions>')) ?? '';
+    const skills = [...skillText.matchAll(/^- ([a-zA-Z0-9:_-]+):/gm)].map((match) => match[1]).toSorted();
+    if (JSON.stringify(skills) !== JSON.stringify(armSkillNames(arm))) throw new Error('Native runner skill mismatch');
+  }
   const device =
     platform === 'ios'
       ? `${pins.IOS_DEVICE_TYPE}, iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `; create a simulator named ${runId}` : '; use a Stim-owned simulator'}`
@@ -299,10 +382,11 @@ async function dispatch() {
   const prompt = nativeTaskPrompt({
     arm,
     platform,
-    fixture: fixture.fixtureDirectory,
+    fixture: taskFixture,
     worktree,
     branch: `bench/${runId}`,
     marker,
+    variant,
     device,
     proofDirectory,
     session: runId,
@@ -314,6 +398,10 @@ async function dispatch() {
     cohort: platform === 'android' ? 'standalone-native-v2' : 'standalone-native-v1',
     runId,
     platform,
+    platformArgument,
+    variant,
+    runner: runnerKind,
+    crash,
     arm,
     model,
     reasoningEffort: 'high',
@@ -331,28 +419,45 @@ async function dispatch() {
     dispatchAt: new Date().toISOString(),
   };
   save(join(runDir, 'meta.json'), meta);
-  const invocation = isolatedRunnerInvocation(isolation, process.env.STIM_BENCH_CODEX_BIN, [
-    '--ask-for-approval',
-    'never',
-    'exec',
-    '--strict-config',
-    '--ignore-rules',
-    '--json',
-    '--model',
-    model,
-    '--sandbox',
-    'danger-full-access',
-    '--add-dir',
-    runDir,
-    '--cd',
-    fixture.fixtureDirectory,
-    '-',
-  ]);
+  const runnerArguments =
+    runnerKind === 'claude'
+      ? claudeRunnerArguments({ model, guidancePath: claudeGuidance.path, tools: 'Bash,Edit,Read' })
+      : [
+          '--ask-for-approval',
+          'never',
+          'exec',
+          '--strict-config',
+          '--ignore-rules',
+          '--json',
+          '--model',
+          model,
+          '--sandbox',
+          'danger-full-access',
+          '--add-dir',
+          runDir,
+          '--cd',
+          taskFixture,
+          '-',
+        ];
+  const invocation = isolatedRunnerInvocation(
+    isolation,
+    runnerKind === 'claude' ? (process.env.STIM_BENCH_CLAUDE_BIN ?? 'claude') : process.env.STIM_BENCH_CODEX_BIN,
+    runnerArguments,
+  );
   meta.runnerResult = await spawnStamped(
     invocation.command,
     invocation.args,
     join(runDir, 'events.jsonl'),
-    { cwd: fixture.fixtureDirectory, env: runnerEnv, stdio: ['pipe', 'pipe', 'pipe'] },
+    {
+      cwd: taskFixture,
+      env: {
+        ...runnerEnv,
+        ...(runnerKind === 'claude'
+          ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' }
+          : {}),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
     prompt,
     15 * 60_000,
   );
@@ -364,36 +469,50 @@ async function dispatch() {
 function collect(runDir) {
   const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
   const events = readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  const evidence = reconstructCommandEvidence('codex', events);
+  const runnerKind = meta.runner ?? 'codex';
+  const evidence = reconstructCommandEvidence(runnerKind, events);
   save(join(runDir, 'commands.json'), evidence);
-  provenance();
+  provenance(runnerKind);
+  const crash = meta.crash;
   const changedPaths = [
     ...new Set(
       [
-        ...run('git', ['diff', '--name-only', meta.fixture.fixtureCommit], { cwd: meta.worktree }).split('\n'),
+        ...run('git', ['diff', '--name-only', crash?.fixtureCommit ?? meta.fixture.fixtureCommit], {
+          cwd: meta.worktree,
+        }).split('\n'),
         ...run('git', ['ls-files', '--others', '--exclude-standard'], { cwd: meta.worktree }).split('\n'),
       ].filter(Boolean),
     ),
   ];
-  const source = nativeSourceProof({
-    before: readFileSync(join(meta.fixture.fixtureDirectory, meta.fixture.source), 'utf8'),
-    after: readFileSync(join(meta.worktree, meta.fixture.source), 'utf8'),
-    marker: meta.marker,
-    changedPaths,
-    source: meta.fixture.source,
+  const crashSource = crash ? readFileSync(join(meta.worktree, crash.sourceRelative), 'utf8') : null;
+  const repair = crash ? launchCrashRepair(crashSource, crash.token, crash.originalSha256) : null;
+  const reproduced = crash
+    ? nativeCrashReproduced(evidence.commands, { token: crash.token, source: crash.sourceRelative })
+    : null;
+  const source = crash
+    ? repair.valid && changedPaths.length === 1 && changedPaths[0] === crash.sourceRelative
+    : nativeSourceProof({
+        before: readFileSync(join(meta.fixture.fixtureDirectory, meta.fixture.source), 'utf8'),
+        after: readFileSync(join(meta.worktree, meta.fixture.source), 'utf8'),
+        marker: meta.marker,
+        changedPaths,
+        source: meta.fixture.source,
+      });
+  const parsedEvents = events.map((record) => {
+    try {
+      return JSON.parse(record.line);
+    } catch {
+      return null;
+    }
   });
   const usage =
-    events
-      .map((record) => {
-        try {
-          return JSON.parse(record.line);
-        } catch {
-          return null;
-        }
-      })
-      .findLast((event) => event?.type === 'turn.completed')?.usage ?? null;
+    runnerKind === 'claude'
+      ? (parsedEvents.findLast((event) => event?.type === 'result')?.usage ?? null)
+      : (parsedEvents.findLast((event) => event?.type === 'turn.completed')?.usage ?? null);
   const invalidReasons = [];
-  if (!source) invalidReasons.push('source-change-mismatch');
+  if (!source)
+    invalidReasons.push(crash ? (repair.reason ?? 'launch-crash-source-change-mismatch') : 'source-change-mismatch');
+  if (reproduced && !reproduced.valid) invalidReasons.push(reproduced.reason);
   if (meta.runnerResult?.code !== 0 || meta.runnerResult?.signal || meta.runnerResult?.timedOut)
     invalidReasons.push('runner-failed-or-timed-out');
   if (!usage) invalidReasons.push('missing-completed-turn');
@@ -413,6 +532,7 @@ function collect(runDir) {
     cohort: meta.cohort,
     runId: meta.runId,
     platform: meta.platform,
+    variant: meta.variant ?? 'standalone',
     arm: meta.arm,
     elapsedSeconds: (Date.parse(meta.finishedAt) - Date.parse(meta.dispatchAt)) / 1000,
     usage,
