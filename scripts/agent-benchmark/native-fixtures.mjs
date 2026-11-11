@@ -176,15 +176,35 @@ class MainActivity : ComponentActivity() {
   };
 }
 
-export function assertExactFixture(fixture) {
-  const missing = ['fixtureDirectory', 'source', 'product', 'bundleId'].filter(
-    (key) => typeof fixture[key] !== 'string' || !fixture[key],
+/**
+ * The Exact fixture from a stim-benchmarks checkout: `exact/fixture.json` names the app folder
+ * (`app`), whose name Exact requires the checkout folder to keep, and the crash anchor.
+ */
+export function exactFixture(checkout, fixturesCommit) {
+  const descriptor = JSON.parse(readFileSync(join(checkout, 'exact', 'fixture.json'), 'utf8'));
+  const missing = ['app', 'source', 'product', 'bundleId'].filter(
+    (key) => typeof descriptor[key] !== 'string' || !descriptor[key],
   );
-  if (fixture.platform !== 'ios') missing.push('platform: ios');
-  if (!/^[0-9a-f]{40}$/.test(fixture.fixtureCommit ?? '')) missing.push('fixtureCommit');
+  if (descriptor.schemaVersion !== 1) missing.push('schemaVersion: 1');
+  if (descriptor.framework !== 'exact') missing.push('framework: exact');
+  if (descriptor.platform !== 'ios') missing.push('platform: ios');
+  if (!/^[a-z][a-z0-9-]*$/.test(descriptor.app ?? '')) missing.push('app: one folder name');
+  if (!/^[0-9a-f]{40}$/.test(fixturesCommit ?? '')) missing.push('FIXTURES_COMMIT pin');
   if (missing.length) throw new Error(`Exact fixture.json is missing or invalid: ${missing.join(', ')}`);
+  const appDirectory = `exact/${descriptor.app}`;
+  const fixture = {
+    ...descriptor,
+    appDirectory,
+    fixtureDirectory: join(checkout, appDirectory),
+    fixtureCommit: fixturesCommit,
+  };
   nativeCrashPlan(fixture);
   return fixture;
+}
+
+/** Untimed build outputs a control crash fixture copies from the source checkout; Exact refuses a copied target/. */
+export function carriedOutputs(framework) {
+  return framework === 'exact' ? [] : ['.build', '.build-control', 'build', 'mobile/build', '.gradle'];
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

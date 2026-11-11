@@ -6,6 +6,7 @@ import {
   sameLiteralShellCommand,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
+import { TRAILHEAD_FIXTURE } from './agent-benchmark/fixture.mjs';
 
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
@@ -24,15 +25,18 @@ export function changedPathsFromGitOutputs(...outputs) {
   ].toSorted();
 }
 
-export function injectRootRenderCrash(source, token) {
+const TRAILHEAD_ROOT = TRAILHEAD_FIXTURE.rootComponent;
+
+export function injectRootRenderCrash(source, token, root = TRAILHEAD_ROOT) {
   if (!/^STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}$/.test(token)) {
     throw new Error('launch-crash token has an unexpected format');
   }
   if (source.includes(token)) throw new Error('launch-crash token is already present');
-  const rootLayout = 'export default function RootLayout() {\n';
-  const at = source.indexOf(rootLayout);
-  if (at === -1) throw new Error('RootLayout function was not found');
-  const insertion = at + rootLayout.length;
+  const declaration = `${root.declaration}\n`;
+  const at = source.indexOf(declaration);
+  if (at === -1) throw new Error(`${root.name} function was not found`);
+  if (source.indexOf(declaration, at + 1) !== -1) throw new Error(`${root.name} function is declared twice`);
+  const insertion = at + declaration.length;
   return `${source.slice(0, insertion)}  throw new Error('${token}');\n${source.slice(insertion)}`;
 }
 
@@ -69,7 +73,7 @@ function successfulAgentDeviceLaunch(command, expected) {
   return lines.includes(`Opened: ${expected.appId}`) && lines.includes(`Session state: ${expected.sessionState}`);
 }
 
-function runtimeErrorSnapshot(command, previous, expected, token) {
+function runtimeErrorSnapshot(command, previous, expected, token, sourceMarkers) {
   if (
     !expected?.snapshotCommand ||
     !successful(command) ||
@@ -88,7 +92,7 @@ function runtimeErrorSnapshot(command, previous, expected, token) {
     output.split(/\r?\n/).includes(`App: ${expected.appId}`) &&
     /\b(?:Error|Exception)\b/.test(output) &&
     output.includes(token) &&
-    ['app/_layout.tsx', 'RootLayout'].some((marker) => output.includes(marker))
+    sourceMarkers.some((marker) => output.includes(marker))
   );
 }
 
@@ -149,11 +153,13 @@ function launchCommand(command, arm, platform) {
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
+      /(?:\breact-native|node_modules\/\.bin\/react-native)\s+run-android\b/.test(command) ||
       /\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+(?:-s\s+\S+\s+)?shell\s+am\s+start\b/.test(command)
     );
   }
   return (
     /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:ios\b/.test(command) ||
+    /(?:\breact-native|node_modules\/\.bin\/react-native)\s+run-ios\b/.test(command) ||
     /\bxcrun\s+simctl\s+(?:launch|openurl)\b/.test(command)
   );
 }
@@ -208,7 +214,7 @@ function orderedCommands(commands) {
     );
 }
 
-function sourceInspectionBeforeCapture(command, arm, platform) {
+function sourceInspectionBeforeCapture(command, arm, platform, root = TRAILHEAD_ROOT) {
   const value = shellCommand(command).replace(/\\([A-Za-z_.])/g, '$1');
   if (/(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value)) return false;
   if (
@@ -223,7 +229,11 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
   }
   const namesSource = /(?:^|[\s'"`])(?:app|src)\/|\.(?:[cm]?[jt]sx?|swift|kt|java)(?:[\s'"`]|$)/.test(value);
   if (namesSource) return true;
-  if (/RootLayout|STIM_BENCH_LAUNCH_CRASH_/.test(value) && !errorCaptureCommand(value, arm, platform)) return true;
+  if (
+    (value.includes(root.name) || value.includes('STIM_BENCH_LAUNCH_CRASH_')) &&
+    !errorCaptureCommand(value, arm, platform)
+  )
+    return true;
   return false;
 }
 
@@ -307,7 +317,7 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
   ) {
     return true;
   }
-  if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
+  if (sourceInspectionBeforeCapture(value, arm, platform, setup.root)) return false;
   if (arm === 'control') {
     const pipefail = value.replace(/^set -(?:o|eo|euo) pipefail\s*(?:;|\n)\s*/, '');
     if (pipefail !== value) return allowedBeforeErrorCapture(pipefail, arm, platform, setup);
@@ -446,10 +456,11 @@ export function launchCrashDiagnosis(
     reviewedDiagnostics = [],
     initialLaunchCapture = false,
     agentDeviceLaunch,
+    root = TRAILHEAD_ROOT,
   },
 ) {
   const ordered = orderedCommands(commands);
-  const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
+  const sourceMarkers = [root.file, root.name];
   const initialLaunchIndex = ordered.findIndex(
     (command, index) =>
       successfulLaunch(command, arm, platform) ||
@@ -468,7 +479,7 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      (runtimeErrorSnapshot(command, ordered.slice(0, index), agentDeviceLaunch, token) ||
+      (runtimeErrorSnapshot(command, ordered.slice(0, index), agentDeviceLaunch, token, sourceMarkers) ||
         errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
         ordered.slice(initialLaunchIndex + 1, index).some((capture) => {
           if (
@@ -517,11 +528,11 @@ export function launchCrashDiagnosis(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
       !successfulAgentDeviceLaunch(command, agentDeviceLaunch) &&
-      !allowedBeforeErrorCapture(command.command, arm, platform, setup),
+      !allowedBeforeErrorCapture(command.command, arm, platform, { ...setup, root }),
   );
   const disallowedBeforeCapture = unrecognizedBeforeCapture.filter(
     (command) =>
-      sourceInspectionBeforeCapture(command.command, arm, platform) &&
+      sourceInspectionBeforeCapture(command.command, arm, platform, root) &&
       !reviewedDiagnostics.some(
         (entry) =>
           entry.commandId === command.id &&

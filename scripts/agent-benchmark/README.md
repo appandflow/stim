@@ -21,22 +21,26 @@ Native rows (Expo and bare) have all three scenarios; standalone native, macOS
 and Exact have app launch and error fix. A platform or arm names the `pins.env`
 keys it needs; `dispatch` passes the pins to `assertRunnableCell`, so a cell
 refuses with the missing piece until its pin is set. `pins.env` may set `MODELS`
-to a comma-separated list; the default is `claude-sonnet-5-5`. `FIXTURE_KIND=bare`
-selects the bare React Native fixture (commit pin `BARE_FIXTURE_COMMIT`); the
-default is Trailhead. Everything is local; there is no remote variant.
+to a comma-separated list; the default is `claude-sonnet-5-5`. `FIXTURE_DIR`
+(`expo` or `bare`) selects a fixture of `appandflow/stim-benchmarks`, checked out
+at `STIM_BENCH_FIXTURE` and pinned by `FIXTURES_COMMIT`; the driver reads that
+directory's `fixture.json`. Without `FIXTURE_DIR` it serves Trailhead
+(`TRAILHEAD_FIXTURE_COMMIT`). Everything is local; there is no remote variant.
 
 The `readiness` driver (`driver.mjs`) runs variants `javascript` (app launch),
 `native` (native change) and `launch-crash` (error fix) on Expo and bare React
 Native fixtures. `native-driver.mjs` runs standalone native, macOS and Exact
-with variants `standalone` and `launch-crash`. Specifications of the fixtures
-that do not exist yet are in [`docs/benchmark-fixtures.md`](../../docs/benchmark-fixtures.md).
+with variants `standalone` and `launch-crash`; its `exact-ios` platform reads
+`exact/fixture.json` from the same checkout. The fixture contract is in
+[`docs/benchmark-fixtures.md`](../../docs/benchmark-fixtures.md).
 
 ### Expo agent CLI arm
 
 Pins: `EXPO_AGENT_CLI_VERSION` (exact release), `EXPO_AGENT_CLI_INTEGRITY` (the
-npm `sha512-` value) and `EXPO_SKILLS_SHA256` (digest of the directory
-`STIM_BENCH_EXPO_SKILLS` points at, which holds the Expo skills the tool
-installs). `driver.mjs prepare-expo-agent-cli` installs the pinned release with
+npm `sha512-` value) and `EXPO_SKILLS_SHA256` (`directoryDigest` of the
+directory `STIM_BENCH_EXPO_SKILLS` points at: the `plugins/expo/skills`
+directory of `expo/skills`, whose subdirectories the runner installs as
+separate skills). `driver.mjs prepare-expo-agent-cli` installs the pinned release with
 `npm install --prefix $STIM_BENCH_ROOT/expo-agent-cli` and writes an
 `expo-agent-cli` shim; it is separate from `runtime/` so the arm cannot read the
 Stim package. Dispatch re-checks the version, integrity, skills digest and that
@@ -48,8 +52,8 @@ invocations, `EXPO_TOKEN`, `@latest`) from the recorded commands. The tool
 manages its own device: the watcher accepts the single new device without
 matching a name, and the proof still runs `agent-device` against the device the
 run reports. Not run yet: the install, whether the shim or a bare `npx` call
-resolves the pinned copy, how the tool allocates and releases its device, the
-flags for Android, and the skills setup that fills `STIM_BENCH_EXPO_SKILLS`.
+resolves the pinned copy, how the tool allocates and releases its device, and
+the flags for Android.
 
 ## Task prompts
 
@@ -162,7 +166,7 @@ Set the machine-local paths explicitly:
 
 ```bash
 export STIM_BENCH_ROOT=/path/to/benchmark-root
-export STIM_BENCH_FIXTURE=/path/to/clean-trailhead-checkout
+export STIM_BENCH_FIXTURE=/path/to/clean-stim-benchmarks-checkout
 export STIM_BENCH_WORKTREE_PARENT=/path/to/benchmark-worktrees
 export STIM_BENCH_STIM_PACKAGE="$STIM_BENCH_ROOT/runtime/node_modules/stim"
 export STIM_BENCH_CODEX_AUTH=/path/to/codex-auth.json

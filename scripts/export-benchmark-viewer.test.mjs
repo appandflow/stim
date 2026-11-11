@@ -1291,6 +1291,23 @@ describe('benchmark viewer export', () => {
       'no valid benchmark runs found',
     );
     writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
+    const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
+    const calculator = { ios: { bundleId: 'com.appandflow.stimbench' } };
+    const calculatorEvents = recordedEvents.replaceAll('com.appandflow.trailhead', calculator.ios.bundleId);
+    writeFileSync(eventsPath, calculatorEvents);
+    record.evidenceSha256.events = sha256(eventsPath);
+    record.screen.commands = record.screen.commands.map((command) =>
+      command.replace('com.appandflow.trailhead', calculator.ios.bundleId),
+    );
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({ ...meta, fixture: { directory: 'expo', descriptor: calculator } }),
+    );
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
     delete record.screen.recordingCopyCommandId;
     writeFileSync(recordPath, JSON.stringify(record));
     expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(

@@ -2,6 +2,7 @@ import {
   chmodSync,
   copyFileSync,
   cpSync,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -13,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-import { armSkillNames, benchmarkArm } from './matrix.mjs';
+import { benchmarkArm } from './matrix.mjs';
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -31,11 +32,17 @@ export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, st
     'stim-package': () => join(stimPackage, 'skill'),
     ...(expoSkillsRoot ? { 'expo-skills': (name) => join(expoSkillsRoot, name) } : {}),
   };
-  const selectedSkills = benchmarkArm(arm).skills.map((skill) => {
+  const selectedSkills = benchmarkArm(arm).skills.flatMap((skill) => {
     if (!sources[skill.source])
       throw new Error(`no source is configured for ${arm} skill ${skill.name} (${skill.source})`);
-    return { name: skill.name, source: sources[skill.source](skill.name) };
+    if (!skill.plugin) return [{ name: skill.name, source: sources[skill.source](skill.name) }];
+    const pluginRoot = sources[skill.source]('');
+    return readdirSync(pluginRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(pluginRoot, entry.name, 'SKILL.md')))
+      .map((entry) => ({ name: entry.name, source: join(pluginRoot, entry.name) }));
   });
+  const names = selectedSkills.map((skill) => skill.name);
+  if (new Set(names).size !== names.length) throw new Error(`${arm} skills repeat a name: ${names.join(', ')}`);
   for (const skill of selectedSkills) {
     const target = join(codexHome, 'skills', skill.name);
     mkdirSync(dirname(target), { recursive: true });
@@ -70,7 +77,7 @@ export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, st
     '',
   ].join('\n');
   writeFileSync(join(codexHome, 'config.toml'), config);
-  return { codexHome };
+  return { codexHome, skillNames: names.toSorted() };
 }
 
 export function killProcessTree(child, processGroupId, signal) {
@@ -168,8 +175,8 @@ export function runnerKindForModel(model) {
   return ['sonnet', 'opus'].includes(model) || model.startsWith('claude-') ? 'claude' : 'codex';
 }
 
-export function writeClaudeGuidance(codexHome, arm, runDir) {
-  const skillNames = armSkillNames(arm);
+export function writeClaudeGuidance(codexHome, runDir) {
+  const skillNames = readdirSync(join(codexHome, 'skills')).toSorted();
   const guidance = skillNames
     .map((name) => readFileSync(join(codexHome, 'skills', name, 'SKILL.md'), 'utf8'))
     .join('\n\n');

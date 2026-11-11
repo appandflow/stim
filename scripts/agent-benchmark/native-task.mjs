@@ -10,6 +10,7 @@ export function nativeTaskPrompt({
   session,
   stateDirectory,
   variant = 'standalone',
+  appDirectory = '',
 }) {
   if (!['stim', 'control'].includes(arm) || !['ios', 'android', 'macos'].includes(platform)) {
     throw new Error('Unsupported native benchmark arm or platform');
@@ -20,7 +21,7 @@ export function nativeTaskPrompt({
       ? 'Use Stim for workspace preparation, building and launching. Follow its installed skill.'
       : 'Use the native platform tools directly. Do not use Stim or read its implementation, state, documentation or skill.';
   return [
-    `Create a new git worktree at ${JSON.stringify(worktree)} on branch ${JSON.stringify(branch)} from ${JSON.stringify(fixture)}.`,
+    `Create a new git worktree at ${JSON.stringify(worktree)} on branch ${JSON.stringify(branch)} from ${JSON.stringify(fixture)}.${appDirectory ? ` The app is the ${appDirectory} directory of the worktree.` : ''}`,
     variant === 'launch-crash'
       ? `In this standalone native ${platform} app, the app fails on launch. Reproduce it and capture the runtime error before inspecting application source, fix it, then build and launch the Debug app, press Increment once, and verify that the app displays Count: 1.`
       : `In this standalone native ${platform} app, change the visible revision text to ${JSON.stringify(marker)}. Build and launch the Debug app, press Increment once, and verify that the app displays the new revision and Count: 1.`,

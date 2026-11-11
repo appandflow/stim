@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
-import { assertExactFixture, createNativeFixture } from './native-fixtures.mjs';
+import { createNativeFixture, exactFixture } from './native-fixtures.mjs';
 import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 
 const dirs = [];
@@ -57,21 +57,36 @@ describe('native launch crash injection', () => {
 
 const command = (text, output, offset) => ({ command: text, output, startEventOffset: offset });
 
+const checkoutWith = (value) => {
+  const checkout = mkdtempSync(join(tmpdir(), 'bench-exact-fixture-'));
+  onTestFinished(() => rmSync(checkout, { recursive: true, force: true }));
+  mkdirSync(join(checkout, 'exact'));
+  writeFileSync(join(checkout, 'exact', 'fixture.json'), JSON.stringify(value));
+  return checkout;
+};
+
 describe('Exact fixture description', () => {
-  const exact = {
-    platform: 'ios',
+  const descriptor = {
+    schemaVersion: 1,
     framework: 'exact',
-    fixtureDirectory: '/f',
-    fixtureCommit: 'a'.repeat(40),
-    source: 'src/app.ts',
+    platform: 'ios',
+    app: 'stim-bench-exact',
+    source: 'app.contract',
     product: 'Acceptance',
     bundleId: 'dev.example.acceptance',
-    crash: { source: 'src/main.rs', anchor: 'fn app_start() {', language: 'rust' },
+    crash: { source: 'app.ts', anchor: 'fn app_start() {', language: 'rust' },
   };
-  it('names what a missing field is before a run starts', () => {
-    expect(assertExactFixture(exact)).toBe(exact);
-    expect(() => assertExactFixture({ ...exact, fixtureCommit: 'main' })).toThrow(/fixtureCommit/);
-    expect(() => assertExactFixture({ ...exact, crash: undefined })).toThrow(/crash:/);
+  it('keeps the app in a folder named after it inside any checkout of the fixtures repository', () => {
+    const checkout = checkoutWith(descriptor);
+    expect(exactFixture(checkout, 'a'.repeat(40))).toMatchObject({
+      appDirectory: 'exact/stim-bench-exact',
+      fixtureDirectory: join(checkout, 'exact', 'stim-bench-exact'),
+    });
+  });
+  it('names what a missing field or pin is before a run starts', () => {
+    expect(() => exactFixture(checkoutWith(descriptor), 'main')).toThrow(/FIXTURES_COMMIT/);
+    expect(() => exactFixture(checkoutWith({ ...descriptor, app: '../x' }), 'a'.repeat(40))).toThrow(/app/);
+    expect(() => exactFixture(checkoutWith({ ...descriptor, crash: undefined }), 'a'.repeat(40))).toThrow(/crash:/);
   });
 });
 

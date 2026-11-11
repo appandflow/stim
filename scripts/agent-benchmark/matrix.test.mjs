@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { makeRunnerHome } from './runner.mjs';
+import { makeRunnerHome, writeClaudeGuidance } from './runner.mjs';
 import {
   assertRunnableCell,
   BENCHMARK_MODEL_PIN,
@@ -18,12 +18,16 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+const skill = (dir, name) => {
+  mkdirSync(join(dir, name), { recursive: true });
+  writeFileSync(join(dir, name, 'SKILL.md'), `# ${name}`);
+};
+
+const missing = (platform, scenario, arm, pins) => benchmarkCell(platform, scenario, arm, pins).missing.join('; ');
+
 describe('benchmark matrix', () => {
-  it('runs the Expo and standalone cells for control and Stim without further setup', () => {
+  it('runs the generated standalone cells without setup', () => {
     for (const [platform, scenario] of [
-      ['expo-ios', 'launch'],
-      ['expo-android', 'native-change'],
-      ['expo-android', 'error-fix'],
       ['macos', 'launch'],
       ['native-ios', 'error-fix'],
     ]) {
@@ -41,18 +45,20 @@ describe('benchmark matrix', () => {
     expect(() => scenarioForVariant('native', 'native')).toThrow(/unsupported variant/);
   });
 
-  it('keeps a cell blocked until the pins it needs are set, and names them', () => {
-    expect(() => assertRunnableCell('bare-ios', 'launch', 'stim')).toThrow(/bare React Native fixture/);
-    expect(assertRunnableCell('bare-ios', 'launch', 'stim', { BARE_FIXTURE_COMMIT: 'abc' }).status).toBe('runnable');
-    expect(() => assertRunnableCell('exact-ios', 'error-fix', 'control', {})).toThrow(/Exact fixture/);
-    expect(() => assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli')).toThrow(/@expo\/agent-cli version/);
+  it('keeps a cell blocked until the pins it needs are set, and names them with its blockers', () => {
+    expect(missing('bare-ios', 'launch', 'stim')).toMatch(/stim-benchmarks commit with the bare/);
+    expect(missing('bare-ios', 'launch', 'stim', { FIXTURES_COMMIT: 'abc' })).not.toMatch(/stim-benchmarks commit/);
+    expect(missing('bare-ios', 'launch', 'stim', { FIXTURES_COMMIT: 'abc' })).toMatch(/#5511/);
+    expect(() => assertRunnableCell('exact-ios', 'error-fix', 'control', {})).toThrow(/exact fixture/);
+    expect(missing('expo-ios', 'launch', 'expo-agent-cli')).toMatch(/@expo\/agent-cli version/);
     expect(
-      assertRunnableCell('expo-ios', 'launch', 'expo-agent-cli', {
+      missing('expo-ios', 'launch', 'expo-agent-cli', {
+        FIXTURES_COMMIT: 'abc',
         EXPO_AGENT_CLI_VERSION: '1.0.27',
         EXPO_AGENT_CLI_INTEGRITY: 'sha512-x',
         EXPO_SKILLS_SHA256: 'x',
-      }).status,
-    ).toBe('runnable');
+      }),
+    ).not.toMatch(/agent-cli|Expo skills|stim-benchmarks commit/);
   });
 
   it('has no web row and gives the Expo tool arm only Expo platforms', () => {
@@ -85,5 +91,28 @@ describe('benchmark matrix', () => {
         stimPackage: root,
       }),
     ).toThrow(/expo-skills/);
+  });
+
+  it('installs each skill of the Expo skills plugin as its own skill', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-bench-arm-'));
+    tempDirs.push(root);
+    writeFileSync(join(root, 'auth.json'), '{}');
+    skill(join(root, 'skills'), 'agent-device');
+    skill(join(root, 'expo'), 'expo-router');
+    skill(join(root, 'expo'), 'expo-dev-client');
+    writeFileSync(join(root, 'expo', 'README.md'), 'not a skill');
+    const runDir = join(root, 'run');
+    const { codexHome, skillNames } = makeRunnerHome({
+      runDir,
+      arm: 'expo-agent-cli',
+      codexAuthPath: join(root, 'auth.json'),
+      agentSkillsRoot: join(root, 'skills'),
+      stimPackage: root,
+      expoSkillsRoot: join(root, 'expo'),
+    });
+    expect(skillNames).toEqual(['agent-device', 'expo-dev-client', 'expo-router']);
+    const guidance = readFileSync(writeClaudeGuidance(codexHome, runDir).path, 'utf8');
+    expect(guidance).toContain('# expo-router');
+    expect(guidance).toContain('# expo-dev-client');
   });
 });

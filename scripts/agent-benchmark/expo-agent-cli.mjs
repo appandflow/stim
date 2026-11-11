@@ -145,11 +145,12 @@ export function expoAgentCliConfigViolations(packageJson) {
   return violations;
 }
 
-function directoryDigest(directory) {
+/** SHA-256 over every file's relative path and bytes, in code-unit order of names; the EXPO_SKILLS_SHA256 pin. */
+export function directoryDigest(directory) {
   const hash = createHash('sha256');
   const visit = (current, prefix) => {
     for (const entry of readdirSync(current, { withFileTypes: true }).toSorted((a, b) =>
-      a.name.localeCompare(b.name),
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
     )) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) visit(path, `${prefix}${entry.name}/`);

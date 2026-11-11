@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   assertExpoAgentCliInstall,
+  directoryDigest,
   expoAgentCliCommandAudit,
   expoAgentCliConfigViolations,
   expoAgentCliEnvironment,
@@ -82,5 +87,24 @@ describe('Expo agent CLI pinning', () => {
   it('disables telemetry and drops the Expo token', () => {
     const environment = expoAgentCliEnvironment({ EXPO_TOKEN: 'x', PATH: '/bin' });
     expect(environment).toEqual({ EXPO_NO_TELEMETRY: '1', PATH: '/bin' });
+  });
+});
+
+describe('Expo skills digest', () => {
+  it('orders names by code unit, so the pin does not depend on the locale', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bench-expo-skills-'));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, 'a-skill'));
+    writeFileSync(join(root, 'a-skill', 'SKILL.md'), 'lower');
+    writeFileSync(join(root, 'README.md'), 'upper');
+    const expected = createHash('sha256')
+      .update('README.md\0')
+      .update('upper')
+      .update('\0')
+      .update('a-skill/SKILL.md\0')
+      .update('lower')
+      .update('\0')
+      .digest('hex');
+    expect(directoryDigest(root)).toBe(expected);
   });
 });

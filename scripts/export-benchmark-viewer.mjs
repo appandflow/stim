@@ -1,5 +1,11 @@
 import { ARMS } from './agent-benchmark/matrix.mjs';
 import {
+  fixtureAppId,
+  fixtureDirectoryForRecord,
+  fixtureForRecord,
+  nativeChangeMarker,
+} from './agent-benchmark/fixture.mjs';
+import {
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -596,7 +602,7 @@ function iosReadinessCommandFailure({ meta, record, proofPath, recordingPath, sc
   const screenshotScratch = join('/tmp', `${meta.runId}-settings.png`);
   const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
   const expectedCommands = [
-    `${prefix} open com.appandflow.trailhead --foreground --platform ios --udid ${deviceId}`,
+    `${prefix} open ${fixtureAppId(meta, 'ios')} --foreground --platform ios --udid ${deviceId}`,
     `${prefix} record start ${recordingScratch} --scope device --quality high --hide-touches`,
     `${prefix} wait text ${JSON.stringify(record.screen.expected)}`,
     `${prefix} screenshot ${screenshotScratch}`,
@@ -638,7 +644,7 @@ function readinessApplicationProofFailure({ runDir, record, meta, eventsPath, co
     return null;
   }
   if (platform === 'ios') {
-    const expectedMarker = `Trailhead ${meta.runId}`;
+    const expectedMarker = nativeChangeMarker(meta);
     if (
       recordedProofTarget !== eventsPath ||
       record.proof.kind !== 'agent-device-native-window-marker' ||
@@ -956,7 +962,11 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
     return reject('setup evidence missing or failed');
   if (meta.agentDevice?.session && meta.agentDevice?.stateDir) {
     const prefix = `env AGENT_DEVICE_STATE_DIR=${meta.agentDevice.stateDir} AGENT_DEVICE_SESSION=${meta.agentDevice.session} agent-device `;
-    const target = { platform: meta.platform ?? 'ios', device: record.simulator?.udid };
+    const target = {
+      platform: meta.platform ?? 'ios',
+      device: record.simulator?.udid,
+      appId: fixtureAppId(meta),
+    };
     if (meta.agentDevice.session !== meta.runId || agentDeviceIsolationInvalidReasons(commands, prefix, target).length)
       return reject('agent-device isolation mismatch');
     auxiliarySessions = agentDeviceAuxiliarySessions(commands, prefix, target);
@@ -977,8 +987,12 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
     arm: record.arm,
     platform: meta.platform ?? 'ios',
     activities: evidence.activities,
-    setup: { worktree: record.worktree, avdConfig: meta.expectedControlAvdConfig },
+    setup: {
+      worktree: record.worktree && join(record.worktree, fixtureDirectoryForRecord(meta)),
+      avdConfig: meta.expectedControlAvdConfig,
+    },
     reviewedDiagnostics: review.diagnosticCommands ?? [],
+    root: fixtureForRecord(meta).rootComponent,
   });
   const recovery = launchCrashRecovery(commands, {
     diagnosis,
@@ -1207,7 +1221,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       ) {
         const stamped = readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
         const { commands } = reconstructCommandEvidence(meta.runner, stamped);
-        const evidence = ccacheLogEvidence({ runDir, meta, commands, worktree: record.worktree });
+        const evidence = ccacheLogEvidence({
+          runDir,
+          meta,
+          commands,
+          worktree: record.worktree && join(record.worktree, fixtureDirectoryForRecord(meta)),
+        });
         if (
           !evidence ||
           JSON.stringify(benchmarkCcache(meta, commands, evidence)) !==

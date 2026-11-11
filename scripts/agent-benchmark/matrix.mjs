@@ -35,12 +35,6 @@ export function isBenchmarkArm(id) {
   return ARMS.some((candidate) => candidate.id === id);
 }
 
-export function armSkillNames(id) {
-  return benchmarkArm(id)
-    .skills.map((skill) => skill.name)
-    .toSorted();
-}
-
 function benchmarkPlatform(id) {
   const platform = PLATFORMS.find((candidate) => candidate.id === id);
   if (!platform) throw new Error(`unknown benchmark platform: ${id}`);

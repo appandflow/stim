@@ -10,6 +10,15 @@ import {
   launchCrashToken,
 } from './launch-crash-benchmark.mjs';
 
+const step = (id, command, output, second) => ({
+  id,
+  command,
+  output,
+  exitCode: 0,
+  startedAt: `2026-09-04T12:00:${second}Z`,
+  endedAt: `2026-09-04T12:00:${second + 1}Z`,
+});
+
 describe('launch crash benchmark', () => {
   it.each(['ios', 'android'])(
     'accepts literal temp-dir prefixes while retaining crash evidence gates on %s',
@@ -99,6 +108,8 @@ describe('launch crash benchmark', () => {
     ['stim', 'android', 'env STIM_TMPDIR=/tmp/run stim android', "env TMPDIR='/tmp/android run' stim logs --errors"],
     ['control', 'ios', 'npx expo run:ios', 'tail -40 /tmp/metro.log'],
     ['control', 'android', 'npx expo run:android', 'adb -s emulator-5554 logcat -d'],
+    ['control', 'ios', 'npx react-native run-ios --udid SIMULATOR', 'tail -40 /tmp/metro.log'],
+    ['control', 'android', 'npx react-native run-android', 'adb -s emulator-5554 logcat -d'],
   ])(
     'accepts actionable initial launch output for %s/%s without a redundant log query',
     (arm, platform, command, logCommand) => {
@@ -975,6 +986,36 @@ done`;
       command: 'stim logs --errors',
       initialLaunchCommandId: 'launch',
       errorCaptureCommandId: 'logs',
+    });
+  });
+
+  it("diagnoses and injects against the fixture's own root component", () => {
+    const token = launchCrashToken('calculator');
+    const root = {
+      file: 'src/StimBenchRoot.tsx',
+      declaration: 'export default function StimBenchRoot() {',
+      name: 'StimBenchRoot',
+    };
+    expect(injectRootRenderCrash(`${root.declaration}\n  return null;\n}\n`, token, root)).toBe(
+      `${root.declaration}\n  throw new Error('${token}');\n  return null;\n}\n`,
+    );
+    const logs = step(
+      'logs',
+      'stim logs --errors',
+      `ERROR ${token}\n  at StimBenchRoot (src/StimBenchRoot.tsx:24:17)`,
+      20,
+    );
+    const commands = [step('warm', 'stim worktree warm', '', 10), step('launch', 'stim ios', 'launched', 12), logs];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, root };
+    expect(launchCrashDiagnosis(commands, options)).toMatchObject({ valid: true, commandId: 'logs' });
+    expect(launchCrashDiagnosis(commands, { ...options, root: undefined })).toMatchObject({
+      valid: false,
+      reason: 'actionable-launch-crash-diagnosis-missing',
+    });
+    expect(launchCrashDiagnosis([step('search', 'rg -n StimBenchRoot', '', 11), ...commands], options)).toMatchObject({
+      valid: false,
+      reason: 'launch-crash-pre-capture-command-not-allowed',
+      commandId: 'search',
     });
   });
 

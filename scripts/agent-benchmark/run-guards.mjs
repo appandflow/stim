@@ -1,3 +1,4 @@
+import { TRAILHEAD_FIXTURE } from './fixture.mjs';
 import { ARMS } from './matrix.mjs';
 const platforms = new Set(['ios', 'android']);
 const variants = new Set(['javascript', 'native', 'launch-crash']);
@@ -201,7 +202,7 @@ export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
     group.push({ ...entry, command, body: match[2] });
     groups.set(match[1], group);
   });
-  const open = `open com.appandflow.trailhead --foreground --platform ${target.platform} ${target.platform === 'ios' ? '--udid' : '--serial'} ${target.device}`;
+  const open = `open ${target.appId ?? TRAILHEAD_FIXTURE.ios.bundleId} --foreground --platform ${target.platform} ${target.platform === 'ios' ? '--udid' : '--serial'} ${target.device}`;
   return [...groups.entries()].flatMap(([session, entries]) => {
     if (
       entries.length < 2 ||

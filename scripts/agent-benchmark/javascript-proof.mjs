@@ -1,5 +1,6 @@
-export function javascriptProof(source, sourcePath, screen) {
-  const expected = 'Keep saved trail maps available offline';
+import { TRAILHEAD_FIXTURE } from './fixture.mjs';
+
+export function javascriptProof(source, sourcePath, screen, expected = TRAILHEAD_FIXTURE.proof.editedSubtitle) {
   if (typeof source !== 'string' || !source.includes(expected))
     return { valid: false, reason: 'source-edit-missing', sourcePath };
   if (screen?.valid !== true || screen.expected !== expected) return { valid: false, reason: 'screen-proof-failed' };

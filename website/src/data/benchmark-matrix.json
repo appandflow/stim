@@ -36,7 +36,8 @@
         },
         {
           "name": "expo",
-          "source": "expo-skills"
+          "source": "expo-skills",
+          "plugin": true
         }
       ],
       "requires": [
@@ -60,31 +61,45 @@
       "id": "expo-ios",
       "label": "Expo iOS simulator",
       "driver": "readiness",
-      "fixture": "trailhead",
+      "fixture": "stim-benchmarks/expo",
       "driverPlatform": "ios",
       "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
-      "blockers": [],
-      "requires": []
+      "blockers": [
+        "a build in a warmed worktree is never stored in the Stim build cache (#5511), so prepare cannot record the golden build"
+      ],
+      "requires": [
+        {
+          "pin": "FIXTURES_COMMIT",
+          "missing": "appandflow/stim-benchmarks commit with the expo fixture (docs/benchmark-fixtures.md)"
+        }
+      ]
     },
     {
       "id": "expo-android",
       "label": "Expo Android emulator",
       "driver": "readiness",
-      "fixture": "trailhead",
+      "fixture": "stim-benchmarks/expo",
       "driverPlatform": "android",
       "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim", "expo-agent-cli"],
       "proof": "agent-device Settings screenshot",
-      "blockers": [],
-      "requires": []
+      "blockers": [
+        "a build in a warmed worktree is never stored in the Stim build cache (#5511), so prepare cannot record the golden build"
+      ],
+      "requires": [
+        {
+          "pin": "FIXTURES_COMMIT",
+          "missing": "appandflow/stim-benchmarks commit with the expo fixture (docs/benchmark-fixtures.md)"
+        }
+      ]
     },
     {
       "id": "bare-ios",
       "label": "Bare React Native iOS simulator",
       "driver": "readiness",
-      "fixture": "bare",
+      "fixture": "stim-benchmarks/bare",
       "driverPlatform": "ios",
       "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim"],
@@ -92,11 +107,13 @@
         "expo-agent-cli": "the tool targets Expo projects only"
       },
       "proof": "agent-device Settings screenshot",
-      "blockers": [],
+      "blockers": [
+        "a build in a warmed worktree is never stored in the Stim build cache (#5511), so prepare cannot record the golden build"
+      ],
       "requires": [
         {
-          "pin": "BARE_FIXTURE_COMMIT",
-          "missing": "bare React Native fixture commit (spec in docs/benchmark-fixtures.md)"
+          "pin": "FIXTURES_COMMIT",
+          "missing": "appandflow/stim-benchmarks commit with the bare fixture (docs/benchmark-fixtures.md)"
         }
       ]
     },
@@ -104,7 +121,7 @@
       "id": "bare-android",
       "label": "Bare React Native Android emulator",
       "driver": "readiness",
-      "fixture": "bare",
+      "fixture": "stim-benchmarks/bare",
       "driverPlatform": "android",
       "scenarios": ["launch", "native-change", "error-fix"],
       "arms": ["control", "stim"],
@@ -112,11 +129,13 @@
         "expo-agent-cli": "the tool targets Expo projects only"
       },
       "proof": "agent-device Settings screenshot",
-      "blockers": [],
+      "blockers": [
+        "a build in a warmed worktree is never stored in the Stim build cache (#5511), so prepare cannot record the golden build"
+      ],
       "requires": [
         {
-          "pin": "BARE_FIXTURE_COMMIT",
-          "missing": "bare React Native fixture commit (spec in docs/benchmark-fixtures.md)"
+          "pin": "FIXTURES_COMMIT",
+          "missing": "appandflow/stim-benchmarks commit with the bare fixture (docs/benchmark-fixtures.md)"
         }
       ]
     },
@@ -169,7 +188,7 @@
       "id": "exact-ios",
       "label": "Exact iOS",
       "driver": "native",
-      "fixture": "exact",
+      "fixture": "stim-benchmarks/exact",
       "driverPlatform": "ios",
       "scenarios": ["launch", "error-fix"],
       "arms": ["control", "stim"],
@@ -177,11 +196,13 @@
         "expo-agent-cli": "Exact apps are not Expo projects"
       },
       "proof": "agent-device screenshot and snapshot",
-      "blockers": [],
+      "blockers": [
+        "Stim has not yet run exact/stim-bench-exact from a stim-benchmarks worktree; only its control build was checked there"
+      ],
       "requires": [
         {
-          "pin": "EXACT_FIXTURE_COMMIT",
-          "missing": "Exact fixture commit (spec in docs/benchmark-fixtures.md)"
+          "pin": "FIXTURES_COMMIT",
+          "missing": "appandflow/stim-benchmarks commit with the exact fixture (docs/benchmark-fixtures.md)"
         }
       ]
     }

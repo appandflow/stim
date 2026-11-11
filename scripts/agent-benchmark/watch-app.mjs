@@ -25,6 +25,8 @@ const [
   expectedStimName,
   expectedSystemImage,
   expectedNativeLabel,
+  appId,
+  iosProduct,
 ] = process.argv.slice(2);
 const baseline = new Set(JSON.parse(readFileSync(baselinePath, 'utf8')));
 const expectedControl = {
@@ -78,16 +80,16 @@ function devices() {
 function alive(udid) {
   try {
     if (platform === 'android') {
-      return adb('-s', udid, 'shell', 'pidof', 'com.appandflow.trailhead').trim().length > 0;
+      return adb('-s', udid, 'shell', 'pidof', appId).trim().length > 0;
     }
-    simctl('get_app_container', udid, 'com.appandflow.trailhead', 'app');
+    simctl('get_app_container', udid, appId, 'app');
     const processes = execFileSync('/bin/ps', ['-A', '-o', 'command='], {
       encoding: 'utf8',
       timeout: 5000,
     });
     return processes
       .split('\n')
-      .some((line) => line.includes(`/Devices/${udid}/`) && line.includes('/Trailhead.app/Trailhead'));
+      .some((line) => line.includes(`/Devices/${udid}/`) && line.includes(`/${iosProduct}.app/${iosProduct}`));
   } catch {
     return false;
   }
@@ -107,7 +109,7 @@ function androidBuildTool(name) {
 function captureAndroidNativeProof(serial) {
   const aapt = androidBuildTool('aapt');
   if (!aapt) return { valid: false, reason: 'android-native-proof-tool-missing' };
-  const packagePath = adb('-s', serial, 'shell', 'pm', 'path', 'com.appandflow.trailhead')
+  const packagePath = adb('-s', serial, 'shell', 'pm', 'path', appId)
     .split('\n')
     .find((line) => line.startsWith('package:') && line.endsWith('/base.apk'))
     ?.slice('package:'.length);
