@@ -10,7 +10,9 @@ const EXPO_AGENT_CLI_BIN = 'expo-agent-cli';
 // Commands documented in the 1.0.27 README of @expo/agent-cli (npm) that leave this machine:
 // deploy ships to EAS Hosting (--native to EAS builds), feedback posts to Expo, and login/logout/register
 // are passed through to the project's expo CLI and change an Expo account session.
-const CLOUD_SUBCOMMANDS = new Set(['deploy', 'feedback', 'login', 'logout', 'register']);
+// agents:setup writes into the user home and runs claude, npx or bunx; docs:sync fetches docs. Both belong to
+// preparation, so a timed run rejects them.
+const CLOUD_SUBCOMMANDS = new Set(['deploy', 'feedback', 'login', 'logout', 'register', 'agents', 'agents:setup']);
 const EAS_CLI_NAMES = new Set(['eas', 'eas-cli']);
 const BACKEND_KEYS = ['buildBackend', 'deviceBackend'];
 
@@ -60,7 +62,6 @@ function expoAgentCliShim(prefix) {
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
 // Installs the pinned release into its own prefix, never into runtime/ where the Stim package and skill live.
-// Written from the npm metadata only; it has not been run.
 export function installExpoAgentCli({ root, pins, run = execFileSync }) {
   const prefix = expoAgentCliPrefix(root);
   mkdirSync(prefix, { recursive: true });
@@ -122,9 +123,12 @@ export function expoAgentCliCommandAudit(commands) {
       if (args.some((word) => word === '--eas' || word.startsWith('--eas='))) {
         violations.push({ reason: 'eas-flag', command: segment });
       }
-      const subcommand = args.find((word) => !word.startsWith('-'));
-      if (subcommand && CLOUD_SUBCOMMANDS.has(subcommand.split(':')[0])) {
-        violations.push({ reason: `cloud-command-${subcommand}`, command: segment });
+      const positional = args.filter((word) => !word.startsWith('-'));
+      for (const [index, word] of positional.entries()) {
+        const spaced = word === 'docs' && positional[index + 1] === 'sync';
+        if (CLOUD_SUBCOMMANDS.has(word) || word === 'docs:sync' || spaced) {
+          violations.push({ reason: `cloud-command-${word}`, command: segment });
+        }
       }
     }
   }

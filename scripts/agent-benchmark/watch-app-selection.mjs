@@ -12,6 +12,10 @@ export function matchesExpectedIosSimulator(device, expected) {
   );
 }
 
+function withoutName(expected) {
+  return { ...expected, name: undefined, namePrefix: undefined, matchAnyName: true };
+}
+
 export function selectIosCandidate(devices, { arm, baseline, parkedUdid, expectedControl }) {
   const candidates = devices.filter((device) => {
     if (!device.isAvailable) return false;
@@ -21,6 +25,14 @@ export function selectIosCandidate(devices, { arm, baseline, parkedUdid, expecte
   const candidate = candidates[0] ?? null;
   if (arm === 'control' && candidate && !matchesExpectedIosSimulator(candidate, expectedControl)) {
     return { error: 'control-simulator-mismatch', candidates, expected: expectedControl };
+  }
+  if (
+    arm === 'expo-agent-cli' &&
+    candidate &&
+    (candidate.deviceTypeIdentifier !== expectedControl.deviceTypeIdentifier ||
+      candidate.runtimeIdentifier !== expectedControl.runtimeIdentifier)
+  ) {
+    return { error: 'expo-agent-cli-simulator-mismatch', candidates, expected: expectedControl };
   }
   return { candidate };
 }
@@ -39,19 +51,27 @@ export function androidApplicationLabelFromBadging(output) {
 
 export function matchesExpectedAndroidEmulator(device, expected) {
   return (
-    (expected.namePrefix ? device?.name?.startsWith(expected.namePrefix) : device?.name === expected.name) &&
+    (expected.matchAnyName ||
+      (expected.namePrefix ? device?.name?.startsWith(expected.namePrefix) : device?.name === expected.name)) &&
     (!expected.deviceTypeIdentifier || device?.deviceTypeIdentifier === expected.deviceTypeIdentifier) &&
     device?.runtimeIdentifier === expected.runtimeIdentifier &&
     (!expected.systemImage || device?.systemImage === expected.systemImage)
   );
 }
 
-export function selectAndroidCandidate(devices, { arm, baseline, expectedControl, expectedStim }) {
+export function selectAndroidCandidate(
+  devices,
+  { arm, baseline, expectedControl, expectedStim, preexistingNames = new Set() },
+) {
   const candidates = devices.filter((device) => device.isAvailable && !baseline.has(device.udid));
   if (candidates.length > 1) return { error: 'multiple-candidate-emulators', candidates };
   const candidate = candidates[0] ?? null;
-  const expected = arm === 'stim' ? expectedStim : expectedControl;
-  if (arm !== 'expo-agent-cli' && candidate && !matchesExpectedAndroidEmulator(candidate, expected)) {
+  if (arm === 'expo-agent-cli' && candidate && preexistingNames.has(candidate.name)) {
+    return { error: 'expo-agent-cli-adopted-preexisting-emulator', candidates };
+  }
+  const expected =
+    arm === 'stim' ? expectedStim : arm === 'expo-agent-cli' ? withoutName(expectedControl) : expectedControl;
+  if (candidate && !matchesExpectedAndroidEmulator(candidate, expected)) {
     return { error: `${arm}-emulator-mismatch`, candidates, expected };
   }
   return { candidate };

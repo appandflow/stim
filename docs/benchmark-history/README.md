@@ -25,3 +25,9 @@ audit; this command checks campaign completeness, not raw run validity.
 Publish the new canonical datasets and their current proof files only after the
 whole replacement campaign passes the audit, then snapshot that complete set.
 Do not archive individual failed attempts here.
+
+Snapshots written by the current script use `schemaVersion` 3: each run has
+`seconds` and `timingOrigin` (`first-agent-activity` for React Native datasets,
+`dispatch-to-completed-task` for native pairs) instead of `settingsReadySeconds`
+and a file-level origin. `rc.json` and `1.0.0.json` stay schema 1; nothing in the
+repository reads these files, so they are unaffected.

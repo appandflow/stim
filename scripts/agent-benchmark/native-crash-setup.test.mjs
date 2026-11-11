@@ -92,6 +92,22 @@ describe('native crash reproduction evidence', () => {
         source,
       }).reason,
     ).toBe('native-crash-source-inspected-before-capture');
+    for (const history of [
+      'git show HEAD',
+      'cd w && git log -p',
+      'git checkout HEAD~1 -- App.swift',
+      'git diff HEAD~1',
+    ]) {
+      expect(nativeCrashReproduced([command(history, `commit ${token}`, 1)], { token, source }).reason).toBe(
+        'native-crash-source-inspected-before-capture',
+      );
+    }
+    expect(
+      nativeCrashReproduced([command('git worktree add -b b /w HEAD', '', 1), command('launch', token, 2)], {
+        token,
+        source,
+      }).valid,
+    ).toBe(true);
     expect(nativeCrashReproduced([command('launch', 'ok', 1)], { token, source }).reason).toBe(
       'native-crash-not-captured',
     );

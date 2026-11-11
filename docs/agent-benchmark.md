@@ -65,6 +65,20 @@ Dispatch refuses a cell that is not runnable.
 | Standalone native Android | Stim, control                 | app launch, error fix                | 4    |
 | Exact iOS                 | Stim, control                 | app launch, error fix                | 4    |
 
+Known limit of the JavaScript and native error-fix paths: the injected crash is
+committed in the fixture checkout. Before the error is captured, commands that
+name the source file, `git diff` or `git show` (JavaScript), and for native
+cells `git log`, `git blame`, `git restore` and a history `git checkout`, make
+the run invalid. After the capture, nothing stops an agent from restoring the
+file with `git checkout HEAD~1 -- <file>`; the exact-repair proof checks the
+result, not how the agent reached it.
+
+The Expo agent CLI arm rejects `agents:setup`, `agents`, `docs:sync` and
+`docs sync` during a timed run (they write into the user home, run other tools
+or fetch from the network); skills are installed at preparation and pinned. The
+pinned install in `expo-agent-cli.mjs` is written from the npm metadata and has
+not been run.
+
 Export: `scripts/export-native-benchmarks.mjs` publishes the native, macOS and
 Exact pairs, error-fix pairs (`native/<platform>/comparison-launch-crash.json`,
 audit check `crashReproducedBeforeSource`) and Claude-run pairs, and

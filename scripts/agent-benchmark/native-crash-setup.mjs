@@ -1,9 +1,12 @@
 import { basename } from 'node:path';
+import { shellCommandSegments } from './run-guards.mjs';
 
 const TOKEN = /^STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}$/;
 
 const SWIFT_ANCHOR = 'struct NativeAcceptance: App {\n';
 const KOTLIN_ANCHOR = '    super.onCreate(state)\n';
+const HISTORY_READS = /^git\s+(?:diff|show|log|blame|cat-file|reflog|restore|ls-tree|archive|grep)(?:\s|$)/;
+const HISTORY_CHECKOUT = /^git\s+(?:checkout|switch)\s.*(?:\s--(?:\s|$)|HEAD|[~^])/;
 const EXACT_STATEMENTS = {
   rust: (token) => `panic!("${token}");`,
   typescript: (token) => `throw new Error('${token}');`,
@@ -50,7 +53,11 @@ export function injectNativeCrash(source, plan, token) {
 }
 
 export function nativeCrashReproduced(commands, { token, source }) {
-  const inspected = (command) => String(command.command ?? '').includes(basename(source));
+  const inspected = (command) =>
+    String(command.command ?? '').includes(basename(source)) ||
+    shellCommandSegments(String(command.command ?? '')).some(
+      (segment) => HISTORY_READS.test(segment) || HISTORY_CHECKOUT.test(segment),
+    );
   const ordered = commands.toSorted((a, b) => (a.startEventOffset ?? 0) - (b.startEventOffset ?? 0));
   const capture = ordered.findIndex((command) => String(command.output ?? '').includes(token));
   if (capture === -1) return { valid: false, reason: 'native-crash-not-captured' };
