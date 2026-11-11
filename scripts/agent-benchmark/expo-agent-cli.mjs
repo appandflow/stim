@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from '
 import { join } from 'node:path';
 import { shellCommandSegments } from './run-guards.mjs';
 
-export const EXPO_AGENT_CLI_PACKAGE = '@expo/agent-cli';
+const EXPO_AGENT_CLI_PACKAGE = '@expo/agent-cli';
 const EXPO_AGENT_CLI_BIN = 'expo-agent-cli';
 
 // Commands documented in the 1.0.27 README of @expo/agent-cli (npm) that leave this machine:
@@ -53,7 +53,7 @@ export function assertExpoAgentCliInstall({ manifest, lock, pins }) {
   }
 }
 
-export function expoAgentCliShim(prefix) {
+function expoAgentCliShim(prefix) {
   return `#!/bin/sh\nexec node ${JSON.stringify(join(prefix, 'node_modules', EXPO_AGENT_CLI_PACKAGE, 'bin', 'cli.js'))} "$@"\n`;
 }
 
@@ -143,7 +143,7 @@ export function expoAgentCliConfigViolations(packageJson) {
   return violations;
 }
 
-export function directoryDigest(directory) {
+function directoryDigest(directory) {
   const hash = createHash('sha256');
   const visit = (current, prefix) => {
     for (const entry of readdirSync(current, { withFileTypes: true }).toSorted((a, b) =>

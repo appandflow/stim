@@ -57,7 +57,7 @@ describe('campaign timing snapshot', () => {
     ]) {
       const bad = complete();
       Object.assign(bad[0].runs[0], change);
-      expect(() => campaignTimings('x', bad)).toThrow();
+      expect(() => campaignTimings('x', bad)).toThrow(/campaign cell|valid timings|Duplicate/);
     }
     const wrongMetric = complete();
     wrongMetric[0].primaryMetric = 'Dispatch to screen';
