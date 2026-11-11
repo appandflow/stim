@@ -1,0 +1,452 @@
+// The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+declare const AGENT_DRIVER_API_VERSION: 1;
+declare const AGENT_DRIVER_LOAD_TIMEOUT_MS = 1e4;
+declare const AGENT_DRIVER_UNAVAILABLE = "agent-driver-unavailable";
+declare const AGENT_ROUTE_PREFIX = "/device-host/agent/";
+declare const BUILD_RESOLVE_TIMEOUT_ENV = "STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS";
+declare const BUILD_RESOLVE_TIMEOUT_MS = 3e4;
+declare const BUILD_UPLOAD_TIMEOUT_ENV = "STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS";
+declare const BUILD_UPLOAD_TIMEOUT_MS = 6e4;
+declare const CACHE_CONTRACT_CHECK_TIMEOUT_MS = 3e4;
+declare const CACHE_PROVIDER_API_VERSION: 1;
+declare const PROVIDER_LOAD_TIMEOUT_ENV = "STIM_CACHE_LOAD_TIMEOUT_MS";
+declare const PROVIDER_LOAD_TIMEOUT_MS = 1e4;
+declare const TRANSPORT_API_VERSION: 1;
+declare function agentClientConfigFile(id: string): string;
+declare function agentDriverUnavailable(message: string): AgentDriverUnavailableError;
+declare function agentRoute(session: string): string;
+declare function buildResolveTimeoutMs(env?: NodeJS.ProcessEnv): number;
+declare function buildUploadTimeoutMs(env?: NodeJS.ProcessEnv): number;
+declare function cacheProviderContractChecks(options: CacheContractOptions): CacheContractCheck[];
+declare function callWithTimeout<T>(call: (signal: AbortSignal) => T | Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<ProviderCallResult<T>>;
+declare function createFilesystemFileCache(directory: string): FileCacheCapability & Required<Pick<FileCacheCapability, "stat">>;
+declare function createWarnOnce(emit: (message: string) => void): WarnOnce;
+declare function isAgentDriverUnavailable(error: unknown): error is AgentDriverUnavailableError;
+declare function loadAgentDriver(id: string, source: PluginSource, input: AgentDriverInput, timeoutMs?: number): Promise<LoadAgentDriverResult>;
+declare function loadAgentDriverModule(id: string, source: PluginSource, timeoutMs?: number): Promise<LoadAgentDriverModuleResult>;
+declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: {
+declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | config?: CacheProviderConfig | null;
+declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | env?: NodeJS.ProcessEnv;
+declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | projectRoot: string;
+declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | timeoutMs?: number;
+declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & {
+declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | input: TransportInput;
+declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | reference: string;
+declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | timeoutMs?: number;
+declare function newAgentToken(): string;
+declare function resolveTieredBuild({ local, loadProvider, target, destinationDir, ensureDestination, skipRead, warn, timeoutMs, signal }: ResolveTieredBuildOptions): Promise<TieredBuildResolution | null>;
+declare function runAgentDriverContract(options: AgentDriverContractOptions): Promise<AgentDriverContractResult[]>;
+declare function runCacheProviderContract(options: CacheContractOptions | CacheContractModuleOptions): Promise<CacheContractResult[]>;
+declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
+declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
+declare function storeTieredBuild({ local, loadProvider, target, sourcePath, overwrite, warn, timeoutMs, signal }: StoreTieredBuildOptions): Promise<TieredBuildStoreResult>;
+declare function timeoutFromEnv(name: string, fallback: number, env?: NodeJS.ProcessEnv): number;
+export AGENT_DRIVER_API_VERSION
+export AGENT_DRIVER_LOAD_TIMEOUT_MS
+export AGENT_DRIVER_UNAVAILABLE
+export AGENT_ROUTE_PREFIX
+export AgentClientAccess
+export AgentClientAccessInput
+export AgentDriverClaim
+export AgentDriverClaimRefusal
+export AgentDriverClient
+export AgentDriverContractOptions
+export AgentDriverContractResult
+export AgentDriverGrant
+export AgentDriverHost
+export AgentDriverInput
+export AgentDriverModule
+export AgentDriverProcess
+export AgentDriverProcessStatus
+export AgentDriverRecoveryInput
+export AgentDriverStopStep
+export AgentDriverTarget
+export AgentDriverUnavailableError
+export CACHE_CONTRACT_CHECK_TIMEOUT_MS
+export CacheContractCheck
+export CacheContractModuleOptions
+export CacheContractOptions
+export CacheContractResult
+export HostedAgentApp
+export HostedAgentDevice
+export HostedAgentDriver
+export LoadAgentDriverModuleResult
+export LoadAgentDriverResult
+export TransportContractOptions
+export TransportContractResult
+export agentClientConfigFile
+export agentDriverUnavailable
+export agentRoute
+export cacheProviderContractChecks
+export isAgentDriverUnavailable
+export loadAgentDriver
+export loadAgentDriverModule
+export loadCacheProvider
+export newAgentToken
+export runAgentDriverContract
+export runCacheProviderContract
+export runContract
+export runTransportContract
+export type BUILD_RESOLVE_TIMEOUT_ENV
+export type BUILD_RESOLVE_TIMEOUT_MS
+export type BUILD_UPLOAD_TIMEOUT_ENV
+export type BUILD_UPLOAD_TIMEOUT_MS
+export type BuildCacheCapability
+export type BuildCacheContext
+export type BuildCacheTarget
+export type BuildResolveInput
+export type BuildStoreInput
+export type CACHE_PROVIDER_API_VERSION
+export type CacheProvider
+export type CacheProviderConfig
+export type CacheProviderModule
+export type FileCacheCapability
+export type FileCacheResolveInput
+export type FileCacheStoreInput
+export type HostedAgentGrant
+export type HostedAgentIssuedGrant
+export type HostedAgentLease
+export type LoadBuildProvider
+export type LoadCacheProviderResult
+export type LoadTransportResult
+export type MetroCacheCapability
+export type MetroCacheContext
+export type MetroCacheGetInput
+export type MetroCacheSetInput
+export type PROVIDER_LOAD_TIMEOUT_ENV
+export type PROVIDER_LOAD_TIMEOUT_MS
+export type ProviderCallResult
+export type ResolveTieredBuildOptions
+export type StoreTieredBuildOptions
+export type TRANSPORT_API_VERSION
+export type TieredBuildResolution
+export type TieredBuildStoreResult
+export type Transport
+export type TransportEndpoint
+export type TransportExposeInput
+export type TransportExposure
+export type TransportHeaders
+export type TransportIdentity
+export type TransportInput
+export type TransportModule
+export type TransportPeer
+export type TransportResolveInput
+export type TransportWatchEvent
+export type WarnOnce
+export type buildResolveTimeoutMs
+export type buildUploadTimeoutMs
+export type callWithTimeout
+export type createFilesystemFileCache
+export type createWarnOnce
+export type loadTransport
+export type resolveTieredBuild
+export type storeTieredBuild
+export type timeoutFromEnv
+interface AgentClientAccess {
+interface AgentClientAccess { | command: string;
+interface AgentClientAccess { | config: string;
+interface AgentClientAccessInput {
+interface AgentClientAccessInput { | baseUrl: string;
+interface AgentClientAccessInput { | file: string;
+interface AgentClientAccessInput { | grant: HostedAgentIssuedGrant;
+interface AgentClientAccessInput { | platform: "macos" | "ios" | "android";
+interface AgentDriverClaim {
+interface AgentDriverClaim { | claim: string;
+interface AgentDriverClaim { | path: string;
+interface AgentDriverClaim { | previousChild: AgentDriverProcess | null;
+interface AgentDriverClaimRefusal {
+interface AgentDriverClaimRefusal { | held: string | null;
+interface AgentDriverClaimRefusal { | waitingFor: string | null;
+interface AgentDriverClient {
+interface AgentDriverClient { | access(input: AgentClientAccessInput): AgentClientAccess | null;
+interface AgentDriverContractOptions {
+interface AgentDriverContractOptions { | app: HostedAgentApp;
+interface AgentDriverContractOptions { | baseDir: string;
+interface AgentDriverContractOptions { | checkTimeoutMs?: number;
+interface AgentDriverContractOptions { | clientGrant?: HostedAgentIssuedGrant;
+interface AgentDriverContractOptions { | id?: string;
+interface AgentDriverContractOptions { | reference: string;
+interface AgentDriverContractOptions { | unavailableInput: Omit<AgentDriverInput, "host">;
+interface AgentDriverContractResult {
+interface AgentDriverContractResult { | error?: string;
+interface AgentDriverContractResult { | name: string;
+interface AgentDriverContractResult { | passed: boolean;
+interface AgentDriverHost {
+interface AgentDriverHost { | capture(pid: number): Promise<AgentDriverProcess | null>;
+interface AgentDriverHost { | childPending(claim: string): Promise<void>;
+interface AgentDriverHost { | claims: {
+interface AgentDriverHost { | clearChild(claim: string): Promise<void>;
+interface AgentDriverHost { | group: boolean;
+interface AgentDriverHost { | inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
+interface AgentDriverHost { | own?: string;
+interface AgentDriverHost { | processes: {
+interface AgentDriverHost { | release(claim: string): Promise<boolean>;
+interface AgentDriverHost { | removeCommand(path: string): Promise<string>;
+interface AgentDriverHost { | setChild(claim: string, child: AgentDriverProcess): Promise<void>;
+interface AgentDriverHost { | steps: AgentDriverStopStep[];
+interface AgentDriverHost { | stop(process: AgentDriverProcess, options: {
+interface AgentDriverHost { | stopStale(root: string, label: string, options: {
+interface AgentDriverHost { | take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
+interface AgentDriverHost { | }): Promise<boolean>;
+interface AgentDriverHost { | }): Promise<void>;
+interface AgentDriverInput {
+interface AgentDriverInput { | claimRoot: string;
+interface AgentDriverInput { | device?: HostedAgentDevice;
+interface AgentDriverInput { | env: NodeJS.ProcessEnv;
+interface AgentDriverInput { | host: AgentDriverHost;
+interface AgentDriverInput { | stateDir: string;
+interface AgentDriverModule {
+interface AgentDriverModule { | client?: AgentDriverClient;
+interface AgentDriverModule { | createAgentDriver(input: AgentDriverInput): HostedAgentDriver | Promise<HostedAgentDriver>;
+interface AgentDriverModule { | id: string;
+interface AgentDriverModule { | recover?(input: AgentDriverRecoveryInput): Promise<void>;
+interface AgentDriverProcess {
+interface AgentDriverProcess { | readonly pid: number;
+interface AgentDriverProcess { | readonly token: string;
+interface AgentDriverTarget {
+interface AgentDriverTarget { | path: string;
+interface AgentDriverTarget { | port: number;
+interface BuildCacheCapability {
+interface BuildCacheCapability { | resolve(input: BuildResolveInput): string | null | Promise<string | null>;
+interface BuildCacheCapability { | store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+interface BuildCacheContext extends BuildCacheTarget {
+interface BuildCacheContext extends BuildCacheTarget { | signal: AbortSignal;
+interface BuildCacheTarget {
+interface BuildCacheTarget { | key: string;
+interface BuildCacheTarget { | platform: "ios" | "android";
+interface BuildCacheTarget { | projectRoot: string;
+interface BuildResolveInput extends BuildCacheContext {
+interface BuildResolveInput extends BuildCacheContext { | destinationDir: string;
+interface BuildStoreInput extends BuildCacheContext {
+interface BuildStoreInput extends BuildCacheContext { | overwrite: boolean;
+interface BuildStoreInput extends BuildCacheContext { | sourcePath: string;
+interface CacheContractCheck {
+interface CacheContractCheck { | capability: "builds";
+interface CacheContractCheck { | name: string;
+interface CacheContractCheck { | run(): Promise<void>;
+interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> {
+interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | baseDir?: string;
+interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | options?: Record<string, unknown>;
+interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | providerModule: string;
+interface CacheContractOptions {
+interface CacheContractOptions { | abortSettleMs?: number;
+interface CacheContractOptions { | checkTimeoutMs?: number;
+interface CacheContractOptions { | platform?: "ios" | "android";
+interface CacheContractOptions { | projectRoot: string;
+interface CacheContractOptions { | provider: CacheProvider;
+interface CacheContractOptions { | workDir: string;
+interface CacheContractResult {
+interface CacheContractResult { | capability: "builds" | "module";
+interface CacheContractResult { | error?: string;
+interface CacheContractResult { | name: string;
+interface CacheContractResult { | passed: boolean;
+interface CacheProvider {
+interface CacheProvider { | builds?: BuildCacheCapability;
+interface CacheProvider { | files?: FileCacheCapability;
+interface CacheProvider { | metro?: MetroCacheCapability;
+interface CacheProviderConfig {
+interface CacheProviderConfig { | baseDir: string;
+interface CacheProviderConfig { | options: Record<string, unknown>;
+interface CacheProviderConfig { | provider: string;
+interface CacheProviderModule {
+interface CacheProviderModule { | apiVersion: typeof CACHE_PROVIDER_API_VERSION;
+interface CacheProviderModule { | createCacheProvider(input: {
+interface CacheProviderModule { | env?: NodeJS.ProcessEnv;
+interface CacheProviderModule { | options: Record<string, unknown>;
+interface CacheProviderModule { | projectRoot: string;
+interface CacheProviderModule { | }): CacheProvider | Promise<CacheProvider>;
+interface ContractOptions {
+interface ContractOptions { | "agent-driver": AgentDriverContractOptions;
+interface ContractOptions { | "cache-provider": CacheContractModuleOptions;
+interface ContractOptions { | transport: TransportContractOptions;
+interface ContractResults {
+interface ContractResults { | "agent-driver": AgentDriverContractResult[];
+interface ContractResults { | "cache-provider": CacheContractResult[];
+interface ContractResults { | transport: TransportContractResult[];
+interface FileCacheCapability {
+interface FileCacheCapability { | resolve(input: FileCacheResolveInput): Promise<string | null>;
+interface FileCacheCapability { | size: number;
+interface FileCacheCapability { | stat?(input: Pick<FileCacheResolveInput, "key" | "signal">): Promise<{
+interface FileCacheCapability { | store(input: FileCacheStoreInput): Promise<void>;
+interface FileCacheCapability { | } | null>;
+interface FileCacheResolveInput {
+interface FileCacheResolveInput { | destinationDir: string;
+interface FileCacheResolveInput { | key: string;
+interface FileCacheResolveInput { | signal: AbortSignal;
+interface FileCacheStoreInput {
+interface FileCacheStoreInput { | key: string;
+interface FileCacheStoreInput { | overwrite: boolean;
+interface FileCacheStoreInput { | signal: AbortSignal;
+interface FileCacheStoreInput { | sourcePath: string;
+interface HostedAgentDriver {
+interface HostedAgentDriver { | issue(app: HostedAgentApp): Promise<AgentDriverGrant>;
+interface HostedAgentDriver { | onExit(listener: () => void): () => void;
+interface HostedAgentDriver { | readonly name: string;
+interface HostedAgentDriver { | revoke(session: string): Promise<void>;
+interface HostedAgentDriver { | start(): Promise<void>;
+interface HostedAgentDriver { | stop(): Promise<void>;
+interface HostedAgentDriver { | target(session: string): Promise<AgentDriverTarget | null>;
+interface HostedAgentIssuedGrant {
+interface HostedAgentIssuedGrant { | driver: string;
+interface HostedAgentIssuedGrant { | lease?: HostedAgentLease;
+interface HostedAgentIssuedGrant { | path: string;
+interface HostedAgentIssuedGrant { | scope: string;
+interface HostedAgentIssuedGrant { | token: string;
+interface HostedAgentLease {
+interface HostedAgentLease { | backend?: "ios-instance" | "android-instance";
+interface HostedAgentLease { | clientId: string;
+interface HostedAgentLease { | deviceKey: string;
+interface HostedAgentLease { | runId: string;
+interface HostedAgentLease { | tenant: string;
+interface LoadCacheProviderResult {
+interface LoadCacheProviderResult { | name?: string;
+interface LoadCacheProviderResult { | none?: true;
+interface LoadCacheProviderResult { | provider?: CacheProvider;
+interface LoadCacheProviderResult { | unavailable?: string;
+interface MetroCacheCapability {
+interface MetroCacheCapability { | get(input: MetroCacheGetInput): unknown;
+interface MetroCacheCapability { | set(input: MetroCacheSetInput): void | Promise<void>;
+interface MetroCacheContext {
+interface MetroCacheContext { | cacheName: string;
+interface MetroCacheContext { | projectRoot: string;
+interface MetroCacheContext { | signal: AbortSignal;
+interface MetroCacheGetInput extends MetroCacheContext {
+interface MetroCacheGetInput extends MetroCacheContext { | key: Buffer;
+interface MetroCacheSetInput extends MetroCacheContext {
+interface MetroCacheSetInput extends MetroCacheContext { | key: Buffer;
+interface MetroCacheSetInput extends MetroCacheContext { | value: unknown;
+interface PluginSource {
+interface PluginSource { | load(): Promise<unknown>;
+interface PluginSource { | manifest(): unknown | Promise<unknown>;
+interface ProviderCallResult<T> {
+interface ProviderCallResult<T> { | failed?: string;
+interface ProviderCallResult<T> { | timedOut?: true;
+interface ProviderCallResult<T> { | value?: T;
+interface ResolveTieredBuildOptions {
+interface ResolveTieredBuildOptions { | destinationDir: string;
+interface ResolveTieredBuildOptions { | ensureDestination?: (destinationDir: string) => void;
+interface ResolveTieredBuildOptions { | loadProvider?: LoadBuildProvider | null;
+interface ResolveTieredBuildOptions { | local: BuildCacheCapability;
+interface ResolveTieredBuildOptions { | signal?: AbortSignal;
+interface ResolveTieredBuildOptions { | skipRead?: boolean;
+interface ResolveTieredBuildOptions { | target: BuildCacheTarget;
+interface ResolveTieredBuildOptions { | timeoutMs?: number;
+interface ResolveTieredBuildOptions { | warn?: WarnOnce;
+interface StoreTieredBuildOptions {
+interface StoreTieredBuildOptions { | loadProvider?: LoadBuildProvider | null;
+interface StoreTieredBuildOptions { | local: BuildCacheCapability;
+interface StoreTieredBuildOptions { | overwrite: boolean;
+interface StoreTieredBuildOptions { | signal?: AbortSignal;
+interface StoreTieredBuildOptions { | sourcePath: string;
+interface StoreTieredBuildOptions { | target: BuildCacheTarget;
+interface StoreTieredBuildOptions { | timeoutMs?: number;
+interface StoreTieredBuildOptions { | warn?: WarnOnce;
+interface TieredBuildResolution {
+interface TieredBuildResolution { | path: string;
+interface TieredBuildResolution { | providerName?: string;
+interface TieredBuildResolution { | storedLocally?: boolean;
+interface TieredBuildResolution { | tier: "local" | "provider";
+interface TieredBuildStoreResult {
+interface TieredBuildStoreResult { | localPath: string | null;
+interface TieredBuildStoreResult { | providerName: string | null;
+interface TieredBuildStoreResult { | providerUpload: Promise<ProviderCallResult<void>> | null;
+interface Transport {
+interface Transport { | bindAddresses?(): string[];
+interface Transport { | close?(): void | Promise<void>;
+interface Transport { | expose?(input: TransportExposeInput): Promise<TransportExposure>;
+interface Transport { | id: string;
+interface Transport { | identify?(peer: TransportPeer): Promise<TransportIdentity | null>;
+interface Transport { | resolve?(input: TransportResolveInput): Promise<TransportEndpoint | {
+interface Transport { | unexpose?(input: TransportExposeInput): Promise<void>;
+interface Transport { | unresolved: string;
+interface Transport { | watch?(listener: (event: TransportWatchEvent) => void): () => void;
+interface TransportContractOptions {
+interface TransportContractOptions { | baseDir: string;
+interface TransportContractOptions { | checkTimeoutMs?: number;
+interface TransportContractOptions { | env: NodeJS.ProcessEnv;
+interface TransportContractOptions { | expose?: {
+interface TransportContractOptions { | options?: Record<string, unknown>;
+interface TransportContractOptions { | port: number;
+interface TransportContractOptions { | reference: string;
+interface TransportContractResult {
+interface TransportContractResult { | error?: string;
+interface TransportContractResult { | name: string;
+interface TransportContractResult { | passed: boolean;
+interface TransportEndpoint {
+interface TransportEndpoint { | host: string;
+interface TransportEndpoint { | servername: string;
+interface TransportEndpoint { | url: string;
+interface TransportExposeInput {
+interface TransportExposeInput { | port: number;
+interface TransportIdentity {
+interface TransportIdentity { | id: string;
+interface TransportIdentity { | name: string;
+interface TransportIdentity { | user: string;
+interface TransportInput {
+interface TransportInput { | env: NodeJS.ProcessEnv;
+interface TransportInput { | options: Record<string, unknown>;
+interface TransportModule {
+interface TransportModule { | createTransport(input: TransportInput): Transport | Promise<Transport>;
+interface TransportModule { | id: string;
+interface TransportPeer {
+interface TransportPeer { | address: string;
+interface TransportPeer { | headers: TransportHeaders;
+interface TransportResolveInput {
+interface TransportResolveInput { | address?: string;
+interface TransportResolveInput { | credential: {
+interface TransportResolveInput { | id?: string;
+interface TransportResolveInput { | machine: string;
+interface TransportResolveInput { | name: string;
+interface TransportResolveInput { | suffix?: string;
+interface TransportResolveInput { | tailnet?: {
+interface TransportWatchEvent {
+interface TransportWatchEvent { | addresses: string[];
+type AgentDriverGrant = Omit<HostedAgentIssuedGrant, "path">;
+type AgentDriverProcessStatus = "same" | "different" | "gone" | "unknown";
+type AgentDriverRecoveryInput = Omit<AgentDriverInput, "device">;
+type AgentDriverStopStep = readonly [signal: NodeJS.Signals, waitMs: number];
+type AgentDriverUnavailableError = Error & {
+type AgentDriverUnavailableError = Error & { | code: typeof AGENT_DRIVER_UNAVAILABLE;
+type HostedAgentApp = {
+type HostedAgentApp = { | bundleId: string;
+type HostedAgentApp = { | client: string;
+type HostedAgentApp = { | session: string;
+type HostedAgentDevice = {
+type HostedAgentDevice = { | session: string;
+type HostedAgentGrant = {
+type HostedAgentGrant = { | driver: "none";
+type LoadAgentDriverModuleResult = {
+type LoadAgentDriverModuleResult = { | module: AgentDriverModule;
+type LoadAgentDriverResult = {
+type LoadAgentDriverResult = { | driver: HostedAgentDriver;
+type LoadBuildProvider = () => Promise<LoadCacheProviderResult> | LoadCacheProviderResult;
+type LoadTransportResult = {
+type LoadTransportResult = { | transport: Transport;
+type ServeRoute = {
+type ServeRoute = { | port: number;
+type ServeRoute = { | state: "routed";
+type TransportExposure = ServeRoute;
+type TransportHeaders = Record<string, string | string[] | undefined>;
+type WarnOnce = (code: string, message: string) => void;
+} & ({
+} & ({ | avdName?: never;
+} & ({ | pid: number;
+} & ({ | serial?: never;
+} & ({ | udid: string;
+} & ({ | udid?: never;
+} | (HostedAgentDevice & {
+} | (HostedAgentDevice & { | pid?: never;
+} | HostedAgentIssuedGrant;
+} | {
+} | { | avdName: string;
+} | { | port: number;
+} | { | ports: number[];
+} | { | reason: string;
+} | { | serial: string;
+} | { | state: "funneled";
+} | { | state: "missing";
+} | { | state: "unknown";
+} | { | udid?: never;
+} | { | unavailable: string;
+}): Promise<LoadCacheProviderResult>;
+}): Promise<LoadTransportResult>;
