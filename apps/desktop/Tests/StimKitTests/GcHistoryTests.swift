@@ -25,7 +25,7 @@ import Testing
     let manual = runs[3]
     #expect(manual.summary == "Cleared 1, kept 1, freed 2 GB")
     #expect(manual.freedBytes == 2_000_000_000)
-    #expect(manual.reason == "stim gc --delete --worktrees --older-than 7")
+    #expect(manual.reason == "stim gc")
     #expect(runs[1].summary == "Failed 1")
     #expect(runs[1].title == "Automatic maintenance")
     #expect(runs[1].reason == "Started by stim ios")
