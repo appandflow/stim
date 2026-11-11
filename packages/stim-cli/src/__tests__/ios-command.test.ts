@@ -11061,6 +11061,20 @@ describe('registered iOS project recipes', () => {
     const refused = await run({ remote: 'remote-only', json: true }, deps);
     expect(refused.exitCode).toBe(1);
     expect(refused.errs.join('\n')).toMatch(/cannot run on a hosted iOS simulator/);
+    writeHostedIos(root, 'default', {
+      machine: 'mini',
+      selected: 'auto',
+      session: '23456789-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device: null,
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const recorded = await run({ json: true }, deps);
+    expect(parseFirst(recorded.logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('runs on mini; run stim stop first'),
+    });
+    expect(recorded.calls.order).not.toContain('installIosApp');
     expect(automatic).not.toHaveBeenCalled();
   });
 

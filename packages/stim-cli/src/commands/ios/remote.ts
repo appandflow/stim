@@ -192,6 +192,14 @@ export async function selectIosPlacement(
         remedy: 'Run it on a simulator on this Mac with --remote local, or unset ios.remote.',
       },
     };
+  if (args.hostedRefusal && selection.recorded)
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's iOS simulator runs on ${selection.recorded.machine}; run stim stop first.`,
+        remedy: 'Run stim stop, then stim ios to run it on this Mac.',
+      },
+    };
   if (args.hostedRefusal) {
     const placement: DevicePlacement = { decision: 'local', reason: args.hostedRefusal };
     const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');

@@ -141,12 +141,14 @@ test('reports an exact.mjs that cannot run', async () => {
 });
 
 test.skipIf(process.platform === 'win32')(
-  'builds without a simulator unless app.json declares native modules',
+  'builds without a simulator, even one the shell names, unless app.json declares native modules',
   async () => {
     exactScript('echo "sim=$EXACT_SIM $*" > ran.txt\nexit 1');
     writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: [] }));
+    expect(exactIosProject(root).targets).toContain('hosted');
 
-    expect(await compile(context(null, null))).toMatchObject({ ok: false, exitCode: 1 });
+    const shell = testContext({ env: { ...process.env, EXACT_SIM: 'USER-SIM' } });
+    expect(await compile({ ...context(null, null), operation: shell })).toMatchObject({ ok: false, exitCode: 1 });
     expect(readFileSync(join(root, 'ran.txt'), 'utf8')).toBe('sim= ios --no-install\n');
 
     writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['shop-map'] }));
@@ -224,6 +226,13 @@ test('plans an uncached build on this machine with the bundle id from app.json',
     }),
     placement: 'this machine',
     bundleId: 'com.example.shop',
+  });
+});
+
+test('a hosted plan leaves the runtime to the hosting Mac', async () => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' } }));
+  expect(await plan({ remoteBuild: 'local', remote: 'auto', runtime: '99.0' })).toMatchObject({
+    placement: 'this machine',
   });
 });
 

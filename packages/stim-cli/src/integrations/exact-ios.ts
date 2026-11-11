@@ -34,6 +34,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from '../workspace/settings.ts';
+import { readHostedNative } from '../workspace/placement-state.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   exactDeclaresModules,
@@ -156,7 +157,9 @@ async function compile(
         remedy:
           'Build and run it with stim ios; build-only runs (stim ci build) support Exact apps without native modules.',
       });
-    return run({ ...context.operation?.env });
+    const env = { ...context.operation?.env };
+    delete env.EXACT_SIM;
+    return run(env);
   }
   const booted = await booting;
   if (!booted.ok)
@@ -343,11 +346,21 @@ async function planExactIos(
     deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
     runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
     physical: false,
+    hosted: remote !== null && !hostedUnsupported,
     remoteBackend: null,
     listRuntimes: DEFAULT_DEPS.listIosRuntimes,
     signal: operation.signal,
   });
   if (modelRefusal) return { refusal: modelRefusal };
+  const recorded = remote && hostedUnsupported ? readHostedNative(root, 'ios', slot)[slot] : undefined;
+  if (recorded)
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's iOS simulator runs on ${recorded.machine}; run stim stop first.`,
+        remedy: 'Run stim stop, then stim ios to run it on this Mac.',
+      },
+    };
   const configuration = resolveConfiguration(options.configuration, settings);
   const schemeProblem = exactSchemeProblem(options.scheme, configuration);
   if (schemeProblem)
