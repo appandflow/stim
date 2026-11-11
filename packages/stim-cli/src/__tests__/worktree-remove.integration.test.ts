@@ -13,17 +13,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import {
-  excludePodChurn,
-  porcelainPath,
-  registerRemove,
-  removeWorktreeTarget,
-  removalRemedy,
-} from '../commands/worktree.ts';
-import type { Command } from 'commander';
+import { excludePodChurn, porcelainPath, removeOp, removeWorktreeTarget, removalRemedy } from '../commands/worktree.ts';
+import type { Op } from '../cli/define-op.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { serviceRunningFrom } from '../workspace/service-guard.ts';
-import { registerStart } from '../commands/start.ts';
+import { startOp } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -31,15 +25,6 @@ import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import * as measurements from '../stimd/passes/measure.ts';
-
-type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
-
-interface CommandStub {
-  command(nameAndArgs?: string): CommandStub;
-  description(str?: string): CommandStub;
-  option(flags?: string, description?: string): CommandStub;
-  action(fn: ActionFn): CommandStub;
-}
 
 test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
@@ -73,50 +58,16 @@ function canon(p: string) {
   }
 }
 
-function captureAction(register: (cmd: Command) => void) {
-  let captured: ActionFn | undefined;
-  const stub: CommandStub = {
-    command() {
-      return stub;
-    },
-    description() {
-      return stub;
-    },
-    option() {
-      return stub;
-    },
-    action(fn: ActionFn) {
-      captured = fn;
-      return stub;
-    },
-  };
-  register(stub as Command);
-  return (target: string | undefined, opts: Record<string, unknown> = {}) => {
-    if (!captured) throw new Error('register did not register an action');
-    return captured(target, opts);
-  };
+function captureAction(op: Op) {
+  return (target: string | undefined, opts: Record<string, unknown> = {}) =>
+    op.run?.({ args: [target], options: opts, parent: {}, version: '0.0.0' });
 }
 
-function captureStartAction(overrides: Parameters<typeof registerStart>[1]) {
-  let captured: ((opts: Record<string, unknown>) => void | Promise<void>) | undefined;
-  const stub: CommandStub = {
-    command() {
-      return stub;
-    },
-    description() {
-      return stub;
-    },
-    option() {
-      return stub;
-    },
-    action(fn) {
-      captured = fn as unknown as (opts: Record<string, unknown>) => void | Promise<void>;
-      return stub;
-    },
+function captureStartAction(overrides: Parameters<typeof startOp>[0]) {
+  const op = startOp(overrides);
+  return async (opts: Record<string, unknown>): Promise<void> => {
+    await op.run?.({ args: [], options: opts, parent: {}, version: '0.0.0' });
   };
-  registerStart(stub as Command, overrides);
-  if (!captured) throw new Error('registerStart did not register an action');
-  return captured;
 }
 
 interface PorcelainEntry {
@@ -333,7 +284,7 @@ test('action: on the source checkout, reclaims the environment with the owned de
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -363,7 +314,7 @@ test('action: a dirty source checkout still reclaims, without a refusal and with
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -391,7 +342,7 @@ test('action: --force changes nothing on the source checkout -- reclaim only, tr
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, { force: true });
   } finally {
     console.error = original;
@@ -424,7 +375,7 @@ test('action: a failed device teardown on the source checkout keeps the record a
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -458,7 +409,7 @@ test('action: source-checkout artifact deletion blocks a concurrent replacement 
     }
   };
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -485,7 +436,7 @@ describe('on the source checkout, from a subfolder', () => {
     'reclaims only the project at or above the %s',
     async (where) => {
       const { mobile, web } = sourceCheckout();
-      const run = captureAction(registerRemove);
+      const run = captureAction(removeOp);
       await run(where === 'project folder' ? mobile : join(mobile, 'src'), {});
 
       expect(process.exitCode).not.toBe(1);
@@ -499,18 +450,18 @@ describe('on the source checkout, from a subfolder', () => {
     const example = join(mobile, 'example');
     mkdirSync(example);
     upsertProject(example, { metroPort: 8087 });
-    await captureAction(registerRemove)(mobile, {});
+    await captureAction(removeOp)(mobile, {});
     expect(getProject(example)).toBe(null);
     expect(getProject(web)?.metroPort).toBe(8086);
 
-    await captureAction(registerRemove)(join(mainDir, '..', basename(mainDir)), {});
+    await captureAction(removeOp)(join(mainDir, '..', basename(mainDir)), {});
     expect(process.exitCode).not.toBe(1);
     expect(getProject(web)).toBe(null);
   });
 
   test('from the checkout root still reclaims every project under it', async () => {
     const { mobile, web } = sourceCheckout();
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
 
     expect(process.exitCode).not.toBe(1);
@@ -522,7 +473,7 @@ describe('on the source checkout, from a subfolder', () => {
     const { mobile, web } = sourceCheckout();
     const docs = join(mainDir, 'docs');
     mkdirSync(docs);
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(docs, {});
 
     expect(process.exitCode).toBe(1);
@@ -553,7 +504,7 @@ describe('in a linked worktree, from a subfolder', () => {
     'reclaims only the project at or above the %s and leaves the tree',
     async (where) => {
       const { mobile, web, removedTree } = linkedWorktree();
-      await captureAction(registerRemove)(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+      await captureAction(removeOp)(where === 'project folder' ? mobile : join(mobile, 'src'), {});
 
       expect(process.exitCode).not.toBe(1);
       expect(getProject(mobile)).toBe(null);
@@ -567,7 +518,7 @@ describe('in a linked worktree, from a subfolder', () => {
     const { mobile, web, removedTree } = linkedWorktree();
     const docs = join(wtDir, 'docs');
     mkdirSync(docs);
-    await captureAction(registerRemove)(docs, {});
+    await captureAction(removeOp)(docs, {});
 
     expect(process.exitCode).toBe(1);
     expect(getProject(mobile)?.metroPort).toBe(8085);
@@ -586,18 +537,18 @@ describe('in a linked worktree, from a subfolder', () => {
       ]),
     });
     setExecutor(exec);
-    await captureAction(registerRemove)(sub, {});
+    await captureAction(removeOp)(sub, {});
     expect(process.exitCode).not.toBe(1);
     expect(getProject(wtDir)?.worktreeBranchOwned).toBe(true);
     expect(exec.calls.run.some((cmd) => /worktree remove/.test(cmd))).toBe(false);
 
-    await captureAction(registerRemove)(wtDir, {});
+    await captureAction(removeOp)(wtDir, {});
     expect(exec.calls.run.some((cmd) => /update-ref -d .*worktree-feat-x/.test(cmd))).toBe(true);
   });
 
   test('the worktree root removes the whole worktree and every project under it', async () => {
     const { mobile, web, removedTree } = linkedWorktree();
-    await captureAction(registerRemove)(wtDir, {});
+    await captureAction(removeOp)(wtDir, {});
 
     expect(process.exitCode).not.toBe(1);
     expect(removedTree()).toBe(true);
@@ -610,14 +561,14 @@ describe('in a linked worktree, from a subfolder', () => {
     const links = canon(mkdtempSync(join(tmpdir(), 'stim-test-links-')));
     try {
       symlinkSync(join(wtDir, 'apps'), join(links, 'apps-link'));
-      await captureAction(registerRemove)(join(links, 'apps-link', 'mobile'), {});
+      await captureAction(removeOp)(join(links, 'apps-link', 'mobile'), {});
       expect(process.exitCode).not.toBe(1);
       expect(getProject(mobile)).toBe(null);
       expect(getProject(web)?.metroPort).toBe(8086);
       expect(removedTree()).toBe(false);
 
       symlinkSync(wtDir, join(links, 'root-link'));
-      await captureAction(registerRemove)(join(links, 'root-link'), {});
+      await captureAction(removeOp)(join(links, 'root-link'), {});
       expect(process.exitCode).not.toBe(1);
       expect(removedTree()).toBe(true);
       expect(getProject(web)).toBe(null);
@@ -648,7 +599,7 @@ test('action: a registered project directory that is not a git repo gets the sam
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, {});
   } finally {
     console.error = original;
@@ -675,7 +626,7 @@ test('action: refuses when git cannot answer the status check, leaving config un
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(process.exitCode).toBe(1);
@@ -709,7 +660,7 @@ test.each([
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, {});
   } finally {
     console.error = original;
@@ -739,7 +690,7 @@ test.each([
     const original = console.error;
     console.error = (m) => errs.push(String(m));
     try {
-      const run = captureAction(registerRemove);
+      const run = captureAction(removeOp);
       await run(wtDir, {});
     } finally {
       console.error = original;
@@ -772,7 +723,7 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
   const original = console.error;
   console.error = (message) => errs.push(String(message));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, { force: true });
   } finally {
     console.error = original;
@@ -800,7 +751,7 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(process.exitCode).toBe(1);
@@ -851,7 +802,7 @@ test('action: removing a deleted worktree drops the record of its project and th
   rmSync(wtDir, { recursive: true, force: true });
   setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
 
-  await captureAction(registerRemove)(wtDir, {});
+  await captureAction(removeOp)(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
   expect(getProject(wtDir)).toBe(null);
@@ -868,7 +819,7 @@ test.skipIf(process.platform === 'win32')(
     const original = console.error;
     console.error = (m) => errs.push(String(m));
     try {
-      await captureAction(registerRemove)(unmounted, {});
+      await captureAction(removeOp)(unmounted, {});
     } finally {
       console.error = original;
     }
@@ -913,7 +864,7 @@ test('action: a timed-out worktree list after removal keeps the branch and the r
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    await captureAction(registerRemove)(wtDir, {});
+    await captureAction(removeOp)(wtDir, {});
   } finally {
     console.error = original;
   }
@@ -945,7 +896,7 @@ test('action: a HEAD read that times out after reclaim still reports what was re
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    await captureAction(registerRemove)(wtDir, {});
+    await captureAction(removeOp)(wtDir, {});
   } finally {
     console.error = original;
   }
@@ -976,7 +927,7 @@ test('action: pending cleanup keeps a branch that another worktree checks out', 
   };
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(process.exitCode).toBe(1);
@@ -1001,7 +952,7 @@ test('action: tunnel verification failure retains state and refuses worktree rem
   const original = console.error;
   console.error = (message) => errs.push(String(message));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, { force: true });
   } finally {
     console.error = original;
@@ -1029,7 +980,7 @@ test('action: a missing recorded tunnel does not block normal worktree removal',
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
@@ -1054,7 +1005,7 @@ test('action: a retained EAS session prevents generic worktree removal', async (
   const original = console.error;
   console.error = (message) => errs.push(String(message));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, {});
   } finally {
     console.error = original;
@@ -1079,7 +1030,7 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
@@ -1114,7 +1065,7 @@ test('action: a concurrent tunnel start cannot publish a replacement during work
   };
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
+  const run = captureAction(removeOp);
   await run(wtDir, {});
 
   expect(competingStart).not.toBeNull();
@@ -1172,7 +1123,7 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
   setExecutor(exec);
 
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, {});
     expect(nestedStart).not.toBeNull();
     await nestedStart;
@@ -1209,7 +1160,7 @@ test('against a real repo: remove on the source checkout reclaims the environmen
 
     console.error = (m) => errs.push(String(m));
     console.log = () => {};
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(repo, {});
     console.error = originalError;
     console.log = originalLog;
@@ -1289,7 +1240,7 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     const sims = realGitFakeSimctl(simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]));
 
     console.error = (m) => errs.push(String(m));
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wt, { force: true });
     console.error = originalError;
 
@@ -1343,7 +1294,7 @@ test.skipIf(process.platform === 'win32')(
 
       console.error = (m) => errs.push(String(m));
       console.log = (m) => outs.push(String(m));
-      await captureAction(registerRemove)(wt, {});
+      await captureAction(removeOp)(wt, {});
       console.error = originalError;
       console.log = originalLog;
 
@@ -1390,7 +1341,7 @@ test.skipIf(process.platform === 'win32')(
       });
 
       console.error = (m) => errs.push(String(m));
-      await captureAction(registerRemove)(wt, {});
+      await captureAction(removeOp)(wt, {});
       console.error = originalError;
 
       expect(process.exitCode).toBe(1);
@@ -1429,7 +1380,7 @@ test.skipIf(process.platform === 'win32')(
       });
 
       console.error = (m) => errs.push(String(m));
-      await captureAction(registerRemove)(wt, {});
+      await captureAction(removeOp)(wt, {});
       console.error = originalError;
 
       const [entry] = readdirSync(join(tmpHome, 'trash'));
@@ -1533,7 +1484,7 @@ test.skipIf(process.platform !== 'linux')(
         systemdUnit('dev.stim.server', join(wt, 'server.mjs'), true),
       );
       console.error = (m) => errs.push(String(m));
-      const run = captureAction(registerRemove);
+      const run = captureAction(removeOp);
       await run(wt, { force: true });
       console.error = originalError;
       expect(existsSync(wt)).toBe(true);
@@ -1569,7 +1520,7 @@ describe.skipIf(process.platform !== 'darwin')('stim service guard', () => {
         );
 
         console.error = (m) => errs.push(String(m));
-        const run = captureAction(registerRemove);
+        const run = captureAction(removeOp);
         await run(wt, { force: true });
         console.error = originalError;
 
@@ -1608,7 +1559,7 @@ test.each(['submodule add', 'embedded repository'] as const)(
       );
 
       console.error = (m) => errs.push(String(m));
-      const run = captureAction(registerRemove);
+      const run = captureAction(removeOp);
       await run(wt, {});
       console.error = originalError;
 
@@ -1645,7 +1596,7 @@ test('action: in a bare-repository layout, the worktree on the bare HEAD branch 
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -1673,7 +1624,7 @@ test('action: in a bare-repository layout with a detached bare HEAD, removal ref
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wtDir, {});
   } finally {
     console.error = original;
@@ -1697,7 +1648,7 @@ test('action: the bare repository directory itself is refused as a removal targe
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(bareRoot, {});
   } finally {
     console.error = original;
@@ -1747,7 +1698,7 @@ async function removeCapturingErrors(wt: string): Promise<string> {
   try {
     console.error = (m) => errs.push(String(m));
     console.log = () => {};
-    await captureAction(registerRemove)(wt, {});
+    await captureAction(removeOp)(wt, {});
   } finally {
     console.error = originalError;
     console.log = originalLog;
@@ -1849,7 +1800,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
 
     console.error = (m) => errs.push(String(m));
     console.log = () => {};
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wt, {});
     console.error = originalError;
     console.log = originalLog;
@@ -1879,7 +1830,7 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
     const wt = podChurnRepo(base, { extraDirt: true });
     console.error = (m) => errs.push(String(m));
     console.log = () => {};
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(wt, {});
     console.error = originalError;
     console.log = originalLog;
@@ -1914,7 +1865,7 @@ test('action: removal releases this workspace lease and leaves another workspace
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
-    const run = captureAction(registerRemove);
+    const run = captureAction(removeOp);
     await run(mainDir, {});
   } finally {
     console.error = original;
@@ -1955,7 +1906,7 @@ test.each(PARKING_PRESSURE)(
     const original = console.error;
     console.error = (m) => errs.push(String(m));
     try {
-      await captureAction(registerRemove)(mainDir, {});
+      await captureAction(removeOp)(mainDir, {});
     } finally {
       console.error = original;
       vi.restoreAllMocks();

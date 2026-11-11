@@ -5,7 +5,7 @@ import { withDrainingCancellation } from '../engine/operation-state.ts';
 import type { ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../stimd/metro/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
@@ -102,7 +102,10 @@ async function resolveStartupMetro(port: number, root: string): Promise<MetroRes
 }
 
 function waitForStartup(ms: number): Promise<void> {
-  return cancellableSleep(ms, { signal: ambientContext()?.signal, what: 'Metro startup' });
+  return cancellableSleep(ms, {
+    signal: ambientContext()?.signal,
+    what: 'Metro startup',
+  });
 }
 
 function writeNote(line: string): void {
@@ -132,7 +135,9 @@ export function parseWait(value: unknown): WaitResult {
   if (value === undefined || value === null) return { seconds: DEFAULT_WAIT_SECONDS };
   const seconds = Number(value);
   if (!Number.isFinite(seconds) || seconds <= 0) {
-    return { error: `Invalid --wait value ${JSON.stringify(value)}. Pass a number of seconds, e.g. --wait 90.` };
+    return {
+      error: `Invalid --wait value ${JSON.stringify(value)}. Pass a number of seconds, e.g. --wait 90.`,
+    };
   }
   return { seconds };
 }
@@ -173,7 +178,12 @@ export function liveSupervisor({
     inspectIdentity,
   });
   return target.status === 'ours' && target.port === port
-    ? { pid: target.pid!, port: target.port!, mode: target.mode ?? null, startedAt: target.startedAt ?? null }
+    ? {
+        pid: target.pid!,
+        port: target.port!,
+        mode: target.mode ?? null,
+        startedAt: target.startedAt ?? null,
+      }
     : null;
 }
 
@@ -225,17 +235,6 @@ export function readLogTail(file: string, n: number = LOG_TAIL_LINES): string[] 
   } catch {
     return [];
   }
-}
-
-export default function startCommand(program: Command): void {
-  registerStart(program);
-}
-
-interface StartOptions {
-  json?: boolean;
-  wait?: string;
-  remote?: boolean;
-  resetCache?: boolean;
 }
 
 interface StartCommandDeps {
@@ -294,19 +293,32 @@ function normalizeManagedTunnelUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
 }
 
-export function registerStart(program: Command, overrides: Partial<StartCommandDeps> = {}): void {
+export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
   const d = { ...DEFAULT_START_DEPS, ...overrides };
-  program
-    .command('start')
-    .description(
+  return defineOp({
+    name: 'start',
+    description:
       "Start this workspace's dev server, run by this home's stimd, and wait until it verifies as this project's. " +
-        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
-    )
-    .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
-    .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
-    .option('--remote', 'Prepare the dev server for a remote device')
-    .option('--reset-cache', "Restart owned Metro and clear this app's Metro caches")
-    .action(async (opts: StartOptions) => {
+      'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
+    options: {
+      json: {
+        flags: '--json',
+        description: 'Emit the facts as a single JSON line on stdout; every other line goes to stderr',
+      },
+      wait: {
+        flags: '--wait <seconds>',
+        description: `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`,
+      },
+      remote: {
+        flags: '--remote',
+        description: 'Prepare the dev server for a remote device',
+      },
+      resetCache: {
+        flags: '--reset-cache',
+        description: "Restart owned Metro and clear this app's Metro caches",
+      },
+    },
+    run: async ({ options: opts }) => {
       const json = Boolean(opts.json);
       const out = (line: string) => {
         if (json) console.error(line);
@@ -409,13 +421,21 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             if (!(error instanceof Error) || !('code' in error) || error.code !== 'STIM_CANCELLED') throw error;
             return {
               ok: false as const,
-              error: startError({ code: 'STIM_CANCELLED', message: error.message }),
+              error: startError({
+                code: 'STIM_CANCELLED',
+                message: error.message,
+              }),
               lines: [],
             };
           }
         }),
       );
-      if (!result.ok) return fail({ ...result.error, lines: result.lines, exitCode: interrupted ?? 1 });
+      if (!result.ok)
+        return fail({
+          ...result.error,
+          lines: result.lines,
+          exitCode: interrupted ?? 1,
+        });
       report({
         json,
         out,
@@ -424,8 +444,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         links: await workspaceLinks(root),
       });
       if (interrupted !== null) exitCli(interrupted);
-    });
+    },
+  });
 }
+
+const start: Op = startOp();
+
+export default start;
 
 interface StartRefusalArgs {
   code: string;
@@ -479,7 +504,12 @@ export interface HostedMetroPorts {
 
 export type StartDevServerResult =
   | { ok: true; facts: StartFacts; waited: string }
-  | { ok: false; error: StartError; lines: string[]; retainedClaimRoots?: string[] };
+  | {
+      ok: false;
+      error: StartError;
+      lines: string[];
+      retainedClaimRoots?: string[];
+    };
 
 export async function startDevServer(
   {
@@ -620,7 +650,13 @@ export async function startDevServer(
       }, operationSignal);
 
       const gateBudget = async () => {
-        const budget = await d.diskFloorGate({ root, note, env: ambientEnv(), signal: operationSignal, onReclaim });
+        const budget = await d.diskFloorGate({
+          root,
+          note,
+          env: ambientEnv(),
+          signal: operationSignal,
+          onReclaim,
+        });
         if (budget.refusal) return fail(budget.refusal);
       };
       if (resetCache) {
@@ -648,7 +684,11 @@ export async function startDevServer(
       const port = await resolvePort(root, settings, note, fail, hostedPorts);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveStartupMetro(port, root);
-      let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+      let supervisor = liveSupervisor({
+        state: readWorkspaceState(root),
+        project: getProject(root),
+        port,
+      });
       const recordedTarget = resolveSupervisorTarget({
         state: readWorkspaceState(root)?.supervisor,
         record: getProject(root)?.supervisor,
@@ -689,7 +729,12 @@ export async function startDevServer(
             ),
           );
         };
-        const request: MetroRequest = { since: Date.now(), answer: undefined, cancel, announce };
+        const request: MetroRequest = {
+          since: Date.now(),
+          answer: undefined,
+          cancel,
+          announce,
+        };
         void (async () => {
           try {
             request.answer = await d.ensureMetro(
@@ -709,9 +754,19 @@ export async function startDevServer(
       const attempt = async (): Promise<StartFacts> => {
         if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
           const available = d.providers(tunnelMode);
-          const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
+          const plan = planMetroReach({
+            mode: tunnelMode,
+            metroPort: port,
+            publicUrl,
+            isExpo: expoServer,
+            available,
+          });
           if ('failed' in plan) {
-            return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
+            return fail({
+              code: 'STIM_REMOTE_METRO_UNREACHABLE',
+              message: plan.failed,
+              remedy: plan.remedy,
+            });
           }
           if ('start' in plan) {
             const candidates: readonly ManagedProvider[] =
@@ -721,7 +776,12 @@ export async function startDevServer(
             try {
               acquisition = await (async (): Promise<ManagedTunnelAcquisition> => {
                 let tracking: ManagedTunnelTracking;
-                let startedCleanup: (() => Promise<{ status: 'stopped' | 'failed'; reason?: string }>) | null = null;
+                let startedCleanup:
+                  | (() => Promise<{
+                      status: 'stopped' | 'failed';
+                      reason?: string;
+                    }>)
+                  | null = null;
                 const recorded = readMetroTunnel(root);
                 if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
                   if (!recorded.processToken) {
@@ -820,7 +880,10 @@ export async function startDevServer(
                     };
                   }
                   for (const held of claims)
-                    setClaimChild(held, { pid: started.pid, processToken: started.processToken });
+                    setClaimChild(held, {
+                      pid: started.pid,
+                      processToken: started.processToken,
+                    });
                   const record: TunnelRecord = {
                     provider: started.provider,
                     pid: started.pid,
@@ -953,7 +1016,11 @@ export async function startDevServer(
               note(phaseLine('lan', `tailnet-only Metro: ${publicOrigin}`));
             }
             resolution = await resolveStartupMetro(port, root);
-            supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+            supervisor = liveSupervisor({
+              state: readWorkspaceState(root),
+              project: getProject(root),
+              port,
+            });
           }
         }
 
@@ -1007,7 +1074,12 @@ export async function startDevServer(
             const tunnelReady = await waitForExpoTunnel({
               root,
               seconds: waitSeconds,
-              aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+              aborted: () =>
+                !liveSupervisor({
+                  state: readWorkspaceState(root),
+                  project: getProject(root),
+                  port,
+                }),
             });
             if (!tunnelReady) {
               const stillLive = liveSupervisor({
@@ -1023,7 +1095,11 @@ export async function startDevServer(
                 remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
               });
             }
-            supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+            supervisor = liveSupervisor({
+              state: readWorkspaceState(root),
+              project: getProject(root),
+              port,
+            });
           }
           requireExpoTunnel();
           if (!supervisor) {
@@ -1037,7 +1113,13 @@ export async function startDevServer(
             operationSignal,
           );
           await heldByStimd();
-          return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
+          return startFacts({
+            root,
+            port,
+            supervisor,
+            logsDir,
+            alreadyRunning: true,
+          });
         }
 
         if (!metro.request && supervisor) {
@@ -1065,7 +1147,12 @@ export async function startDevServer(
             const tunnelReady = await waitForExpoTunnel({
               root,
               seconds: waitSeconds,
-              aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+              aborted: () =>
+                !liveSupervisor({
+                  state: readWorkspaceState(root),
+                  project: getProject(root),
+                  port,
+                }),
             });
             if (!tunnelReady) {
               const stillLive = liveSupervisor({
@@ -1083,12 +1170,21 @@ export async function startDevServer(
             }
           }
           supervisor =
-            liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
-            (tunnel ? null : supervisor);
+            liveSupervisor({
+              state: readWorkspaceState(root),
+              project: getProject(root),
+              port,
+            }) || (tunnel ? null : supervisor);
           requireExpoTunnel();
           if (managedTunnelExited()) return failExitedManagedTunnel();
           await heldByStimd();
-          return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
+          return startFacts({
+            root,
+            port,
+            supervisor,
+            logsDir,
+            alreadyRunning: true,
+          });
         }
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
@@ -1117,7 +1213,11 @@ export async function startDevServer(
             });
           const exited = answer?.op === 'error' && answer.code === 'metro-exited';
           if (answer?.op === 'error' && !exited) return fail(metroRefusal(answer, port));
-          const lines = failureEvidence({ logFile: metroOutput, logsDir, sinceTs: request.since });
+          const lines = failureEvidence({
+            logFile: metroOutput,
+            logsDir,
+            sinceTs: request.since,
+          });
           const failure: StartRefusalArgs = exited
             ? {
                 code: 'STIM_SUPERVISOR_EXITED',
@@ -1139,10 +1239,19 @@ export async function startDevServer(
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
         const metroGone = () =>
-          refused() || !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+          refused() ||
+          !liveSupervisor({
+            state: readWorkspaceState(root),
+            project: getProject(root),
+            port,
+          });
 
         if (tunnel) {
-          const tunnelReady = await waitForExpoTunnel({ root, seconds: waitSeconds, aborted: metroGone });
+          const tunnelReady = await waitForExpoTunnel({
+            root,
+            seconds: waitSeconds,
+            aborted: metroGone,
+          });
           if (!tunnelReady) {
             const gone = metroGone();
             return fail({
@@ -1155,13 +1264,21 @@ export async function startDevServer(
           }
         }
 
-        supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+        supervisor = liveSupervisor({
+          state: readWorkspaceState(root),
+          project: getProject(root),
+          port,
+        });
         const answer = supervisor ? request.answer : await answered(request);
         if (answer?.op === 'error')
           return fail({
             code: 'STIM_SUPERVISOR_EXITED',
             message: `The dev server on port ${port} stopped as it became ready.`,
-            lines: failureEvidence({ logFile: metroOutput, logsDir, sinceTs: request.since }),
+            lines: failureEvidence({
+              logFile: metroOutput,
+              logsDir,
+              sinceTs: request.since,
+            }),
             remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
           });
         const foreign = answer?.op === 'metro' && (answer.state === 'foreign' || answer.state === 'supervisor');
@@ -1172,7 +1289,13 @@ export async function startDevServer(
             remedy: 'Run `stim status` and `stim logs --errors`, then retry `stim start`.',
           });
         }
-        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: foreign });
+        return startFacts({
+          root,
+          port,
+          supervisor,
+          logsDir,
+          alreadyRunning: foreign,
+        });
       };
       const outcome = await attempt().then(
         (facts) => ({ facts }),
@@ -1245,7 +1368,9 @@ export async function startDevServer(
     };
     if (!managedRemote) return startLocked();
     try {
-      return await d.withWorktreeLock(worktreeRoot, startLocked, { signal: operationSignal });
+      return await d.withWorktreeLock(worktreeRoot, startLocked, {
+        signal: operationSignal,
+      });
     } catch (err) {
       const lockError = workspaceProcessLockError(err);
       if (lockError === 'refused') {
@@ -1283,7 +1408,11 @@ export async function startDevServer(
       };
     }
     if (!(error instanceof StartRefusal)) throw error;
-    return { ok: false, error: startError(error.refusal), lines: error.refusal.lines ?? [] };
+    return {
+      ok: false,
+      error: startError(error.refusal),
+      lines: error.refusal.lines ?? [],
+    };
   }
 }
 
@@ -1307,7 +1436,12 @@ export async function resolveWorkspaceMetroPort(
   hostedPorts?: HostedMetroPorts,
 ): Promise<number | StartError> {
   const setting = metroPortSetting(settings, ambientEnv());
-  if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
+  if (setting.error)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: setting.error,
+      remedy: SETTING_SHAPE_REMEDY,
+    };
   const pinned = setting.port;
   const project = getProject(root);
   const recorded = project?.metroPort;
@@ -1379,7 +1513,11 @@ async function reservePort(
   } catch (error) {
     throwIfCancelled(ambientContext()?.signal, 'Metro startup');
     if (error instanceof PortInspectionError) {
-      return { code: error.code, message: error.reason, remedy: PORT_INSPECTION_REMEDY };
+      return {
+        code: error.code,
+        message: error.reason,
+        remedy: PORT_INSPECTION_REMEDY,
+      };
     }
     return {
       code: 'STIM_BAD_ARG',

@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { brokenPodLinks, inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
 import { iosConfigurationSetting } from './ios/support.ts';
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, plural, releasedLeaseFact, shortHash, shortUdid } from '../command-output.ts';
 import { isTimeoutError } from '../exec.ts';
 import {
@@ -308,33 +308,39 @@ async function registerWarmedWorkspace(workspace: string, out: (line: string) =>
   }
 }
 
-export function registerWarm(worktree: Command): void {
-  worktree
-    .command('warm')
-    .description('Copy missing ignored paths from the source checkout into the current linked worktree.')
-    .option(
-      '--refresh',
-      'Before copying, fast-forward the source checkout to its upstream and install what the new commits moved.',
-    )
-    .action(async (opts: { refresh?: boolean }) => {
-      const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
-        try {
-          return await warmWorktreeTarget({ cwd: operation.cwd, refresh: opts.refresh, operation });
-        } catch (error) {
-          if (!operation.signal.aborted || error instanceof WorkspaceProcessCleanupError) {
-            const code = (error as { code?: string })?.code;
-            console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
-            const claim = claimFailure(error, `stim worktree warm${opts.refresh ? ' --refresh' : ''}`);
-            if (claim) console.error(chalk.dim(claim.remedy));
-            if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
-          }
-          return { exitCode: 1 };
+export const warmOp: Op = defineOp({
+  name: 'warm',
+  description: 'Copy missing ignored paths from the source checkout into the current linked worktree.',
+  options: {
+    refresh: {
+      flags: '--refresh',
+      description:
+        'Before copying, fast-forward the source checkout to its upstream and install what the new commits moved.',
+    },
+  },
+  run: async ({ options: opts }) => {
+    const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
+      try {
+        return await warmWorktreeTarget({
+          cwd: operation.cwd,
+          refresh: opts.refresh,
+          operation,
+        });
+      } catch (error) {
+        if (!operation.signal.aborted || error instanceof WorkspaceProcessCleanupError) {
+          const code = (error as { code?: string })?.code;
+          console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
+          const claim = claimFailure(error, `stim worktree warm${opts.refresh ? ' --refresh' : ''}`);
+          if (claim) console.error(chalk.dim(claim.remedy));
+          if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
         }
-      });
-      if (interrupted !== null) process.exitCode = interrupted;
-      else if (value.exitCode) process.exitCode = 1;
+        return { exitCode: 1 };
+      }
     });
-}
+    if (interrupted !== null) process.exitCode = interrupted;
+    else if (value.exitCode) process.exitCode = 1;
+  },
+});
 
 export async function warmWorktreeTarget(opts: {
   cwd: string;
@@ -375,7 +381,10 @@ export async function warmWorktreeTarget(opts: {
       });
     }
     const readSettings = (): SettingsObject | null => {
-      const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+      const settings = resolveSettings({
+        gitCommonDir: common,
+        repoRoot: root,
+      });
       const shapeErrors = settingShapeErrors(settings);
       if (shapeErrors.length) {
         for (const message of shapeErrors) out(chalk.red(message));
@@ -520,7 +529,12 @@ export async function warmWorktreeTarget(opts: {
       );
       if (mutation === null) return { exitCode };
       const failure = await withWarmClaim(
-        { repositoryRoot: root, phase: 'refresh', out, signal: operation.signal },
+        {
+          repositoryRoot: root,
+          phase: 'refresh',
+          out,
+          signal: operation.signal,
+        },
         async (hold) => {
           out(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
           const settings = readSettings();
@@ -546,7 +560,13 @@ export async function warmWorktreeTarget(opts: {
       if (exitCode) return { exitCode };
     }
     await withWarmClaim(
-      { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
+      {
+        repositoryRoot: root,
+        phase: 'copy',
+        out,
+        signal: operation.signal,
+        declareSpawnsFor: operation,
+      },
       (hold) => copy(hold.wait),
     );
   } catch (error) {
@@ -616,7 +636,10 @@ function appIosProjectDir(appDir: string): IosProjectDir {
 
 const WATCHMAN_COOKIE_PATH = /(?:^|\/)\.watchman-cookie-[A-Za-z0-9._-]+$/;
 
-export function excludeWatchmanCookies(lines: string[] | null | undefined): { lines: string[]; cookies: string[] } {
+export function excludeWatchmanCookies(lines: string[] | null | undefined): {
+  lines: string[];
+  cookies: string[];
+} {
   const kept: string[] = [];
   const cookies: string[] = [];
   for (const line of lines || []) {
@@ -879,7 +902,10 @@ async function reclaimAll(
     parkedDevices,
     evictedDevices,
     poolNotes,
-    parkedMax: { ios: parkedMaxSetting('ios').max, android: parkedMaxSetting('android').max },
+    parkedMax: {
+      ios: parkedMaxSetting('ios').max,
+      android: parkedMaxSetting('android').max,
+    },
     skippedDevices,
     keptEntries,
     retainedResources,
@@ -1086,11 +1112,23 @@ async function inspectRemoval(path: string, mergedHead?: string, operation?: Sti
 
 function timedOutInspection(error: unknown): RemovalInspection {
   const blocker = `a git safety check timed out: ${error instanceof Error ? error.message : String(error)}`;
-  return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
+  return {
+    dirtyLines: [],
+    podChurn: [],
+    cookies: [],
+    unpushed: null,
+    blockers: [blocker],
+    timedOut: true,
+  };
 }
 
 async function inspectGit(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
-  const options = { removal: true, env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const options = {
+    removal: true,
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  };
   const gitAnswered = await hasUncommittedWorkAsync(path, options);
   const allDirty = gitAnswered ? await dirtyPathsAsync(path, { limit: Infinity }, options) : [];
   const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
@@ -1098,7 +1136,10 @@ async function inspectGit(path: string, mergedHead?: string, operation?: StimCon
   const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = await unpushedCommitsAsync(path, options);
   const merged = Boolean(mergedHead) && (await resolveFullRefAsync(path, 'HEAD', options)) === mergedHead;
-  const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
+  const blockers = removalBlockers({
+    dirty,
+    unpushed: merged && unpushed ? [] : unpushed,
+  });
   const submodules = await hasPopulatedSubmodulesAsync(path, options);
   if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
   else if (submodules) blockers.push('initialized submodules, which git removes only with --force');
@@ -1123,7 +1164,10 @@ async function printRemovalRefusal(
   if (
     unpushed &&
     unpushed.length &&
-    !(await hasRemoteAsync(path, { env: operation?.env, signal: operation?.signal }))
+    !(await hasRemoteAsync(path, {
+      env: operation?.env,
+      signal: operation?.signal,
+    }))
   ) {
     output.error(
       chalk.dim(
@@ -1152,7 +1196,13 @@ async function restorePodChurn(
   operation?: StimContext,
 ): Promise<void> {
   for (const file of files) {
-    if (await restoreFileAsync(path, file, { env: operation?.env, signal: operation?.signal, declareFor: operation })) {
+    if (
+      await restoreFileAsync(path, file, {
+        env: operation?.env,
+        signal: operation?.signal,
+        declareFor: operation,
+      })
+    ) {
       output.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
     } else {
       output.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
@@ -1664,7 +1714,10 @@ async function removeOrRefuse(
                 return;
               }
               await withConfigLockAsync(() =>
-                upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha }),
+                upsertProject(path, {
+                  worktreeRemovalComplete: true,
+                  worktreePendingBranchSha: approvedBranchSha,
+                }),
               );
               let checkedOutAt: string | undefined;
               try {
@@ -1755,20 +1808,26 @@ async function removeOrRefuse(
     });
 }
 
-export function registerRemove(worktree: Command): void {
-  worktree
-    .command('remove [target]')
-    .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place. From a subfolder, in the source checkout or in a linked worktree, it reclaims only the project at or above that folder, with the projects nested under it, and leaves the tree; pass the root of a linked worktree to remove it.',
-    )
-    .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
-    .action(async (target: string | undefined, opts: { force?: boolean }) => {
-      await removeWorktreeTarget(target, { force: opts.force });
-    });
-}
+export const removeOp: Op = defineOp({
+  name: 'remove',
+  arguments: '[target]',
+  description:
+    'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place. From a subfolder, in the source checkout or in a linked worktree, it reclaims only the project at or above that folder, with the projects nested under it, and leaves the tree; pass the root of a linked worktree to remove it.',
+  options: {
+    force: {
+      flags: '--force',
+      description: 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules',
+    },
+  },
+  run: async ({ args: [target], options: opts }) => {
+    await removeWorktreeTarget(target, { force: opts.force });
+  },
+});
 
-export default function worktreeCommand(program: Command): void {
-  const worktree = program.command('worktree').description('Warm and remove Git worktrees');
-  registerWarm(worktree);
-  registerRemove(worktree);
-}
+const worktree: Op = defineOp({
+  name: 'worktree',
+  description: 'Warm and remove Git worktrees',
+  commands: [warmOp, removeOp],
+});
+
+export default worktree;

@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Command } from 'commander';
-import { registerWarm } from '../commands/worktree.ts';
+import { warmOp } from '../commands/worktree.ts';
+import { runCli } from '../cli/define-op.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
@@ -45,9 +45,7 @@ async function runWarm(cwd: string, ...args: string[]) {
   const previous = process.cwd();
   try {
     process.chdir(cwd);
-    const command = new Command();
-    registerWarm(command);
-    await command.parseAsync(['warm', ...args], { from: 'user' });
+    await runCli(warmOp, [...args], { version: '0.0.0' });
     return { stdout, stderr: stderr.join('\n'), code: process.exitCode || 0 };
   } finally {
     process.chdir(previous);

@@ -11,7 +11,10 @@ import remoteCommand from '../commands/remote.ts';
 import settingsCommand from '../commands/settings.ts';
 import shareCommand from '../commands/share.ts';
 import statsOp from '../commands/stats.ts';
+import startCommand from '../commands/start.ts';
 import statusOp from '../commands/status.ts';
+import stopOp from '../commands/stop.ts';
+import worktreeOp from '../commands/worktree.ts';
 
 const OPS = [
   statusOp,
@@ -25,6 +28,9 @@ const OPS = [
   gcOp,
   deviceCommand,
   shareCommand,
+  startCommand,
+  stopOp,
+  worktreeOp,
 ];
 
 interface Outcome {
@@ -267,6 +273,25 @@ test.each(
     ['share', '--view-password', 'ios'],
     ['share', '--passwrd', 'x', 'ios'],
     ['share', '--', 'ios', '--json'],
+    ['start'],
+    ['start', '--json', '--wait', '30', '--remote', '--reset-cache'],
+    ['start', '--wait'],
+    ['start', 'extra'],
+    ['start', '--bogus'],
+    ['stop'],
+    ['stop', '--slot', 'tablet', '--json'],
+    ['stop', '--slot', 'web'],
+    ['stop', '--slot', 'bad/slot'],
+    ['stop', '--slot'],
+    ['worktree'],
+    ['worktree', 'warm'],
+    ['worktree', 'warm', '--refresh'],
+    ['worktree', 'warm', 'extra'],
+    ['worktree', 'remove'],
+    ['worktree', 'remove', '../wt', '--force'],
+    ['worktree', 'remove', 'a', 'b'],
+    ['worktree', 'help', 'remove'],
+    ['worktree', 'bogus'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {
   const op = OPS.find((each) => each.name === name);
