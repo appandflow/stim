@@ -12,6 +12,7 @@ vi.mock('@stim-cli/agent-driver-agent-device', () => ({
   id: 'agent-device',
   client: undefined,
   recover: undefined,
+  invocation: undefined,
   createAgentDriver: () => {
     throw Object.assign(new Error(`Cannot find module '${missing}' imported from /Users/someone/stim/server.mjs`), {
       code: 'ERR_MODULE_NOT_FOUND',

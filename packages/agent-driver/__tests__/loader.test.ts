@@ -1,6 +1,11 @@
-import { agentDriverUnavailable, loadAgentDriver, loadAgentDriverModule } from '../index.ts';
+import { agentDriverUnavailable, createAgentDriverHost, loadAgentDriver, loadAgentDriverModule } from '../index.ts';
 
-const input = { env: {}, stateDir: '/nonexistent/state', claimRoot: '/nonexistent/claims' };
+const input = {
+  env: {},
+  stateDir: '/nonexistent/state',
+  claimRoot: '/nonexistent/claims',
+  host: createAgentDriverHost(),
+};
 
 function driver(name = 'fake', start = () => Promise.reject(agentDriverUnavailable('fake is not installed.'))) {
   return {

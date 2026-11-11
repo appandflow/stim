@@ -558,10 +558,10 @@ const COMMAND_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 async function runAgentDevice(argv: string[]): Promise<void> {
   const json = argv.includes('--json');
-  const { resolveAgentDevice } = await import('@stim-cli/core');
+  const { agentDriverInvocation } = await import('../device-host/agent-drivers.ts');
   let invocation: { command: string; args: string[] };
   try {
-    invocation = resolveAgentDevice(process.env);
+    invocation = await agentDriverInvocation('agent-device', process.env);
   } catch (error) {
     return refuse(
       {

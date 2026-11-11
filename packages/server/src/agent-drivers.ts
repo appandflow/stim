@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   agentDriverUnavailable,
+  createAgentDriverHost,
   loadAgentDriver,
   loadAgentDriverModule,
   type HostedAgentDevice,
@@ -47,6 +48,7 @@ export async function configuredAgentDriver(
     stateDir: join(area, name),
     claimRoot: join(area, `${name}.claims`),
     ...(device ? { device } : {}),
+    host: createAgentDriverHost(),
   });
   if ('unavailable' in loaded) {
     process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
@@ -81,7 +83,12 @@ export async function recoverAgentDrivers(env: NodeJS.ProcessEnv, areas: string[
     for (const area of areas) {
       if (!existsSync(join(area, name))) continue;
       try {
-        await loaded.module.recover({ env, stateDir: join(area, name), claimRoot: join(area, `${name}.claims`) });
+        await loaded.module.recover({
+          env,
+          stateDir: join(area, name),
+          claimRoot: join(area, `${name}.claims`),
+          host: createAgentDriverHost(),
+        });
       } catch (error) {
         process.stderr.write(
           `The ${name} agent driver could not recover ${area}: ${error instanceof Error ? error.message : String(error)}\n`,

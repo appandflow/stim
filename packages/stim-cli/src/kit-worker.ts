@@ -14,14 +14,17 @@ const NO_STIM_IMPORT = `export async function resolve(specifier, context, next) 
 export type KitRequest =
   | { type: 'call'; seq: number; member: string; args: unknown[]; module?: boolean }
   | { type: 'subscribe'; seq: number; member: string }
-  | { type: 'unsubscribe'; seq: number; target: number };
+  | { type: 'unsubscribe'; seq: number; target: number }
+  | { type: 'host-result'; seq: number; value: unknown }
+  | { type: 'host-error'; seq: number; message: string; code?: string };
 
 export type KitReply =
   | { type: 'ready'; id: string; members: string[]; moduleMembers: string[] }
   | { type: 'failed'; message: string }
   | { type: 'result'; seq: number; value: unknown }
   | { type: 'error'; seq: number; message: string; code?: string }
-  | { type: 'event'; seq: number; value: unknown };
+  | { type: 'event'; seq: number; value: unknown }
+  | { type: 'host'; seq: number; member: string; args: unknown[] };
 
 type Member = (...args: unknown[]) => unknown;
 
@@ -31,6 +34,10 @@ function reason(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function fullMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function errorCode(error: unknown): { code: string } | Record<string, never> {
@@ -49,16 +56,59 @@ function lookup(root: Record<string, unknown>, path: string): { owner: unknown; 
   return { owner, value };
 }
 
+/** The host members as functions whose calls cross the port; each `member` is a dotted path such as `claims.take`. */
+function hostProxy(port: NonNullable<typeof parentPort>, members: string[]): Record<string, unknown> {
+  const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+  let seq = 0;
+  port.on('message', (reply: KitRequest) => {
+    if (reply.type !== 'host-result' && reply.type !== 'host-error') return;
+    const waiting = pending.get(reply.seq);
+    pending.delete(reply.seq);
+    if (reply.type === 'host-result') waiting?.resolve(reply.value);
+    else waiting?.reject(Object.assign(new Error(reply.message), reply.code === undefined ? {} : { code: reply.code }));
+  });
+  const host: Record<string, unknown> = {};
+  for (const member of members) {
+    const path = member.split('.');
+    const last = path.pop();
+    if (last === undefined) continue;
+    let node = host;
+    for (const key of path) {
+      const next = node[key];
+      if (isRecord(next)) node = next;
+      else {
+        const made: Record<string, unknown> = {};
+        node[key] = made;
+        node = made;
+      }
+    }
+    node[last] = (...args: unknown[]) =>
+      new Promise((resolve, reject) => {
+        const next = ++seq;
+        pending.set(next, { resolve, reject });
+        try {
+          port.postMessage({ type: 'host', seq: next, member, args } satisfies KitReply);
+        } catch (error) {
+          pending.delete(next);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+  }
+  return host;
+}
+
 async function run(port: NonNullable<typeof parentPort>): Promise<void> {
-  const { href, factory, input, capabilities, moduleCapabilities, idMember } = workerData as {
+  const { href, factory, input, capabilities, moduleCapabilities, idMember, hostMembers } = workerData as {
     href: string;
     factory: string;
     input: unknown;
     capabilities: string[];
     moduleCapabilities: string[];
     idMember: string;
+    hostMembers: string[];
   };
   const post = (reply: KitReply) => port.postMessage(reply);
+  const host = hostMembers.length > 0 ? hostProxy(port, hostMembers) : null;
   let module: Record<string, unknown>;
   try {
     if (typeof nodeModule.registerHooks === 'function')
@@ -80,7 +130,7 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
   }
   let instance: Record<string, unknown>;
   try {
-    const made: unknown = await (module[factory] as Member)(input);
+    const made: unknown = await (module[factory] as Member)(host && isRecord(input) ? { ...input, host } : input);
     if (!isRecord(made) || typeof made[idMember] !== 'string')
       return post({ type: 'failed', message: `${factory}() did not return an object with a string ${idMember}` });
     instance = made;
@@ -99,6 +149,7 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
 
   const stops = new Map<number, () => void>();
   port.on('message', async (request: KitRequest) => {
+    if (request.type === 'host-result' || request.type === 'host-error') return;
     const { seq } = request;
     try {
       if (request.type === 'unsubscribe') {
@@ -128,7 +179,7 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
       const value: unknown = await member.apply(owner, request.args);
       post({ type: 'result', seq, value: value === undefined ? null : value });
     } catch (error) {
-      post({ type: 'error', seq, message: reason(error), ...errorCode(error) });
+      post({ type: 'error', seq, message: fullMessage(error), ...errorCode(error) });
     }
   });
 }

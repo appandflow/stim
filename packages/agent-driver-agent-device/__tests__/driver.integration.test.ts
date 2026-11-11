@@ -1,3 +1,4 @@
+import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import {
   chmodSync,
   existsSync,
@@ -105,6 +106,7 @@ function driverIn(
     env: { HOME: home, PATH: '/usr/bin:/bin', FAKE_PIDS: join(home, 'daemon-pids.log'), ...env },
     stateDir: join(home, 'state'),
     claimRoot: join(home, 'agent-device.claims'),
+    host: createAgentDriverHost(),
     watchMs: 50,
     ...extra,
   });

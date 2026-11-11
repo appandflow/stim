@@ -53,7 +53,7 @@ import { readPid } from './pid-file.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
 import * as processes from '../../agent-driver-agent-device/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
-import { type HostedAgentApp } from '@stim-cli/agent-driver';
+import { createAgentDriverHost, type HostedAgentApp } from '@stim-cli/agent-driver';
 import { HostedAgentHost, type AgentAccess } from '../src/agent-driver.ts';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import { Ajv2020 } from 'ajv/dist/2020.js';
@@ -1636,6 +1636,7 @@ describe('hosted agent control', () => {
             env: { ANDROID_HOME: sdk },
             stateDir: join(deviceHostArea(app.session), 'agent-device'),
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
+            host: createAgentDriverHost(),
             device: app,
           }),
         approved: () => true,

@@ -1,7 +1,7 @@
 import type { AgentDriverClient, AgentDriverInput, AgentDriverRecoveryInput } from '@stim-cli/agent-driver';
-import { AgentDeviceDriver, recorderClaimRoot, stopRecorders } from './driver.ts';
+import { AgentDeviceDriver, stopRecorders } from './driver.ts';
 
-export { AgentDeviceDriver, resolveAgentDevice, type AgentDeviceDriverOptions } from './driver.ts';
+export { AgentDeviceDriver, type AgentDeviceDriverOptions } from './driver.ts';
 export { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS, type DeviceCommandRule } from './device-policy.ts';
 
 export const id: string = 'agent-device';
@@ -10,9 +10,11 @@ export function createAgentDriver(input: AgentDriverInput): AgentDeviceDriver {
   return new AgentDeviceDriver(input);
 }
 
-export function recover({ stateDir }: AgentDriverRecoveryInput): Promise<void> {
-  return stopRecorders(recorderClaimRoot(stateDir));
+export function recover({ stateDir, host }: AgentDriverRecoveryInput): Promise<void> {
+  return stopRecorders(host, stateDir);
 }
+
+export { resolveAgentDevice as invocation } from './agent-device-bin.ts';
 
 export const client: AgentDriverClient = {
   access({ grant, baseUrl, file, platform }) {

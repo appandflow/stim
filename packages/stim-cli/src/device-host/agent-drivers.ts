@@ -1,5 +1,10 @@
 import type { PluginSource } from '@stim-cli/core/plugin-loader';
-import { agentClientConfigFile, loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
+import {
+  agentClientConfigFile,
+  loadAgentDriverModule,
+  type AgentDriverClient,
+  type AgentDriverInvocation,
+} from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
 const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
@@ -25,6 +30,15 @@ export async function agentDriverClient(
   if ('unavailable' in loaded) return loaded;
   const { client } = loaded.module;
   return client ? { client } : { unavailable: `the ${name} driver has no client` };
+}
+
+/** How the first-party driver `name` runs its tool on this machine. Throws why it cannot. */
+export async function agentDriverInvocation(name: string, env: NodeJS.ProcessEnv): Promise<AgentDriverInvocation> {
+  if (!registered(name)) throw new Error(`this Stim has no ${name} driver`);
+  const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
+  if ('unavailable' in loaded) throw new Error(loaded.unavailable);
+  if (!loaded.module.invocation) throw new Error(`the ${name} driver has no invocation`);
+  return loaded.module.invocation(env);
 }
 
 /**

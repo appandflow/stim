@@ -38,7 +38,7 @@ workspace's own `AGENT_DEVICE_STATE_DIR` rather than a hosted driver.
 ## Contract
 
 A driver package declares `"stimPlugin": { "kinds": { "agent-driver": 1 } }`
-and exports `id` and `createAgentDriver({ env, stateDir, claimRoot, device })`,
+and exports `id` and `createAgentDriver({ env, stateDir, claimRoot, device, host })`,
 which returns the `HostedAgentDriver` that `HostedAgentHost` already
 reference-counts: `start`, `stop`, `issue`, `revoke`, `target` and `onExit`,
 named `id`. Every argument and result is structured-clone-safe data. `target`
@@ -48,7 +48,21 @@ every policy decision: which client and session may use a grant, the tailnet
 node pin, restarts and teardown order. The driver confines each forwarded
 request to the one app or device it issued the grant for.
 
-Two capabilities are optional:
+`host` holds the engine members a driver uses for ownership. `claims.take`,
+`childPending`, `setChild`, `clearChild` and `release` take and update an
+exclusive claim at a root the driver names, identified by an id; `take` also
+reports the child that a reaped holder recorded. `claims.stopStale` stops the
+recorded children of claims whose owner is gone and removes those claims, and
+`claims.removeCommand` gives the command a refusal prints. `processes.capture`,
+`inspect` and `stop` capture a process identity, check it, and signal it only
+while it is the same process. Claims are taken for the stim-server process, and
+liveness, survey and reaping stay in core's ownership claims; a state the host
+cannot establish rejects with a message that names the claim and its remove
+command. The driver spawns its own children and has the host capture their
+identities. In the kit worker each member call crosses the `MessagePort` as a
+request and a reply.
+
+Three capabilities are optional:
 
 - `client`, run by the CLI on the Mac that placed the app. It turns a grant
   into the contents of the file Stim writes beside the placement as
@@ -58,6 +72,8 @@ Two capabilities are optional:
   `agent-device-remote.json` as before.
 - `recover`, which stops what a driver run left behind for a stim-server
   process that is gone.
+- `invocation(env)`, how the driver's tool runs on this machine. `stim
+agent-device` runs agent-device through it.
 
 Stim reads a driver's recorded agent actions from `<id>/sessions` in a
 workspace or archive directory itself, so existing archives read the same.
@@ -174,8 +190,9 @@ its name in the two registries and in `HOSTED_AGENT_DRIVERS`.
 
 - `hosting.agentDriver` stays a choice of first-party names, so validation,
   `stim settings` and the JSON Schema keep rejecting typos.
-- The contract package has no runtime dependencies; it depends on
-  `@stim-cli/core` for the payload types only.
+- The contract package depends on `@stim-cli/core` for the payload types, the
+  loader and the host members' implementation. A driver package imports only
+  its types, so it carries no engine code.
 - stim-server and the CLI depend on every first-party driver package for now.
   The dynamic import keeps the door open for optional installs.
 - A first publish of each new package needs npm to accept it from the release

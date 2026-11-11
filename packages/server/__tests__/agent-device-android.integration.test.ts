@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -155,6 +156,7 @@ beforeEach(() => {
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost(),
     device: { session: SESSION, serial: SERIAL, avdName: AVD },
   });
 });
@@ -586,6 +588,7 @@ test('watch detects serial reuse even while request verification is cached', asy
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
+    host: createAgentDriverHost(),
     device: { session: SESSION, serial: SERIAL, avdName: AVD },
     watchMs: 20,
   });

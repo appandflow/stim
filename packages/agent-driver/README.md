@@ -15,11 +15,12 @@ A driver package exports:
 
 ```js
 export const id = 'my-tool';
-export function createAgentDriver({ env, stateDir, claimRoot, device }) {
+export function createAgentDriver({ env, stateDir, claimRoot, device, host }) {
   return driver;
 }
 export const client = { access };
-export async function recover({ env, stateDir, claimRoot }) {}
+export async function recover({ env, stateDir, claimRoot, host }) {}
+export function invocation(env) {}
 ```
 
 `createAgentDriver` returns a `HostedAgentDriver` named `id`, directly or
@@ -38,6 +39,22 @@ run or cannot scope an app rejects with an `Error` whose `code` is
 `agent-driver-unavailable`; its message is shown to the client. `device` names
 the hosted simulator or emulator when the driver serves one hosted device
 session; without it the driver serves hosted macOS apps.
+
+`host` is how a driver takes ownership claims and checks process identities
+without importing the engine. `host.claims.take(root, label)` takes the
+exclusive claim at `root` for stim-server and resolves `{ claim, path,
+previousChild }`, or `{ held, waitingFor }` naming who holds it.
+`childPending`, `setChild`, `clearChild` and `release` take the claim id.
+`stopStale(root, label, { own, steps })` stops the recorded children of claims
+whose owner is gone, and of `own`, then removes them. `removeCommand(path)`
+gives the command a refusal prints. `host.processes.capture(pid)` returns an
+opaque identity that `inspect` and `stop(identity, { group, steps })` take; a
+stop step signals only while the identity is the same process. Every member
+returns a promise of cloneable data, and a claim state the host cannot
+establish rejects with a message naming the claim and its remove command.
+
+`invocation` is optional: how the driver's tool runs on this machine, as
+`{ command, args }`. `stim agent-device` uses agent-device's.
 
 `client` is optional and runs on the Mac that placed the app. `access` turns a
 grant into the contents of a mode 0600 file, which Stim writes as

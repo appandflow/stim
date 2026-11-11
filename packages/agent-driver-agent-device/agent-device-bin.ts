@@ -1,6 +1,7 @@
 import { accessSync, constants, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { AGENT_DRIVER_UNAVAILABLE, AgentDriverInvocation } from '@stim-cli/agent-driver';
 
 const AGENT_DEVICE_BIN_ENV = 'STIM_AGENT_DEVICE_BIN';
 
@@ -10,17 +11,14 @@ const CANDIDATES = (home: string): string[] => [
   '/usr/local/bin/agent-device',
 ];
 
-export interface AgentDeviceInvocation {
-  command: string;
-  args: string[];
-}
+const UNAVAILABLE: typeof AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
 
 /**
  * Finds agent-device at a fixed path: the stim-server LaunchAgent's PATH holds only system directories, and
  * agent-device's `#!/usr/bin/env node` script cannot find Node there, so a JavaScript entry runs under the
  * server's own Node.
  */
-export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocation {
+export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDriverInvocation {
   const explicit = env[AGENT_DEVICE_BIN_ENV]?.trim();
   const candidates = explicit ? [explicit] : CANDIDATES(env.HOME || homedir());
   for (const candidate of candidates) {
@@ -36,6 +34,6 @@ export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocatio
         ? `${AGENT_DEVICE_BIN_ENV} names ${explicit}, which is not a readable agent-device on the hosting Mac.`
         : `agent-device is not installed on the hosting Mac (looked in ${candidates.join(', ')}). Install it with: npm install --global --prefix "$HOME/.local" agent-device`,
     ),
-    { code: 'AGENT_DEVICE_UNAVAILABLE' },
+    { code: UNAVAILABLE },
   );
 }
