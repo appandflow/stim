@@ -13372,10 +13372,9 @@ setInterval(() => {}, 1000);
           ...(ending === 'timeout' ? { actionLimits: { timeoutMs: 1500 } } : {}),
         });
         const client = await desktop();
-        const reply = await client.request('desktop.gc.subscribe', {
+        const reply = await client.request('desktop.gc.item.subscribe', {
           cwd: workspace,
-          cache: 'rpc-fixture',
-          delete: true,
+          item: { kind: 'cache', dir: fixture.cache },
         });
         assert(
           'result' in reply &&
@@ -13441,13 +13440,17 @@ setInterval(() => {}, 1000);
       await start({ env: fixture.env });
       const client = await desktop();
       expect(
-        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+        await client.request('desktop.gc.item.subscribe', {
+          cwd: workspace,
+          item: { kind: 'cache', dir: fixture.cache },
+        }),
       ).toHaveProperty('result.subscription');
       const done = await ended(client);
       expect(done.exitCode).toBe(1);
       expect(JSON.parse(done.stdout)).toMatchObject({
         mode: 'delete',
-        cacheScope: 'rpc-fixture',
+        item: { kind: 'cache', dir: fixture.cache },
+        failures: 1,
         results: expect.arrayContaining([
           expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
         ]),
@@ -13465,7 +13468,7 @@ setInterval(() => {}, 1000);
     const fixture = cacheFixture();
     await start({ env: fixture.env, actionLimits: { maxOutputBytes: 128 } });
     const client = await desktop();
-    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture' })).toHaveProperty(
+    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, dryRun: true })).toHaveProperty(
       'result.subscription',
     );
     expect(await ended(client)).toMatchObject({

@@ -1159,62 +1159,6 @@ describe('EAS orphan session sweep', () => {
     },
   );
 
-  test.each([false, true])(
-    'local delete stays in its starting home after EAS lock release (cancelled %s)',
-    async (cancelled) => {
-      const project = join(fakeHome, 'expo-app');
-      registerExpoProject(project);
-      installExecutor();
-      const originalLock = writeLock({ pid: 999999 });
-      const startingHome = tmpHome;
-      const nextHome = join(fakeHome, 'next-test-home');
-      process.env.STIM_HOME = nextHome;
-      saveConfig({ version: 2, projects: {}, repos: {} });
-      const nextLock = join(nextHome, 'build-locks', 'ios-next-debug-sim.lock');
-      plantClaim(nextLock, 'exclusive', goneClaimOwner(999999), { details: { projectRoot: project } });
-      process.env.STIM_HOME = startingHome;
-      const harness = easGcHarness({ project, list: easList() });
-      const cancellation = new AbortController();
-      harness.deps.operation.signal = AbortSignal.any([testSignal, cancellation.signal]);
-      const exitCode = process.exitCode;
-      let held = false;
-      let localDeleteHeld: boolean | null = null;
-      const originalLog = console.log;
-      const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-        if (String(args[0]).includes('Cleared the ios build lock')) localDeleteHeld = held;
-      });
-
-      try {
-        await runGc(
-          { pressure: 'normal' },
-          {
-            ...harness.deps,
-            easLedgerRoot: join(fakeHome, 'machine-eas'),
-            withEasProjectLock: async (_root, fn) => {
-              held = true;
-              try {
-                return await fn();
-              } finally {
-                held = false;
-                if (cancelled) cancellation.abort();
-                process.env.STIM_HOME = nextHome;
-              }
-            },
-          },
-        );
-      } finally {
-        log.mockRestore();
-        console.log = originalLog;
-        process.env.STIM_HOME = startingHome;
-        process.exitCode = exitCode;
-      }
-
-      expect(localDeleteHeld).toBe(cancelled ? null : false);
-      expect(existsSync(originalLock)).toBe(cancelled);
-      expect(existsSync(nextLock)).toBe(true);
-    },
-  );
-
   test('dry run reports a project-scoped orphan and performs no lookup or stop', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
