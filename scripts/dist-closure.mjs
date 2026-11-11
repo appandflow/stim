@@ -30,7 +30,6 @@ const deny = {
     ...shared,
     fingerprint,
     ownFingerprint,
-    ['commander', /^commander(\/|$)/],
     ['the status command', /^stim\/src\/(commands\/status|status-read)\.ts$/],
   ],
   'status-command': [...shared, fingerprint, ownFingerprint],
