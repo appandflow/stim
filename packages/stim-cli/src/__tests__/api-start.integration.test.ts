@@ -16,10 +16,10 @@ import { join } from 'node:path';
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
 import { workspaceName } from '@stim-cli/core';
 import { createStim } from '../api.ts';
-import type { ChildProcess } from 'node:child_process';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { spawnEntry } from '../spawn-entry.ts';
 
 let scratch: string;
 const cleanups: (() => Promise<void>)[] = [];
@@ -198,11 +198,12 @@ test('concurrent start clients reuse their own Metro without changing caller con
 });
 
 test.skipIf(process.platform === 'win32')(
-  'start from a child folder reuses its actual supervisor and the same client stops it',
+  "start from a child folder runs Metro as stimd's child, reuses it, and the same client stops it",
   async () => {
-    const root = join(scratch, 'owned-supervisor');
-    const home = join(scratch, 'owned-supervisor-home');
+    const root = join(scratch, 'owned-metro');
+    const home = join(scratch, 'owned-metro-home');
     mkdirSync(root);
+    mkdirSync(home);
     writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     const entry = join(root, 'server.mjs');
     writeFileSync(
@@ -213,62 +214,59 @@ test.skipIf(process.platform === 'win32')(
       join(root, '.stim.json'),
       JSON.stringify({ metro: { command: [process.execPath, entry, '{port}'], tunnel: 'off' } }),
     );
-    const real = getExecutor();
-    const children: ChildProcess[] = [];
-    const tokens = new Map<ChildProcess, string>();
-    setExecutor({
-      ...real,
-      spawn: (file, args, options) => {
-        const child = real.spawn(file, args, options);
-        children.push(child);
-        const token = child.pid && captureProcessToken(child.pid);
-        if (token) tokens.set(child, token);
-        return child;
+    const env = { ...process.env, STIM_HOME: home, STIM_ENGINE_ROOT: join(home, 'engine'), STIM_DAEMON: 'off' };
+    vi.stubEnv('STIM_HOME', home);
+    const daemon = getExecutor().spawn(
+      process.execPath,
+      [spawnEntry('cli'), '__stimd', '--attached', '--no-handover'],
+      {
+        env,
+        stdio: ['pipe', 'ignore', 'ignore'],
       },
-    });
+    );
+    const exited = once(daemon, 'exit');
     const nested = join(root, 'src');
     mkdirSync(nested);
-    const client = createStim({ projectRoot: nested, home, env: { ...process.env, STIM_DAEMON: 'off' } });
+    const client = createStim({ projectRoot: nested, home, env });
+    let identity: { pid: number; processToken: string } | undefined;
     try {
+      await vi.waitFor(() => expect(existsSync(join(home, 'run', 'stimd.json'))).toBe(true), { timeout: 15_000 });
       const first = await client.start({ waitSeconds: 10 });
       expect(first.alreadyRunning).toBe(false);
-      const child = children.find((candidate) => candidate.pid === first.supervisorPid);
-      assert(child?.pid);
-      const processToken = tokens.get(child);
-      assert(processToken);
-      const identity = { pid: child.pid, processToken };
-      expect(inspectProcessIdentity(identity)).toBe('same');
       const state = JSON.parse(readFileSync(join(home, 'workspaces', workspaceName(root), 'state.json'), 'utf8'));
-      expect(state.supervisor.pid).toBe(child.pid);
-      expect(inspectProcessIdentity(state.supervisor)).toBe('same');
+      identity = { pid: state.supervisor.pid, processToken: state.supervisor.processToken };
+      expect(first.supervisorPid).toBe(identity.pid);
+      expect(inspectProcessIdentity(identity)).toBe('same');
+      expect(
+        Number(
+          getExecutor()
+            .runFile('ps', ['-o', 'ppid=', '-p', String(identity.pid)], { timeoutMs: 5000 })
+            .trim(),
+        ),
+      ).toBe(daemon.pid);
       expect(await client.start({ waitSeconds: 10 })).toMatchObject({
         alreadyRunning: true,
         supervisorPid: first.supervisorPid,
         port: first.port,
       });
-      expect(children).toHaveLength(1);
       expect(await client.stop()).toMatchObject({ ok: true });
-      const deadline = Date.now() + 1000;
-      while (inspectProcessIdentity(identity) !== 'gone' && Date.now() < deadline) await delay(5);
       expect(inspectProcessIdentity(identity)).toBe('gone');
+      expect(readClaimSet(join(home, 'workspaces', workspaceName(root), 'metro.claim')).live).toEqual([]);
     } finally {
-      await createStim({ projectRoot: root, home })
+      await createStim({ projectRoot: root, home, env })
         .stop()
         .catch(() => {});
-      for (const child of children) {
-        if (child.exitCode !== null || child.signalCode !== null) continue;
-        const exited = once(child, 'exit');
-        if (child.pid && inspectProcessIdentity({ pid: child.pid, processToken: tokens.get(child) }) === 'same') {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {}
-        }
-        child.kill('SIGKILL');
-        await exited;
+      daemon.stdin?.end();
+      if (daemon.exitCode === null) daemon.kill('SIGTERM');
+      await exited;
+      if (identity && inspectProcessIdentity(identity) === 'same') {
+        try {
+          process.kill(-identity.pid, 'SIGKILL');
+        } catch {}
       }
     }
   },
-  30_000,
+  45_000,
 );
 
 test('start admission resolves the app once and refuses before usage, config changes or Metro probes', async () => {

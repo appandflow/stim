@@ -130,7 +130,7 @@ let refusal: {
   version: string;
   pid: number | null;
   handover: boolean;
-  heldBy: 'shares' | 'logs' | null;
+  heldBy: 'shares' | 'logs' | 'dev-servers' | null;
   workspaces: string[];
 } | null = null;
 let opSocket: Socket | null = null;
@@ -170,7 +170,10 @@ function noteRefusal(message: Record<string, unknown>): void {
     version: String(message.version ?? message.build),
     pid: typeof message.pid === 'number' ? message.pid : null,
     handover: message.handover === true || message.build === stimdBuildId(),
-    heldBy: message.heldBy === 'shares' || message.heldBy === 'logs' ? message.heldBy : null,
+    heldBy:
+      message.heldBy === 'shares' || message.heldBy === 'logs' || message.heldBy === 'dev-servers'
+        ? message.heldBy
+        : null,
     workspaces: Array.isArray(message.workspaces)
       ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
       : [],
@@ -184,7 +187,10 @@ function noteRefusal(message: Record<string, unknown>): void {
 export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   if (!refusal) return null;
   const { version, pid, handover, heldBy, workspaces } = refusal;
-  const kill = `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves`;
+  const kill =
+    process.platform === 'win32'
+      ? `run \`npx stim@${version} stop\` in each workspace whose dev server it runs, then stop that stimd${pid === null ? '' : ` with \`taskkill /PID ${pid} /F\``}, which also ends the builds and shares it serves`
+      : `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and shares it serves; its dev servers keep running and the next stimd takes them over`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const [why, remedy] = refusedByAttached
     ? [
@@ -196,20 +202,25 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
           `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
           `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
         ]
-      : heldBy === 'shares'
+      : heldBy === 'dev-servers'
         ? [
-            `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
-            `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
+            `${stimd} runs Stim ${version} and the dev servers of ${workspaces.join(', ')}, which stop when it exits on Windows; it restarts on this build once they stop.`,
+            `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'}; then run the command again.`,
           ]
-        : handover
+        : heldBy === 'shares'
           ? [
-              `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
-              'Run the command again once those commands end.',
+              `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
+              `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
             ]
-          : [
-              `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-              `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
-            ];
+          : handover
+            ? [
+                `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+                'Run the command again once those commands end.',
+              ]
+            : [
+                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+              ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 
@@ -319,26 +330,164 @@ function askStimd(
   });
 }
 
+/** What `metro.ensure` sends besides the workspace and its port. */
+export interface MetroLaunchParams {
+  root: string;
+  port: number;
+  tunnel?: boolean;
+  publicOrigin?: string | null;
+  resetCache?: boolean;
+}
+
+/**
+ * Asks this home's stimd to run the workspace's Metro through a Metro ticket (`metro.prepare`, then `metro.wait`): the
+ * admitted operation's when it has a stimd connection, else one admitted for this request, starting a stimd first
+ * whatever `daemon.mode` says, since only stimd runs Metro. An operation admitted for this request outlives a
+ * `starting` answer until `signal` aborts, since stimd stops a Metro still starting when its operation ends. Resolves
+ * with stimd's answer, or null when no stimd answers within `timeoutMs` or `signal` aborts.
+ */
+export async function ensureMetroThroughStimd(
+  params: MetroLaunchParams,
+  timeoutMs: number,
+  operation?: StimContext,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const held: Socket[] = [];
+  try {
+    let opToken = operationToken(operation);
+    if (!opToken) {
+      const env = operation?.env ?? process.env;
+      const context = (await import('../stimd/forwarded.ts')).invocation(params.root, env);
+      if ('code' in context) return { op: 'error', ...context };
+      await ensureStimd(
+        env,
+        process.platform,
+        true,
+        held,
+        'stim start',
+        true,
+        { ...context, workspace: params.root },
+        true,
+      );
+      opToken = admittedOpToken(held);
+      const refused = opToken ? null : otherBuildRefusal();
+      if (refused) return { op: 'error', ...refused };
+      if (!opToken) return null;
+    }
+    const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
+    if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
+    const answer = await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);
+    if (held.length > 0 && answer?.op === 'metro' && answer.state === 'starting' && signal && !signal.aborted) {
+      const release = held.splice(0);
+      for (const socket of release) socket.unref();
+      signal.addEventListener('abort', () => release.forEach((socket) => socket.destroy()), { once: true });
+    }
+    return answer;
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
+    return {
+      op: 'error',
+      code: error.code,
+      message: error.message,
+      ...('remedy' in error && typeof error.remedy === 'string' ? { remedy: error.remedy } : {}),
+    };
+  } finally {
+    for (const socket of held) socket.destroy();
+  }
+}
+
+/** Whether {@link stopMetroTree} stopped the dev server, else why not and what to do. */
+export type MetroTreeStop = { stopped: true } | { stopped: false; reason: string; remedy: string };
+
+/**
+ * Stops a workspace's dev server: through this home's stimd (`metro.stop`) when a stimd runs or a Metro claim shows
+ * one ran it, starting a stimd to adopt a Metro an exited one left; through `fallback`, which signals the recorded
+ * process tree, when stimd does not own it (a dev server supervisor an older Stim started), when neither a stimd nor
+ * a Metro claim exists, or on Windows when no stimd runs. A Metro under the claim of a stimd of another build stays:
+ * only that build stops it.
+ */
 export async function stopMetroTree(
   root: string,
   pid: number | undefined,
   processToken: string | undefined,
   fallback: () => Promise<boolean> | boolean,
   signal?: AbortSignal,
-): Promise<boolean> {
-  if (process.platform !== 'win32') return fallback();
-  const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
-  if (signal?.aborted) return false;
-  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
-  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
-  if (answer) return false;
-  let absent = false;
-  try {
-    const daemon = readClaimSet(stimdClaimRoot());
-    const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
-    absent = !daemon.live.length && !daemon.unresolved.length && !metro.live.length && !metro.unresolved.length;
-  } catch {}
-  return absent ? fallback() : false;
+): Promise<MetroTreeStop> {
+  const claimRoot = join(workspaceDir(root), 'metro.claim');
+  const held = () => {
+    try {
+      const daemon = readClaimSet(stimdClaimRoot());
+      const metro = readClaimSet(claimRoot);
+      return {
+        daemon: daemon.live.length > 0 || daemon.unresolved.length > 0,
+        daemonClaim: daemon.live[0]?.path ?? daemon.unresolved[0]?.path ?? stimdClaimRoot(),
+        metro: metro.live.length > 0 || metro.unresolved.length > 0,
+        claim: metro.live[0]?.path ?? metro.unresolved[0]?.path ?? claimRoot,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const viaFallback = async (): Promise<MetroTreeStop> =>
+    (await fallback())
+      ? { stopped: true }
+      : {
+          stopped: false,
+          reason: `could not signal dev server pid ${pid}`,
+          remedy: `Inspect it with \`ps -p ${pid}\`; stop it with the tool that started it.`,
+        };
+  const unresolved = (reason: string, claim = held()?.claim ?? claimRoot): MetroTreeStop => ({
+    stopped: false,
+    reason: `${reason}; ${claim} still holds this workspace's Metro`,
+    remedy: `Verify dev server pid ${pid} and its process tree have stopped, then run ${claimRemoveCommand(claim)}.`,
+  });
+  const before = held();
+  if (before && !before.daemon && (!before.metro || process.platform === 'win32')) {
+    const stopped = await viaFallback();
+    return stopped.stopped || !before.metro ? stopped : unresolved(stopped.reason, before.claim);
+  }
+  let launchError: string | null = null;
+  if (before && !before.daemon && process.platform !== 'win32') {
+    const launched = await ensureStimd(
+      process.env,
+      process.platform,
+      false,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+    ).catch((error: unknown) => {
+      launchError = error instanceof Error ? error.message : String(error);
+      return false;
+    });
+    if (launched) await waitForStimdHello();
+  }
+  const ask = () => askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
+  let answer = await ask();
+  if (!answer && stimdRefused() && !signal?.aborted && successorExpected() && (await successorBound()))
+    answer = await ask();
+  if (signal?.aborted) return { stopped: false, reason: 'the stop was cancelled', remedy: 'Run `stim stop` again.' };
+  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return { stopped: true };
+  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return viaFallback();
+  if (answer) {
+    const reason = typeof answer.message === 'string' ? answer.message : 'stimd did not stop the dev server';
+    return typeof answer.remedy === 'string' ? { stopped: false, reason, remedy: answer.remedy } : unresolved(reason);
+  }
+  const after = held();
+  if (after && !after.daemon && !after.metro) return viaFallback();
+  const refused = otherBuildRefusal();
+  if (refused) {
+    if (after && !after.metro) return viaFallback();
+    return { stopped: false, reason: refused.message, remedy: refused.remedy };
+  }
+  if (after?.daemon && !launchError)
+    return {
+      stopped: false,
+      reason: `stimd did not answer; ${after.daemonClaim} still holds this home's stimd`,
+      remedy: `Verify no stimd of this home runs, then run ${claimRemoveCommand(after.daemonClaim)}; dev server pid ${pid} still runs.`,
+    };
+  return unresolved(launchError ? `no stimd could adopt the dev server: ${launchError}` : 'stimd did not answer');
 }
 
 /**
@@ -533,7 +682,7 @@ async function claimTaken(
  * does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and waits
  * for it to take its claim. When that detached stimd has not taken it within 2 s, a CLI command (not an API caller)
  * hosts stimd as its own child for its lifetime (`hostStimd`), and otherwise waits up to five seconds in all. Under
- * `daemon.mode` off it starts stimd for device logs when requested; otherwise a pinned command begins its op only
+ * `daemon.mode` off it starts stimd when `required`, for Metro and device logs; otherwise a pinned command begins its op only
  * with a live stimd, such as the one `stim ci` hosts. Throws {@link SANDBOX_BLOCKED} when the sandbox denies this home's stimd socket. Returns whether a
  * stimd holds the home; an unresolvable daemon claim is reported and counts as held.
  */
@@ -545,10 +694,10 @@ export async function ensureStimd(
   command?: string,
   allowAttached = true,
   invocation?: Invocation & { workspace?: string | null },
-  requireForLogs = false,
+  required = false,
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
-  if (!spawnsDaemon(env) && !requireForLogs) {
+  if (!spawnsDaemon(env) && !required) {
     if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
     return false;
   }
@@ -952,14 +1101,10 @@ export function opWaiting(waiting: boolean): void {
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
-const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
 
 /**
  * Before a top-level command runs: commands that create running state record the use of their workspace (unless
- * `recordUse` is false, for an operation that records it itself) and make sure the home's stimd runs; unless `passes`
- * is false, `doctor`, `start`, `ios` and `android` run the in-process passes (maintenance, the activity pass over
- * workspaces with no dev server, the pressure ladder) when no stimd holds the home, never taking the command's own
- * workspace, the registered workspace containing `cwd`.
+ * `recordUse` is false, for an operation that records it itself) and make sure the home's stimd runs.
  */
 export async function beforeCommand(
   name: string,
@@ -967,7 +1112,6 @@ export async function beforeCommand(
   {
     cwd,
     recordUse,
-    passes,
     pin = false,
     held,
     invocation,
@@ -975,7 +1119,6 @@ export async function beforeCommand(
   }: {
     cwd: string;
     recordUse: boolean;
-    passes: boolean;
     pin?: boolean;
     held?: Socket[];
     invocation?: Invocation & { workspace?: string | null };
@@ -983,30 +1126,22 @@ export async function beforeCommand(
   } = {
     cwd: process.cwd(),
     recordUse: true,
-    passes: true,
   },
 ): Promise<void> {
-  const creates = DAEMON_COMMANDS.includes(name);
-  const inline = passes && INLINE_COMMANDS.includes(name);
-  if (!creates && !inline) return;
-  if (creates && pin) requireResolvedStimdHome();
+  if (!DAEMON_COMMANDS.includes(name)) return;
+  if (pin) requireResolvedStimdHome();
   const { commandWorkspace } = await import('./command-workspace.ts');
-  const root = commandWorkspace(creates && recordUse, env, cwd);
-  const taken =
-    creates &&
-    (await ensureStimd(
-      env,
-      process.platform,
-      pin,
-      held,
-      `stim ${name}`,
-      true,
-      invocation && { ...invocation, workspace: root },
-      deviceLogs && (name === 'ios' || name === 'android'),
-    ));
-  if ((taken && daemonMode(env) !== 'off') || !inline) return;
-  const { runPassesInProcess } = await import('./passes.ts');
-  await runPassesInProcess(name, env, root);
+  const root = commandWorkspace(recordUse, env, cwd);
+  await ensureStimd(
+    env,
+    process.platform,
+    pin,
+    held,
+    `stim ${name}`,
+    true,
+    invocation && { ...invocation, workspace: root },
+    deviceLogs && (name === 'ios' || name === 'android'),
+  );
 }
 
 function send(message: Record<string, unknown>): void {

@@ -32,7 +32,6 @@ process.env.STIM_HOME = home;
 const env = {
   ...process.env,
   STIM_DAEMON: 'off',
-  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   GRADLE_USER_HOME: join(output, 'gradle-home'),
   STIM_MAX_BUILDS: '1',
   AGENT_DEVICE_HOME: join(output, 'agent-device'),

@@ -32,7 +32,6 @@ const env = {
   STIM_POOL_IOS_PARKED_MAX: '0',
   STIM_POOL_ANDROID_PARKED_MAX: '0',
   STIM_DAEMON: 'off',
-  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   AGENT_DEVICE_HOME: join(temporary, 'agent-device'),
   AGENT_DEVICE_CLAIMS_DIR: join(temporary, 'agent-claims'),
 };

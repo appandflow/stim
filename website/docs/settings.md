@@ -1019,7 +1019,7 @@ took the time.
 ## Stim daemon
 
 `daemon.mode` is a machine setting, `on` by default, with the environment
-override `STIM_DAEMON`. It governs every pass Stim runs on its own: the idle
+override `STIM_DAEMON`. It governs the automatic passes of the per-home `stimd`: the idle
 and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
 reclaim for a run waiting to boot, and
 [automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
@@ -1050,26 +1050,29 @@ Stim build than the running `stimd` does not use it. When that build is what
 `stimd`'s own installation now holds, as after `npm install --global stim`
 updated it in place, and a command started that `stimd` (not `stim serve`, Stim
 Desktop or a service unit), `stimd` restarts on it once no command it admitted
-remains, no share-only server runs and no physical iPhone's console is
-streamed, and the command waits up to 15 seconds for it. The new `stimd`
-resumes the simulator and emulator log streams the old one ran; an iPhone
-console runs until `stim stop` or the idle stop in its workspace, because
-resuming it would launch the app again. Otherwise `stim share`, `share list` and `share stop` refuse with
+remains, no share-only server runs, no physical iPhone's console is streamed
+and, on Windows, no dev server runs, and the command waits up to 15 seconds for
+it. The new `stimd` resumes the simulator and emulator log streams the old one
+ran; an iPhone console runs until `stim stop` or the idle stop in its workspace,
+because resuming it would launch the app again. On Windows a dev server stops
+with its `stimd`, so `stimd` waits for `stim stop` in that workspace; elsewhere
+the successor takes the dev server over. Otherwise `stim share`, `share list` and `share stop` refuse with
 `STIM_DAEMON_UNAVAILABLE`, naming the running build and what holds it, and other commands run
 without `stimd`; `stimd` keeps serving until nothing runs in the home, and the
 next command starts its own build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it
 starts. `report` logs what
-each pass would do and acts on nothing. `off` runs no daemon and no pass: each
-dev server supervisor stops its own dev server and devices after
-`idle.minutes`, and nothing times a device with no dev server. It is `off` in
-CI unless `STIM_DAEMON` is set.
+each pass would do and acts on nothing. `off` runs no pass. In every mode
+`stimd` runs each workspace's Metro and tunnel and collects device logs, so
+`start`, `ios`, `android`, `web` and `revive` start it when they need one, also
+under `off`. Under `off` it stops a dev server and the workspace's devices
+after `idle.minutes`, nothing times a device with no dev server, and `stimd`
+exits once nothing runs in the home. It is `off` in CI unless `STIM_DAEMON` is
+set.
 
-While no `stimd` runs (when one could not start), `stim doctor`, `stim start`,
-`stim ios` and `stim android` run automatic maintenance, the idle stage for owned
-devices whose workspace has no running dev server, and the pressure ladder in
-their own process, never for the command's own workspace, acting in `on` and only
-logging in `report`. `stim gc --delete` runs the ladder in its own process
-whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
+While no `stimd` runs, a command under the hard disk floor runs the pressure
+ladder in its own process, never for the command's own workspace, acting in
+`on` and only logging in `report`. `stim gc --delete` runs the ladder in its
+own process whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment
 overrides of settings that are not sensitive, such as `STIM_DISK_MIN_FREE_GB`,
@@ -1087,9 +1090,8 @@ that adopts and kills everything a call started, such as an agent harness that
 sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
 ticking between commands. The service ends with the user manager at the last
 logout unless lingering is on; the next command starts the daemon again. Without one the daemon is a detached child, which
-such a runner stops when the call ends; set `STIM_DAEMON=off` for that runner,
-and the passes then run in each command's own process. The dev server's
-supervisor is not a service; `stim guide metro` has the recipe for it.
+such a runner stops when the call ends, with the dev server it runs; run the
+command under `stim ci run --` there, which holds `stimd` for the job.
 
 `stim status` prints a daemon line with its mode, whether it runs, when it last
 ticked and the pressure level, then the last daemon action, the runs waiting for

@@ -157,7 +157,6 @@ jobs:
             packages/stim-cli/package.json
             packages/stim-cli/src/engine/eas-machine-root-guard-env.ts
             packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts
-            packages/stim-cli/src/daemon/passes-guard-env.ts
             package.json
             pnpm-lock.yaml
             vitest.bench.config.ts
@@ -246,7 +245,6 @@ jobs:
           packages/stim-cli/src/__tests__/gc-outputs-lock.test.ts
           packages/stim-cli/src/__tests__/device-capacity.test.ts
           packages/stim-cli/src/__tests__/engine-build-slots.test.ts
-          packages/stim-cli/src/__tests__/supervisor-run.test.ts
           packages/stim-cli/src/__tests__/stim-home-registry.test.ts
           packages/stim-cli/src/__tests__/doctor-source.test.ts
           packages/stim-cli/src/__tests__/doctor-source-repair.integration.test.ts
@@ -257,7 +255,6 @@ jobs:
       - name: Windows startup cancellation
         run: |
           pnpm test packages/stim-cli/src/__tests__/api-start.integration.test.ts -t "cancelling startup drains dynamic Expo config"
-          pnpm test packages/stim-cli/src/__tests__/start-context.integration.test.ts -t "pending Windows supervisor launcher"
 
   test-macos:
     name: test (macos)

@@ -702,12 +702,14 @@ run waiting to boot, and automatic maintenance.
           When that build is what stimd's own installation now holds (an
           npm update in place) and stimd was started by a command, not by
           stim serve, Stim Desktop or a service unit, stimd restarts on it
-          once no command it admitted remains, no share-only server runs and
-          no physical iPhone's console is streamed, and the command waits up
-          to 15 s for it. The new stimd resumes the simulator and emulator
-          log streams the old one ran (stim guide logs); an iPhone console
-          runs until stim stop or the idle stop in its workspace, because
-          resuming it would launch the app again.
+          once no command it admitted remains, no share-only server runs,
+          no physical iPhone's console is streamed and, on Windows, no dev
+          server runs, and the command waits up to 15 s for it. The new
+          stimd resumes the simulator and emulator log streams the old one
+          ran (stim guide logs); an iPhone console runs until stim stop or
+          the idle stop in its workspace, because resuming it would launch
+          the app again. On Windows a dev server stops with its stimd; on
+          macOS and Linux the new stimd takes it over.
           Otherwise stim share, share list and share stop refuse with
           STIM_DAEMON_UNAVAILABLE, naming the running build and what holds
           it, and other commands run without stimd;
@@ -715,9 +717,11 @@ run waiting to boot, and automatic maintenance.
           command starts its own build's stimd. stimd stops a
           stim-daemon from Stim 1.40 to 1.42 when it starts.
   report  the same passes log what they would do and act on nothing.
-  off     no daemon and no pass: each dev server supervisor stops its own dev
-          server and devices after idle.minutes, and nothing times a device
-          with no dev server.
+  off     no pass. stimd still starts when a command needs it, because it
+          runs each workspace's Metro and tunnel and collects device logs;
+          it stops a dev server and the workspace's devices after
+          idle.minutes, exits once nothing runs in the home, and nothing
+          times a device with no dev server.
 
 stimd starts as a transient launchd job on macOS, under Stim Host where it is
 installed. On Linux it starts as a transient user service, stimd-<home
@@ -727,18 +731,15 @@ a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
 between commands. The
 service ends with the user manager at the last logout unless lingering is on; the
 next command starts the daemon again. Without a manager the daemon is a detached child and such a
-runner stops it when the call ends: its log then ends with daemon_exited
-"exiting: SIGTERM" shortly after daemon_started. Set STIM_DAEMON=off for that
-runner; the passes then run in each command's own process. The dev server
-supervisor is not a service; see guide metro, LINUX RUNNERS THAT REAP
-BACKGROUND PROCESSES.
+runner stops it, and the dev server it runs, when the call ends: its log then
+ends with daemon_exited "exiting: SIGTERM" shortly after daemon_started. Run
+the command under \`stim ci run --\` there, which holds stimd for the job; see
+guide metro, LINUX RUNNERS THAT REAP BACKGROUND PROCESSES.
 
-Without a running stimd -- when one could not start -- stim doctor, start, ios
-and android run automatic maintenance, the idle stage for owned devices whose
-workspace has no running dev server, and the pressure ladder in their own
-process, acting in on and only logging in report, never taking the command's
-own workspace. stim gc runs the same passes in its
-own process. It is off in CI unless STIM_DAEMON is set.
+Without a running stimd, a command under the hard disk floor runs the pressure
+ladder in its own process, acting in on and only logging in report, never
+taking the command's own workspace. stim gc runs its passes in its own
+process. It is off in CI unless STIM_DAEMON is set.
 A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's CI and the environment

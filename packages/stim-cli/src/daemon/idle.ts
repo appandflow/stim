@@ -63,8 +63,6 @@ export interface IdlePassInput {
   act: boolean;
   /** Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
   pressure?: { level: 'high' | 'critical'; reasons: string[] };
-  /** Leaves out every workspace whose dev server runs, whose own supervisor times its idle stop. */
-  unsupervised?: boolean;
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -118,7 +116,6 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   const scope = idleScope({
     protected: !!input.protectedRoot && canonicalPath(input.protectedRoot) === canonicalPath(path),
     serving: supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null,
-    unsupervised: input.unsupervised === true,
     simsError: ownsIos && input.sims === null ? (input.simsError ?? 'unknown error') : null,
     booted: booted.map((device) => ({
       deferred: device.kind === 'ios' && holdsDeferredShutdown(state, device.slot, device.id, input.now),

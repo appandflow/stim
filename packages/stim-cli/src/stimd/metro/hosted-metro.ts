@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { workspaceStateFile } from '../../workspace/paths.ts';
 import {
   HOSTED_METRO_LINKS_KEY,
@@ -9,12 +9,13 @@ import {
   HOSTED_METRO_REQUESTS_KEY,
   type HostedMetroRequest,
   type HostedMetroLinks,
+  isJsonObject,
   reversePorts,
   parseMachine,
+  type WorkspaceState,
 } from '@stim-cli/core/state';
-import { readWorkspaceState, updateWorkspaceState } from '../../workspace/workspace-state.ts';
+import { updateWorkspaceState, updateWorkspaceStateAsync } from '../../workspace/workspace-state.ts';
 import { probeHostedSession } from '../../device-host/hosted-client.ts';
-import { clearHostedMetro } from '../../device-host/metro-request.ts';
 import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
 import { watchWorkspaceState } from '../../workspace/workspace-state-watch.ts';
@@ -32,7 +33,18 @@ function reconcileHostedMetro(
   };
 }
 
-export function watchHostedMetro(root: string, metroPort: number, processToken: string): () => Promise<void> {
+/**
+ * Serves the hosted Metro links, reverse ports and agent relays the workspace's hosted sessions ask for, from the
+ * dev server `processToken` names. Past the one write that advertises the watcher, its state I/O is asynchronous so
+ * that stimd's main thread never waits on it.
+ * `warn` gets what fails, for the workspace's Metro log. Resolves the returned close once every link is closed.
+ */
+export function watchHostedMetro(
+  root: string,
+  metroPort: number,
+  processToken: string,
+  warn: (message: string) => void = (message) => process.stderr.write(`${message}\n`),
+): () => Promise<void> {
   const active: Record<string, HostedMetroRequest> = {};
   const pools = new Map<string, MetroLinkPool>();
   const reversePools = new Map<string, MetroLinkPool>();
@@ -44,29 +56,35 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
   let probing = false;
   let probeTimer: ReturnType<typeof setTimeout> | undefined;
   let stamp = '';
-  let cached: ReturnType<typeof readWorkspaceState> = null;
+  let cached: WorkspaceState | null = null;
   let queued = false;
   updateWorkspaceState(root, (state) =>
     state.supervisor?.processToken === processToken
       ? { ...state, supervisor: { ...state.supervisor, hostedMetroLinks: true } }
       : state,
   );
-  const readState = () => {
-    const file = statSync(workspaceStateFile(root));
+  const readState = async () => {
+    const file = await stat(workspaceStateFile(root));
     const next = `${file.ino}:${file.mtimeMs}:${file.ctimeMs}:${file.size}`;
     if (next !== stamp) {
-      cached = readWorkspaceState(root);
+      try {
+        const parsed: unknown = JSON.parse(await readFile(workspaceStateFile(root), 'utf8'));
+        cached = isJsonObject(parsed) ? parsed : null;
+      } catch {
+        cached = null;
+      }
       stamp = next;
     }
     return cached;
   };
   const unpublished = new Map<string, HostedMetroLinks | null>();
   let republish: ReturnType<typeof setTimeout> | undefined;
-  const flush = () => {
+  let flushing: Promise<void> = Promise.resolve();
+  const writeUnpublished = async () => {
     clearTimeout(republish);
     for (const [session, links] of unpublished) {
       try {
-        updateWorkspaceState(root, (state) => {
+        await updateWorkspaceStateAsync(root, (state) => {
           const published = { ...hostedMetroLinks(state) };
           if (state.supervisor?.processToken !== processToken) return state;
           if (links) published[session] = links;
@@ -79,9 +97,12 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         republish.unref();
         return;
       }
-      unpublished.delete(session);
+      if (unpublished.get(session) === links) unpublished.delete(session);
     }
   };
+  function flush(): void {
+    flushing = flushing.then(writeUnpublished);
+  }
   const publish = (session: string, links: HostedMetroLinks | null) => {
     unpublished.delete(session);
     unpublished.set(session, links);
@@ -90,7 +111,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
   const reconcile = async () => {
     if (closed) return;
     observer.refresh();
-    const state = readState();
+    const state = await readState();
     if (state?.supervisor?.processToken !== processToken) return;
     const placements = [
       ...Object.values(hostedIosPlacements(state)),
@@ -103,7 +124,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
       Object.entries(hostedMetroRequests(state)).filter(([session]) => sessions.has(session)),
     );
     if (Object.keys(requests).length !== Object.keys(hostedMetroRequests(state)).length) {
-      updateWorkspaceState(root, (current) => {
+      await updateWorkspaceStateAsync(root, (current) => {
         if (current.supervisor?.processToken !== processToken) return current;
         const recorded = new Set(
           [...Object.values(hostedIosPlacements(current)), ...Object.values(hostedAndroidPlacements(current))].map(
@@ -185,7 +206,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
           onReady: () => {},
           onLost: () => {},
           onError: (message) => {
-            process.stderr.write(`reverse port ${port}: ${message}\n`);
+            warn(`reverse port ${port}: ${message}`);
             reversePools.get(key)?.close();
             reversePools.delete(key);
             reverseFailedAt.set(key, Date.now());
@@ -201,7 +222,11 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         placements.map(async (placement) => {
           if ((await probeHostedSession(placement)).state === 'stopped' && !closed) {
             stopped.add(placement.session);
-            clearHostedMetro(root, placement.session);
+            await updateWorkspaceStateAsync(root, (current) => {
+              const kept = { ...hostedMetroRequests(current) };
+              delete kept[placement.session];
+              return { ...current, [HOSTED_METRO_REQUESTS_KEY]: kept };
+            });
           }
         }),
       )

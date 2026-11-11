@@ -77,7 +77,6 @@ export async function runOperation(
     await client.beforeCommand(operationCommand, entry.env, {
       cwd: entry.cwd,
       recordUse: !residentNativeRun && (entry.caller === 'cli' || entry.operation !== 'start'),
-      passes: entry.caller === 'cli',
       pin: true,
       invocation: context,
       deviceLogs: entry.caller === 'cli' || entry.operation === 'run',

@@ -178,8 +178,8 @@ leased until <time>" for each one.`,
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
-  supervisorPid   the detached supervisor's pid, or NULL when a dev server was
-                  already answering that Stim did not start
+  supervisorPid   the pid of the dev server stimd runs, or NULL when a dev
+                  server was already answering that Stim did not start
   mode            "bare-inproc" | "expo-child" | "command-child" | null
                   (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written

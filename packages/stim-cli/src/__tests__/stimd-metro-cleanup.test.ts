@@ -3,11 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { requestDevServerStop } from '../stimd/metro/stop-cause.ts';
 
 const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
   failAfterSpawn: false,
   groupAlive: true,
+  answers: true,
+  extraEnv: new Array<Record<string, string>>(),
   close: vi.fn<() => Promise<void>>(async () => {
     throw new Error('Could not confirm shutdown of dev-server pid 424242.');
   }),
@@ -35,10 +39,17 @@ vi.mock('../metro.ts', async (importOriginal) => ({
 }));
 vi.mock('../ports.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../ports.ts')>()),
-  isMetroRunning: async () => true,
+  isMetroRunning: async () => fixtures.answers,
 }));
 vi.mock('../stimd/metro/server-command.ts', () => ({
-  startCommandServer: async ({ spawnFn }: { spawnFn: (cmd: string, args: string[], options: object) => unknown }) => {
+  startCommandServer: async ({
+    spawnFn,
+    extraEnv,
+  }: {
+    spawnFn: (cmd: string, args: string[], options: object) => unknown;
+    extraEnv: Record<string, string>;
+  }) => {
+    fixtures.extraEnv.push(extraEnv);
     if (fixtures.failAfterSpawn) {
       spawnFn('fixture', [], {});
       throw new Error('startup failed after spawn');
@@ -82,7 +93,9 @@ beforeEach(() => {
   fixtures.token.mockReturnValue('test-token');
   fixtures.failAfterSpawn = false;
   fixtures.groupAlive = true;
+  fixtures.answers = true;
   fixtures.close.mockClear();
+  fixtures.extraEnv = [];
   openMetroChildren();
 });
 
@@ -101,9 +114,26 @@ test.skipIf(process.platform === 'win32')(
     expect(failure).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
     expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toMatchObject([{ childDeclared: true }]);
     expect(readFileSync(workspaceStateFile(root), 'utf8')).toBe(record);
-    await metroTick(true, log);
+    await metroTick('on', log);
     await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
     expect(fixtures.close).toHaveBeenCalledOnce();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'an operation that ends after the readiness deadline still stops a Metro that never answered',
+  async () => {
+    fixtures.answers = false;
+    fixtures.close.mockResolvedValueOnce();
+    const operation = new AbortController();
+    const started = ensureMetro({ root, port: 8181 }, log, undefined, operation.signal);
+    await vi.advanceTimersByTimeAsync(121_000);
+    await expect(started).resolves.toMatchObject({ op: 'metro', state: 'starting' });
+    expect(fixtures.close).not.toHaveBeenCalled();
+    fixtures.groupAlive = false;
+    operation.abort();
+    await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
+    await closeMetroChildren();
   },
 );
 
@@ -118,18 +148,18 @@ test.skipIf(process.platform === 'win32')(
         }),
     );
     expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
-    expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' })).toMatchObject({
+    expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' }, log)).toMatchObject({
       op: 'error',
       code: 'metro-changed',
     });
     expect(fixtures.close).not.toHaveBeenCalled();
-    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' });
+    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log);
     await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
     expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toHaveLength(1);
     finish();
     await expect(stopping).resolves.toMatchObject({ op: 'metro.stopped', state: 'stopped' });
     expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
-    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' })).resolves.toMatchObject({
+    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log)).resolves.toMatchObject({
       op: 'metro.stopped',
       state: 'not-owned',
     });
@@ -175,3 +205,35 @@ test('failed tunnel startup keeps the unverified claim', async () => {
   expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toMatchObject([{ childDeclared: true }]);
   await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
 });
+
+test.skipIf(process.platform === 'win32')(
+  "a managed tunnel's origin reaches the dev server and stays in its claim for a restart, and a cache reset does not",
+  async () => {
+    const origin = 'https://ready.ngrok.app';
+    expect(await ensureMetro({ root, port: 8186, publicOrigin: origin, resetCache: true }, log)).toMatchObject({
+      op: 'metro',
+    });
+    expect(fixtures.extraEnv).toEqual([
+      expect.objectContaining({ STIM_METRO_PUBLIC_URL: origin, EXPO_PACKAGER_PROXY_URL: origin }),
+    ]);
+    const [claim] = readClaimSet(join(workspaceDir(root), 'metro.claim')).live;
+    expect(claim?.details).toMatchObject({ publicOrigin: origin, tunnel: false });
+    expect(claim?.details).not.toHaveProperty('resetCache');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  "a command's stop request becomes the recorded stop cause and is cleared with the dev server",
+  async () => {
+    fixtures.close.mockResolvedValueOnce();
+    expect(await ensureMetro({ root, port: 8187 }, log)).toMatchObject({ op: 'metro' });
+    requestDevServerStop(root, 'test-token', { by: 'stim stop' });
+    expect(await stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log)).toMatchObject({
+      state: 'stopped',
+    });
+    const state = readWorkspaceState(root);
+    expect(state?.devServerStop).toMatchObject({ reason: 'requested', by: 'stim stop' });
+    expect(state).not.toHaveProperty('devServerStopRequest');
+    expect(state).not.toHaveProperty('supervisor');
+  },
+);

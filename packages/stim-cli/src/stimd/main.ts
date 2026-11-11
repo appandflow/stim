@@ -104,6 +104,7 @@ import {
   stopManagedMetro,
   ensureTunnel,
   metroChildrenRun,
+  metroRootsEndingWithStimd,
   metroOpFlags,
   setMetroInvocation,
   metroTick,
@@ -935,6 +936,7 @@ async function runStimdInner(
   const pinned = (): boolean =>
     Boolean(backgroundFailure) ||
     metroCleanupPending() ||
+    metroRootsEndingWithStimd().length > 0 ||
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
@@ -962,7 +964,9 @@ async function runStimdInner(
               ? { heldBy: 'logs', workspaces: logs.heldRoots() }
               : net.running()?.shareOnly
                 ? { heldBy: 'shares' }
-                : {}),
+                : metroRootsEndingWithStimd().length > 0
+                  ? { heldBy: 'dev-servers', workspaces: metroRootsEndingWithStimd() }
+                  : {}),
           }
         : {};
     socket.end(
@@ -1287,7 +1291,7 @@ async function runStimdInner(
             op === 'metro.ensure'
               ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
               : op === 'metro.stop'
-                ? stopManagedMetro(message.params)
+                ? stopManagedMetro(message.params, log)
                 : ensureTunnel(message.params, operationEnv);
           const controller = opControllers.get(socket);
           const ask =
@@ -1531,7 +1535,7 @@ async function runStimdInner(
       shutdown(`the attached engine claim failed: ${retentionError}`, 'error');
       break;
     }
-    void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
+    void metroTick(mode, log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       await logs.ownedSync();
       if (hasOffWork()) {

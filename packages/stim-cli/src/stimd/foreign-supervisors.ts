@@ -2,6 +2,7 @@ import { inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/proce
 import { isJsonObject } from '@stim-cli/core/state';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { stimdRunsMetro } from './metro/children.ts';
 import { workspaceIdleProbe } from './metro/idle-stop.ts';
 import { metroRequestAt } from './passes/idle-stop.ts';
 
@@ -17,13 +18,13 @@ export async function stopForeignSupervisors(build: string, now: number = Date.n
   // compat C25 until removal-minor
   for (const root of Object.keys(loadConfig()?.projects ?? {})) {
     const state = readWorkspaceState(root);
-    const foreign = [state?.supervisor, ...Object.values(state?.collectors ?? {})].filter(
-      (record): record is ProcessRecord =>
-        isJsonObject(record) &&
-        typeof record.engineDir === 'string' &&
-        record.engineDir !== build &&
-        inspectProcessIdentity(record) === 'same',
-    );
+    const stoppable = (record: unknown): record is ProcessRecord =>
+      isJsonObject(record) &&
+      typeof record.engineDir === 'string' &&
+      record.engineDir !== build &&
+      !stimdRunsMetro(root, Number(record.pid)) &&
+      inspectProcessIdentity(record) === 'same';
+    const foreign = [state?.supervisor, ...Object.values(state?.collectors ?? {})].filter(stoppable);
     if (!foreign.length) continue;
     const probe = workspaceIdleProbe(root);
     const metro = metroRequestAt(root, now - IDLE_POINT_MS, true);
@@ -32,7 +33,7 @@ export async function stopForeignSupervisors(build: string, now: number = Date.n
       left += foreign.length;
       continue;
     }
-    for (const record of foreign)
+    for (const record of foreign.filter(stoppable))
       try {
         process.kill(Number(record.pid), 'SIGTERM');
       } catch {}

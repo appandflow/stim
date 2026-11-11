@@ -57,7 +57,6 @@ describe('the idle stop decision', () => {
 const scopeFacts = fc.record({
   protected: fc.boolean(),
   serving: fc.boolean(),
-  unsupervised: fc.boolean(),
   simsError: fc.option(fc.constant('simctl failed')),
   booted: fc.array(fc.record({ deferred: fc.boolean() }), { maxLength: 3 }),
   foreign: fc.array(fc.constantFrom('Pixel', 'iPhone'), { maxLength: 2 }),
@@ -73,7 +72,7 @@ describe('the activity pass scope', () => {
   });
 
   test('a workspace with nothing running, or only devices a deferred shutdown holds, is left out', () => {
-    const idle = { protected: false, serving: false, unsupervised: false, simsError: null, foreign: [] };
+    const idle = { protected: false, serving: false, simsError: null, foreign: [] };
     expect(idleScope({ ...idle, booted: [] })).toEqual({ runs: false });
     expect(idleScope({ ...idle, booted: [{ deferred: true }, { deferred: true }] })).toEqual({ runs: false });
     expect(idleScope({ ...idle, booted: [{ deferred: true }, { deferred: false }] })).toBeNull();

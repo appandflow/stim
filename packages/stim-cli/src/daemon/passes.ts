@@ -12,15 +12,13 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { daemonClaimHeld, requestDaemonTick, stimdRefused } from './client.ts';
-import { commandWorkspace } from './command-workspace.ts';
+import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
-import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
 import { runDormantPass } from './stages.ts';
@@ -264,10 +262,9 @@ export function createMaintenanceLane(
 }
 
 /**
- * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because the idle
- * stage of rung 1 is the activity pass, which a command runs only for workspaces with no dev server
- * (`runCommandIdle`). Measures and lists devices only when the level is above normal, and nothing while `daemon.mode`
- * is off. Logs to `daemon.ndjson` under `trigger`.
+ * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because rung 1's
+ * idle stage is the daemon's activity pass. Measures and lists devices only when the level is above normal, and
+ * nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
 async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
   const mode = daemonMode(env);
@@ -306,42 +303,6 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
       },
       pressure,
     );
-  } finally {
-    writer.close();
-  }
-}
-
-/**
- * The activity pass in this process, for a command with no daemon holding the home, over the workspaces whose dev
- * server does not run: an owned device left booted after its dev server stopped, or after a Release run, goes into
- * the idle stage after `idle.minutes` of the one activity clock. Dev servers keep their own supervisor's timer.
- * Logs to `daemon.ndjson` under `trigger`.
- */
-async function runCommandIdle(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
-  const mode = daemonMode(env);
-  const config = loadConfig();
-  if (!config || mode === 'off') return;
-  const now = Date.now();
-  const measured = await measureTick(config, now);
-  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-  try {
-    await runBootedParkedPass({
-      sims: measured.sims,
-      memory: measured.measurement.memory.level,
-      act: mode === 'on',
-      log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
-    });
-    await runIdlePass({
-      config,
-      now,
-      sims: measured.sims,
-      simsError: measured.simsError,
-      devices: measured.devices,
-      act: mode === 'on',
-      unsupervised: true,
-      ...(protectedRoot ? { protectedRoot } : {}),
-      log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
-    });
   } finally {
     writer.close();
   }
@@ -453,25 +414,5 @@ export async function runLadderNow(
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);
-  } catch {}
-}
-
-/**
- * Automatic maintenance, the activity pass over workspaces with no running dev server, and the pressure ladder at
- * command time, for a command that found no daemon holding the home: a stimd that could
- * not start. Nothing runs while `daemon.mode` is off, and report acts on nothing. Each dev server supervisor times
- * its own idle stop. No pass takes `protectedRoot`, the command's own workspace.
- */
-export async function runPassesInProcess(
-  trigger: string,
-  env: NodeJS.ProcessEnv = process.env,
-  protectedRoot: string | null = commandWorkspace(false, env),
-): Promise<void> {
-  try {
-    const mode = daemonMode(env);
-    if (env[HOME_PASSES_TEST_GUARD_ENV] || mode === 'off' || daemonClaimHeld()) return;
-    await runCommandIdle(trigger, env, protectedRoot ?? undefined);
-    await runMaintenance(trigger, { report: mode === 'report' });
-    await runCommandLadder(trigger, env, protectedRoot ?? undefined);
   } catch {}
 }

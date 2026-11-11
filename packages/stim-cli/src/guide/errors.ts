@@ -1345,14 +1345,15 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   node_modules/.bin/expo does not exist. Install the project's dependencies.`,
     },
     STIM_METRO_TIMEOUT: {
-      summary: 'the supervisor is alive but Metro or the tunnel was not ready within the wait; --wait 180',
+      summary: 'Metro or the tunnel was not ready within the wait; --wait 180',
       body: () => `STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
-  The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
+  The dev server started, but Metro or its requested Expo tunnel was not ready.
   A Debug \`ios\` or \`android\` run that starts the dev server reports the
-  same refusal after the default 60s; re-running it waits for the same
-  supervisor again, and \`stim start --wait 180\` waits longer. \`start\` has already
-  printed the last lines of the global workspace logs/supervisor.log above this -- read
+  same refusal after the default 60s. Stim stops a dev server that has not
+  answered when the command that started it ends, so a rerun starts it again;
+  \`stim start --wait 180\` waits longer. \`start\` has already
+  printed the last lines of the global workspace logs/metro.stderr.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
     },
@@ -1368,13 +1369,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Metro. \`stim ports get\` prints the same message.`,
     },
     STIM_SUPERVISOR_EXITED: {
-      summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',
+      summary: 'the dev server failed outright; the quoted metro.stderr.log tail is the real error',
       body: () => `STIM_SUPERVISOR_EXITED
-  "The supervisor exited (<code|signal>) before the dev server came up"
+  "The dev server exited before it came up on port <n>."
   The dev server failed outright, and the quoted evidence is the real error:
-  the supervisor.log tail if it wrote one, plus this attempt's error records
+  the metro.stderr.log tail if it wrote one, plus this attempt's error records
   from the timeline (an expo child's config error -- a PluginError, a bad app
-  config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
+  config -- lands THERE). \`stim logs --errors\` has
   the full records. Fix that and run \`start\` again.
 
   A bind error on the reserved port ("listen EADDRINUSE ... :<port>") means
@@ -1989,14 +1990,18 @@ not on any remote"  (worktree remove)
   STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
   seconds for cleanup before forcing the daemon to exit. If startup still
   fails, run stim doctor or run outside the sandbox.
-  stim share, share list and share stop also answer it when this home's
-  stimd runs another Stim build and no stimd of this build replaced it. The
-  message names that build, its pid and what holds its restart on this
-  build: wait for the commands it serves; let its live shares expire; for
-  device log streams, run npx stim@<its version> stop in the workspaces it
-  names. Or run the command with that build, or stop that stimd with
-  kill <pid>, which also ends the builds, dev servers and shares it serves,
-  so the next command starts one of this build.`,
+  stim start, stim stop, stim share, share list and share stop also answer
+  it when this home's stimd runs another Stim build and no stimd of this build
+  replaced it; that stimd also runs the home's Metro. The message names that
+  build, its pid and what holds its restart on this build: wait for the
+  commands it serves; let its live shares expire; for device log streams, and
+  on Windows for the dev servers it runs, run npx stim@<its version> stop in
+  the workspaces it names. Or run the command with that build, or stop that
+  stimd, which also ends the builds and shares it serves, so the next command
+  starts one of this build. On macOS and Linux stop it with kill <pid>; its
+  dev servers keep running and the next stimd takes them over. On Windows its
+  dev servers stop only with it, so run npx stim@<its version> stop in their
+  workspaces first, then taskkill /PID <pid> /F.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',

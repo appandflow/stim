@@ -19,7 +19,7 @@ function processGroupAlive(pgid: number): boolean {
   }
 }
 
-export function commandArgv(command: readonly string[], port: number): string[] {
+function commandArgv(command: readonly string[], port: number): string[] {
   return command.map((arg) => arg.replaceAll(METRO_COMMAND_PORT, String(port)));
 }
 

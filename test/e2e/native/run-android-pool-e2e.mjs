@@ -33,7 +33,6 @@ assert(apkPath, 'Usage: node --experimental-strip-types test/e2e/native/run-andr
 const work = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-pool-e2e-')));
 process.env.STIM_HOME = join(work, 'home');
 process.env.STIM_DAEMON = 'off';
-process.env.STIM_TEST_GUARD_NO_HOME_PASSES = '1';
 process.env.STIM_POOL_ANDROID_PARKED_MAX = '1';
 const manifest = dumpApkManifest(apkPath);
 const packageName = apkPackage(manifest);

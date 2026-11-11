@@ -10,7 +10,6 @@ import {
 } from '@stim-cli/core/state';
 import { formatLongDuration } from '../command-output.ts';
 import {
-  collectOwnedDeviceActivity,
   collectOwnedDeviceActivityAsync,
   workspaceBuildInProgress,
   type OwnedDeviceActivity,
@@ -23,7 +22,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
-import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from './ios.ts';
+import { listAllIosSimsAsync, type IosSimRecord } from './ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from './teardown.ts';
 
 const SIM_LIST_TIMEOUT_MS = 10_000;
@@ -54,23 +53,10 @@ export function idleShutdownDueMs(
   return idle >= idleMs ? idle : null;
 }
 
-export interface DueDevice {
-  device: OwnedDeviceActivity;
-  idleForMs: number;
-}
-
 interface IdleDecision {
   device: OwnedDeviceActivity;
   idleForMs: number | null;
   keptBecause: () => string;
-}
-
-function listSims(): IosSimRecord[] {
-  try {
-    return listAllIosSims({ timeoutMs: SIM_LIST_TIMEOUT_MS });
-  } catch {
-    return [];
-  }
 }
 
 async function listSimsAsync(operation: StimContext | undefined): Promise<IosSimRecord[]> {
@@ -119,11 +105,6 @@ function decisionsFor(
   });
 }
 
-function idleDecisions(root: string | undefined, idleMs: number, now: number): IdleDecision[] {
-  const config = idleConfig(root, idleMs, now);
-  return config ? decisionsFor(config, collectOwnedDeviceActivity(config, listSims(), now), idleMs, now) : [];
-}
-
 async function idleDecisionsAsync(
   root: string,
   idleMs: number,
@@ -135,13 +116,6 @@ async function idleDecisionsAsync(
   const sims = await listSimsAsync(operation);
   const devices = await collectOwnedDeviceActivityAsync(config, sims, now, undefined, operation?.signal, operation);
   return decisionsFor(config, devices, idleMs, now);
-}
-
-/** Booted owned devices idle for `idleMs`, in one workspace or all registered workspaces when root is absent. */
-export function dueIdleDevices(root: string | undefined, idleMs: number, now: number = Date.now()): DueDevice[] {
-  return idleDecisions(root, idleMs, now).flatMap(({ device, idleForMs }) =>
-    idleForMs === null ? [] : [{ device, idleForMs }],
-  );
 }
 
 export interface IdleShutdownEvent {

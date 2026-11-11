@@ -13,16 +13,17 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 :::
 
-`stim start` reserves a port for the workspace and starts its React Native or
-Expo dev server under a detached supervisor. The command exits only after the
-server answers and Stim verifies its project identity.
+`stim start` reserves a port for the workspace and has the Stim home's stimd
+start its React Native or Expo dev server as its own child. The command exits
+only after the server answers and Stim verifies its project identity. It
+starts stimd when none runs, whatever `daemon.mode` says.
 
 A Debug `stim ios` or `stim android` run starts the dev server the same way
 when it is not running, so `stim start` is optional. Running it first lets
 Metro warm up while you do other work.
 
-Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
-as a supervised child. A healthy server that another process started for the
+Bare React Native runs Metro in Stim's Metro host process. Expo runs the
+project's Expo CLI. Both run on the Node the project pins. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
 If Expo cannot be resolved in a linked worktree, run `stim worktree warm`
@@ -142,9 +143,8 @@ Set `maintenance.idleStopHours` to `0` to disable this timeout. The worker has a
 
 ## Why the dev server stopped
 
-When the supervisor stops its dev server, it records the cause in the
-`supervisor_stopped` line of the timeline (`supervisor_idle_stopped` for an
-idle stop) and in `stim status`, which prints it after `not running` while
+When a dev server stops, stimd records the cause in the
+`supervisor_stopped` line of the timeline and in `stim status`, which prints it after `not running` while
 the workspace keeps its port. `stim stop` releases the port, so its own stops
 show only in the timeline. In `--json`, the environment's `metro.lastStop`
 carries it:
@@ -155,7 +155,7 @@ carries it:
 | `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                     |
 | `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                    |
 | `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                         |
-| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                          |
+| `vanished`      | The dev server is gone and recorded no cause, usually because it died while no stimd ran, or after a machine restart. `stim stop` logs `supervisor_vanished`.                                                    |
 
 ## Watchman roots
 
@@ -164,15 +164,15 @@ watch root in the shared watchman daemon and never removes it. Bare React
 Native Metro uses watchman whenever it is installed. Expo SDK 56 and later use
 it only when `metro.config.js` sets `resolver.useWatchman` to `true`.
 
-When the supervisor stops its dev server, it runs `watchman watch-del` on the
+When stimd stops a dev server it started, it runs `watchman watch-del` on the
 root its Metro registered, once no other client subscribes to it or has a
 trigger on it. It only
-removes a root that appeared after the supervisor started, contains the
+removes a root that appeared after the dev server started, contains the
 workspace and carried this Metro's subscription. It never starts the watchman
 daemon and leaves other roots alone, including those jest registers. The
 timeline records `watchman_root_removed`, or `watchman_root_kept` with the
 reason. A
-supervisor that dies without stopping leaves its root; remove it with
+dev server that dies, or one a restarted stimd took over, leaves its root; remove it with
 `watchman watch-del <root>`.
 
 Removing a root stops watchman from recrawling it. The daemon's memory
@@ -531,7 +531,7 @@ stim logs --source agent.
 
 :::
 
-`stim stop` ends the supervisor and log collectors. It also frees the reserved
+`stim stop` has stimd stop the dev server, and ends the log collectors. It also frees the reserved
 port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
 
 When `stimd` restarts on another Stim build, it stops each simulator and
@@ -651,16 +651,16 @@ stim ports reverse, and confirm from the app that it connects.
 ## Metro for hosted iOS
 
 `stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.
-Hosted Debug runs require a supervisor and a host stim-server that support
+Hosted Debug runs require a dev server stimd runs and a host stim-server that support
 client-opened Metro links before reserving the simulator. `--no-metro-check`
-refuses; restart a missing or older supervisor with `stim stop; stim start`.
-The supervisor keeps a few authenticated connections open to the host for each
+refuses; restart a missing or older dev server with `stim stop; stim start`.
+stimd keeps a few authenticated connections open to the host for each
 session. The host's bridge listens only on loopback and pairs each connection
-the simulator makes with one of them, which the supervisor forwards to this
+the simulator makes with one of them, which stimd forwards to this
 Metro. The host never connects back to this machine, so a host shared into your
 tailnet, or one your ACLs only let you reach on its stim-server port, works.
 `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
-skip Metro. A recorded hosted session prevents the supervisor's idle stop; stop or a stopped host
+skip Metro. A recorded hosted session prevents the dev server's idle stop; stop or a stopped host
 session closes its links. The [idle workspace stop](#idle-workspace-stop) still applies. Native device records are pulled by `stim logs` and
 `stim logs --errors` from adaptive, bounded host queries. Followers share a
 throttled collection without blocking app delivery, view or control. Stop limits each log drain

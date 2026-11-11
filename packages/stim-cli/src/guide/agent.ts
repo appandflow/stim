@@ -61,7 +61,7 @@ logcat records arrive through stim logs, including --errors and --json;
 Desktop and the phone view/control it through the local stim-server relay.
 Stop before switching
 between a local simulator and a hosting Mac. Hosted Debug requires the local
-Metro supervisor; restart a missing or older one with stim stop; stim start.
+Metro, run by stimd; restart a missing or older one with stim stop; stim start.
 A named Mac never falls back here; auto can use the local device queue when no
 host admits. Auto keeps a live local slot or recorded hosted session. Follow the
 placement reason and the reported device. Stop reconciles a recorded host

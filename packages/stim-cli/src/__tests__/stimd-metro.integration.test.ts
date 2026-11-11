@@ -20,6 +20,7 @@ import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim'
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { upsertProject } from '../workspace/config.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -36,7 +37,7 @@ function write(path: string, text: string, mode?: number): void {
 }
 
 /** A bare React Native project whose `metro` answers `/status`, pinned by `.nvmrc` to a Node that records its pids. */
-function bareProject(): string {
+function bareProject({ listens = true, exitsAfterMs = 0 } = {}): string {
   const root = join(dir, 'bare');
   write(join(root, 'package.json'), JSON.stringify({ name: 'bare', dependencies: { 'react-native': '0.0.0' } }));
   write(join(root, '.nvmrc'), '1.2.3\n');
@@ -48,10 +49,19 @@ function bareProject(): string {
     'metro',
     `const http = require('node:http');
 exports.loadConfig = async ({ port }) => ({ server: { port }, resolver: { platforms: ['ios'] }, watchFolders: [] });
-exports.runServer = (config) => new Promise((resolve) => {
+exports.runServer = ${
+      listens
+        ? `(config) => new Promise((resolve) => {
   const httpServer = http.createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''));
-  httpServer.listen(config.server.port, () => resolve({ httpServer }));
-});`,
+  httpServer.listen(config.server.port, () => resolve({ httpServer }));${
+    exitsAfterMs
+      ? `
+  setTimeout(() => process.exit(3), ${exitsAfterMs});`
+      : ''
+  }
+})`
+        : '() => new Promise(() => setInterval(() => {}, 1000))'
+    };`,
   );
   module(
     '@react-native/dev-middleware',
@@ -223,6 +233,27 @@ test.skipIf(process.platform !== 'win32')(
   },
   30_000,
 );
+
+test('a Metro that exits by itself releases its claim and stimd keeps serving', async () => {
+  const root = bareProject({ exitsAfterMs: 1500 });
+  rmSync(join(root, '.nvmrc'));
+  const pid = await startStimd();
+  const port = await freePort();
+  await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
+  await vi.waitFor(
+    () => {
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect([...claims.live, ...claims.unresolved]).toEqual([]);
+    },
+    { timeout: 15_000, interval: 100 },
+  );
+  expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).devServerStop).toMatchObject({
+    reason: 'server-exited',
+    code: 3,
+  });
+  expect(alive(pid)).toBe(true);
+  await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+}, 40_000);
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
   test('an attached stimd hands over when only a tunnel is running', async () => {
@@ -568,6 +599,180 @@ socket.on('data', chunk => {
       socket.destroy();
     }
   });
+
+  test('a stop does not queue behind a Metro that has not answered yet', async () => {
+    const root = bareProject({ listens: false });
+    const port = await freePort();
+    await startStimd();
+    const { socket: path, build } = record() ?? { socket: '', build: '' };
+    const starter = connect(path);
+    starter.setEncoding('utf8');
+    let started = '';
+    starter.on('data', (chunk: string) => (started += chunk));
+    await once(starter, 'connect');
+    starter.write(
+      `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'metro.ensure', params: { root, port } })}\n`,
+    );
+    try {
+      const supervisor = await vi.waitFor(
+        () => {
+          const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+          expect(recorded?.pid).toBeTypeOf('number');
+          return recorded;
+        },
+        { timeout: 15_000, interval: 100 },
+      );
+      const stopped = await Promise.race([
+        ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken }),
+        new Promise((done) => setTimeout(() => done('still queued'), 15_000)),
+      ]);
+      expect(stopped).toEqual({ op: 'metro.stopped', state: 'stopped' });
+      expect(processGroupAlive(supervisor.pid)).toBe(false);
+      await vi.waitFor(() => expect(started).toContain('metro-stopping'));
+    } finally {
+      starter.destroy();
+    }
+  }, 40_000);
+
+  test('a Metro whose operation ends before it answers stops', async () => {
+    const root = bareProject({ listens: false });
+    const port = await freePort();
+    await startStimd();
+    const { socket: path, build } = record() ?? { socket: '', build: '' };
+    const operation = connect(path);
+    operation.setEncoding('utf8');
+    const lines: Record<string, unknown>[] = [];
+    let buffer = '';
+    operation.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)));
+        buffer = buffer.slice(end + 1);
+      }
+    });
+    await once(operation, 'connect');
+    operation.write(
+      `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params: { workspace: root, forwarded: { cwd: root, env } } })}\n`,
+    );
+    await vi.waitFor(() => expect(lines[1]?.op).toBe('op.begun'));
+    try {
+      await expect(ask('metro.prepare', { root, port }, String(lines[1]?.opToken))).resolves.toMatchObject({
+        op: 'metro.prepared',
+      });
+      const supervisor = await vi.waitFor(
+        () => {
+          const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+          expect(recorded?.pid).toBeTypeOf('number');
+          return recorded;
+        },
+        { timeout: 15_000, interval: 100 },
+      );
+      operation.destroy();
+      await vi.waitFor(() => expect(processGroupAlive(supervisor.pid)).toBe(false), { timeout: 15_000, interval: 100 });
+      await vi.waitFor(() => {
+        const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+        expect([...claims.live, ...claims.unresolved]).toEqual([]);
+      });
+    } finally {
+      operation.destroy();
+    }
+  }, 40_000);
+
+  test('start under daemon.mode off has a stimd adopt a running Metro whose stimd was killed', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 1\n', 0o755);
+    const run = async (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+      const child = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...env, ...extra }, stdio: 'pipe' });
+      let output = '';
+      child.stdout?.on('data', (chunk) => (output += String(chunk)));
+      child.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const [code] = await once(child, 'exit');
+      if (code !== 0) throw new Error(`stim ${args.join(' ')} exited ${code}: ${output}`);
+      return output;
+    };
+    const started = await run(['start']);
+    const first = record();
+    const metro = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+    expect(started).toContain(`starting on port ${metro.port} (${metro.mode}, supervisor pid ${metro.pid})`);
+    try {
+      process.kill(Number(first?.pid), 'SIGKILL');
+      await vi.waitFor(() => expect(alive(first?.pid)).toBe(false));
+      expect(processGroupAlive(metro.pid)).toBe(true);
+
+      await run(['start'], { STIM_DAEMON: 'off' });
+      const next = record();
+      expect(next?.pid).not.toBe(first?.pid);
+      expect(alive(next?.pid)).toBe(true);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect(claims.live.map((holder) => [holder.owner.pid, holder.child?.pid])).toEqual([[next?.pid, metro.pid]]);
+    } finally {
+      await run(['stop']);
+      const last = record()?.pid;
+      if (last && alive(last)) process.kill(last, 'SIGTERM');
+      await vi.waitFor(() => expect(last === undefined || !alive(last)).toBe(true), { timeout: 15_000 });
+    }
+    expect(processGroupAlive(metro.pid)).toBe(false);
+  }, 90_000);
+
+  test('stop starts a stimd that adopts and stops a Metro whose stimd was killed', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 1\n', 0o755);
+    const port = await freePort();
+    upsertProject(root, { metroPort: port });
+    const killed = await startStimd();
+    const metro = await ask('metro.ensure', { root, port });
+    expect(metro).toMatchObject({ op: 'metro', state: 'started' });
+    stimd?.kill('SIGKILL');
+    stimd = null;
+    await vi.waitFor(() => expect(alive(killed)).toBe(false));
+    expect(processGroupAlive(Number(metro.pid))).toBe(true);
+    const stop = spawn(process.execPath, [cli, 'stop'], { cwd: root, env, stdio: 'pipe' });
+    let output = '';
+    stop.stdout?.on('data', (chunk) => (output += String(chunk)));
+    stop.stderr?.on('data', (chunk) => (output += String(chunk)));
+    const [code] = await once(stop, 'exit');
+    const adopter = record();
+    try {
+      expect({ code, output }).toMatchObject({ code: 0 });
+      expect(adopter?.pid).not.toBe(killed);
+      expect(processGroupAlive(Number(metro.pid))).toBe(false);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect([...claims.live, ...claims.unresolved]).toEqual([]);
+    } finally {
+      if (adopter && adopter.pid !== killed && alive(adopter.pid)) process.kill(adopter.pid, 'SIGTERM');
+    }
+  }, 60_000);
+
+  test("an Expo tunnel's URL is recorded for the workspace's Metro", async () => {
+    const root = join(dir, 'expo-tunnel');
+    write(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^50.0.0' } }));
+    write(join(root, 'app.json'), JSON.stringify({ name: 'app', platforms: ['ios', 'android'] }));
+    write(
+      join(root, 'node_modules', 'expo', 'package.json'),
+      JSON.stringify({ name: 'expo', version: '50.0.0', bin: { expo: 'bin/cli' } }),
+    );
+    write(
+      join(root, 'node_modules', 'expo', 'bin', 'cli'),
+      `#!/usr/bin/env node
+const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
+require('node:http')
+  .createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''))
+  .listen(port, () => console.log('Waiting on exp://fixture-tunnel.exp.direct'));
+`,
+      0o755,
+    );
+    const port = await freePort();
+    await startStimd();
+    const workspace = realpathSync(root);
+    const started = await ask('metro.ensure', { root: workspace, port, tunnel: true });
+    expect(started).toMatchObject({ op: 'metro', mode: 'expo-child' });
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')).metroTunnel).toEqual({
+        kind: 'expo',
+        url: 'https://fixture-tunnel.exp.direct',
+      }),
+    );
+  }, 30_000);
 
   test('a stale heartbeat whose /status probe fails restarts Metro', async () => {
     const root = bareProject();

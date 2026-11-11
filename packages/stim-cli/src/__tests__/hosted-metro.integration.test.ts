@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, type PathLike, type WatchListener } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setImmediate } from 'node:timers/promises';
+import { setTimeout as realDelay } from 'node:timers/promises';
 import { hostedMetroLinks } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../stimd/metro/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
@@ -26,8 +26,8 @@ vi.mock('../workspace/workspace-state.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../workspace/workspace-state.ts')>();
   return {
     ...actual,
-    updateWorkspaceState: (root: string, update: Parameters<typeof actual.updateWorkspaceState>[1]) =>
-      actual.updateWorkspaceState(root, (state) => {
+    updateWorkspaceStateAsync: (root: string, update: Parameters<typeof actual.updateWorkspaceStateAsync>[1]) =>
+      actual.updateWorkspaceStateAsync(root, (state) => {
         const next = update(state);
         if (
           links.failLinkWrites > 0 &&
@@ -58,7 +58,21 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: links.probe }));
 vi.mock('../stimd/metro/metro-links.ts', () => ({
-  openMetroLinks: ({ onReady, onLost }: { onReady: () => void; onLost: () => void }) => {
+  openMetroLinks: ({
+    onReady,
+    onLost,
+    onError,
+    reverse,
+  }: {
+    onReady: () => void;
+    onLost: () => void;
+    onError: (message: string) => void;
+    reverse?: boolean;
+  }) => {
+    if (reverse) {
+      queueMicrotask(() => onError('the phone refused the reverse'));
+      return { close: () => {} };
+    }
     links.lost.mockImplementation(onLost);
     queueMicrotask(onReady);
     return { close: links.close };
@@ -148,11 +162,13 @@ test('a session on a local network machine publishes its agent relay port with r
     expect(links.relayPort).toHaveBeenCalledWith(51234);
     expect(hostedAgentPort(root, session)).toBe(51234);
     links.lost();
-    expect(hostedMetroLinks(readWorkspaceState(root))[session]).toEqual({
-      id: 'request',
-      processToken: 'watcher',
-      agentPort: 51234,
-    });
+    await vi.waitFor(() =>
+      expect(hostedMetroLinks(readWorkspaceState(root))[session]).toEqual({
+        id: 'request',
+        processToken: 'watcher',
+        agentPort: 51234,
+      }),
+    );
     expect(hostedAgentPort(root, session)).toBeNull();
     await closeHostedMetro(root, session);
     await vi.waitFor(() => expect(links.relayClose).toHaveBeenCalledOnce());
@@ -184,15 +200,18 @@ test('remote stopped evidence closes links ten seconds after an offset initial p
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
   links.dropWatchEvents = true;
   links.probe.mockResolvedValue({ state: 'ready' });
+  const settle = () => realDelay(200);
   const close = watchHostedMetro(root, 8082, 'watcher');
   try {
     vi.advanceTimersByTime(5000);
-    await setImmediate();
+    await settle();
     expect(links.probe).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(5000);
+    await settle();
     expect(links.probe).toHaveBeenCalledOnce();
     links.probe.mockResolvedValue({ state: 'stopped' });
     await vi.advanceTimersByTimeAsync(5000);
+    await settle();
     expect(links.probe).toHaveBeenCalledTimes(2);
     expect(readWorkspaceState(root)?.hostedMetroRequests).toEqual({});
     await vi.advanceTimersByTimeAsync(5000);
@@ -221,6 +240,18 @@ test('a live supervisor must advertise its watcher before a hosted Debug run can
   const close = watchHostedMetro(root, 8082, processToken!);
   try {
     expect(() => requireHostedMetro(root)).not.toThrow();
+  } finally {
+    await close();
+  }
+});
+
+test("a reverse port that fails is reported to the workspace's Metro log", async () => {
+  links.probe.mockResolvedValue({ state: 'ready' });
+  writeWorkspaceState(root, { ...readWorkspaceState(root), reversePorts: [9090] });
+  const warn = vi.fn<(message: string) => void>();
+  const close = watchHostedMetro(root, 8082, 'watcher', warn);
+  try {
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith('reverse port 9090: the phone refused the reverse'));
   } finally {
     await close();
   }

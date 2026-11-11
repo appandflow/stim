@@ -84,7 +84,7 @@ a seed belongs to this workflow.
     deps        source /w/main: pnpm-lock.yaml changed -> pnpm install (41s)
     pods        source /w/main/apps/mobile: ios/Podfile.lock unchanged -> skipped
 
-  # 2. Optional: the dev server, under a detached supervisor. Blocks until it
+  # 2. Optional: the dev server, run by this home's stimd. Blocks until it
   #    is verifiably THIS project's, then hands your shell back. Step 3 runs
   #    this same start when the dev server is not running.
   stim start
@@ -122,7 +122,7 @@ a seed belongs to this workflow.
   #    Retain proof: a screenshot, recording, or relevant runtime output.
   #    See: stim guide lifecycle verification
 
-  # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
+  # 6. Pausing: dev server stopped, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
   stim stop
 
@@ -1406,8 +1406,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   A wait reports how long this caller has waited and names the holder:
   \`lock        waiting 40s for stim worktree warm --refresh (pid 41233) -- stim guide lifecycle options\`.
 
-  \`start\` names the port, the supervisor mode and its pid on one line
-  (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
+  \`start\` names the port and the dev server mode on one line
+  (\`metro       starting on port 8083 (expo-child, supervisor pid 34856)\`),
   and \`stop\` reports what it released:
 
     stop        supervisor pid 34856
@@ -2595,11 +2595,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   are never touched. It records deviceIdleShutdowns in state.json, so \`stim
   status\` shows "shut down after 15m idle" on the device until the next
   \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
-  or while no daemon runs, the workspace's supervisor checks once a minute and
-  shuts its own devices down after idle.minutes. A device whose workspace has
-  no running dev server is shut down by the idle stage that the next command
-  runs in its own process (stim doctor, start, ios and android), never for that
-  command's own workspace; with no daemon nothing times it between commands. Change the clock with
+  stimd checks each workspace whose dev server it runs on every tick and
+  shuts its devices down after idle.minutes. With no daemon, nothing times a
+  device whose workspace has no running dev server. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
   and dormant off, and an explicit 0 stays 0.
 

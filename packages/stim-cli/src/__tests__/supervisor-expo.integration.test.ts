@@ -23,7 +23,6 @@ import {
   metroStoreConfirmedRoot,
   metroStoreRoot,
 } from '../stimd/metro/metro-store.ts';
-import { trackDevServerActivity } from '../stimd/metro/idle-stop.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
@@ -97,16 +96,14 @@ describe('startExpoServer', () => {
     });
   });
 
-  test('bundle responses the child writes to its output files within a second are all logged, from its own process group, and leave the idle tracker with no open request', async () => {
+  test('bundle responses the child writes to its output files within a second are all logged, from its own process group', async () => {
     fakeBin();
     const child = fakeChild();
     let clock = 1_000_000;
-    const activity = trackDevServerActivity(() => clock);
     const written: Record<string, unknown>[] = [];
     const writer = {
       file: join(root, 'metro.ndjson'),
       write(record: unknown) {
-        activity.record(record);
         written.push(record as Record<string, unknown>);
         return true;
       },
@@ -159,9 +156,6 @@ describe('startExpoServer', () => {
       ]),
     );
     child.emit('exit', 0, null);
-    const quietSince = clock;
-    clock += 3_600_000;
-    expect(activity.lastActivityAt()).toBe(quietSince);
   });
 
   test('the child inherits the supervisor process environment (#33)', async () => {

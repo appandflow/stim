@@ -2,28 +2,22 @@ import chalk from 'chalk';
 import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
-import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../stimd/metro/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { getProject, releaseMetroPort, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signalProcessTree } from '../metro.ts';
+import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../stimd/metro/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
-import {
-  ensureWorkspaceStorage,
-  supervisorLogFile,
-  workspaceLogsDir,
-  workspaceAgentDeviceDir,
-} from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { createPortProbe, isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
@@ -52,12 +46,10 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { stopOwnedMetroForReset } from '../stimd/metro/cache-reset.ts';
-import { spawnEntry } from '../spawn-entry.ts';
-import { windowsLauncherArgs } from '../detached-entry.ts';
+import { ensureMetroThroughStimd } from '../daemon/client.ts';
 import {
   publicUrlSetting,
   ngrokUrlSetting,
-  idleMinutesSetting,
   metroPortSetting,
   metroCommandSetting,
   metroCommandSettingError,
@@ -76,24 +68,21 @@ import {
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
-import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider } from '../engine/metro-reach.ts';
+import { detectProviders, planMetroReach, type ManagedProvider } from '../engine/metro-reach.ts';
 import {
   startTunnelSequence,
   stopTunnel,
-  terminateChild,
   withManagedRemoteWorktreeLock,
   withManagedTunnelLock,
   type StartTunnelSequenceOptions,
   type StartTunnelSequenceResult,
-  type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import type { ReclaimObserver } from '../stimd/passes/budget.ts';
 import { diskFloorGate } from '../daemon/floor.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
-import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
+import { groupExitBudgetMs } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
-import { ownStoreEngine } from '../daemon/engine-switch.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -118,10 +107,6 @@ function waitForStartup(ms: number): Promise<void> {
 
 function writeNote(line: string): void {
   console.error(line);
-}
-
-export function supervisorEntry(): string {
-  return spawnEntry('supervisor-run');
 }
 
 interface WaitResult {
@@ -165,12 +150,6 @@ interface LiveSupervisor {
   port: number;
   mode: string | null;
   startedAt: string | null;
-}
-
-interface ChildExitInfo {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  error?: Error;
 }
 
 export function liveSupervisor({
@@ -265,43 +244,13 @@ interface StartCommandDeps {
   isTunnelAlive(pid: number, processToken?: string | null): boolean;
   writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
   stopTunnel(record: TunnelRecord): ReturnType<typeof stopTunnel>;
-  writeSupervisorRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
-  terminateSupervisorChild(child: SupervisorProcess): Promise<boolean>;
+  ensureMetro: typeof ensureMetroThroughStimd;
   withWorktreeLock: typeof withManagedRemoteWorktreeLock;
   withTunnelLock: typeof withManagedTunnelLock;
   clearTunnelRecord(root: string, record: TunnelRecord): unknown;
   diskFloorGate: typeof diskFloorGate;
   platform: NodeJS.Platform;
 }
-
-/** The spawned supervisor, or on win32 the stand-in for the one the launcher recorded. */
-export interface SupervisorProcess extends TerminableChild {
-  on(event: string, listener: (...args: unknown[]) => void): unknown;
-  unref(): void;
-  recordedIdentity?: ProcessRecord;
-}
-
-export function supervisorSignalable(
-  child: Pick<SupervisorProcess, 'recordedIdentity'>,
-  inspectIdentity: typeof inspectProcessIdentity = inspectProcessIdentity,
-): boolean {
-  return !child.recordedIdentity || inspectIdentity(child.recordedIdentity) === 'same';
-}
-
-function recordedSupervisorProcess(recorded: ProcessRecord | null): SupervisorProcess {
-  const pid = typeof recorded?.pid === 'number' ? recorded.pid : undefined;
-  return Object.assign(new EventEmitter(), {
-    pid,
-    ...(recorded ? { recordedIdentity: recorded } : {}),
-    stdout: null,
-    stderr: null,
-    kill: (signal: NodeJS.Signals | number = 'SIGTERM') =>
-      pid !== undefined && signalProcessTree(pid, typeof signal === 'number' ? 'SIGTERM' : signal),
-    unref() {},
-  });
-}
-
-const RECORDED_SUPERVISOR_WAIT_MS = 15_000;
 
 function providersOnPath(mode: Parameters<typeof detectProviders>[1]): ManagedProvider[] {
   return detectProviders((bin) => {
@@ -320,19 +269,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
     processToken === undefined ? pidExists(pid) : inspectProcessIdentity({ pid, processToken }) === 'same',
   writeTunnelRecord: (root, patch) => updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch })),
   stopTunnel,
-  writeSupervisorRecord: (root, patch) => updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch })),
-  terminateSupervisorChild: async (child) => {
-    if (child.pid && process.platform !== 'win32') {
-      try {
-        signalProcessTree(child.pid, 'SIGTERM', { group: true });
-      } catch {}
-    }
-    const stopped = await terminateChild(child, { alreadyExited: false, timeoutMs: 1_000, isAlive: pidExists });
-    return (
-      stopped &&
-      (process.platform === 'win32' || !child.pid || (await waitForGroupExit(child.pid, groupExitBudgetMs())))
-    );
-  },
+  ensureMetro: ensureMetroThroughStimd,
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
   clearTunnelRecord: (root, record) => withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)),
@@ -362,7 +299,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
   program
     .command('start')
     .description(
-      "Start this workspace's dev server under a detached supervisor and wait until it verifies as this project's. " +
+      "Start this workspace's dev server, run by this home's stimd, and wait until it verifies as this project's. " +
         'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
@@ -707,7 +644,7 @@ export async function startDevServer(
       }
 
       const logsDir = workspaceLogsDir(root);
-      const logFile = supervisorLogFile(root);
+      const metroOutput = join(logsDir, 'metro.stderr.log');
       const port = await resolvePort(root, settings, note, fail, hostedPorts);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveStartupMetro(port, root);
@@ -727,266 +664,49 @@ export async function startDevServer(
       }
       if (!resetCache && !resolution.metro && !supervisor) await gateBudget();
       let managedTunnel: ManagedTunnelTracking | null = null;
-      const spawned: { child: SupervisorProcess | null } = { child: null };
-      let spawnedTs: number | null = null;
-      let childExit: ChildExitInfo | null = null;
-      let spawnedIdentity: ProcessRecord | null = null;
-      let unknownWindowsSpawn = false;
-      let windowsLauncher: { child: ChildProcess; since: number; closed: boolean } | null = null;
       let tunnelPending: WorkspaceProcessCleanupError | null = null;
+      const metro: { request: MetroRequest | null } = { request: null };
 
-      const handedOffSupervisor = (): LiveSupervisor | null => {
-        if (!spawnedIdentity) return null;
-        const target = resolveSupervisorTarget({
-          state: readWorkspaceState(root)?.supervisor,
-          record: getProject(root)?.supervisor,
-          reservedPort: port,
-        });
-        return target.status === 'ours' &&
-          typeof target.pid === 'number' &&
-          target.pid === spawnedIdentity.pid &&
-          target.processToken === spawnedIdentity.processToken &&
-          target.port === port
-          ? { pid: target.pid, port, mode: target.mode ?? null, startedAt: target.startedAt ?? null }
-          : null;
-      };
-
-      const spawnDirect = (supervisorArgs: string[], childEnv: NodeJS.ProcessEnv): SupervisorProcess => {
-        const fd = openSync(logFile, 'a');
-        let child: ChildProcess;
-        try {
-          child = getExecutor().spawn(process.execPath, supervisorArgs, {
-            cwd: root,
-            detached: true,
-            stdio: ['ignore', fd, fd],
-            env: childEnv,
-          });
-        } finally {
-          closeSync(fd);
-        }
-        child.unref?.();
-        child.on?.('exit', (code, signal) => {
-          childExit = { code, signal };
-        });
-        child.on?.('error', (err) => {
-          childExit = { code: null, signal: null, error: err };
-        });
-        return child;
-      };
-
-      const recordedSupervisor = async (
-        since: number,
-        waitMs = RECORDED_SUPERVISOR_WAIT_MS,
-      ): Promise<ProcessRecord | null> => {
-        const deadline = Date.now() + waitMs;
-        while (Date.now() < deadline) {
-          const record = readWorkspaceState(root)?.supervisor as SupervisorStateRecord | undefined;
-          if (
-            record?.pid &&
-            record.port === port &&
-            Date.parse(String(record.startedAt)) >= since &&
-            pidExists(record.pid)
-          )
-            return { pid: record.pid, processToken: record.processToken };
-          await cancellableSleep(25);
-        }
-        return null;
-      };
-
-      // See windowsLauncherArgs: the direct child is a PowerShell process that exits once the
-      // supervisor is started, so liveness comes from the record the supervisor writes.
-      const spawnThroughWindowsShell = async (
-        supervisorArgs: string[],
-        childEnv: NodeJS.ProcessEnv,
-      ): Promise<SupervisorProcess> => {
-        const [entry, ...args] = supervisorArgs as [string, ...string[]];
-        const launcher = windowsLauncherArgs({ entry, args, cwd: root, logFile });
-        const since = Date.now();
-        const shell = getExecutor().spawn(launcher.file, launcher.args, {
-          cwd: root,
-          stdio: ['ignore', 'ignore', 'pipe'],
-          env: { ...childEnv, ...launcher.env },
-          windowsHide: true,
-        });
-        const launch = { child: shell, since, closed: false };
-        windowsLauncher = launch;
-        unknownWindowsSpawn = shell.pid !== undefined;
-        const stderr: string[] = [];
-        shell.stderr?.on('data', (chunk) => stderr.push(String(chunk)));
-        const closed = new Promise<ChildExitInfo>((resolve) => {
-          shell.once('close', (code, signal) => {
-            launch.closed = true;
-            resolve({ code, signal });
-          });
-          shell.once('error', (error) => resolve({ code: null, signal: null, error }));
-        });
-        const waiting = new AbortController();
-        const signal = operationSignal ? AbortSignal.any([operationSignal, waiting.signal]) : waiting.signal;
-        let exit: ChildExitInfo;
-        try {
-          exit = await Promise.race([
-            closed,
-            cancellableSleep(Math.min(RECORDED_SUPERVISOR_WAIT_MS, waitSeconds * 1000), {
-              signal,
-              what: 'Windows supervisor launcher',
-            }).then(() =>
-              fail({
-                code: 'STIM_METRO_TIMEOUT',
-                message: 'The Windows supervisor launcher did not finish before the startup deadline.',
-                remedy: 'Inspect the launcher and supervisor before retrying.',
-              }),
+      const startMetro = (origin: string | null): MetroRequest => {
+        const cancel = new AbortController();
+        const previous = readWorkspaceState(root)?.supervisor?.processToken;
+        let announced = false;
+        const announce = (last: boolean) => {
+          if (announced) return;
+          const recorded = readWorkspaceState(root)?.supervisor;
+          const pid =
+            recorded?.port === port && recorded.processToken !== previous && typeof recorded.pid === 'number'
+              ? recorded.pid
+              : null;
+          if (pid === null && !last) return;
+          announced = true;
+          out(
+            chalk.dim(
+              phaseLine(
+                'metro',
+                `starting on port ${port} (${serverMode}${pid === null ? '' : `, supervisor pid ${pid}`})`,
+              ),
             ),
-          ]);
-        } finally {
-          waiting.abort();
-        }
-        const launcherFailed = exit.code !== 0 || exit.error;
-        unknownWindowsSpawn = !launcherFailed;
-        const recorded = launcherFailed ? null : await recordedSupervisor(since);
-        if (recorded) unknownWindowsSpawn = false;
-        if (recorded === null) {
-          const reason = launcherFailed
-            ? `the supervisor launcher exited (${exit.error ? exit.error.message : `code ${exit.code}`})`
-            : `the supervisor did not record itself within ${RECORDED_SUPERVISOR_WAIT_MS / 1000}s`;
-          appendFileSync(logFile, `Stim start: ${reason}.\n${stderr.join('')}`);
-          childExit = { code: exit.code, signal: exit.signal, ...(exit.error ? { error: exit.error } : {}) };
-        }
-        windowsLauncher = null;
-        return recordedSupervisorProcess(recorded);
-      };
-
-      const spawnSupervisor = async (origin: string | null): Promise<SupervisorProcess> => {
-        mkdirSync(logsDir, { recursive: true });
-        spawnedTs = Date.now();
-        const supervisorArgs = [
-          supervisorEntry(),
-          '--root',
-          root,
-          '--port',
-          String(port),
-          ...(tunnel ? ['--tunnel'] : []),
-          ...(resetCache ? ['--reset-cache'] : []),
-          '--idle-stop-minutes',
-          String(idleMinutesSetting(settings)),
-          '--device-idle-minutes',
-          String(idleMinutesSetting(settings)),
-        ];
-        const childEnv: NodeJS.ProcessEnv = {
-          ...ambientEnv(),
-          ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
-        };
-        for (const held of claims) markClaimChildPending(held);
-        const child =
-          d.platform === 'win32'
-            ? await spawnThroughWindowsShell(supervisorArgs, childEnv)
-            : spawnDirect(supervisorArgs, childEnv);
-        spawned.child = child;
-        if (child.pid) {
-          const processToken = child.recordedIdentity?.processToken ?? captureProcessToken(child.pid);
-          if (processToken) {
-            spawnedIdentity = { pid: child.pid, processToken };
-            for (const held of claims) setClaimChild(held, spawnedIdentity);
-          }
-        }
-        out(chalk.dim(phaseLine('metro', `starting on port ${port} (${serverMode}, supervisor pid ${child.pid})`)));
-        return child;
-      };
-
-      const waitForSupervisorHandoff = async (child: SupervisorProcess): Promise<LiveSupervisor | null> => {
-        const deadline = Date.now() + 5_000;
-        while (Date.now() < deadline) {
-          const found = handedOffSupervisor();
-          if (found) return found;
-          if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
-          await cancellableSleep(25);
-        }
-        return null;
-      };
-
-      const reconcileSpawnedSupervisor = async (): Promise<void> => {
-        try {
-          const launch = windowsLauncher;
-          if (launch) {
-            const drained = await terminateChild(launch.child, {
-              alreadyExited: launch.closed || launch.child.exitCode !== null || launch.child.signalCode !== null,
-              timeoutMs: 1000,
-              isAlive: pidExists,
-            });
-            if (!drained)
-              throw new WorkspaceProcessCleanupError(
-                claims,
-                `Could not confirm cleanup of Windows supervisor launcher pid ${launch.child.pid}.`,
-                'Inspect and stop the launcher and its supervisor with their original tooling before retrying.',
-              );
-            if (unknownWindowsSpawn) {
-              const recorded = await recordedSupervisor(launch.since, 1000);
-              if (recorded) {
-                spawned.child = recordedSupervisorProcess(recorded);
-                spawnedIdentity = recorded;
-                for (const held of claims) setClaimChild(held, recorded);
-                unknownWindowsSpawn = false;
-              }
-            }
-            windowsLauncher = null;
-          }
-          const child = spawned.child;
-          if (tunnelPending) throw tunnelPending;
-          if (child?.pid && !handedOffSupervisor()) {
-            const hasPublishedSupervisor = () => {
-              const identity = spawnedIdentity;
-              return (
-                identity !== null &&
-                [readWorkspaceState(root)?.supervisor, getProject(root)?.supervisor].some(
-                  (record) => record?.pid === identity.pid && record?.processToken === identity.processToken,
-                )
-              );
-            };
-            if (hasPublishedSupervisor()) {
-              for (const held of claims) markClaimChildPending(held);
-              throw new WorkspaceProcessCleanupError(
-                claims,
-                `Supervisor pid ${child.pid} published ownership that cannot be reconciled with the workspace registry.`,
-                'Inspect the supervisor and its dev server, then stop them with their original tooling before retrying.',
-              );
-            }
-            const same = spawnedIdentity && inspectProcessIdentity(spawnedIdentity) === 'same';
-            const supervisorCleanup =
-              (childExit !== null &&
-                (same ? !processGroupAlive(child.pid) : await waitForGroupExit(child.pid, groupExitBudgetMs()))) ||
-              Boolean(same && supervisorSignalable(child) && (await d.terminateSupervisorChild(child)));
-            const publicationRacedCleanup = hasPublishedSupervisor();
-            if (
-              !supervisorCleanup ||
-              (d.platform !== 'win32' && processGroupAlive(child.pid)) ||
-              publicationRacedCleanup
-            ) {
-              if (publicationRacedCleanup) for (const held of claims) markClaimChildPending(held);
-              throw new WorkspaceProcessCleanupError(
-                claims,
-                `Could not confirm cleanup of supervisor pid ${child.pid}.`,
-                `Stop supervisor pid ${child.pid} with its original tooling before retrying.`,
-              );
-            }
-            for (const held of claims) clearClaimChild(held);
-          } else if (unknownWindowsSpawn) {
-            throw new WorkspaceProcessCleanupError(
-              claims,
-              'The Windows launcher started a supervisor but its identity was not recorded.',
-              'Inspect and stop it with its original tooling before retrying.',
-            );
-          }
-        } catch (cause) {
-          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
-          throw new WorkspaceProcessCleanupError(
-            claims,
-            `Could not reconcile supervisor ownership: ${(cause as Error).message}`,
-            'Inspect and stop the supervisor with its original tooling before retrying.',
           );
-        }
+        };
+        const request: MetroRequest = { since: Date.now(), answer: undefined, cancel, announce };
+        void (async () => {
+          try {
+            request.answer = await d.ensureMetro(
+              { root, port, tunnel, publicOrigin: origin, resetCache },
+              waitSeconds * 1000 + METRO_ANSWER_SLACK_MS,
+              ambientContext(),
+              operationSignal ? AbortSignal.any([operationSignal, cancel.signal]) : cancel.signal,
+            );
+          } catch {
+            request.answer = null;
+          }
+        })();
+        metro.request = request;
+        return request;
       };
 
-      let refusal: StartRefusal | undefined;
-      try {
+      const attempt = async (): Promise<StartFacts> => {
         if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
           const available = d.providers(tunnelMode);
           const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
@@ -1211,44 +931,7 @@ export async function startDevServer(
                   };
                 }
 
-                let child: SupervisorProcess;
-                try {
-                  child = await spawnSupervisor(tracking.record.url);
-                } catch (err) {
-                  return {
-                    failed: {
-                      code: 'STIM_SUPERVISOR_EXITED',
-                      message: `Could not spawn the dev server supervisor: ${(err as Error)?.message || err}`,
-                      remedy: 'Fix the spawn error, then retry `stim start --remote`.',
-                    },
-                  };
-                }
-                const handoffRecord = {
-                  pid: child.pid as number,
-                  processToken: child.recordedIdentity
-                    ? (child.recordedIdentity.processToken ?? null)
-                    : child.pid
-                      ? captureProcessToken(child.pid)
-                      : null,
-                  port,
-                  mode: serverMode,
-                  startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
-                  ...(ownStoreEngine() ? { engineDir: ownStoreEngine()?.build } : {}),
-                };
-                try {
-                  await d.writeSupervisorRecord(root, { supervisor: handoffRecord });
-                } catch {
-                  const handedOff = await waitForSupervisorHandoff(child);
-                  if (!handedOff) {
-                    return {
-                      failed: {
-                        code: 'STIM_SUPERVISOR_EXITED',
-                        message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
-                        remedy: 'The supervisor process was stopped. Retry `stim start --remote`.',
-                      },
-                    };
-                  }
-                }
+                startMetro(tracking.record.url);
                 return { origin: tracking.record.url, tunnel: tracking };
               })();
             } catch (err) {
@@ -1301,7 +984,24 @@ export async function startDevServer(
           }
         };
 
-        if (!spawned.child && resolution.metro) {
+        const heldByStimd = async (): Promise<void> => {
+          if (!supervisor) return;
+          const answer = await d.ensureMetro(
+            { root, port, tunnel, publicOrigin },
+            waitSeconds * 1000 + METRO_ANSWER_SLACK_MS,
+            ambientContext(),
+            operationSignal,
+          );
+          if (answer === null)
+            fail({
+              code: 'STIM_DAEMON_UNAVAILABLE',
+              message: `The Stim daemon did not answer for the dev server on port ${port}.`,
+              remedy: 'Run `stim doctor`, then retry `stim start`.',
+            });
+          else if (answer.op === 'error') fail(metroRefusal(answer, port));
+        };
+
+        if (!metro.request && resolution.metro) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
           if (tunnel && supervisor) {
             const tunnelReady = await waitForExpoTunnel({
@@ -1336,10 +1036,11 @@ export async function startDevServer(
             () => clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]),
             operationSignal,
           );
+          await heldByStimd();
           return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
         }
 
-        if (!spawned.child && supervisor) {
+        if (!metro.request && supervisor) {
           note(
             chalk.dim(
               `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
@@ -1356,7 +1057,7 @@ export async function startDevServer(
             return fail({
               code: 'STIM_METRO_TIMEOUT',
               message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
-              lines: logTailLines(logFile),
+              lines: logTailLines(metroOutput),
               remedy: 'Run `stim stop` to halt it, then `stim start` again.',
             });
           }
@@ -1386,88 +1087,108 @@ export async function startDevServer(
             (tunnel ? null : supervisor);
           requireExpoTunnel();
           if (managedTunnelExited()) return failExitedManagedTunnel();
+          await heldByStimd();
           return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
         }
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
-        const child = spawned.child ?? (await spawnSupervisor(publicOrigin));
-        const attemptStartedTs = spawnedTs ?? Date.now();
+        const request = metro.request ?? startMetro(publicOrigin);
+        const refused = () => request.answer === null || request.answer?.op === 'error';
 
         const healthy = await waitForMetro({
           root,
           port,
           seconds: waitSeconds,
-          aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false) || managedTunnelExited(),
+          aborted: () => {
+            request.announce(false);
+            return refused() || managedTunnelExited();
+          },
         });
+        request.announce(true);
 
         if (!healthy) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
-          const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
-          const exitInfo = childExit as ChildExitInfo | null;
-          const how = exitInfo
-            ? exitInfo.signal
-              ? `signal ${exitInfo.signal}`
-              : `code ${exitInfo.code}`
-            : 'without being observed';
-          const failure: StartRefusalArgs = gone
+          const answer = request.answer;
+          if (answer === null)
+            return fail({
+              code: 'STIM_DAEMON_UNAVAILABLE',
+              message: `The Stim daemon did not answer the request to start the dev server on port ${port}.`,
+              remedy: 'Run `stim doctor`, then retry `stim start`.',
+            });
+          const exited = answer?.op === 'error' && answer.code === 'metro-exited';
+          if (answer?.op === 'error' && !exited) return fail(metroRefusal(answer, port));
+          const lines = failureEvidence({ logFile: metroOutput, logsDir, sinceTs: request.since });
+          const failure: StartRefusalArgs = exited
             ? {
                 code: 'STIM_SUPERVISOR_EXITED',
-                message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
+                message: `The dev server exited before it came up on port ${port}.`,
+                lines,
                 remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
               }
             : {
                 code: 'STIM_METRO_TIMEOUT',
                 message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
+                lines,
+                remedy:
+                  'Stim stops a dev server that has not answered when this command ends. Read `stim logs --errors`, then retry with a longer --wait.',
               };
-          const retryable = gone && !remote && metroPortSetting(settings, ambientEnv()).port === null;
+          const retryable = exited && !remote && metroPortSetting(settings, ambientEnv()).port === null;
           if (retryable && portBindRace(failure.lines ?? [], port)) throw new MetroPortRace(failure, port);
           return fail(failure);
         }
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
+        const metroGone = () =>
+          refused() || !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
 
         if (tunnel) {
-          const tunnelReady = await waitForExpoTunnel({
-            root,
-            seconds: waitSeconds,
-            aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false),
-          });
+          const tunnelReady = await waitForExpoTunnel({ root, seconds: waitSeconds, aborted: metroGone });
           if (!tunnelReady) {
-            const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
+            const gone = metroGone();
             return fail({
               code: gone ? 'STIM_SUPERVISOR_EXITED' : 'STIM_METRO_TIMEOUT',
               message: gone
-                ? `The supervisor exited before the Expo tunnel became ready on port ${port}.`
+                ? `The dev server exited before the Expo tunnel became ready on port ${port}.`
                 : `Expo did not report a tunnel URL within ${waitSeconds}s.`,
               remedy: 'Run `stim stop`, then `stim start --remote`.',
             });
           }
         }
 
-        supervisor = await waitForSupervisorHandoff(child);
-        if (!supervisor) {
+        supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+        const answer = supervisor ? request.answer : await answered(request);
+        if (answer?.op === 'error')
           return fail({
             code: 'STIM_SUPERVISOR_EXITED',
-            message: 'The dev server answered before its supervisor ownership could be verified.',
-            remedy: 'Retry `stim start` after the supervisor exits or records its ownership.',
+            message: `The dev server on port ${port} stopped as it became ready.`,
+            lines: failureEvidence({ logFile: metroOutput, logsDir, sinceTs: request.since }),
+            remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
+          });
+        const foreign = answer?.op === 'metro' && (answer.state === 'foreign' || answer.state === 'supervisor');
+        if (!supervisor && !foreign) {
+          return fail({
+            code: 'STIM_SUPERVISOR_EXITED',
+            message: 'The dev server answered before its ownership could be verified.',
+            remedy: 'Run `stim status` and `stim logs --errors`, then retry `stim start`.',
           });
         }
-        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
-      } catch (error) {
-        if (error instanceof StartRefusal) refusal = error;
-        throw error;
-      } finally {
-        await reconcileSpawnedSupervisor().catch((cleanup: unknown) => {
-          if (refusal && cleanup instanceof WorkspaceProcessCleanupError) {
-            cleanup.message = `${refusal.message} ${cleanup.message}`;
-            cleanup.cause = refusal;
-          }
-          throw cleanup;
-        });
+        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: foreign });
+      };
+      const outcome = await attempt().then(
+        (facts) => ({ facts }),
+        (error: unknown) => ({ error }),
+      );
+      metro.request?.cancel.abort();
+      const cleanup = tunnelPending as WorkspaceProcessCleanupError | null;
+      if (cleanup) {
+        if ('error' in outcome && outcome.error instanceof StartRefusal) {
+          cleanup.message = `${outcome.error.message} ${cleanup.message}`;
+          cleanup.cause = outcome.error;
+        }
+        throw cleanup;
       }
+      if ('error' in outcome) throw outcome.error;
+      return outcome.facts;
     };
 
     const runStartRetryingPortRace = async (claim: ClaimHandle, tunnelClaim: ClaimHandle): Promise<StartFacts> => {
@@ -1717,7 +1438,43 @@ async function waitForExpoTunnel({
 }
 
 function logTailLines(logFile: string): string[] {
-  return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
+  return [...readLogTail(logFile), `Metro output: ${logFile}`];
+}
+
+interface MetroRequest {
+  since: number;
+  /** stimd's answer once it came: null when none did, undefined while it is pending. */
+  answer: Record<string, unknown> | null | undefined;
+  cancel: AbortController;
+  /** Prints the `starting on port` line once stimd records the Metro pid, or without it when `last`. */
+  announce: (last: boolean) => void;
+}
+
+const METRO_ANSWER_SLACK_MS = 10_000;
+
+const ANSWER_AFTER_READY_MS = 2_000;
+
+/** stimd's answer, which follows Metro's readiness by one probe, or null when it does not come within 2 s. */
+async function answered(request: MetroRequest): Promise<Record<string, unknown> | null> {
+  for (const deadline = Date.now() + ANSWER_AFTER_READY_MS; request.answer === undefined && Date.now() < deadline;)
+    await waitForStartup(50);
+  return request.answer ?? null;
+}
+
+/** The start refusal for stimd's refusal to run the workspace's Metro. */
+function metroRefusal(answer: Record<string, unknown>, port: number): StartRefusalArgs {
+  const message = typeof answer.message === 'string' ? answer.message : 'stimd did not start the dev server';
+  if (typeof answer.code === 'string' && answer.code.startsWith('STIM_'))
+    return {
+      code: answer.code,
+      message,
+      remedy: typeof answer.remedy === 'string' ? answer.remedy : null,
+    };
+  return {
+    code: 'STIM_SUPERVISOR_EXITED',
+    message: `Stim could not start the dev server on port ${port}: ${message}.`,
+    remedy: 'Run `stim status` and `stim logs --errors`, then retry `stim start`.',
+  };
 }
 
 export function failureEvidence({
@@ -1729,8 +1486,8 @@ export function failureEvidence({
   logsDir: string;
   sinceTs: number;
 }): string[] {
-  const supTail = readLogTail(logFile);
-  const lines = supTail.length > 0 ? [...supTail, `Supervisor log: ${logFile}`] : [];
+  const tail = readLogTail(logFile);
+  const lines = tail.length > 0 ? [...tail, `Metro output: ${logFile}`] : [];
   let errors: ReturnType<typeof queryLogs> = [];
   let all: ReturnType<typeof queryLogs> = [];
   try {

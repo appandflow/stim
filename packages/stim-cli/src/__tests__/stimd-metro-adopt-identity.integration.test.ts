@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
@@ -8,15 +8,20 @@ import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from 
 import * as identity from '../process-identity.ts';
 import * as metro from '../metro.ts';
 import { upsertProject } from '../workspace/config.ts';
-import { workspaceDir } from '../workspace/paths.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   adoptMetroChildren,
   closeMetroChildren,
   ensureMetro,
   ensureTunnel,
+  metroTick,
   openMetroChildren,
 } from '../stimd/metro/children.ts';
-import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import { injectedDigest } from '../stimd/metro/injected.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { stopForeignSupervisors } from '../stimd/foreign-supervisors.ts';
 
 async function stopFixture(pid: number, token: string): Promise<void> {
   const status = inspectProcessIdentity({ pid, processToken: token });
@@ -124,6 +129,158 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
           signal.mockRestore();
           inspect.mockRestore();
         }
+      } finally {
+        await stopFixture(pid, token);
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+
+  test.each([
+    [false, 'keeps'],
+    [true, 'stops'],
+  ])(
+    'with requests observable: %s, the off-mode tick %s an Expo dev server idle past idle.minutes',
+    async (observesRequests, outcome) => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-idle-')));
+      vi.stubEnv('STIM_HOME', home);
+      const root = join(home, 'project');
+      mkdirSync(root);
+      writeFileSync(join(root, '.stim.json'), JSON.stringify({ idle: { minutes: 1 } }));
+      upsertProject(root, { metroPort: 8183 });
+      ensureWorkspaceStorage(root);
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      const longAgo = Date.now() - 10 * 60_000;
+      writeFileSync(
+        join(workspaceLogsDir(root), 'metro.ndjson'),
+        `${JSON.stringify({ ts: longAgo, src: 'metro', event: 'supervisor_started' })}\n`,
+      );
+      writeWorkspaceState(root, { lastUsedAt: new Date(longAgo).toISOString() });
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+      await once(child, 'spawn');
+      child.unref();
+      const pid = child.pid;
+      if (!pid) throw new Error('fixture child did not start');
+      const token = captureProcessToken(pid);
+      if (!token) {
+        child.kill('SIGKILL');
+        throw new Error('fixture child identity unavailable');
+      }
+      plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', goneClaimOwner(), {
+        details: {
+          port: 8183,
+          mode: 'expo-child',
+          digest: injectedDigest(),
+          ...(observesRequests ? { observesRequests } : {}),
+        },
+        startedAt: new Date(longAgo).toISOString(),
+        child: { record: { pid, processToken: token } },
+      });
+      openMetroChildren();
+      try {
+        await metroTick('off', () => {});
+        expect(inspectProcessIdentity({ pid, processToken: token })).toBe(outcome === 'keeps' ? 'same' : 'gone');
+        await closeMetroChildren();
+      } finally {
+        await stopFixture(pid, token);
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
+
+  test('an adopted Metro that exits has the watchman roots it registered removed', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-roots-')));
+    vi.stubEnv('STIM_HOME', home);
+    const root = join(home, 'project');
+    mkdirSync(root);
+    upsertProject(root, { metroPort: 8184 });
+    const calls: string[][] = [];
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'watchman') return real.runFileAsync(file, args, options);
+        calls.push(args);
+        if (args.includes('debug-get-subscriptions')) return '{"subscribers":[]}';
+        if (args.includes('trigger-list')) return '{"triggers":[]}';
+        return args.includes('watch-list') ? '{"roots":[]}' : '{}';
+      },
+    });
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+    await once(child, 'spawn');
+    child.unref();
+    const pid = child.pid;
+    if (!pid) throw new Error('fixture child did not start');
+    const token = captureProcessToken(pid);
+    if (!token) {
+      child.kill('SIGKILL');
+      throw new Error('fixture child identity unavailable');
+    }
+    plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', goneClaimOwner(), {
+      details: {
+        port: 8184,
+        mode: 'command',
+        digest: injectedDigest(),
+        watch: { before: [], owned: [root] },
+      },
+      child: { record: { pid, processToken: token } },
+    });
+    openMetroChildren();
+    try {
+      adoptMetroChildren(() => {});
+      await stopFixture(pid, token);
+      await vi.waitFor(async () => {
+        await metroTick('on', () => {});
+        expect(calls).toContainEqual(['--no-spawn', 'watch-del', root]);
+      });
+      await closeMetroChildren();
+    } finally {
+      await stopFixture(pid, token);
+      resetExecutor();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test.each([
+    ['it adopted', goneClaimOwner],
+    ['its predecessor still holds', liveClaimOwner],
+  ])(
+    'after an engine switch the successor does not stop a Metro %s as a foreign supervisor',
+    async (_, owner) => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-adopted-foreign-')));
+      vi.stubEnv('STIM_HOME', home);
+      const root = join(home, 'project');
+      mkdirSync(root);
+      upsertProject(root, { metroPort: 8185 });
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+      await once(child, 'spawn');
+      child.unref();
+      const pid = child.pid;
+      if (!pid) throw new Error('fixture child did not start');
+      const token = captureProcessToken(pid);
+      if (!token) {
+        child.kill('SIGKILL');
+        throw new Error('fixture child identity unavailable');
+      }
+      plantClaim(join(workspaceDir(root), 'metro.claim'), 'exclusive', owner(), {
+        details: { port: 8185, mode: 'command', digest: injectedDigest(), engineDir: 'previous-build' },
+        child: { record: { pid, processToken: token } },
+      });
+      writeWorkspaceState(root, {
+        supervisor: { pid, processToken: token, engineDir: 'previous-build', port: 8185, mode: 'command' },
+      });
+      openMetroChildren();
+      try {
+        adoptMetroChildren(() => {});
+        expect(await stopForeignSupervisors('next-build', Date.now() + 60 * 60_000)).toBe(0);
+        await new Promise((done) => setTimeout(done, 300));
+        expect(inspectProcessIdentity({ pid, processToken: token })).toBe('same');
+        await closeMetroChildren();
       } finally {
         await stopFixture(pid, token);
         vi.unstubAllEnvs();

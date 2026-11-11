@@ -1,7 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { MODE_BARE, MODE_EXPO } from '../stimd/metro/state.ts';
-import type { ServerStarter } from '../stimd/metro/types.ts';
 import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
@@ -31,13 +29,9 @@ import {
 
 interface NativeProjectIntegration {
   platforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[];
-  mode: typeof MODE_BARE | typeof MODE_EXPO;
-  loadDevServer(): Promise<ServerStarter>;
 }
 
 const expo: NativeProjectIntegration = {
-  mode: MODE_EXPO,
-  loadDevServer: async () => (await import('../stimd/metro/server-expo.ts')).startExpoServer,
   platforms(root) {
     const appJson = readAppJson(root);
     const config = appJson?.expo ?? appJson;
@@ -56,8 +50,6 @@ const expo: NativeProjectIntegration = {
 };
 
 const reactNative: NativeProjectIntegration = {
-  mode: MODE_BARE,
-  loadDevServer: async () => (await import('../supervisor/server-bare.ts')).startBareServer,
   platforms(root, { context, settings }) {
     if (!declaresAppDependency(readPackageJson(root))) return [];
     const platforms: ProjectPlatform[] = [];
@@ -178,7 +170,7 @@ export const projectIntegrations: readonly ProjectIntegration[] = [
 ];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 
-export function nativeProjectIntegration(
+function nativeProjectIntegration(
   root: string,
   isExpo: (root: string) => boolean = detectIsExpo,
 ): NativeProjectIntegration {

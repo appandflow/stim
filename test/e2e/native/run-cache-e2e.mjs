@@ -70,7 +70,6 @@ const ENV = {
   ...process.env,
   STIM_HOME: HOME_DIR,
   STIM_DAEMON: 'off',
-  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   STIM_BUILD_CACHE: BUILD_CACHE_ROOT,
   STIM_METRO_CACHE: METRO_CACHE_ROOT,
   TMPDIR: CACHE_TMP_DIR,
@@ -782,8 +781,8 @@ function worktreeCreate(name, sourceDir) {
 function startAndAssertMode(cwd) {
   const r = cli(['start', '--json', '--wait', '240'], { cwd, allowFail: true });
   if (r.code !== 0) {
-    const supLog = join(workspaceLogsDir(cwd), 'supervisor.log');
-    if (existsSync(supLog)) log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
+    const supLog = join(workspaceLogsDir(cwd), 'metro.stderr.log');
+    if (existsSync(supLog)) log(`--- metro.stderr.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
     die(`stim start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
