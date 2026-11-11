@@ -613,7 +613,13 @@
         "packages/stim-cli/src/commands/device-tools.ts",
         "packages/stim-cli/src/commands/share.ts",
         "packages/stim-cli/src/commands/stop.ts",
-        "packages/stim-cli/src/commands/worktree.ts"
+        "packages/stim-cli/src/commands/worktree.ts",
+        "packages/stim-cli/src/commands/ios.ts",
+        "packages/stim-cli/src/commands/android.ts",
+        "packages/stim-cli/src/commands/reload.ts",
+        "packages/stim-cli/src/commands/revive.ts",
+        "packages/stim-cli/src/commands/web.ts",
+        "packages/stim-cli/src/commands/agent-device.ts"
       ],
       "rules": {
         "no-restricted-imports": [
