@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -143,10 +143,11 @@ test('reports an exact.mjs that cannot run', async () => {
 test.skipIf(process.platform === 'win32')(
   'builds without a simulator unless app.json declares native modules',
   async () => {
-    exactScript('echo "sim=$EXACT_SIM $*"\nexit 1');
+    exactScript('echo "sim=$EXACT_SIM $*" > ran.txt\nexit 1');
     writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: [] }));
 
-    expect(await compile(context(null, null))).toMatchObject({ diagnostics: [{ message: 'sim= ios --no-install' }] });
+    expect(await compile(context(null, null))).toMatchObject({ ok: false, exitCode: 1 });
+    expect(readFileSync(join(root, 'ran.txt'), 'utf8')).toBe('sim= ios --no-install\n');
 
     writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['shop-map'] }));
     await expect(compile(context(null, null))).rejects.toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
