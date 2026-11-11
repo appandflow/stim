@@ -49,7 +49,7 @@ const deny = {
 };
 
 /** The most dist files and bytes an entry's static closure may load. */
-const bounds = { status: { files: 5, bytes: 30_000 } };
+const bounds = { status: { files: 5, bytes: 30_000 }, api: { files: 5, bytes: 30_000 } };
 
 const staticImport = /^(?:import|export)\s(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/gm;
 const region = /^\/\/#region (\S+)/gm;

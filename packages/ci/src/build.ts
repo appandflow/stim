@@ -1,6 +1,7 @@
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { createStim, type StimBuildOptions, type StimBuildResult } from 'stim';
+import type { StimBuildOptions, StimBuildResult } from 'stim';
+import { createStim } from 'stim/api-self';
 import { runCommand } from './command.ts';
 import { failure, prepareCI, writeJson, type CIContextOptions } from './context.ts';
 import type { CIFailure } from './index.ts';

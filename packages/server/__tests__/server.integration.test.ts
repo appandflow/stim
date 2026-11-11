@@ -60,6 +60,7 @@ import {
 import { createStim } from 'stim';
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
+import * as stimSelf from 'stim/api-self';
 import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
@@ -747,8 +748,8 @@ test('server close cancels a home identity waiting on the config lock', async ()
   const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
   assert(lock);
   let entered = false;
-  const original = stim.createStim;
-  const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+  const original = stimSelf.createStim;
+  const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
     const client = original(options);
     return {
       ...client,
@@ -2009,8 +2010,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       const held = claim?.acquired;
       let recovered = false;
       let first = true;
-      const original = stim.createStim;
-      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const original = stimSelf.createStim;
+      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
         const client = original(options);
         return {
           ...client,
@@ -6957,8 +6958,8 @@ describe('build.plan', () => {
       fail: (cause: Error) => void;
     }[] = [];
     let cancelled = 0;
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       plan: async (request) => {
         assert(request.platform !== 'macos');
@@ -7903,8 +7904,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const original = stim.createStim;
-      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createStim;
+      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
         ...original(options),
         start: async (request) => {
           const signal = request?.signal;
@@ -7993,8 +7994,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const firstClaim = claims[0];
     assert(firstClaim);
     await start({ requestLimits: { connection: 4 } });
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       start: (request) =>
         original(options).start({
@@ -12480,8 +12481,8 @@ describe.skipIf(process.platform === 'win32')('Desktop web output', () => {
         durationMs: 1,
       },
     };
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       run: vi.fn<stim.StimClient['run']>().mockResolvedValue(result),
     }));
@@ -12522,8 +12523,8 @@ describe.skipIf(process.platform === 'win32')('Desktop platform build result', (
         links: { workspace: 'https://stim.appandflow.com/open' },
       },
     };
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       build: vi.fn<stim.StimClient['build']>().mockImplementation(async (request) => {
         expect(request).toMatchObject({
@@ -12684,8 +12685,8 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const original = stim.createStim;
-      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createStim;
+      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
         ...original(options),
         [kind]: async (request: stim.StimRunOptions | stim.StimBuildOptions): Promise<never> => {
           const signal = request.signal;
@@ -12860,8 +12861,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
         release = resolve;
       });
       let signal: AbortSignal | undefined;
-      const original = stim.createStim;
-      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createStim;
+      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
         ...original(options),
         warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
           signal = request.signal;
@@ -12923,8 +12924,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     const ready = new Promise<void>((resolve) => {
       admitted = resolve;
     });
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
       const client = original(options);
       return {
         ...client,
@@ -12981,8 +12982,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
         const signal = request.signal;
@@ -13129,8 +13130,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
       const admitted = new Promise<void>((resolve) => {
         observed = resolve;
       });
-      const original = stim.createStim;
-      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const original = stimSelf.createStim;
+      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
         const client = original(options);
         return {
           ...client,
@@ -13265,8 +13266,8 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
 
   it('deletes only the selected private cache and refreshes cached reports without a CLI process', async () => {
     const fixture = cacheFixture();
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
       const client = original(options);
       return { ...client, gc: (request: stim.StimGcOptions = {}) => client.gc({ ...request, cache: 'rpc-fixture' }) };
     });
@@ -13521,8 +13522,8 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createStim;
+    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
       ...original(options),
       requestMachineAccess: async ({ signal }: stim.StimMachineAccessOptions = {}) => {
         assert(signal);
@@ -13630,7 +13631,7 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const api = vi.spyOn(stim, 'createStim');
+    const api = vi.spyOn(stimSelf, 'createStim');
     const methods = [
       'desktop.start.subscribe',
       'desktop.run.subscribe',
@@ -13658,12 +13659,12 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const original = stim.createStim;
+    const original = stimSelf.createStim;
     const startWork = vi.fn<() => Promise<never>>(async () => {
       throw new Error('fixture start');
     });
     const api = vi
-      .spyOn(stim, 'createStim')
+      .spyOn(stimSelf, 'createStim')
       .mockImplementation((options) => ({ ...original(options), start: startWork }));
     try {
       expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');

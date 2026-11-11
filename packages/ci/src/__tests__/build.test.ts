@@ -11,7 +11,7 @@ const lifecycle = vi.hoisted(() => ({
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<() => Promise<unknown>>(),
 }));
-vi.mock('stim', () => ({
+vi.mock('stim/api-self', () => ({
   createStim: (options: StimOptions) => {
     lifecycle.create(options);
     return lifecycle;

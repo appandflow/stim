@@ -42,6 +42,11 @@
       "default": "./dist/api.mjs"
     },
     "./package.json": "./package.json",
+    "./api-self": {
+      "types": "./dist/api-self.d.mts",
+      "module-sync": "./dist/api-self.mjs",
+      "default": "./dist/api-self.mjs"
+    },
     "./engine-state": {
       "types": "./dist/engine-state.d.mts",
       "module-sync": "./dist/engine-state.mjs",

@@ -341,6 +341,7 @@
     {
       "files": [
         "packages/stim-cli/src/api.ts",
+        "packages/stim-cli/src/api/client.ts",
         "packages/stim-cli/src/cli-operation.ts",
         "packages/stim-cli/src/status-worker.ts",
         "packages/stim-cli/src/cli/status-entry.ts",
@@ -470,7 +471,7 @@
     },
     {
       "files": [
-        "packages/stim-cli/src/api.ts",
+        "packages/stim-cli/src/api/client.ts",
         "packages/stim-cli/src/cli-operation.ts",
         "packages/stim-cli/src/commands/android/collector.ts",
         "packages/stim-cli/src/commands/ios/collector.ts",
