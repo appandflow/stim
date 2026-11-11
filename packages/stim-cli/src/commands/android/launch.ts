@@ -26,6 +26,7 @@ import {
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
   VERIFY_TIMEOUT_MS,
+  repackCompileRemedy,
 } from '../../engine/launch-verify.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -448,6 +449,13 @@ export async function verifyAndroidMetroRun({
     phase('verify', chalk.yellow(headline));
     for (const line of lines) phase('', chalk.yellow(line));
     return { state: LAUNCH_UNVERIFIED, unattributed: true };
+  }
+
+  if (verification?.compileErrors?.length) {
+    phase('verify', chalk.yellow('UNVERIFIED: Re.Pack delivered a bundle whose compile logged errors'));
+    for (const line of launchErrorPreview(verification.compileErrors, root)) phase('', chalk.yellow(line));
+    phase('remedy', chalk.yellow(repackCompileRemedy('android')));
+    return { state: LAUNCH_UNVERIFIED, warning: 'Re.Pack compile errors; inspect the error above' };
   }
 
   if (verification?.record) {

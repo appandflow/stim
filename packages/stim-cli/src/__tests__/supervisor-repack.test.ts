@@ -293,7 +293,7 @@ describe('verifyLaunch on Re.Pack records', () => {
     const result = await verify([REAL.bundleIn, REAL.progress, REAL.done, REAL.failed, REAL.bundleOut], 'repack-child');
     expect(result).toMatchObject({
       verified: false,
-      errors: [expect.objectContaining({ level: 'error', platform: 'ios' })],
+      compileErrors: [expect.objectContaining({ level: 'error', platform: 'ios' })],
     });
     expect(result).not.toHaveProperty('fatal');
   });

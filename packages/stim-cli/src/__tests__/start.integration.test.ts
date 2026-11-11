@@ -628,6 +628,22 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_START_REQUIRED');
   });
 
+  test('start --remote refuses a Re.Pack app, whose bundle URLs name localhost, before starting anything', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' } }));
+    writeFileSync(join(root, 'rock.config.mjs'), "import { pluginRepack } from '@rock-js/plugin-repack';\n");
+    const exec = metroExecutor({});
+    setExecutor(exec);
+
+    const result = await runAction({ json: true, remote: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '')).toMatchObject({
+      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+      remedy: expect.stringContaining('metro.command'),
+    });
+  });
+
   test('start --remote accepts an external Expo server with an operator public URL', async () => {
     writeFileSync(
       join(root, 'package.json'),

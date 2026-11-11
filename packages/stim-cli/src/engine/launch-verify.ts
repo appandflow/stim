@@ -18,6 +18,8 @@ export type VerifyLaunchResult = {
   timedOut?: boolean;
   requested?: boolean;
   unattributed?: boolean;
+  /** Error-level Re.Pack output of the compile that produced the delivered bundle. */
+  compileErrors?: NdjsonRecord[];
   mode: string | null;
   waitedMs: number;
   readiness?: AppReadiness;
@@ -575,7 +577,8 @@ export async function verifyLaunch({
             return {
               verified: false,
               record: proof,
-              errors: [...actionableErrors, ...compileErrors],
+              errors: actionableErrors,
+              compileErrors,
               processAlive: alive,
               mode,
               waitedMs,
@@ -727,6 +730,10 @@ function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | 
       typeof record.msg === 'string' &&
       /\bBundling failed\b/.test(record.msg))
   );
+}
+
+export function repackCompileRemedy(platform: 'ios' | 'android'): string {
+  return `Fix the errors \`stim logs --source metro\` shows; Re.Pack recompiles on save. Then run \`stim reload ${platform}\`.`;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   unattributedLaunchLines,
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
+  repackCompileRemedy,
 } from '../../engine/launch-verify.ts';
 import type { IosDeps } from './dependencies.ts';
 import { writeAgentDeviceBootHook } from '../../engine/agent-device.ts';
@@ -497,6 +498,13 @@ function reportUnverified({
     phase('verify', chalk.yellow(headline));
     for (const line of lines) note(chalk.yellow(phaseLine('', line)));
     return { state: LAUNCH_UNVERIFIED, unattributed: true };
+  }
+
+  if (verification.compileErrors?.length) {
+    phase('verify', chalk.yellow('UNVERIFIED: Re.Pack delivered a bundle whose compile logged errors'));
+    for (const line of launchErrorPreview(verification.compileErrors, root)) note(chalk.yellow(phaseLine('', line)));
+    note(chalk.yellow(phaseLine('remedy', repackCompileRemedy('ios'))));
+    return { state: LAUNCH_UNVERIFIED, warning: 'Re.Pack compile errors; inspect the error above' };
   }
 
   if (verification.record) {
