@@ -319,7 +319,7 @@ exec sleep 600
     }
   }, 30_000);
 
-  test('the attached watchdog leaves home ownership unresolved when tunnel startup outlasts shutdown', async () => {
+  test('when tunnel startup outlasts an attached shutdown, the tunnel claim keeps guarding the child and the home stays recoverable', async () => {
     const root = bareProject();
     const started = join(dir, 'slow-tunnel-started');
     write(join(dir, 'bin', 'cloudflared'), `#!/bin/sh\ntouch ${JSON.stringify(started)}\nexec sleep 600\n`, 0o755);
@@ -340,7 +340,11 @@ exec sleep 600
     await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
     child.stdin?.end();
     await exited;
-    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toHaveLength(1);
+    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toEqual([]);
+    expect(readClaimSet(join(home, 'daemon', 'claim')).unresolved).toEqual([]);
+    const [tunnel] = readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live;
+    expect(tunnel?.child).toMatchObject({ pid: expect.any(Number) });
+    expect(inspectProcessIdentity(tunnel?.child)).toBe('same');
   }, 30_000);
 
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
