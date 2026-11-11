@@ -511,7 +511,11 @@ npm install --global stim@next
   the version the packages carry on `main`, so `1.39.0` on `main` publishes
   `1.40.0-next.20261103040825.g751e1f0`. It sorts above every published
   release and below the next minor, and a plain `npm install stim` or a `^`
-  range never selects it. Both published packages use that version.
+  range never selects it. Both published packages use that version. When the
+  next stable release is a major, `.github/next-version` names it (`2.0.0`)
+  and the channel publishes `2.0.0-next.<UTC commit time>.g<short sha>`
+  instead; the workflow refuses a file that is not `X.Y.0` or is below the
+  minor bump. Delete the file in the candidate version commit of that release.
 - **Throttle.** The job waits until `NEXT_THROTTLE_MINUTES` (5) after the
   current `next` was published, then publishes whatever is the head of `main`
   at that moment. GitHub keeps one run active and one pending, so under
