@@ -33,6 +33,8 @@ const expectedControl = {
   runtimeIdentifier: expectedControlRuntime,
   ...(expectedSystemImage ? { systemImage: expectedSystemImage } : {}),
 };
+const avdsBeforePath = join(dirname(baselinePath), 'avds-before.json');
+const preexistingNames = new Set(existsSync(avdsBeforePath) ? JSON.parse(readFileSync(avdsBeforePath, 'utf8')) : []);
 const deadline = Date.now() + 20 * 60 * 1000;
 let firstAlive = null;
 
@@ -144,6 +146,7 @@ while (Date.now() < deadline) {
             baseline,
             expectedControl,
             expectedStim: { ...expectedControl, name: expectedStimName },
+            preexistingNames,
           })
         : selectIosCandidate(devices(), {
             arm,

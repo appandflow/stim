@@ -1,14 +1,23 @@
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-import { benchmarkArm } from './matrix.mjs';
+import { armSkillNames, benchmarkArm } from './matrix.mjs';
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 
-export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage }) {
+export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage, expoSkillsRoot }) {
   if (!codexAuthPath || !agentSkillsRoot) {
     throw new Error('STIM_BENCH_CODEX_AUTH and STIM_BENCH_SKILLS_ROOT are required');
   }
@@ -20,6 +29,7 @@ export function makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, st
   const sources = {
     'skills-root': (name) => join(agentSkillsRoot, name),
     'stim-package': () => join(stimPackage, 'skill'),
+    ...(expoSkillsRoot ? { 'expo-skills': (name) => join(expoSkillsRoot, name) } : {}),
   };
   const selectedSkills = benchmarkArm(arm).skills.map((skill) => {
     if (!sources[skill.source])
@@ -152,4 +162,43 @@ export function spawnStamped(
       });
     });
   });
+}
+
+export function runnerKindForModel(model) {
+  return ['sonnet', 'opus'].includes(model) || model.startsWith('claude-') ? 'claude' : 'codex';
+}
+
+export function writeClaudeGuidance(codexHome, arm, runDir) {
+  const skillNames = armSkillNames(arm);
+  const guidance = skillNames
+    .map((name) => readFileSync(join(codexHome, 'skills', name, 'SKILL.md'), 'utf8'))
+    .join('\n\n');
+  const path = join(runDir, 'runner-guidance.md');
+  writeFileSync(path, `${guidance}\n`);
+  return { path, skillNames };
+}
+
+export function claudeRunnerArguments({ model, guidancePath, tools }) {
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    model,
+    '--effort',
+    'high',
+    '--safe-mode',
+    '--strict-mcp-config',
+    '--permission-mode',
+    'acceptEdits',
+    '--prompt-suggestions',
+    'false',
+    '--append-system-prompt-file',
+    guidancePath,
+    '--tools',
+    tools,
+    '--allowedTools',
+    tools,
+  ];
 }

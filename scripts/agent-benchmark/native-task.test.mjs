@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { nativeProcessIdentityValid, nativeSourceProof } from './native-task.mjs';
+import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
 
 it('rejects an unchanged revision or unrelated source changes despite a matching screenshot marker', () => {
   const before = 'Text("native-revision-one")\n';
@@ -28,4 +28,22 @@ it('rejects missing or malformed process start identities before a native audit 
     }),
   ).toBe(true);
   expect(nativeProcessIdentityValid('android', { pid: 42, bootId: 'unknown', startTicks: '123' })).toBe(false);
+});
+
+it('describes the launch failure without naming its cause, the revision marker or the source', () => {
+  const prompt = nativeTaskPrompt({
+    arm: 'control',
+    platform: 'android',
+    fixture: '/fixture',
+    worktree: '/w',
+    branch: 'b',
+    marker: 'revision-secret',
+    device: 'd',
+    proofDirectory: '/p',
+    session: 's',
+    stateDirectory: '/s',
+    variant: 'launch-crash',
+  });
+  expect(prompt).toContain('fails on launch');
+  expect(prompt).not.toMatch(/revision-secret|MainActivity|onCreate|STIM_BENCH/);
 });
