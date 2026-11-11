@@ -7,7 +7,7 @@ import { processGroupAlive } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
-import { type BundlerConfig, detectBundlerConfig, resolvePackageJson } from '../../workspace/project-files.ts';
+import { type RepackConfig, detectRepackConfig, resolvePackageJson } from '../../workspace/project-files.ts';
 import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { supervisorError } from './errors.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
@@ -40,8 +40,8 @@ export async function startRepackServer({
   extraEnv?: Record<string, string>;
   baseEnv?: NodeJS.ProcessEnv;
 }): Promise<ChildServerHandle> {
-  const config = detectBundlerConfig(root);
-  const bin = config?.bundler === 'repack' ? repackBin(root, config.cli) : null;
+  const config = detectRepackConfig(root);
+  const bin = config ? repackBin(root, config.cli) : null;
   if (!bin) {
     const refusal = repackBinRefusal(root, config);
     throw supervisorError('STIM_REPACK_BIN', refusal.message, refusal.remedy);
@@ -103,34 +103,70 @@ export function repackServerProblem(
   command: readonly string[] | null,
 ): { message: string; remedy: string } | null {
   if (command) return null;
-  const config = detectBundlerConfig(root);
-  if (config?.bundler !== 'repack' || repackBin(root, config.cli)) return null;
+  const config = detectRepackConfig(root);
+  if (!config || repackBin(root, config.cli)) return null;
   return repackBinRefusal(root, config);
 }
 
-function repackBin(root: string, cli: BundlerConfig['cli']): string | null {
-  const repack = resolvePackageJson(root, '@callstack/repack');
+/**
+ * Why a device reached this way cannot load a bundle from the Re.Pack dev server this project's config names, or null
+ * when it can, none is named, or metro.command replaces it.
+ */
+export function repackReachRefusal(
+  root: string,
+  command: readonly string[] | null,
+  reach: 'remote' | 'hosted' | 'device',
+): { code: string; message: string; remedy: string } | null {
+  if (command) return null;
+  const config = detectRepackConfig(root);
+  if (!config) return null;
+  const why = {
+    remote: 'a remote device reaches the dev server through a tunnel or a public URL',
+    hosted: "a hosted simulator reaches the dev server through Stim's bridge on another Mac",
+    device: 'a phone reaches the dev server over the network',
+  }[reach];
+  return {
+    code: reach === 'device' ? 'STIM_LAN_METRO_UNREACHABLE' : 'STIM_REMOTE_METRO_UNREACHABLE',
+    message:
+      `${config.config} runs Re.Pack, which Stim starts on localhost only and which writes http://localhost:<port>/ ` +
+      `into the bundle's asset and chunk URLs, but ${why}.`,
+    remedy:
+      'Run the app on a local simulator or emulator, or set metro.command to the command that starts this ' +
+      `project's dev server with the host the device can reach, e.g. ["npx", "${config.cli}", "start", "--port", "{port}", "--host", "0.0.0.0"].`,
+  };
+}
+
+function repackBin(root: string, cli: RepackConfig['cli']): string | null {
   // Re.Pack 4's start command has neither --no-reverse-port nor --log-requests, and the CLI rejects unknown options.
-  if (!repack || repackMajor(repack) < 5) return null;
+  if (repackMajor(repackVersion(root)) < 5) return null;
   return expoBinFromPackage(resolvePackageJson(root, cli), cli);
 }
 
-function repackMajor(packageJsonPath: string): number {
+/** The installed `@callstack/repack` version, `unknown` when its package.json has none, or null when it is missing. */
+function repackVersion(root: string): string | null {
+  const path = resolvePackageJson(root, '@callstack/repack');
+  if (!path) return null;
   try {
-    const pkg: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-    const version = isRecord(pkg) ? pkg.version : null;
-    return typeof version === 'string' ? Number.parseInt(version, 10) || 0 : 0;
+    const pkg: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    return isRecord(pkg) && typeof pkg.version === 'string' ? pkg.version : 'unknown';
   } catch {
-    return 0;
+    return 'unknown';
   }
 }
 
-function repackBinRefusal(root: string, config: BundlerConfig | null): { message: string; remedy: string } {
+function repackMajor(version: string | null): number {
+  return version === null ? 0 : Number.parseInt(version, 10) || 0;
+}
+
+function repackBinRefusal(root: string, config: RepackConfig | null): { message: string; remedy: string } {
   const cli = config?.cli ?? 'rock';
+  const version = repackVersion(root);
+  const missing =
+    version !== null && repackMajor(version) < 5
+      ? `it resolves \`@callstack/repack\` ${version}, and Stim runs Re.Pack 5 or later.`
+      : `\`${version === null ? '@callstack/repack' : cli}\` is not resolvable from it.`;
   return {
-    message:
-      `Cannot start the Re.Pack dev server ${config ? `${config.config} names ` : ''}for ${root}: ` +
-      `\`${cli}\` or \`@callstack/repack\` 5 or later is not resolvable from it.`,
+    message: `Cannot start the Re.Pack dev server ${config ? `${config.config} names ` : ''}for ${root}: ${missing}`,
     remedy:
       "Install the project's dependencies (in a monorepo, from the workspace root), or set metro.command to the command that starts this project's dev server.",
   };
@@ -142,18 +178,24 @@ function repackBinRefusal(root: string, config: BundlerConfig | null): { message
  * only once a device asks for its bundle, so its progress events become `bundle_build_started` and
  * `bundle_build_done` records. Other requests are dropped, and other lines, such as Rock's own output and the
  * compile errors Re.Pack's LoggerPlugin prints as text, stay raw `repack_stdout` and `repack_stderr` records.
+ * LoggerPlugin prints a compile's errors right after its `done` progress event, so an error-level line carries the
+ * platform of the compile that finished last.
  */
 export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
   const building = new Set<string>();
   const requests = new Map<string, string>();
+  let compiled: string | null = null;
+  const attributed = (record: NdjsonRecord | null) =>
+    record?.level === 'error' && compiled ? { ...record, platform: compiled } : record;
   return (chunk, stream) => {
     const entry = parseRepackEntry(chunk);
-    if (!entry) return recordFromLine(chunk, { stream, source: 'repack' });
+    if (!entry) return attributed(recordFromLine(chunk, { stream, source: 'repack' }));
     const { progress, request } = entry;
     if (request) return requestRecord(request, requests);
     if (progress) {
       if (typeof progress.time === 'number') {
         building.delete(progress.platform);
+        compiled = progress.platform;
         return {
           src: 'metro',
           level: 'info',
@@ -173,20 +215,24 @@ export function repackRecords(): (chunk: unknown, stream: 'stdout' | 'stderr') =
       };
     }
     if (!entry.text) return null;
-    return {
+    return attributed({
       src: 'metro',
       level: entry.level,
       event: `repack_${stream}`,
       msg: entry.issuer ? `[${entry.issuer}] ${entry.text}` : entry.text,
-    };
+    });
   };
 }
+
+const OPEN_REQUESTS_MAX = 64;
 
 function requestRecord(request: RepackRequest, open: Map<string, string>): NdjsonRecord | null {
   const requestId = `repack-${request.id}`;
   if (request.url !== null) {
     const platform = bundlePlatform(request.url);
     if (!platform) return null;
+    const [oldest] = open.keys();
+    if (open.size >= OPEN_REQUESTS_MAX && oldest) open.delete(oldest);
     open.set(requestId, platform);
     return {
       src: 'metro',

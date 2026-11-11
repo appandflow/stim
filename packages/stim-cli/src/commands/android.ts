@@ -1147,6 +1147,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
         settingsContext,
         remote: remoteContext !== null,
+        reach: hostedTarget ? 'hosted' : null,
         note: out,
         resolve: resolveMetro,
         start: startServer,

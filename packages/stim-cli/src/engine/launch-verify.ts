@@ -7,6 +7,7 @@ import { DEV_MENU_LAUNCH_ARGS } from '../stimd/logs/ios-device.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 import { ANDROID_DISABLE_AUTO_LAUNCH_EXTRA, androidAppProcess, deviceShellArg } from './app-install.ts';
 import { ownBuildRecords } from '../stimd/metro/injected.ts';
+import { MODE_REPACK } from '../stimd/metro/state.ts';
 
 export type VerifyLaunchResult = {
   verified: boolean;
@@ -384,7 +385,8 @@ export async function verifyLaunch({
   const loop = async (): Promise<VerifyLaunchResult> => {
     if (sleep.coverage) await sleep(0);
     while (true) {
-      const metroRecords = read().filter((record) => after(record, since));
+      const allMetroRecords = read();
+      const metroRecords = allMetroRecords.filter((record) => after(record, since));
       const bundleRecords = metroRecords.filter(
         (record) =>
           (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
@@ -568,6 +570,17 @@ export async function verifyLaunch({
             await sleep(Math.min(pollMs, Math.max(0, coverageDeadline - now())));
             continue;
           }
+          const compileErrors = mode === MODE_REPACK ? repackCompileErrors(allMetroRecords, proof, platform) : [];
+          if (compileErrors.length) {
+            return {
+              verified: false,
+              record: proof,
+              errors: [...actionableErrors, ...compileErrors],
+              processAlive: alive,
+              mode,
+              waitedMs,
+            };
+          }
           return {
             verified: true,
             record: proof,
@@ -713,6 +726,38 @@ function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | 
     (['expo_stdout', 'expo_stderr', 'command_stdout', 'command_stderr'].includes(String(record.event)) &&
       typeof record.msg === 'string' &&
       /\bBundling failed\b/.test(record.msg))
+  );
+}
+
+/**
+ * The error-level Re.Pack output of the compile that produced the delivered bundle, from its start to the delivery.
+ * Re.Pack serves a bundle even when its compile failed, so a delivery alone does not prove the app got working code.
+ */
+function repackCompileErrors(
+  records: NdjsonRecord[],
+  delivered: NdjsonRecord,
+  platform: 'ios' | 'android' | null,
+): NdjsonRecord[] {
+  const at = Number(delivered.ts);
+  const done = records.findLast(
+    (record) =>
+      record.event === 'bundle_build_done' && Number(record.ts) <= at && (!platform || record.platform === platform),
+  );
+  if (!done) return [];
+  const started = records.findLast(
+    (record) =>
+      record.event === 'bundle_build_started' &&
+      record.platform === done.platform &&
+      Number(record.ts) <= Number(done.ts),
+  );
+  const from = Number(started?.ts ?? done.ts);
+  return records.filter(
+    (record) =>
+      record.level === 'error' &&
+      String(record.event).startsWith('repack_') &&
+      record.platform === done.platform &&
+      Number(record.ts) >= from &&
+      Number(record.ts) <= at,
   );
 }
 

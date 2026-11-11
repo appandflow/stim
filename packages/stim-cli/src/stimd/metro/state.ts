@@ -7,7 +7,7 @@ import {
 } from '../../workspace/workspace-state.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from '../../devices/device-slots.ts';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { detectBundlerConfig, detectIsExpo } from '../../workspace/project-files.ts';
+import { detectIsExpo, detectRepackConfig } from '../../workspace/project-files.ts';
 import { supervisorPidFile, workspaceStateFile } from '../../workspace/paths.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { sameProcessRecord } from '../../process-identity.ts';
@@ -20,15 +20,15 @@ export const MODE_REPACK = 'repack-child';
 
 /**
  * The dev server Stim runs for `root`, with the config file that decided it: metro.command, then a Rock or React
- * Native CLI config naming its bundler, then Expo, then Stim's in-process Metro.
+ * Native CLI config that imports Re.Pack, then Expo, then Stim's in-process Metro.
  */
 export function detectDevServer(
   root: string,
   command: readonly string[] | null = null,
 ): { mode: string; config: string | null } {
   if (command) return { mode: MODE_COMMAND, config: null };
-  const bundler = detectBundlerConfig(root);
-  if (bundler) return { mode: bundler.bundler === 'repack' ? MODE_REPACK : MODE_BARE, config: bundler.config };
+  const repack = detectRepackConfig(root);
+  if (repack) return { mode: MODE_REPACK, config: repack.config };
   return { mode: detectIsExpo(root) ? MODE_EXPO : MODE_BARE, config: null };
 }
 

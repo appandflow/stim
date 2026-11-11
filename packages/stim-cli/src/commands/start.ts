@@ -25,6 +25,7 @@ import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { MODE_EXPO, clearManagedMetroTunnel, detectDevServer, readMetroTunnel } from '../stimd/metro/state.ts';
+import { repackReachRefusal } from '../stimd/metro/server-repack.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -576,6 +577,8 @@ export async function startDevServer(
       remoteFlag ||
       remoteIosSetting(settings)?.kind === 'backend' ||
       remoteAndroidSetting(settings)?.kind === 'backend';
+    const repackRefusal = remote ? repackReachRefusal(root, metroCommand, 'remote') : null;
+    if (repackRefusal) return fail(repackRefusal);
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({

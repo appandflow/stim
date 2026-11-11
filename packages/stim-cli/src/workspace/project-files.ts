@@ -152,33 +152,34 @@ export function readAppJson(projectRoot: string): AnyJson | null {
   }
 }
 
-export interface BundlerConfig {
-  bundler: 'repack' | 'metro';
+export interface RepackConfig {
   cli: 'rock' | 'react-native';
   /** The file that decided, relative to the project root. */
   config: string;
 }
 
 /**
- * The bundler a Rock config or a React Native CLI config names, read as text so Stim never runs project code to
- * decide. Null when neither file decides, leaving the choice to Expo or bare Metro detection.
+ * The Re.Pack setup a Rock config or a React Native CLI config imports, read as text so Stim never runs project code
+ * to decide. Null when neither file imports it, leaving the choice to Expo or bare Metro detection.
  */
-export function detectBundlerConfig(projectRoot: string): BundlerConfig | null {
+export function detectRepackConfig(projectRoot: string): RepackConfig | null {
   const rock = readFirstText(projectRoot, ['rock.config.mjs', 'rock.config.js', 'rock.config.cjs', 'rock.config.ts']);
-  if (rock)
-    return {
-      bundler: rock.text.includes('@rock-js/plugin-repack') ? 'repack' : 'metro',
-      cli: 'rock',
-      config: rock.name,
-    };
+  if (rock) return importsModule(rock.text, '@rock-js/plugin-repack') ? { cli: 'rock', config: rock.name } : null;
   const cli = readFirstText(projectRoot, [
     'react-native.config.js',
     'react-native.config.cjs',
     'react-native.config.mjs',
   ]);
-  return cli?.text.includes('@callstack/repack/commands')
-    ? { bundler: 'repack', cli: 'react-native', config: cli.name }
+  return cli && importsModule(cli.text, '@callstack/repack/commands')
+    ? { cli: 'react-native', config: cli.name }
     : null;
+}
+
+function importsModule(source: string, specifier: string): boolean {
+  const code = source.replace(/\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/.*$/gm, '$1');
+  return new RegExp(`(?:\\bfrom|\\bimport|\\brequire\\s*\\()\\s*\\(?\\s*(['"\`])${specifier}(?:/[^'"\`]*)?\\1`).test(
+    code,
+  );
 }
 
 function readFirstText(projectRoot: string, names: string[]): { name: string; text: string } | null {

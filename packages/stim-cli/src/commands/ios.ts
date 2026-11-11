@@ -1041,6 +1041,7 @@ async function runIos(
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
           settingsContext,
           remote: Boolean(remoteDevice),
+          reach: physical ? 'device' : hostedTarget ? 'hosted' : null,
           hostedPorts,
           note,
           resolve: d.resolveProjectMetro,
