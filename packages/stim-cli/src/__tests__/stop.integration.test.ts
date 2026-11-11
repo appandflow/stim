@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
@@ -1773,12 +1773,10 @@ test('stop --json prints exactly one line of JSON on stdout', async () => {
   const cwd = process.cwd();
   const logs: string[] = [];
   const originalLog = console.log;
-  const program = new Command();
-  stopCommand(program);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(tmpRoot);
   try {
-    await program.parseAsync(['node', 'stim', 'stop', '--json']);
+    await runCli(stopCommand, ['--json'], { version: '0.0.0' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;

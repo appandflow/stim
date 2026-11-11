@@ -122,10 +122,10 @@
       "as": 825,
       "nonNull": 340,
       "refusalRemedy": 17,
-      "commander": 20
+      "commander": 17
     },
     "test": {
-      "as": 429,
+      "as": 424,
       "nonNull": 605
     }
   },

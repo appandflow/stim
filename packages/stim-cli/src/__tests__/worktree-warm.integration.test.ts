@@ -22,8 +22,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
-import { Command } from 'commander';
-import { registerWarm } from '../commands/worktree.ts';
+import { warmOp } from '../commands/worktree.ts';
+import { runCli } from '../cli/define-op.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -207,9 +207,7 @@ async function runWarm(cwd: string) {
   const previous = process.cwd();
   try {
     process.chdir(cwd);
-    const command = new Command();
-    registerWarm(command);
-    await command.parseAsync(['warm'], { from: 'user' });
+    await runCli(warmOp, [], { version: '0.0.0' });
     return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
   } finally {
     process.chdir(previous);

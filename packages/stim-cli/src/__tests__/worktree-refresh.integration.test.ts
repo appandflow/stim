@@ -15,9 +15,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
-import { Command } from 'commander';
 import { workspaceName } from '@stim-cli/core';
-import { registerWarm } from '../commands/worktree.ts';
+import { warmOp } from '../commands/worktree.ts';
+import { runCli } from '../cli/define-op.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import {
   exclusiveClaimDir,
@@ -75,9 +75,7 @@ function runWarm(cwd: string, ...args: string[]) {
     const previous = process.cwd();
     try {
       process.chdir(cwd);
-      const command = new Command();
-      registerWarm(command);
-      await command.parseAsync(['warm', ...args], { from: 'user' });
+      await runCli(warmOp, [...args], { version: '0.0.0' });
       return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
     } finally {
       process.chdir(previous);

@@ -587,7 +587,9 @@
         "packages/stim-cli/src/commands/gc.ts",
         "packages/stim-cli/src/commands/device.ts",
         "packages/stim-cli/src/commands/device-tools.ts",
-        "packages/stim-cli/src/commands/share.ts"
+        "packages/stim-cli/src/commands/share.ts",
+        "packages/stim-cli/src/commands/stop.ts",
+        "packages/stim-cli/src/commands/worktree.ts"
       ],
       "rules": {
         "no-restricted-imports": [

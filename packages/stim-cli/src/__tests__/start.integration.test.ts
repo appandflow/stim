@@ -10,7 +10,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Command } from 'commander';
+import type { Op } from '../cli/define-op.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLinks } from '../devices/stim-desktop.ts';
@@ -29,12 +29,15 @@ import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-
 import { readMetroTunnel } from '../stimd/metro/state.ts';
 import * as supervisorState from '../stimd/metro/state.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { liveSupervisor, failureEvidence, registerStart } from '../commands/start.ts';
+import { liveSupervisor, failureEvidence, startOp } from '../commands/start.ts';
 import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
-  return { ...actual, workspaceLinks: vi.fn<typeof actual.workspaceLinks>(actual.workspaceLinks) };
+  return {
+    ...actual,
+    workspaceLinks: vi.fn<typeof actual.workspaceLinks>(actual.workspaceLinks),
+  };
 });
 
 let tmpHome: string;
@@ -66,14 +69,18 @@ afterEach(async () => {
   delete process.env.STIM_HOME;
 });
 
-type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
-type StartOverrides = NonNullable<Parameters<typeof registerStart>[1]>;
+type StartOverrides = NonNullable<Parameters<typeof startOp>[0]>;
 
 /** stimd's `metro.ensure`, run through the executor: the spawned stand-in is the Metro stimd starts, and its exit is stimd's `metro-exited`. */
 const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeoutMs, _operation, signal) => {
   const recorded = readWorkspaceState(params.root)?.supervisor;
   if (recorded?.port === params.port && inspectProcessIdentity(recorded) === 'same')
-    return Promise.resolve({ op: 'metro', state: 'running', pid: recorded.pid, port: params.port });
+    return Promise.resolve({
+      op: 'metro',
+      state: 'running',
+      pid: recorded.pid,
+      port: params.port,
+    });
   return new Promise((resolve) => {
     signal?.addEventListener('abort', () => resolve(null), { once: true });
     const args = [
@@ -89,7 +96,11 @@ const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeout
     try {
       const child = getExecutor().spawn('stimd', args, {});
       child.on?.('exit', (code: unknown, sig: unknown) =>
-        resolve({ op: 'error', code: 'metro-exited', message: `exited (${String(sig ?? code)})` }),
+        resolve({
+          op: 'error',
+          code: 'metro-exited',
+          message: `exited (${String(sig ?? code)})`,
+        }),
       );
       child.on?.('error', (error: Error) => resolve({ op: 'error', code: 'metro-start', message: error.message }));
     } catch (error) {
@@ -98,42 +109,16 @@ const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeout
   });
 };
 
-const registerPosixStart = (cmd: Command, overrides: StartOverrides = {}) =>
-  registerStart(cmd, {
+const registerPosixStart = (overrides: StartOverrides = {}) =>
+  startOp({
     ensureMetro: stimdMetro,
     ...overrides,
     platform: process.platform === 'win32' ? 'linux' : process.platform,
   });
 
-interface CommandStub {
-  command(nameAndArgs?: string): CommandStub;
-  description(str?: string): CommandStub;
-  option(flags?: string, description?: string): CommandStub;
-  action(fn: ActionFn): CommandStub;
-}
-
-function captureAction(register: (cmd: Command) => void) {
-  let captured: ActionFn | undefined;
-  const stub: CommandStub = {
-    command() {
-      return stub;
-    },
-    description() {
-      return stub;
-    },
-    option() {
-      return stub;
-    },
-    action(fn) {
-      captured = fn;
-      return stub;
-    },
-  };
-  register(stub as Command);
-  return (opts: Record<string, unknown> = {}) => {
-    if (!captured) throw new Error('register did not register an action');
-    return captured(opts);
-  };
+function captureAction(register: () => Op) {
+  const op = register();
+  return (opts: Record<string, unknown> = {}) => op.run?.({ args: [], options: opts, parent: {}, version: '0.0.0' });
 }
 
 interface ChildStub {
@@ -230,13 +215,21 @@ async function managedStartExecutor() {
   exec.spawn = (cmd, args, opts) => {
     exec.calls.spawn.push({ cmd, args, opts });
     writeWorkspaceState(root, {
-      supervisor: { pid: process.pid, processToken: captureProcessToken(process.pid), port, mode: 'bare-inproc' },
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'bare-inproc',
+      },
     });
     exec.listening = true;
     return { pid: process.pid, unref() {}, on() {} };
   };
   setExecutor(exec);
-  upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+  upsertProject(root, {
+    metroPort: port,
+    settings: { metro: { tunnel: 'ngrok' } },
+  });
   return { exec, port };
 }
 
@@ -261,7 +254,7 @@ function contendedRemoteStart() {
 
 async function runAction(
   opts: Record<string, unknown>,
-  register: (cmd: Command) => void = registerPosixStart,
+  register: () => Op = registerPosixStart,
   onStderr?: (line: string) => void,
 ) {
   const run = captureAction(register);
@@ -296,7 +289,7 @@ async function runAction(
   return { logs, errs, exitCode };
 }
 
-async function runConcurrentActions(opts: Record<string, unknown>, register: (cmd: Command) => void) {
+async function runConcurrentActions(opts: Record<string, unknown>, register: () => Op) {
   const run = captureAction(register);
   const logs: string[] = [];
   const errs: string[] = [];
@@ -339,7 +332,11 @@ async function runSpawnedExpoStart({
 }) {
   writeFileSync(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    JSON.stringify({
+      name: 'ws',
+      dependencies: { expo: '54.0.0' },
+      scripts: { ios: 'expo run:ios' },
+    }),
   );
   const { server, port } = await metroListener();
   const exec = metroExecutor({ listeners: {} });
@@ -360,7 +357,9 @@ async function runSpawnedExpoStart({
     if (tunnelDelayMs !== undefined) {
       tunnelWritten = new Promise((resolve) => {
         setTimeout(() => {
-          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://remote.exp.direct' } });
+          writeWorkspaceState(root, {
+            metroTunnel: { kind: 'expo', url: 'exp://remote.exp.direct' },
+          });
           if (exitAfterTunnel) childHandlers.exit?.(1, null);
           resolve(Date.now());
         }, tunnelDelayMs);
@@ -385,7 +384,13 @@ async function runSpawnedExpoStart({
   try {
     const result = await runAction(options);
     const completedAt = Date.now();
-    return { result, exec, port, completedAt, tunnelWrittenAt: await tunnelWritten };
+    return {
+      result,
+      exec,
+      port,
+      completedAt,
+      tunnelWrittenAt: await tunnelWritten,
+    };
   } finally {
     server.close();
   }
@@ -438,13 +443,21 @@ describe('action: already running', { timeout: 30_000 }, () => {
     const result = await runAction({ json: true, resetCache: true });
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').message).toContain('externally started');
-    expect(readWorkspaceState(root)).toEqual({ ...before, lastUsedAt: expect.any(String) });
+    expect(readWorkspaceState(root)).toEqual({
+      ...before,
+      lastUsedAt: expect.any(String),
+    });
     expect(getProject(root)?.metroPort).toBe(port);
   });
 
   test('cache reset without a pin leaves the reservation when a foreign process holds it', async () => {
     const { server, port } = await metroListener();
-    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' }));
+    setExecutor(
+      metroExecutor({
+        listeners: { [port]: DEAD_LISTENER_PID },
+        cwd: '/somewhere/else',
+      }),
+    );
     upsertProject(root, { metroPort: port });
     let result;
     try {
@@ -507,7 +520,13 @@ describe('action: already running', { timeout: 30_000 }, () => {
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: new Date().toISOString(), idleMinutes: 60 } });
+    writeWorkspaceState(root, {
+      devServerStop: {
+        reason: 'idle',
+        at: new Date().toISOString(),
+        idleMinutes: 60,
+      },
+    });
 
     let result;
     try {
@@ -583,12 +602,19 @@ describe('action: already running', { timeout: 30_000 }, () => {
   test('start --remote refuses an external Expo server that has no public URL', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'expo' } },
+    });
 
     let result;
     try {
@@ -605,7 +631,11 @@ describe('action: already running', { timeout: 30_000 }, () => {
   test('start --remote accepts an external Expo server with an operator public URL', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
@@ -634,7 +664,10 @@ describe('action: already running', { timeout: 30_000 }, () => {
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     if (owned) {
       writeWorkspaceState(root, {
         supervisor: {
@@ -650,8 +683,8 @@ describe('action: already running', { timeout: 30_000 }, () => {
 
     let result;
     try {
-      result = await runAction({ json: true, remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
+      result = await runAction({ json: true, remote: true }, () =>
+        registerPosixStart({
           providers: () => ['ngrok'],
           startTunnelSequence: async () => {
             tunnelStarted = true;
@@ -707,12 +740,19 @@ describe('action: already running', { timeout: 30_000 }, () => {
   test('start --remote refuses when a healthy local Expo supervisor has no Expo tunnel', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'expo' } },
+    });
     writeWorkspaceState(root, {
       supervisor: {
         pid: process.pid,
@@ -742,12 +782,19 @@ describe('action: already running', { timeout: 30_000 }, () => {
   test('a concurrent remote start waits when an owned Expo server is already healthy before its tunnel', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'expo' } },
+    });
     writeWorkspaceState(root, {
       supervisor: {
         pid: process.pid,
@@ -759,7 +806,12 @@ describe('action: already running', { timeout: 30_000 }, () => {
     });
     const tunnelWritten = new Promise<number>((resolve) => {
       setTimeout(() => {
-        writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://already-healthy.exp.direct' } });
+        writeWorkspaceState(root, {
+          metroTunnel: {
+            kind: 'expo',
+            url: 'exp://already-healthy.exp.direct',
+          },
+        });
         resolve(Date.now());
       }, 1000);
     });
@@ -863,7 +915,9 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   });
 
   test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
-    const { exec, port } = await runSpawnedExpoStart({ options: { json: true, wait: '10' } });
+    const { exec, port } = await runSpawnedExpoStart({
+      options: { json: true, wait: '10' },
+    });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
     expect(spawned.args).toEqual(['metro.ensure', '--root', root, '--port', String(port)]);
@@ -891,8 +945,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     upsertProject(root, { metroPort: port, settings });
     let providerStarted = false;
 
-    const result = await runAction({ json: true, remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok', 'cloudflared'],
         startTunnelSequence: async () => {
           providerStarted = true;
@@ -915,10 +969,12 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     setExecutor(exec);
     upsertProject(root, {
       metroPort: 8180,
-      settings: { metro: { command: ['node', 'cli.js', 'start', '--port', '{port}'] } },
+      settings: {
+        metro: { command: ['node', 'cli.js', 'start', '--port', '{port}'] },
+      },
     });
 
-    const result = await runAction({ ...opts }, (cmd) => registerStart(cmd, { platform }));
+    const result = await runAction({ ...opts }, () => startOp({ platform }));
 
     expect(result.exitCode).toBe(1);
     const refusal = JSON.parse(result.logs[0] ?? '');
@@ -930,14 +986,16 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   test('start --remote reports worktree removal before project registration', async () => {
     setExecutor(metroExecutor({ listeners: {} }));
     let providerChecked = false;
-    const result = await runAction({ json: true, remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, remote: true }, () =>
+      registerPosixStart({
         providers: () => {
           providerChecked = true;
           return ['ngrok'];
         },
         withWorktreeLock: async () => {
-          throw Object.assign(new Error('held for worktree removal'), { code: 'STIM_LOCK_REFUSED' });
+          throw Object.assign(new Error('held for worktree removal'), {
+            code: 'STIM_LOCK_REFUSED',
+          });
         },
       }),
     );
@@ -953,7 +1011,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
     const { exec, port } = await runSpawnedExpoStart({
       options: { json: true, wait: '10' },
-      settings: { [platform]: { remote: 'proxy' }, metro: { tunnel: 'expo' } },
+      settings: {
+        [platform]: { remote: 'proxy' },
+        metro: { tunnel: 'expo' },
+      },
       tunnelDelayMs: 0,
     });
     expect(exec.calls.spawn[0]?.args).toEqual(['metro.ensure', '--root', root, '--port', String(port), '--tunnel']);
@@ -988,8 +1049,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     });
 
     try {
-      await runAction({ json: true, wait: '10' }, (cmd) =>
-        registerPosixStart(cmd, {
+      await runAction({ json: true, wait: '10' }, () =>
+        registerPosixStart({
           providers: () => ['ngrok'],
           startTunnelSequence: async () => {
             throw new Error('plain start must not start a tunnel');
@@ -1025,11 +1086,16 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       };
       upsertProject(root, {
         metroPort: port,
-        settings: { metro: { tunnel: provider, ...(provider === 'ngrok' ? { ngrokUrl: url } : {}) } },
+        settings: {
+          metro: {
+            tunnel: provider,
+            ...(provider === 'ngrok' ? { ngrokUrl: url } : {}),
+          },
+        },
       });
 
-      const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
+      const result = await runAction({ json: true, wait: '10', remote: true }, () =>
+        registerPosixStart({
           providers: () => ['ngrok', 'cloudflared', 'tailscale'],
           startTunnelSequence: async (options) => {
             order.push('tunnel');
@@ -1063,14 +1129,17 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     async (provider) => {
       const { exec, port } = await managedStartExecutor();
       const url = provider === 'tailscale' ? `https://host.tail123.ts.net:${port}` : 'https://one.ngrok.app';
-      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: provider } } });
+      upsertProject(root, {
+        metroPort: port,
+        settings: { metro: { tunnel: provider } },
+      });
       const { contended, withWorktreeLock } = contendedRemoteStart();
       let tunnelStarts = 0;
       let active = 0;
       let maxActive = 0;
 
-      const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
+      const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, () =>
+        registerPosixStart({
           providers: () => [provider],
           withWorktreeLock,
           startTunnelSequence: async () => {
@@ -1104,8 +1173,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   test('concurrent managed starts hand off one supervisor spawn inside the tunnel lock', async () => {
     const { port, exec } = await managedStartExecutor();
     const { contended, withWorktreeLock } = contendedRemoteStart();
-    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         withWorktreeLock,
         startTunnelSequence: async () => {
@@ -1122,7 +1191,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         withTunnelLock: (workspaceRoot, fn) =>
           withManagedTunnelLock(workspaceRoot, async (claim) => {
             const acquisition = await fn(claim);
-            expect(readWorkspaceState(root)?.supervisor).toMatchObject({ pid: process.pid, port });
+            expect(readWorkspaceState(root)?.supervisor).toMatchObject({
+              pid: process.pid,
+              port,
+            });
             expect(exec.calls.spawn).toHaveLength(1);
             return acquisition;
           }),
@@ -1144,10 +1216,13 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: async () => {
           listening = true;
@@ -1156,7 +1231,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
             url: 'https://still-running.ngrok.app',
             pid: 4242,
             processToken: 'linux:100',
-            cleanup: async () => ({ status: 'failed', reason: 'pid 4242 ignored SIGKILL' }),
+            cleanup: async () => ({
+              status: 'failed',
+              reason: 'pid 4242 ignored SIGKILL',
+            }),
           };
         },
         isTunnelAlive: () => true,
@@ -1165,7 +1243,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(/cleanup failed.*pid 4242/i);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://still-running.ngrok.app' });
+    expect(readMetroTunnel(root)).toMatchObject({
+      pid: 4242,
+      url: 'https://still-running.ngrok.app',
+    });
     expect(exec.calls.spawn).toEqual([]);
   });
 
@@ -1176,8 +1257,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let active = 0;
     let maxActive = 0;
 
-    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         withWorktreeLock,
         startTunnelSequence: async () => {
@@ -1204,7 +1285,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(result.logs).toHaveLength(2);
     expect(attempts).toBe(2);
     expect(maxActive).toBe(1);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4243, url: 'https://retry.ngrok.app' });
+    expect(readMetroTunnel(root)).toMatchObject({
+      pid: 4243,
+      url: 'https://retry.ngrok.app',
+    });
   }, 30_000);
 
   test('a failed managed tunnel record stops the process before the dev server starts', async () => {
@@ -1217,11 +1301,14 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return { pid: 1, unref() {}, on() {} };
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     let cleanupCalled = false;
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1249,7 +1336,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const port = 8184;
     const exec = metroExecutor({ listeners: {} });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     const signals: Array<NodeJS.Signals | number | undefined> = [];
     let alive = true;
     let exited = false;
@@ -1266,8 +1356,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       },
     });
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: (options) =>
           startTunnelSequence({
@@ -1289,7 +1379,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         writeTunnelRecord: () => {
           throw new Error('disk full');
         },
-        stopTunnel: async () => ({ status: 'failed', reason: 'SIGTERM did not stop pid 4242.' }),
+        stopTunnel: async () => ({
+          status: 'failed',
+          reason: 'SIGTERM did not stop pid 4242.',
+        }),
       }),
     );
 
@@ -1303,12 +1396,15 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const port = 8185;
     const exec = metroExecutor({ listeners: {} });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     let now = 0;
     const child = makeChildProcess({ kill: () => true });
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: (options) =>
           startTunnelSequence({
@@ -1330,7 +1426,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         writeTunnelRecord: () => {
           throw new Error('disk full');
         },
-        stopTunnel: async () => ({ status: 'failed', reason: 'SIGTERM did not stop pid 4242.' }),
+        stopTunnel: async () => ({
+          status: 'failed',
+          reason: 'SIGTERM did not stop pid 4242.',
+        }),
       }),
     );
 
@@ -1343,17 +1442,23 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const port = 8190;
     const exec = metroExecutor({ listeners: {} });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
           url: 'https://unconfirmed.ngrok.app',
           pid: 4242,
           processToken: 'linux:100',
-          cleanup: async () => ({ status: 'failed', reason: 'SIGKILL did not confirm exit' }),
+          cleanup: async () => ({
+            status: 'failed',
+            reason: 'SIGKILL did not confirm exit',
+          }),
         }),
         isTunnelAlive: () => false,
       }),
@@ -1361,7 +1466,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(/unmanaged.*pid 4242/i);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://unconfirmed.ngrok.app' });
+    expect(readMetroTunnel(root)).toMatchObject({
+      pid: 4242,
+      url: 'https://unconfirmed.ngrok.app',
+    });
     expect(exec.calls.spawn).toEqual([]);
   });
 
@@ -1388,14 +1496,17 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     const stopped: TunnelRecord[] = [];
     let livenessChecks = 0;
 
     let result;
     try {
-      result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
+      result = await runAction({ json: true, wait: '10', remote: true }, () =>
+        registerPosixStart({
           providers: () => ['ngrok'],
           startTunnelSequence: async () => ({
             provider: 'ngrok',
@@ -1429,11 +1540,14 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return { pid: process.pid, unref() {}, on() {} };
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     let livenessChecks = 0;
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1443,7 +1557,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
           cleanup: successfulTunnelCleanup,
         }),
         isTunnelAlive: () => ++livenessChecks === 1,
-        stopTunnel: async () => ({ status: 'failed', reason: 'pid 4242 ignored SIGTERM' }),
+        stopTunnel: async () => ({
+          status: 'failed',
+          reason: 'pid 4242 ignored SIGTERM',
+        }),
       }),
     );
 
@@ -1451,7 +1568,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(result.exitCode).toBe(1);
     expect(error.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(error.remedy).toMatch(/cleanup.*failed.*stim stop/i);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://cleanup-failed.ngrok.app' });
+    expect(readMetroTunnel(root)).toMatchObject({
+      pid: 4242,
+      url: 'https://cleanup-failed.ngrok.app',
+    });
   });
 
   test('a reused managed provider that dies before Metro readiness fails without clearing its replacement', async () => {
@@ -1471,7 +1591,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return { pid: process.pid, unref() {}, on() {} };
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     const reused = {
       kind: 'managed' as const,
       provider: 'ngrok' as const,
@@ -1493,8 +1616,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     writeWorkspaceState(root, { metroTunnel: reused });
     let livenessChecks = 0;
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
+    const result = await runAction({ json: true, wait: '1', remote: true }, () =>
+      registerPosixStart({
         providers: () => ['ngrok'],
         startTunnelSequence: async () => {
           throw new Error('the recorded tunnel must be reused');
@@ -1538,13 +1661,16 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok' } },
+    });
     let replaced = false;
     let livenessChecks = 0;
 
     try {
-      await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
+      await runAction({ json: true, wait: '10', remote: true }, () =>
+        registerPosixStart({
           providers: () => ['ngrok'],
           startTunnelSequence: async () => ({
             provider: 'ngrok',
@@ -1887,7 +2013,10 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
     const port = 25063;
     vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
     vi.stubEnv('STIM_METRO_PORT', String(port));
-    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
+    const exec = metroExecutor({
+      listeners: { [port]: DEAD_LISTENER_PID },
+      cwd: '/somewhere/else',
+    });
     setExecutor(exec);
 
     const result = await runAction({ json: true });
@@ -1937,7 +2066,10 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
     const port = 25063;
     vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
     vi.stubEnv('STIM_METRO_PORT', String(port));
-    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
+    const exec = metroExecutor({
+      listeners: { [port]: DEAD_LISTENER_PID },
+      cwd: '/somewhere/else',
+    });
     setExecutor(exec);
 
     const result = await runAction({ json: true, resetCache: true });
@@ -1970,14 +2102,20 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
     const result = await runAction({ json: true });
 
     expect(result.exitCode).toBe(null);
-    expect(JSON.parse(result.logs[0]!)).toMatchObject({ port, alreadyRunning: true });
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({
+      port,
+      alreadyRunning: true,
+    });
     expect(getProject(root)?.metroPort).toBe(port);
     expect(exec.calls.spawn).toEqual([]);
   });
 
   test('a FOREIGN holder of the reserved port moves the reservation instead of counting as healthy', async () => {
     const { server, port } = await metroListener();
-    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
+    const exec = metroExecutor({
+      listeners: { [port]: DEAD_LISTENER_PID },
+      cwd: '/somewhere/else',
+    });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       return { pid: 1, unref() {}, on() {} };
@@ -2142,7 +2280,11 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
   test('a remote start refuses after the local Expo supervisor begins answering without a tunnel', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
@@ -2157,7 +2299,10 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'expo' } },
+    });
     writeWorkspaceState(root, {
       supervisor: {
         pid: process.pid,
@@ -2191,7 +2336,11 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
   test('a concurrent remote start waits when Metro becomes healthy before the Expo tunnel', async () => {
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+      JSON.stringify({
+        name: 'ws',
+        dependencies: { expo: '54.0.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
     );
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
@@ -2212,7 +2361,10 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'expo' } },
+    });
     writeWorkspaceState(root, {
       supervisor: {
         pid: process.pid,
@@ -2256,7 +2408,9 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
       expect(tunnelReads.mock.calls.length).toBeGreaterThan(readsBeforeNextPoll);
       expect(tunnelReads.mock.results.at(-1)?.value).toBeNull();
       expect(settled).toBe(false);
-      writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://concurrent.exp.direct' } });
+      writeWorkspaceState(root, {
+        metroTunnel: { kind: 'expo', url: 'exp://concurrent.exp.direct' },
+      });
       await vi.advanceTimersToNextTimerAsync();
       result = await action;
     } finally {

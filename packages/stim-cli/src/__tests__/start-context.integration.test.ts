@@ -252,8 +252,8 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
       script,
       `
       import { writeFileSync } from 'node:fs';
-      import { Command } from ${JSON.stringify(import.meta.resolve('commander'))};
-      import { registerStart } from ${JSON.stringify(new URL('../commands/start.ts', import.meta.url).href)};
+      import { runCli } from ${JSON.stringify(new URL('../cli/define-op.ts', import.meta.url).href)};
+      import { startOp } from ${JSON.stringify(new URL('../commands/start.ts', import.meta.url).href)};
       import { CliExit } from ${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)};
       import { getExecutor, setExecutor } from ${JSON.stringify(new URL('../exec.ts', import.meta.url).href)};
       import { captureProcessToken } from ${JSON.stringify(new URL('../process-identity.ts', import.meta.url).href)};
@@ -265,14 +265,13 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
           return child;
         }
       });
-      const program = new Command();
-      registerStart(program, {
+      const start = startOp({
         providers: () => ['ngrok'],
         diskFloorGate: async () => ({ refusal: null }),
         ensureMetro: () => new Promise(() => {}),
       });
       try {
-        await program.parseAsync(['node', 'stim', 'start', '--json', '--wait', '30', '--remote']);
+        await runCli(start, ['--json', '--wait', '30', '--remote'], { version: '0.0.0' });
       } catch (error) {
         if (!(error instanceof CliExit)) throw error;
         process.exit(error.exitCode);

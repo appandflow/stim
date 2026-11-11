@@ -592,10 +592,14 @@ describe('the command surface', () => {
         message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
       });
     }
-    for (const args of [['stop'], ['ios'], ['android']]) {
+    await expect(runCli(stopCommand, ['--slot', 'bad/slot'], { version: '9.9.9' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
+    });
+    for (const args of [['ios'], ['android']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [stopCommand, iosCommand, androidCommand]) register(program);
+      for (const register of [iosCommand, androidCommand]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'bad/slot'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
@@ -617,7 +621,7 @@ describe('the command surface', () => {
     for (const args of [['ios'], ['android']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [stopCommand, iosCommand, androidCommand]) register(program);
+      for (const register of [iosCommand, androidCommand]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'web'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
