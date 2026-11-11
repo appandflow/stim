@@ -3,6 +3,7 @@ import {
   createSlimDenialFilter,
   type LaunchdEvent,
   machServiceLabels,
+  nextLogOffset,
   parseLaunchdLine,
 } from '../stimd/logs/ios-slim.ts';
 
@@ -74,12 +75,13 @@ test('reports the app process asking for a disabled service once per feature per
   const filter = createSlimDenialFilter({
     bundleId: 'com.example.app',
     executable: 'ExampleApplication',
-    disabled: new Set(['com.apple.healthd', 'com.apple.itunesstored', 'com.apple.chronod']),
+    disabled: new Set(['com.apple.healthd', 'com.apple.itunesstored', 'com.apple.intelligencecontextd']),
     services: new Map([
       ['com.apple.healthd.server', 'com.apple.healthd'],
       ['com.apple.healthd.cache-delete', 'com.apple.healthd'],
       ['com.apple.itunesstored.xpc', 'com.apple.itunesstored'],
       ['com.apple.apsd', 'com.apple.apsd'],
+      ['com.apple.uiintelligencesupport.agent', 'com.apple.intelligencecontextd'],
     ]),
   });
 
@@ -98,12 +100,27 @@ test('reports the app process asking for a disabled service once per feature per
     features: ['health'],
     slimCategory: 'health',
     pid: 10,
+    level: 'warn',
   });
   expect(filter(lookup('com.apple.healthd.cache-delete', 'ExampleApplicat', 10))).toBeNull();
   expect(filter(lookup('com.apple.itunesstored.xpc', 'ExampleApplicat', 10))).toMatchObject({
     features: ['app-store', 'storekit'],
   });
 
+  expect(filter(lookup('com.apple.uiintelligencesupport.agent', 'ExampleApplicat', 10))).toMatchObject({
+    features: [],
+    slimCategory: 'siri',
+    level: 'debug',
+  });
+
   expect(filter({ kind: 'spawn', bundleId: 'com.example.app', pid: 11 })).toBeNull();
   expect(filter(lookup('com.apple.healthd.server', 'ExampleApplicat', 11))).not.toBeNull();
+});
+
+test.each([
+  ['the file grew', { ino: 5, size: 900 }, { offset: 400, restarted: false }],
+  ['the file was truncated', { ino: 5, size: 100 }, { offset: 0, restarted: true }],
+  ['the file was replaced by a rotation', { ino: 6, size: 900 }, { offset: 0, restarted: true }],
+])('reads the log from the right place when %s', (_case, file, expected) => {
+  expect(nextLogOffset({ ino: 5, offset: 400 }, file)).toEqual(expected);
 });

@@ -293,13 +293,16 @@ SLIM SIMULATOR SERVICE RECORDS
 While the device log stream of an owned iOS simulator that Stim slimmed runs,
 Stim follows that simulator's launchd log. When the launched app's process
 asks for a system service slimming turned off, it writes one record per
-feature (or service label) per app launch: src device, platform ios, level
-warn, event slim_service_denied, with service (the Mach service name), label
-(the disabled launchd label), features (feature ids, empty when the label
-names none), slimCategory (the profile category id), proc and pid. msg names
-the feature and the remedy. They show in a plain \`logs\`, in
-\`--source device\` and \`--level warn\`, and never in \`--errors\`:
-  stim logs --source device --grep "slimming turned off"
+feature (or service label) per app launch: src device, platform ios, event
+slim_service_denied, with service (the Mach service name), label (the
+disabled launchd label), features (feature ids, empty when the label names
+none), slimCategory (the profile category id), proc and pid. Level is warn
+when the label belongs to a feature an app can depend on (push, StoreKit,
+HealthKit...), and msg names the feature and the remedy. A label of no
+feature, such as the lookups system frameworks make in every app, is level
+debug with no remedy. Both show in a plain \`logs\` and \`--source device\`;
+\`--level warn\` keeps only the warnings, and \`--errors\` never shows them:
+  stim logs --source device --level warn --grep "slimming turned off"
 Services the simulator runtime never has are not reported; only services of
 labels Stim disabled on that simulator are.
 

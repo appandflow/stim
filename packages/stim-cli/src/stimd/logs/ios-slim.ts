@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject, readCreatedDevices } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
@@ -52,7 +52,21 @@ export interface SlimDenial {
   slimCategory: string | null;
   proc: string;
   pid: number;
+  level: 'warn' | 'debug';
   msg: string;
+}
+
+/**
+ * Where to read the log from next: from the start when the file was replaced (a new inode) or truncated below what
+ * was already read, else from where the last read stopped.
+ */
+export function nextLogOffset(
+  read: { ino: number; offset: number },
+  file: { ino: number; size: number },
+): { offset: number; restarted: boolean } {
+  return file.ino !== read.ino || file.size < read.offset
+    ? { offset: 0, restarted: true }
+    : { offset: read.offset, restarted: false };
 }
 
 /**
@@ -90,8 +104,8 @@ export function createSlimDenialFilter({
     const key = `${event.pid}\0${features.length > 0 ? features.map((feature) => feature.id).join(',') : label}`;
     if (reported.has(key)) return null;
     reported.add(key);
-    const what = features.length > 0 ? features.map((feature) => feature.name).join(', ') : (category?.name ?? label);
     const keep = category ? `"except": ["${category.id}"]` : `"keep": ["${label}"]`;
+    const asked = `the app asked for ${event.service}, which slimming turned off`;
     return {
       service: event.service,
       label,
@@ -99,7 +113,15 @@ export function createSlimDenialFilter({
       slimCategory: category?.id ?? null,
       proc: event.proc,
       pid: event.pid,
-      msg: `the app asked for ${event.service}, which slimming turned off (${what}): keep it with ios.simslimProfile (${keep}) or set ios.simslim off -- stim guide lifecycle simslim`,
+      ...(features.length > 0
+        ? {
+            level: 'warn' as const,
+            msg: `${asked} (${features.map((feature) => feature.name).join(', ')}): keep it with ios.simslimProfile (${keep}) or set ios.simslim off -- stim guide lifecycle simslim`,
+          }
+        : {
+            level: 'debug' as const,
+            msg: `${asked} (${category?.name ?? label}); no feature Stim lists depends on it`,
+          }),
     };
   };
 }
@@ -209,13 +231,7 @@ export function watchSlimDenials({
     const denial = filter?.(event);
     if (!denial) return;
     const { msg, ...fields } = denial;
-    write({
-      src: 'device',
-      level: 'warn',
-      event: 'slim_service_denied',
-      ...fields,
-      msg,
-    });
+    write({ src: 'device', event: 'slim_service_denied', ...fields, msg });
   };
   void slimServiceMap(udid).then(
     (services) => {
@@ -243,12 +259,11 @@ export function watchSlimDenials({
       return;
     }
     try {
-      const stat = statSync(path);
-      if (stat.ino !== position.ino || stat.size < position.offset) {
-        position.ino = stat.ino;
-        position.offset = 0;
-        partial = '';
-      }
+      const stat = fstatSync(fd);
+      const next = nextLogOffset(position, stat);
+      if (next.restarted) partial = '';
+      position.ino = stat.ino;
+      position.offset = next.offset;
       const length = Math.min(stat.size - position.offset, READ_LIMIT);
       if (length <= 0) return;
       const buffer = Buffer.alloc(length);

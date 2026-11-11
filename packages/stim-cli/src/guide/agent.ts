@@ -301,8 +301,9 @@ services before the first boot, which cuts memory several times over. That
 turns off these features on the simulator: ${slimmedFeatureNames().join(', ')}. An app
 that needs one keeps it with ios.simslimProfile, or opts out with
 ios.simslim off (guide lifecycle simslim). When a system feature misbehaves on
-the simulator, run stim logs --source device --grep "slimming turned off": a
-warn record names the service the app asked for and the category to keep.
+the simulator, run stim logs --source device --level warn --grep "slimming
+turned off": a warning names the feature the app asked for and the category to
+keep.
 
 worktree remove parks the workspace's simulator or emulator for later adoption.
 During owned-device teardown, Stim best-effort closes local agent-device sessions
