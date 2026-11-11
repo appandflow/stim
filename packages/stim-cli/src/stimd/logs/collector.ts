@@ -7,6 +7,7 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { createLineReader } from '../../process-output.ts';
 import { parseDeviceConsoleLine } from './ios-device.ts';
 import { parseLogStreamLine } from './ios.ts';
+import { watchSlimDenials } from './ios-slim.ts';
 import {
   type PidResolution,
   type PidWatcher,
@@ -227,6 +228,17 @@ export async function runCollector({
       appPid: pid,
     }),
   });
+
+  if (platform === 'ios' && !physical && udid && bundleId) {
+    watchSlimDenials({
+      udid,
+      bundleId,
+      executable: appExecutable ?? appName ?? bundleId,
+      signal: shutdown.signal,
+      write: (record) => writer.write({ ...attribution, ...record, platform }),
+      stderr,
+    });
+  }
 
   const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
   const readClockOffset = async (): Promise<number | null> =>

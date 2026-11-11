@@ -216,6 +216,26 @@ JSON file under the app with an `except` list of categories and a `keep` list of
 individual services that stay enabled. `ios.simslim` set to `off` in a project
 opts that app out and restores stock services.
 
+When the app asks a slim simulator for a service of a feature slimming turned
+off, Stim writes a warning to the device log that names the service, the
+feature and the category to keep, once per feature per app launch. Lookups of
+services no listed feature depends on, which system frameworks make in every
+app, are recorded at debug level without a remedy. When a system feature
+misbehaves on the simulator, look for the warning:
+
+```bash
+stim logs --source device --level warn --grep "slimming turned off"
+```
+
+Copy this prompt to have an agent check:
+
+```text
+A system feature (push, StoreKit, Contacts, HealthKit...) does not work in my
+app on the Stim simulator. Run `stim logs --source device --level warn --grep
+"slimming turned off"` and, if a record names the feature, add its category to the
+`except` list of an `ios.simslimProfile` (see `stim guide lifecycle simslim`).
+```
+
 Stim writes the overrides while the simulator is shut down, then boots it
 once, already slim. A new, stopped, or parked and adopted simulator is slimmed
 as part of its boot. A simulator that is already running and that Stim never
