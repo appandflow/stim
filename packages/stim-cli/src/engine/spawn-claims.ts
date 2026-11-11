@@ -3,7 +3,7 @@ import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity } from '../process-identity.ts';
 import { clearClaimChild, markClaimChildPending, setClaimChild, type ClaimHandle } from '../ownership-claim.ts';
 import { operationState } from './operation-state.ts';
-import { WorkspaceProcessCleanupError } from './workspace-process-error.ts';
+import { soleReportChild, WorkspaceProcessCleanupError } from './workspace-process-error.ts';
 
 interface PendingFence {
   claim: ClaimHandle;
@@ -11,6 +11,7 @@ interface PendingFence {
   children: Set<Promise<void>>;
   peers: Set<PendingFence>;
   failure: unknown;
+  unverified: unknown[];
   done: Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -39,7 +40,13 @@ function finishFence(state: PendingFence): void {
       }
     }
   }
+  const child = failure ? soleReportChild(peers.flatMap((peer) => peer.unverified)) : null;
   for (const peer of peers) {
+    if (failure && child) {
+      try {
+        setClaimChild(peer.claim, child);
+      } catch {}
+    }
     if (failure) {
       peer.failure ??= failure;
       peer.reject(failure);
@@ -67,6 +74,7 @@ function followChild(claim: ClaimHandle, settled: Promise<void>): void {
       },
       (error: unknown) => {
         peer.children.delete(settled);
+        peer.unverified.push(error);
         peer.failure ??= error;
         finishFence(peer);
         return undefined;
@@ -128,7 +136,17 @@ export function fenceDeclaredSpawns(context: StimContext): {
           reject = no;
         });
         void done.catch(() => {});
-        state = { claim, fences: 0, children: new Set(), peers: new Set(), failure: null, done, resolve, reject };
+        state = {
+          claim,
+          fences: 0,
+          children: new Set(),
+          peers: new Set(),
+          failure: null,
+          unverified: [],
+          done,
+          resolve,
+          reject,
+        };
         state.peers.add(state);
         fences.set(key, state);
       }
@@ -167,6 +185,7 @@ export function fenceDeclaredSpawns(context: StimContext): {
       if (!finished) {
         finished = true;
         for (const state of states) {
+          if (failure) state.unverified.push(failure);
           state.failure ??= failure;
           state.fences--;
           finishFence(state);
@@ -179,12 +198,17 @@ export function fenceDeclaredSpawns(context: StimContext): {
           error && typeof error === 'object' && 'remedy' in error && typeof error.remedy === 'string'
             ? error.remedy
             : 'Verify that the operation and all descendants have stopped.';
+        const unverified = new Set(
+          states.flatMap((state) => Array.from(state.peers, (peer) => peer.unverified)).flat(),
+        );
+        const sole = soleReportChild([...unverified]) !== null;
         throw Object.assign(
           new WorkspaceProcessCleanupError(
             claims,
             'Cannot verify all declared child cleanup.',
             remedy,
             error instanceof Error ? error : undefined,
+            sole,
           ),
           { reportCleanup: true },
         );

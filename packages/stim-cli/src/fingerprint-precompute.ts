@@ -155,6 +155,7 @@ async function runFingerprintChild(
             `Fingerprint child cleanup could not be verified; retained ${directory}.`,
             `Verify its evaluator processes have stopped, then remove ${directory}.`,
             failure instanceof Error ? failure : undefined,
+            acknowledged,
           ),
           { reportCleanup: true },
         );
