@@ -632,7 +632,10 @@ another process, such as a shell or an `exact.mjs` command, runs from or works i
 the app, nor on Windows, and the next build then compiles from scratch. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
-has booted the simulator, and build-only runs (`stim ci build`) are refused.
+has booted the simulator. Build-only runs (`stim ci build`) build without a
+simulator, except for apps whose `app.json` declares native modules: Exact may
+run code on a simulator to read them, so those are refused and build only with
+`stim ios`.
 
 `stim ios --plan` and Stim Desktop's Next Build show the next run as an
 uncached build with the app's bundle id from `app.json`, where it builds, and an

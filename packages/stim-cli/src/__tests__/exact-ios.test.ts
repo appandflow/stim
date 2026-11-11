@@ -1,10 +1,10 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { exactIosProject } from '../integrations/exact-ios.ts';
-import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-project.ts';
+import type { IosArtifactContext } from '../integrations/ios-project.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import type { IosCommandOptions } from '../commands/ios/types.ts';
 import { resolveSettings } from '../workspace/settings.ts';
@@ -140,10 +140,23 @@ test('reports an exact.mjs that cannot run', async () => {
   });
 });
 
-test('refuses without a booted workspace simulator', async () => {
+test.skipIf(process.platform === 'win32')(
+  'builds without a simulator unless app.json declares native modules',
+  async () => {
+    exactScript('echo "sim=$EXACT_SIM $*" > ran.txt\nexit 1');
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: [] }));
+
+    expect(await compile(context(null, null))).toMatchObject({ ok: false, exitCode: 1 });
+    expect(readFileSync(join(root, 'ran.txt'), 'utf8')).toBe('sim= ios --no-install\n');
+
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['shop-map'] }));
+    await expect(compile(context(null, null))).rejects.toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
+  },
+);
+
+test('refuses when the workspace simulator does not boot', async () => {
   exactScript('exit 0');
 
-  await expect(compile(context(null, null))).rejects.toBeInstanceOf(IosRecipeRefusal);
   await expect(compile(context(null, async () => ({ ok: false, reason: 'boot timed out' })))).rejects.toMatchObject({
     failure: { code: 'STIM_NO_DEVICE', message: 'boot timed out' },
   });
