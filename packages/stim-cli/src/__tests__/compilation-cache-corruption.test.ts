@@ -2,7 +2,7 @@ import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceNdjsonFile, sharedCompilationCache, workspaceLogsDir } from '@stim-cli/core/state';
+import { gcLogFile, sharedCompilationCache, workspaceLogsDir } from '@stim-cli/core/state';
 import { register } from '../cache/cache-manifest.ts';
 import { clearCorruptCompilationCache } from '../cache/compilation-cache-corruption.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
@@ -51,11 +51,19 @@ test('a corrupt cache is emptied and the build fails asking for a rerun, recorde
   expect(result.message).toContain('Stim emptied it');
   expect(result.remedy).toContain('Run the same command again');
   expect(readdirSync(cas)).toEqual([]);
-  for (const file of [maintenanceNdjsonFile(), join(workspaceLogsDir(project), 'maintenance.ndjson')]) {
-    expect(records(file)).toEqual([
-      expect.objectContaining({ event: 'maintenance_action', target: cas, reason: LINE, trigger: 'ios build' }),
-    ]);
-  }
+  expect(records(gcLogFile())).toEqual([
+    expect.objectContaining({
+      src: 'gc',
+      event: 'maintenance_action',
+      target: cas,
+      reason: LINE,
+      trigger: 'maintenance',
+      via: 'ios build',
+    }),
+  ]);
+  expect(records(join(workspaceLogsDir(project), 'maintenance.ndjson'))).toEqual([
+    expect.objectContaining({ src: 'maintenance', event: 'maintenance_action', target: cas, trigger: 'ios build' }),
+  ]);
 });
 
 test('a cache path Stim never registered is left alone', async () => {

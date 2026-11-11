@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import {
   daemonNdjsonFile,
   daemonSnapshotFile,
-  maintenanceNdjsonFile,
+  gcLogFile,
   readDaemonSnapshot,
   type DaemonPressure,
   type DaemonStatus,
@@ -723,7 +723,7 @@ async function assembleDoctorReport(
     platform: opts.platform ?? null,
     stim,
     pressure: pressure.pressure,
-    maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
+    maintenance: { ...maintenance, logPath: gcLogFile() },
     daemon: { ...daemon, logPath: daemonNdjsonFile() },
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),
@@ -789,7 +789,7 @@ export function doctorOp(
         phaseLine('daemon', daemonLine(daemon)),
         phaseLine('daemon snapshot', lastActionLine(daemon) ?? `${daemonSnapshotFile()}; no action yet`),
         phaseLine('daemon log', daemonNdjsonFile()),
-        phaseLine('maintenance log', maintenanceNdjsonFile()),
+        phaseLine('cleanup log', gcLogFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
       ];
       if (opts.json) {

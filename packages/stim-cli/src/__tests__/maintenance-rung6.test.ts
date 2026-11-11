@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   isJsonObject,
-  maintenanceNdjsonFile,
+  gcLogFile,
   maintenanceStateFile,
   readMaintenanceState,
   type DaemonPressure,
@@ -287,7 +287,7 @@ test('a scoped STIM_HOME plans no daemon stop and says why', async () => {
   await pass();
   expect(stop).not.toHaveBeenCalled();
   expect(existsSync(join(version, 'keep'))).toBe(true);
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('STIM_HOME scopes this config');
+  expect(readFileSync(gcLogFile(), 'utf8')).toContain('STIM_HOME scopes this config');
 });
 
 const GIB = 1024 ** 3;

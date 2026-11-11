@@ -19,6 +19,7 @@ import {
   deviceHostAreas,
   readArchive,
   readBuildLedger,
+  isGcLogRecord,
   readGcLog,
   queryLogs as queryMachineLogs,
   readSetupJournal,
@@ -629,7 +630,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (method === 'gc-history' || method === 'builds')
           return {
             records: queryMachineLogs({
-              records: method === 'builds' ? readBuildLedger() : readGcLog(),
+              records: method === 'builds' ? readBuildLedger() : readGcLog().filter(isGcLogRecord),
               sources: [method === 'builds' ? 'builds' : 'gc'],
               tail: method === 'builds' ? 500 : 2000,
             }),

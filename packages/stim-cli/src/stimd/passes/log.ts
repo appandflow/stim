@@ -3,9 +3,10 @@ import { dirname, join } from 'node:path';
 import { ensurePrivateDir, LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
 import {
   MAINTENANCE_LOG_NAME,
-  maintenanceNdjsonFile,
+  gcLogFile,
   workspaceLogsDir,
   workspaceMetadataFile,
+  type GcLogEntry,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { createNdjsonWriter, type NdjsonWriter } from '../../ndjson.ts';
@@ -17,6 +18,7 @@ interface MaintenanceLogger {
     level: MaintenanceRecord['level'],
     msg: string,
     fields?: Record<string, unknown>,
+    machine?: boolean,
   ): MaintenanceRecord | null;
   close(): ReturnType<NdjsonWriter['close']>;
 }
@@ -37,8 +39,12 @@ export function openRetainedLog(
   });
 }
 
+function machineRecord({ pass, trigger, ...rest }: MaintenanceRecord): GcLogEntry {
+  return { ...rest, src: 'gc', runId: pass, trigger: 'maintenance', via: trigger };
+}
+
 export function maintenanceLogger(settings: MaintenanceSettings, pass: string, trigger: string): MaintenanceLogger {
-  const file = maintenanceNdjsonFile();
+  const file = gcLogFile();
   const writer = openRetainedLog(file, settings);
   return {
     write(
@@ -46,6 +52,7 @@ export function maintenanceLogger(settings: MaintenanceSettings, pass: string, t
       level: MaintenanceRecord['level'],
       msg: string,
       fields: Record<string, unknown> = {},
+      machine = true,
     ): MaintenanceRecord | null {
       if (level === 'debug' && !settings.logChecks) return null;
       const record: MaintenanceRecord = {
@@ -59,7 +66,8 @@ export function maintenanceLogger(settings: MaintenanceSettings, pass: string, t
         trigger,
         mode: settings.mode === 'on' ? 'on' : 'report',
       };
-      if (!writer.write(record)) throw writer.lastError ?? new Error(`Could not append ${file}`);
+      if (machine && !writer.write(machineRecord(record)))
+        throw writer.lastError ?? new Error(`Could not append ${file}`);
       if (
         typeof fields.workspace === 'string' &&
         ['maintenance_action', 'maintenance_failure', 'maintenance_skip'].includes(event) &&

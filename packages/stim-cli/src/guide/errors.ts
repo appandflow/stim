@@ -233,7 +233,7 @@ Branch on the code, never on the message.`,
   Stim empties the whole cache at once, the way
   \`gc --delete --cache "compilation cache"\` does, and fails the build. It
   does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
-  cache, so it is a cold one. The emptying is recorded in the maintenance log.
+  cache, so it is a cold one. The emptying is recorded in the cleanup log (stim logs --source gc).
   Every iOS build that compiles with the cache holds a shared claim on it,
   <cache>.claims beside the cache directory, while xcodebuild runs. Stim
   empties the cache only under that set's exclusive claim, here, in gc and in
