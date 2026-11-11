@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   claimRemoveCommand,
   clearClaimChild,
@@ -58,7 +58,7 @@ function canonical(path: string): string {
 
 function inside(path: string, dir: string): boolean {
   const rel = relative(dir, path);
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 async function stopChild(record: ClaimOwner, steps: AgentDriverStopStep[]): Promise<boolean> {
@@ -110,7 +110,7 @@ export function createAgentDriverHost({
   };
   const scoped = (root: string): string => {
     const path = canonical(root);
-    if (path !== canonical(claimRoot) && !inside(path, canonical(stateDir)))
+    if (root.split(/[\\/]/).includes('..') || (path !== canonical(claimRoot) && !inside(path, canonical(stateDir))))
       throw new Error(`The claim root ${root} is outside this driver's state.`);
     return root;
   };

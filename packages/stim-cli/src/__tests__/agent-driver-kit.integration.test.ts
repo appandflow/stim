@@ -161,7 +161,13 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     mkdirSync(outside);
     mkdirSync(state);
     symlinkSync(outside, join(state, 'link'));
-    for (const claims of [join(root, 'other.claims'), join(state, 'link', 'x.claims'), state, root])
+    for (const claims of [
+      join(root, 'other.claims'),
+      join(state, 'link', 'x.claims'),
+      `${state}/link/../x.claims`,
+      state,
+      root,
+    ])
       await expect(use('claims.take', claims, 'fixture daemon')).rejects.toThrow(
         `The claim root ${claims} is outside this driver's state.`,
       );
@@ -177,6 +183,9 @@ describe.skipIf(process.platform === 'win32')('host members through the kit work
     ])
       await expect(call).rejects.toThrow(`This host did not capture process ${child.pid}.`);
     expect(await use('processes.inspect', await use('processes.capture', child.pid))).toBe('same');
+    expect(await use('claims.take', join(state, '..foo.claims'), 'fixture daemon')).toMatchObject({
+      claim: expect.any(String),
+    });
   });
 
   test('a claim store the host cannot use refuses with the claim code and its whole remedy', async () => {
