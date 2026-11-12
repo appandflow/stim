@@ -123,8 +123,7 @@ describe('stim share', () => {
   });
 
   it('reports why the net thread did not start', async () => {
-    const message =
-      'stim-server 1.42.0 (Stim Desktop bundle, pid 4242) holds port 7787; update Stim Desktop (Stim > Check for Updates) or quit it. Phone, shares and remote builds for ~/.stim wait until then.';
+    const message = 'port 7787 is held by pid 4242; stop it (kill 4242), or run stim serve --port <n>.';
     const deps = fake([unavailable], { listening: false, message });
     expect(await runShare('android', {}, deps, '1.0.0')).toMatchObject({
       ok: false,

@@ -450,19 +450,6 @@ function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
   return run;
 }
 
-/**
- * Whether a stimd's Metro claim for `root` names `pid` as its child: one this stimd runs, one an exiting stimd still
- * holds, or, except on Windows where nothing is adopted, one a successor has yet to adopt.
- */
-export function stimdRunsMetro(root: string, pid: number): boolean {
-  return (
-    children.get(root)?.pid === pid ||
-    readClaimSet(claimRoot(root, 'metro')).live.some(
-      (holder) => holder.child?.pid === pid && (GROUPS || inspectProcessIdentity(holder.owner) === 'same'),
-    )
-  );
-}
-
 /** Records a running child where `status`, `stop`, the idle stage, Desktop and `machine-usage` look for a dev server. */
 function record(child: MetroChild, hmrUpdates: boolean): void {
   const entry = {

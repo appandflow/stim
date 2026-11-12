@@ -60,13 +60,18 @@ the real machine's runtimes or tool caches.
 
 ## Runtimes: the one exception to ownership
 
-An unused simulator runtime is the only thing Stim deletes that it neither
-created nor caches. A runtime stays when any simulator on the machine uses it,
-when simctl does not mark it deletable, when it is the only runtime or the
-newest one with none in use, when a project's `ios.runtime` pins it, when it
-has the major version of the active Xcode's simulator SDK, or when simctl
-recorded a use within `maintenance.olderThanDays`, but never less than 7 days,
-or none at all.
+An unused simulator runtime is the exception to device ownership. A runtime
+stays if any simulator on the machine uses it, simctl lacks its runtime
+identifier or does not mark it deletable, a project's `ios.runtime` pins it,
+or it shares the major version of the active Xcode's simulator SDK. It also
+stays if simctl records a use within `maintenance.olderThanDays` (at least
+7 days), or its last use is unknown. Setting `maintenance.olderThanDays` to
+zero disables runtime deletion. If every installed runtime would otherwise be
+removed, keep the newest. Recheck these conditions before each deletion.
+
+The SDK and recency checks avoid making the active Xcode or a recently used
+workflow download a runtime again. Keeping at least one installed image
+leaves a runtime available for new simulators. [Runtime safeguards](https://github.com/appandflow/stim/pull/5540).
 
 Maintainer decision: "Yes delete old runtimes", 2026-11-11.
 

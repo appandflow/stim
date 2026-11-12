@@ -92,9 +92,6 @@ import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
-// compat C22 until removal-minor
-import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
-// compat end
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -126,9 +123,6 @@ import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from '.
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
 import { ownStoreEngine, requireCurrentEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
-// compat C25 until removal-minor
-import { stopForeignSupervisors } from './foreign-supervisors.ts';
-// compat end
 import {
   ATTACHED_ARG,
   attachedExitWaitMs,
@@ -181,7 +175,6 @@ async function takeClaim(
   mode: 'exclusive' | 'shared',
   label: string,
   details: Record<string, unknown>,
-  beforeRetry: () => Promise<unknown> = async () => {},
   retries = CLAIM_TRIES,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
@@ -189,9 +182,18 @@ async function takeClaim(
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
     if (tries >= retries) return null;
-    await beforeRetry();
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
+}
+
+/** Why stimd cannot start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon claim exclusively. */
+// @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
+export function daemonClaimRefusal(): string {
+  const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
+  const stop = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+  return pid === undefined
+    ? "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it."
+    : `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start. Stop it with \`${stop}\`; it also exits on its own after its workspaces stop. If a project pins stim 1.40-1.42, update it to stim 2.0.0 or later there (npm i -D stim@next until 2.0.0 is released; for npx: npx stim@next)`;
 }
 
 function answers(path: string): Promise<boolean> {
@@ -644,8 +646,6 @@ interface RunStimdOptions {
   desktopKey?: string;
   /** Gets the net thread's first answer to `serve`. */
   onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
-  /** Started by a stimd of the previous build after an engine switch: stops that build's supervisors when idle. */
-  afterSwitch?: boolean;
   /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
   service?: boolean;
   /**
@@ -657,7 +657,7 @@ interface RunStimdOptions {
 
 /**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
- * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
+ * shared, which a stim-daemon from Stim 1.40 to 1.42 holding it exclusively refuses; serves the CLI socket,
  * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
  * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
  * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
@@ -696,7 +696,6 @@ async function runStimdInner(
     serve,
     desktopKey,
     onNet,
-    afterSwitch = false,
     service = serve !== undefined,
     attached,
   }: RunStimdOptions,
@@ -736,7 +735,7 @@ async function runStimdInner(
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
+  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -783,10 +782,13 @@ async function runStimdInner(
       releaseClaim(own);
       markAbnormal = null;
       if (current)
-        launchStimd(process.env, startMode, process.platform, join(store.root, current.dir, 'dist', 'cli.mjs'), [
-          '--after-switch',
-          ...serveArgs(serve ?? null, service),
-        ]);
+        launchStimd(
+          process.env,
+          startMode,
+          process.platform,
+          join(store.root, current.dir, 'dist', 'cli.mjs'),
+          serveArgs(serve ?? null, service),
+        );
       writer.close();
       return false;
     }
@@ -811,21 +813,13 @@ async function runStimdInner(
     writer.close();
     return true;
   }
-  // compat C22 until removal-minor
-  let stopped: number | null = null;
-  const takeOver = async () => {
-    stopped = (await takeOverLegacyDaemon()) ?? stopped;
-  };
-  await takeOver();
-  // compat end
   startup.signal.throwIfAborted();
-  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
+  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
   startup.signal.throwIfAborted();
-  if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
     releaseClaim(own);
-    log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
+    log('warn', 'stimd_claim_held', daemonClaimRefusal());
     writer.close();
     return false;
   }
@@ -994,7 +988,6 @@ async function runStimdInner(
       `this stimd's installation now holds ${now.version} (${now.build}); restarting on it once the commands it serves end`,
     );
   };
-  let foreignLeft = afterSwitch;
   let heldSwitch = false;
   const hasActiveCommands = () => ops.size > 0;
   const pinned = (): boolean =>
@@ -1081,7 +1074,7 @@ async function runStimdInner(
     shutdown(why);
     await shutdownDone;
     if (keepOwn) return;
-    launchStimd(process.env, startMode, process.platform, entry, ['--after-switch', ...serveArgs(carried, service)]);
+    launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service));
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
       if (record?.build === next.build && record.pid !== process.pid) return;
@@ -1133,6 +1126,7 @@ async function runStimdInner(
             socket.end();
             return;
           }
+          // @ref LLP 0012#use-the-engine-that-owns-the-home -- Desktop follows the resident engine
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
             refuseClient(socket, message);
             return;
@@ -1733,9 +1727,6 @@ async function runStimdInner(
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
       engineDirs = workspaceEngineDirs(config);
-      // compat C25 until removal-minor
-      if (foreignLeft && follower) foreignLeft = (await stopForeignSupervisors(follower.engine.build)) > 0;
-      // compat end
       await checkEngine();
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
@@ -1884,7 +1875,6 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
         daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
-      afterSwitch: argv.includes('--after-switch'),
       service: serve !== undefined && !argv.includes('--carried'),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });

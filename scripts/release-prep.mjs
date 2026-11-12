@@ -7,7 +7,6 @@ const packageDirs = ['stim-cli', 'cache-s3'];
 const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
 const licensesPath = join(repositoryRoot, 'apps', 'mobile', 'src', 'generated', 'licenses.json');
-const floorsPath = join(repositoryRoot, 'packages/core/state/release-floors.json');
 const exactRange = 'workspace:*';
 const usage = 'usage: node scripts/release-prep.mjs <X.Y.Z[-rc.N]>\n       node scripts/release-prep.mjs --check';
 
@@ -131,17 +130,6 @@ if (compareVersions(target, before.version) <= 0) {
   fail(`${target} does not come after ${before.version}, which the packages already carry`);
 }
 
-const floorsBefore = readFileSync(floorsPath, 'utf8');
-const floors = JSON.parse(floorsBefore);
-const pendingFloors = Object.keys(floors).filter((name) => floors[name] === null);
-const { core, prerelease } = parseVersion(target);
-if (pendingFloors.length > 0 && core[2] > 0) {
-  fail(`a patch cannot ship pending release floors: ${pendingFloors.join(', ')}. Prepare a minor release.`);
-}
-const pinFloors = pendingFloors.length > 0 && core[2] === 0 && !prerelease;
-const actionBundlePath = join(repositoryRoot, '.github/actions/stim-ci/dist/main.mjs');
-const actionBundleBefore = pinFloors ? readFileSync(actionBundlePath, 'utf8') : null;
-
 const regenerateLicenses = !process.env.RELEASE_PREP_SKIP_LICENSES;
 const licensesBefore = regenerateLicenses ? readFileSync(licensesPath, 'utf8') : null;
 
@@ -150,8 +138,6 @@ for (const { dir, after } of rewrites) writeFileSync(manifestPath(dir), after);
 
 const restore = (message) => {
   for (const { dir, before: original } of rewrites) writeFileSync(manifestPath(dir), original);
-  writeFileSync(floorsPath, floorsBefore);
-  if (pinFloors) writeFileSync(actionBundlePath, actionBundleBefore);
   if (regenerateLicenses) writeFileSync(licensesPath, licensesBefore);
   fail(`${message}\nthe manifests were restored to ${before.version}`);
 };
@@ -168,17 +154,6 @@ if (regenerateLicenses) {
     pnpm(['--filter', 'stim-mobile', 'run', 'licenses']);
   } catch {
     restore('apps/mobile could not regenerate src/generated/licenses.json for the bumped manifests');
-  }
-}
-
-if (pinFloors) {
-  for (const name of pendingFloors) floors[name] = target;
-  writeFileSync(floorsPath, `${JSON.stringify(floors, null, 2)}\n`);
-  try {
-    pnpm(['--filter', '@stim-cli/core', 'run', 'build']);
-    pnpm(['--filter', '@stim-cli/github-action', 'run', 'build']);
-  } catch {
-    restore('the action bundle could not be rebuilt with the pinned release floors');
   }
 }
 

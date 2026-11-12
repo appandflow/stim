@@ -112,7 +112,7 @@ async function portFree(port: number): Promise<boolean> {
   });
 }
 
-async function listenerPids(port: number): Promise<string[]> {
+export async function listenerPids(port: number): Promise<string[]> {
   if (process.platform === 'win32') {
     const listed = await run('netstat', ['-ano']);
     return listed.ok ? netstatListeners(listed.stdout, port) : [];

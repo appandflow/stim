@@ -32,7 +32,7 @@ export interface OwnedStreams {
   close(): Promise<string | null>;
 }
 
-// compat C27 until removal-minor
+// compat C27 until #5558
 /** Whether a live supervisor an older Stim started still owns the process `pid`, and observes it itself. */
 function legacy(owner: { pid: number; processToken: string } | undefined, pid: number): boolean {
   return owner !== undefined && owner.pid !== pid && inspectProcessIdentity(owner) === 'same';
@@ -78,7 +78,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
   const workspace = async (root: string, asked: boolean): Promise<void> => {
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return;
-    // compat C27 until removal-minor
+    // compat C27 until #5558
     if (legacy(web, web.chromeProcess.pid)) return;
     // compat end
     const key = `web:${root}`;
@@ -157,7 +157,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         if (record?.chromeProcess?.pid !== pid || record.chromeProcess.processToken !== token)
           return 'the browser record changed';
         if (inspectProcessIdentity(record.chromeProcess) !== 'same') return 'the browser identity is unavailable';
-        // compat C27 until removal-minor
+        // compat C27 until #5558
         if (legacy(record, pid)) return null;
         // compat end
         const attached = workspace(root, true);

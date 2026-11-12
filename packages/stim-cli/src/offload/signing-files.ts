@@ -122,6 +122,7 @@ export async function androidSyncPlan(
  * provisioning profile that no Xcode project, xcconfig, Podfile, podspec or shell script names. A simulator build
  * signs ad hoc and reads none of them; a file one of those names stays, so the build finds it.
  */
+// @ref LLP 0009#signing-stays-with-the-client -- ignored fingerprint inputs can contain signing secrets
 export async function iosSyncPlan(repoRoot: string, paths: readonly string[]): Promise<SyncPlan> {
   const signing = paths.filter((path) => APPLE_SIGNING_FILE.test(path));
   if (signing.length === 0) return { omit: new Set(), refusal: null };

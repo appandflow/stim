@@ -357,6 +357,7 @@ export class OffloadJobs {
   // compat end
 
   // compat C14 permanent
+  // @ref LLP 0009#run-the-client-build -- the worker runs the client engine and passes frames through
   private spawn(kind: OffloadJobKind, client: JobClient, repo: string, entry: { cli: string; node: string }): Job {
     const spec = { client: client.id, clientName: client.name, limits: this.options.limits };
     const child = spawn(entry.node, [entry.cli, '__job', kind], {
