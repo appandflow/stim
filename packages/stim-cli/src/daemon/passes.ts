@@ -240,8 +240,11 @@ export function createMaintenanceLane(
         });
       })()
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) failure = error;
-          log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
+          const cleanup = error instanceof Error && 'reportCleanup' in error;
+          if (cleanup) failure = error;
+          if (operation.signal.aborted && !cleanup)
+            log('debug', 'daemon_maintenance_aborted', 'the maintenance pass stopped: stimd is ending');
+          else log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
           loopDelay.disable();
