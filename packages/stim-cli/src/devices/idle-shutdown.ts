@@ -20,7 +20,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
-import { workspaceDeviceLastUseAt } from './activity.ts';
+import { driversKeepDevice, workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from './ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from './teardown.ts';
@@ -42,7 +42,8 @@ export function idleShutdownDueMs(
     platform = process.platform,
   }: { idleMs: number; now: number; buildInProgress: boolean; platform?: NodeJS.Platform },
 ): number | null {
-  if (buildInProgress || activity.state === 'driven') return null;
+  if (buildInProgress || driversKeepDevice(activity) || (activity.state === 'driven' && activity.unknown?.length))
+    return null;
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
   const unknown = platform === 'win32' ? activity.basis.filter((basis) => basis !== 'driver-process') : activity.basis;

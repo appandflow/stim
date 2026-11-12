@@ -186,9 +186,26 @@ test('the idle stage keeps a .dd that git does not ignore', async () => {
   expect(existsSync(join(root, '.dd', 'Build'))).toBe(true);
 });
 
-test('a live agent-device session keeps the workspace however old its last command, naming the driver', async () => {
-  const { root, derivedData } = bootedWorkspace('agent', 20 * MINUTE_MS);
+test('an agent-device session whose last command is older than the idle window no longer keeps the workspace', async () => {
+  bootedWorkspace('agent', 20 * MINUTE_MS);
   const old = new Date(Date.now() - 20 * MINUTE_MS).toISOString();
+
+  const [decision] = await pass(true, (device) => ({
+    ...device,
+    activity: {
+      state: 'driven',
+      basis: ['agent-device-claim', 'agent-device-runner'],
+      driver: { tool: 'agent-device', pid: 1, since: null },
+      lastActivityAt: old,
+      recent: { 'agent-action': old },
+    },
+  }));
+
+  expect(decision?.outcome).not.toBe('kept');
+});
+
+test('an agent-device session whose commands cannot be dated keeps the workspace', async () => {
+  const { root, derivedData } = bootedWorkspace('agent-undated', 20 * MINUTE_MS);
 
   const decisions = await pass(true, (device) => ({
     ...device,
@@ -196,7 +213,31 @@ test('a live agent-device session keeps the workspace however old its last comma
       state: 'driven',
       basis: ['agent-device-claim'],
       driver: { tool: 'agent-device', pid: 1, since: null },
-      lastActivityAt: old,
+    },
+  }));
+
+  expect(decisions).toEqual([
+    expect.objectContaining({
+      path: root,
+      outcome: 'kept',
+      detail:
+        'its simulator stim-agent-undated (iPhone 17 26.0) has a live agent-device session whose activity cannot be found',
+    }),
+  ]);
+  expect(tornDown).toEqual([]);
+  expect(existsSync(derivedData)).toBe(true);
+});
+
+test('another driver keeps the workspace however old its last command, naming the driver', async () => {
+  const { root } = bootedWorkspace('maestro', 20 * MINUTE_MS);
+  const old = new Date(Date.now() - 20 * MINUTE_MS).toISOString();
+
+  const decisions = await pass(true, (device) => ({
+    ...device,
+    activity: {
+      state: 'driven',
+      basis: ['agent-device-claim', 'driver-process'],
+      driver: { tool: 'maestro', pid: 1, since: null },
       recent: { 'agent-action': old },
     },
   }));
@@ -205,11 +246,9 @@ test('a live agent-device session keeps the workspace however old its last comma
     expect.objectContaining({
       path: root,
       outcome: 'kept',
-      detail: 'its simulator stim-agent (iPhone 17 26.0) is driven by agent-device',
+      detail: 'its simulator stim-maestro (iPhone 17 26.0) is driven by maestro',
     }),
   ]);
-  expect(tornDown).toEqual([]);
-  expect(existsSync(derivedData)).toBe(true);
 });
 
 test('a serving workspace whose simulators cannot be listed is kept, not stopped', async () => {

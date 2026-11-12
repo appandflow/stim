@@ -170,7 +170,6 @@ async function decide(
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
-    driversBlock: true,
     operation: input.operation,
   });
   return {

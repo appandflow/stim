@@ -12,6 +12,7 @@ import {
   agentDeviceLiveness,
   createActivityReader,
   createActivityReaderAsync,
+  driversKeepDevice,
   parseAgentDeviceRecord,
   readWebActivity,
   type ActivityTarget,
@@ -267,8 +268,28 @@ describe('createActivityReader', () => {
     ps = runnerRow(RUNNER_START);
     expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
       state: 'driven',
-      basis: ['agent-device-lease', 'driver-process'],
+      basis: ['agent-device-lease', 'agent-device-runner'],
     });
+  });
+
+  test('a runner dates its activity from its session events, never from the runner log it writes every minute', () => {
+    const session = join(home, 'state', 'sessions', 'qa');
+    mkdirSync(session, { recursive: true });
+    const eventsAt = new Date(NOW - 3 * 3_600_000);
+    writeFileSync(join(session, 'events.ndjson'), '{}\n');
+    utimesSync(join(session, 'events.ndjson'), eventsAt, eventsAt);
+    writeFileSync(join(session, 'runner.log'), 'AGENT_DEVICE_RUNNER_IDLE_KEEPALIVE\n');
+    writeLease(runnerLease({ runnerLogPath: join(session, 'runner.log') }));
+    ps = runnerRow(RUNNER_START);
+    const activity = read({ 100: OWNER_START, 200: RUNNER_START });
+    expect(activity).toMatchObject({ state: 'driven', recent: { 'agent-action': eventsAt.toISOString() } });
+    expect(driversKeepDevice(activity)).toBe(false);
+  });
+
+  test('a runner whose session events cannot be found keeps the device', () => {
+    writeLease(runnerLease());
+    ps = runnerRow(RUNNER_START);
+    expect(driversKeepDevice(read({ 100: OWNER_START, 200: RUNNER_START }))).toBe(true);
   });
 
   test("stim-server's own screenshot captures do not drive a device, another tool's simctl io still does", () => {

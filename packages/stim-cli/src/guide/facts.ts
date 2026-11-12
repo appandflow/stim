@@ -1472,8 +1472,12 @@ RULES
                      is one agent-device kept warm after close or handed
                      off when its daemon exited
                    device-lock          an unexpired \`stim device lock\` lease
+                   agent-device-runner  an agent-device runner process
+                                        naming the UDID or serial, other than
+                                        such a runner; agent-action dates it
+                                        from its lease's session
                    driver-process       a host process naming the UDID or
-                                        serial, other than such a runner
+                                        serial, other than those
                    instrumentation      an on-device uiautomator, androidx.test or
                                         argent helper process (one adb shell ps
                                         per emulator)

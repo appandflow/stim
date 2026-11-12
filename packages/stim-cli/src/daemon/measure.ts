@@ -7,7 +7,7 @@ import { processContext } from '../cli-operation.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, isTimeoutError } from '../exec.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import type { Config } from '../workspace/config.ts';
 import { updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
@@ -16,6 +16,7 @@ import { ownedHere } from './idle.ts';
 import { probeFocusedDeviceUse, type FocusedDeviceUse } from './probe.ts';
 
 const SIM_LIST_TIMEOUT_MS = 10_000;
+const SIM_LIST_RETRY_TIMEOUT_MS = 30_000;
 
 export interface TickMeasurement {
   measurement: DaemonMeasurement;
@@ -120,6 +121,20 @@ async function recordFocusedUse(slots: ReturnType<typeof focusedSlots>, at: stri
 }
 
 /**
+ * One `simctl list`, repeated once with a longer timeout when the first ran out of time: a loaded CoreSimulator
+ * service answers a few seconds late, and a failed listing keeps every workspace that owns a simulator.
+ */
+async function listSimsRetryingTimeout(signal: AbortSignal | undefined): Promise<IosSimRecord[]> {
+  try {
+    return await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal });
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    signal?.throwIfAborted();
+    return listAllIosSimsAsync({ timeoutMs: SIM_LIST_RETRY_TIMEOUT_MS, signal });
+  }
+}
+
+/**
  * One tick's measurement: free disk on the volumes Stim writes to, memory, load, one `simctl list` when a workspace
  * owns a simulator, the owned devices' activity (with one `adb devices` when a workspace owns an emulator), and,
  * unless `probe` is false, the focused Simulator or emulator window a person is using.
@@ -141,7 +156,7 @@ export async function measureTick(
   let simsError: string | null = null;
   if (tickListsSims(config)) {
     try {
-      sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal });
+      sims = await listSimsRetryingTimeout(signal);
     } catch (error) {
       if (isClaimUnavailable(error)) throw error;
       signal?.throwIfAborted();
