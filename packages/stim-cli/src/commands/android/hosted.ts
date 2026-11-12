@@ -162,7 +162,6 @@ export async function finishHostedAndroidRun({
           logsDir: logsDir ?? '',
           launchedAt,
           metroPort,
-          isExpo,
           physical: false,
           device: {},
           scheme: devClientScheme,

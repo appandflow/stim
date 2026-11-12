@@ -26,6 +26,7 @@ import {
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
   VERIFY_TIMEOUT_MS,
+  repackCompileRemedy,
 } from '../../engine/launch-verify.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -101,7 +102,6 @@ interface VerifyAndroidRunArgs {
   logsDir: string;
   launchedAt: number;
   metroPort: number | null;
-  isExpo: boolean;
   physical: boolean;
   device: OwnedDeviceRecord;
   scheme?: string | null;
@@ -259,7 +259,6 @@ export async function verifyAndroidMetroRun({
   logsDir,
   launchedAt,
   metroPort,
-  isExpo,
   physical,
   device,
   scheme,
@@ -329,7 +328,7 @@ export async function verifyAndroidMetroRun({
           since: launchedAt,
           metroPort,
           platform: 'android',
-          mode: workspaceDevServerMode(root, isExpo),
+          mode: workspaceDevServerMode(root),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
@@ -452,6 +451,13 @@ export async function verifyAndroidMetroRun({
     return { state: LAUNCH_UNVERIFIED, unattributed: true };
   }
 
+  if (verification?.compileErrors?.length) {
+    phase('verify', chalk.yellow('UNVERIFIED: Re.Pack delivered a bundle whose compile logged errors'));
+    for (const line of launchErrorPreview(verification.compileErrors, root)) phase('', chalk.yellow(line));
+    phase('remedy', chalk.yellow(repackCompileRemedy('android')));
+    return { state: LAUNCH_UNVERIFIED, warning: 'Re.Pack compile errors; inspect the error above' };
+  }
+
   if (verification?.record) {
     phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
     const report = launchErrorReport(verification.errors ?? [], root);
@@ -473,7 +479,7 @@ export async function verifyAndroidMetroRun({
     component,
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     devClient: Boolean(scheme),
-    mode: workspaceDevServerMode(root, isExpo),
+    mode: workspaceDevServerMode(root),
     remote: Boolean(hostedLogs),
   }))
     phase('', chalk.yellow(line));
@@ -493,7 +499,6 @@ interface FinishAndroidRunArgs {
   useBuildCache: boolean;
   variant: string | null;
   release: boolean;
-  isExpo: boolean;
   metroPort: number | null;
   logsDir: string;
   emuLog: string;
@@ -746,7 +751,6 @@ export async function finishAndroidRun({
   useBuildCache,
   variant,
   release,
-  isExpo,
   metroPort,
   logsDir,
   emuLog,
@@ -1108,7 +1112,6 @@ export async function finishAndroidRun({
     logsDir,
     launchedAt,
     metroPort,
-    isExpo,
     physical,
     device,
     scheme,

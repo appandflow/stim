@@ -164,9 +164,25 @@ WHO RUNS IT
   records it in that workspace's state.json before it answers; the recorded
   pid (supervisorPid, status's supervisor.pid) is the dev server's own. On
   macOS and Linux the dev server outlives a stimd restart and the next stimd
-  takes it over through its metro.claim; on Windows it stops with stimd. Three
-  modes: metro.command selects command-child, otherwise ecosystem detection
-  picks one of the first two:
+  takes it over through its metro.claim; on Windows it stops with stimd. Four
+  modes. Stim never prompts and never runs a package.json script to choose;
+  it takes the first that applies:
+
+    1. metro.command is set: command-child.
+    2. rock.config.* (mjs, js, cjs or ts) imports or requires
+       @rock-js/plugin-repack: repack-child.
+    3. Without a rock.config.*, react-native.config.js (or .cjs, .mjs)
+       requires @callstack/repack/commands: repack-child.
+    4. expo is used (app.json expo key, an app.config naming expo, or a
+       resolvable expo dependency): expo-child.
+    5. Otherwise: bare-inproc.
+
+  Stim reads those config files as text and never runs them. Only a value or
+  side-effect import, a require or a dynamic import of the package counts. A
+  comment, a string, \`import type\` or an \`import('...').Name\` type does not. An app that installs expo only for Expo modules but
+  bundles with Re.Pack gets repack-child. Any other app, including a Rock app
+  on Metro, gets the mode it would get without Re.Pack support. \`start\` names the file that decided, as in
+  "starting on port 8082 (repack-child from rock.config.mjs)".
 
     bare-inproc  bare React Native: Stim's Metro host runs Metro from the
                  project's own node_modules, with Stim's reporter
@@ -175,6 +191,39 @@ WHO RUNS IT
     expo-child   Expo: the project's own \`expo start --port <port>\` runs as
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
+    repack-child  Re.Pack: the project's own \`rock start\`, or
+                 \`react-native start\` with Re.Pack's commands, runs as a
+                 child with --port <port> --no-interactive --no-reverse-port
+                 --json --log-requests (and --reset-cache for
+                 \`start --reset-cache\`). Each bundle request becomes
+                 bundle_response_started and _finished or _failed records,
+                 which launch verification reads as bundle evidence; other
+                 requests are dropped. Re.Pack's compile events become
+                 bundle_build_started and _done progress records. Other
+                 lines, including the compile errors Re.Pack prints as text,
+                 arrive as repack_stdout and repack_stderr records; an
+                 error-level line printed after a compile carries that
+                 compile's platform. In development Re.Pack serves a bundle
+                 that compiled with errors, so a launch whose bundle came
+                 from a compile that logged an error reports
+                 launched: "unverified", not true; read \`stim logs --source
+                 metro\` for the errors. Re.Pack 5 or later is required;
+                 Re.Pack 4 needs metro.command. Stim starts Re.Pack on its
+                 own host, localhost, and Re.Pack writes that host into the
+                 bundle's asset and chunk URLs. A simulator, an emulator and
+                 an Android phone (through adb reverse) reach it. A run that
+                 cannot refuses before it builds, with a metro.command
+                 remedy: \`ios --device\` with STIM_LAN_METRO_UNREACHABLE,
+                 and a --remote, tunnel or hosted run with
+                 STIM_REMOTE_METRO_UNREACHABLE. If the
+                 reserved port is taken by the time Rock starts, Rock may wait
+                 for an answer it cannot get or exit, and \`start\` reports
+                 the dev server as not ready. Re.Pack's own adb reverse, which
+                 would reach every connected device, is off: Stim passes
+                 --no-reverse-port and points the child's ANDROID_HOME at
+                 the null device, and manages the reverse for its port. A config that names
+                 Re.Pack without rock or @callstack/repack installed refuses
+                 with STIM_REPACK_BIN instead of falling back to Expo.
     command-child  metro.command (\`guide settings\`): that argv runs as a
                  child in its own process group, with {port} replaced by the
                  reserved port, and its output is parsed like expo-child's
@@ -253,8 +302,9 @@ end the job with \`stim stop\`.
   list its devices (a timed-out simctl list is retried once with a longer timeout first), while its owned Chrome or a hosted device runs, while a
   web share of it exists, live or stopped for now (\`guide share\`; stim share stop or its
   expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
-  holds its metro-start lock. A dev server whose requests Stim cannot see
-  (metro.command, or an Expo SDK before 54) never stops for being idle. The
+  holds its metro-start lock. A dev server whose requests or HMR updates Stim
+  cannot see (metro.command, Re.Pack, or an Expo SDK before 54) never stops
+  for being idle. The
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
   devServerStop and idleStage in state.json, so \`status\` shows the idle
   stage and
@@ -344,6 +394,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
 
     Expo                      npx expo start --port <port>
     Bare React Native         npx react-native start --port <port>
+    Rock with Re.Pack         npx rock start --port <port>
     Has its own start script  run it and append --port <port>; it may carry
                               flags that matter (e.g. --client-logs)
     Monorepo                  run from the APP directory, not the repo root

@@ -152,6 +152,108 @@ export function readAppJson(projectRoot: string): AnyJson | null {
   }
 }
 
+export interface RepackConfig {
+  cli: 'rock' | 'react-native';
+  /** The file that decided, relative to the project root. */
+  config: string;
+}
+
+/**
+ * The Re.Pack setup a Rock config or a React Native CLI config imports, read as text so Stim never runs project code
+ * to decide. Null when neither file imports it, leaving the choice to Expo or bare Metro detection.
+ */
+export function detectRepackConfig(projectRoot: string): RepackConfig | null {
+  const rock = readFirstText(projectRoot, ['rock.config.mjs', 'rock.config.js', 'rock.config.cjs', 'rock.config.ts']);
+  if (rock) return importsModule(rock.text, '@rock-js/plugin-repack') ? { cli: 'rock', config: rock.name } : null;
+  const cli = readFirstText(projectRoot, [
+    'react-native.config.js',
+    'react-native.config.cjs',
+    'react-native.config.mjs',
+  ]);
+  return cli && importsModule(cli.text, '@callstack/repack/commands')
+    ? { cli: 'react-native', config: cli.name }
+    : null;
+}
+
+/**
+ * Whether source loads `specifier` or a subpath of it through a value import, a side-effect import, `require()` or a
+ * dynamic `import()`. Comments, strings, `import type` and `import('...').Name` type expressions do not count. Regular
+ * expression literals are not recognized, so a quote inside one can hide what follows it.
+ */
+function importsModule(source: string, specifier: string): boolean {
+  const tokens = sourceTokens(source);
+  const names = (at: number) => {
+    const token = tokens[at];
+    return token?.kind === 'string' && (token.value === specifier || token.value.startsWith(`${specifier}/`));
+  };
+  const is = (at: number, value: string) => tokens[at]?.kind === 'code' && tokens[at]?.value === value;
+  for (let at = 0; at < tokens.length; at++) {
+    if (is(at - 1, '.')) continue;
+    if (is(at, 'require') && is(at + 1, '(') && names(at + 2)) return true;
+    if (!is(at, 'import')) continue;
+    if (names(at + 1)) return true;
+    if (is(at + 1, '(')) {
+      const typeExpression =
+        names(at + 2) && is(at + 3, ')') && is(at + 4, '.') && !PROMISE_METHODS.has(tokens[at + 5]?.value ?? '');
+      if (names(at + 2) && !typeExpression) return true;
+      continue;
+    }
+    if (is(at + 1, 'type') && !is(at + 2, 'from') && !is(at + 2, ',')) continue;
+    let end = at + 1;
+    while (end < tokens.length && !is(end, 'from') && !is(end, ';') && !is(end, 'import')) end++;
+    if (is(end, 'from') && names(end + 1)) return true;
+  }
+  return false;
+}
+
+const PROMISE_METHODS = new Set(['then', 'catch', 'finally']);
+
+function sourceTokens(source: string): { kind: 'code' | 'string' | 'template'; value: string }[] {
+  const tokens: { kind: 'code' | 'string' | 'template'; value: string }[] = [];
+  const word = /[A-Za-z_$][\w$]*/y;
+  let at = 0;
+  while (at < source.length) {
+    const char = source.charAt(at);
+    if (char === '/' && source[at + 1] === '/') {
+      const end = source.indexOf('\n', at);
+      at = end === -1 ? source.length : end;
+    } else if (char === '/' && source[at + 1] === '*') {
+      const end = source.indexOf('*/', at + 2);
+      at = end === -1 ? source.length : end + 2;
+    } else if (char === "'" || char === '"' || char === '`') {
+      let value = '';
+      for (at++; at < source.length; at++) {
+        const next = source.charAt(at);
+        if (next === char || (next === '\n' && char !== '`')) break;
+        if (next === '\\') at++;
+        value += source.charAt(at);
+      }
+      at++;
+      tokens.push({ kind: char === '`' ? 'template' : 'string', value });
+    } else {
+      word.lastIndex = at;
+      const match = word.exec(source);
+      if (match) {
+        tokens.push({ kind: 'code', value: match[0] });
+        at += match[0].length;
+      } else {
+        if (!/\s/.test(char)) tokens.push({ kind: 'code', value: char });
+        at++;
+      }
+    }
+  }
+  return tokens;
+}
+
+function readFirstText(projectRoot: string, names: string[]): { name: string; text: string } | null {
+  for (const name of names) {
+    try {
+      return { name, text: readFileSync(join(projectRoot, name), 'utf-8') };
+    } catch {}
+  }
+  return null;
+}
+
 export function readAppConfigText(projectRoot: string): string | null {
   for (const name of ['app.config.js', 'app.config.ts', 'app.config.cjs', 'app.config.mjs']) {
     const p = join(projectRoot, name);

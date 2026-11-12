@@ -24,7 +24,8 @@ import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } fro
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
-import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../stimd/metro/state.ts';
+import { MODE_EXPO, clearManagedMetroTunnel, detectDevServer, readMetroTunnel } from '../stimd/metro/state.ts';
+import { repackReachRefusal } from '../stimd/metro/server-repack.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -535,7 +536,7 @@ export async function startDevServer(
   };
   const isExpo = detectIsExpo(root);
   const metroCommand = metroCommandSetting(settings);
-  const serverMode = metroCommand ? MODE_COMMAND : isExpo ? MODE_EXPO : MODE_BARE;
+  const { mode: serverMode, config: serverConfig } = detectDevServer(root, metroCommand);
   const expoServer = serverMode === MODE_EXPO;
   const worktreeRoot = settingsContext.repoRoot ?? root;
   const run = async (): Promise<StartFacts> => {
@@ -576,6 +577,8 @@ export async function startDevServer(
       remoteFlag ||
       remoteIosSetting(settings)?.kind === 'backend' ||
       remoteAndroidSetting(settings)?.kind === 'backend';
+    const repackRefusal = remote ? repackReachRefusal(root, metroCommand, 'remote') : null;
+    if (repackRefusal) return fail(repackRefusal);
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({
@@ -724,7 +727,7 @@ export async function startDevServer(
             chalk.dim(
               phaseLine(
                 'metro',
-                `starting on port ${port} (${serverMode}${pid === null ? '' : `, supervisor pid ${pid}`})`,
+                `starting on port ${port} (${serverMode}${serverConfig ? ` from ${serverConfig}` : ''}${pid === null ? '' : `, supervisor pid ${pid}`})`,
               ),
             ),
           );
