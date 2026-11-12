@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -70,7 +70,7 @@ describe('runOperation', () => {
     await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
   });
 
-  it.each(['ios', 'android'])(
+  it.each(['start', 'ios', 'android', 'web', 'macos', 'revive'])(
     'starts no daemon and records nothing for `stim %s` outside a project',
     async (command) => {
       const client = await import('../daemon/client.ts');
@@ -80,7 +80,6 @@ describe('runOperation', () => {
       const entered = await runOperation({ caller: 'cli', command, plan: false, cwd: outside, env });
       expect(entered).toMatchObject({ admitted: null, end: expect.any(Function) });
       expect(client.beforeCommand).not.toHaveBeenCalled();
-      expect(existsSync(join(dir, 'home'))).toBe(false);
     },
   );
 

@@ -72,6 +72,8 @@ export async function runOperation(
   if ((operationCommand === 'ios' || operationCommand === 'android') && !findProjectRoot(entry.cwd))
     return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(operationCommand);
+  if (creates && !findProjectRoot(entry.cwd))
+    return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
   if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];

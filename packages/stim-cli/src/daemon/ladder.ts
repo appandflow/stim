@@ -360,7 +360,8 @@ async function trim(
 /**
  * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
  * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
- * cache emptied, the build cache trimmed to its protected entries, and the fingerprint memo emptied.
+ * cache emptied, the build cache trimmed to its protected entries, the fingerprint index and memo emptied, and every
+ * other registered cache emptied whole except those `emptyRegisteredCaches` keeps.
  */
 async function cachesRung(context: RungContext): Promise<void> {
   const critical = context.level === 'critical';
