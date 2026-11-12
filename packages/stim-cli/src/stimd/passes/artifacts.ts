@@ -59,6 +59,8 @@ const SCAN_LIMIT = 20_000;
 
 export interface ArtifactWorktree {
   path: string;
+  /** The source checkout of its repository; its own path for a source checkout. */
+  source?: string;
   linked: boolean;
   locked: boolean;
   keys: string[];
@@ -115,7 +117,13 @@ function artifactWorktree(
   const entry = matchWorktreeEntry(entries, root);
   if (!entry || entry.bare || 'refusal' in source) return null;
   const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
-  return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
+  return {
+    path: entry.path,
+    source: source.path,
+    linked: entry.path !== source.path,
+    locked: Boolean(entry.locked),
+    keys,
+  };
 }
 
 /** The worktrees whose artifacts maintenance may clear, read without blocking when an operation is given. */
@@ -486,7 +494,7 @@ function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly A
     }
   };
   for (const other of worktrees) {
-    if (!other.linked) continue;
+    if (!other.linked || other.source !== candidate.worktree) continue;
     const direct = join(other.path, rel);
     if (isSymlink(direct) && into(direct)) return `the worktree ${other.path} links ${rel} to it`;
     let seen = 0;

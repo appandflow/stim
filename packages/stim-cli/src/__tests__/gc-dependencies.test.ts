@@ -620,3 +620,22 @@ test('the source warm claim keeps a warm out while a delete holds it, and is ref
   expect('release' in again).toBe(true);
   if ('release' in again) again.release();
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a linked worktree of another repository too large to scan does not keep this source checkout',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const other = join(projects, 'other');
+    mkdirSync(other);
+    execSync('git init -q -b main', { cwd: other });
+    execSync('git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init', { cwd: other });
+    const stranger = join(projects, 'stranger');
+    execSync(`git worktree add -q "${stranger}" -b stranger`, { cwd: other });
+    for (let i = 0; i < 2100; i++) writeFileSync(join(stranger, `filler-${i}.txt`), '');
+    upsertProject(realpathSync.native(stranger), { metroPort: null });
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(false);
+  },
+  60_000,
+);
