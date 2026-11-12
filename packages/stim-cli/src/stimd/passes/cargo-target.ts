@@ -2,14 +2,22 @@ import { existsSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import { loadConfig, type MaintenanceAction, type MaintenanceSize } from '@stim-cli/core/state';
+import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
+import { getExecutor } from '../../exec.ts';
+import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
-import { cargoProfileDirs, staleCargoTargetPaths, trimCargoTarget } from '../../workspace/cargo-target.ts';
+import { readVolumeSpaceAsync } from './budget.ts';
+import {
+  cargoProfileDirs,
+  idleCargoUnitPaths,
+  staleCargoTargetPaths,
+  trimCargoTarget,
+} from '../../workspace/cargo-target.ts';
 import type { ActionOutcome } from './act.ts';
 import type { MaintenancePlan } from './plan.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
@@ -112,6 +120,7 @@ export async function measureCargoTargets(
   now: number,
   operation?: StimContext,
   recorded: readonly MaintenanceSize[] = [],
+  { lowPriority = false }: { lowPriority?: boolean } = {},
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   for (const size of recorded)
@@ -134,6 +143,7 @@ export async function measureCargoTargets(
     }
     const bytes = await measuredDirectorySizeAsync(dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
+      lowPriority,
       ...(operation ? { signal: operation.signal, operation } : {}),
     });
     if (bytes === null) scan.unmeasured.set(dir, root);
@@ -142,18 +152,71 @@ export async function measureCargoTargets(
   return sizes;
 }
 
-async function bytesOf(paths: readonly string[], signal?: AbortSignal): Promise<number> {
+async function bytesOf(paths: readonly string[], signal?: AbortSignal, lowPriority = false): Promise<number> {
   let total = 0;
   for (const path of paths) {
     signal?.throwIfAborted();
-    total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+    total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority })) ?? 0;
   }
   return total;
 }
 
+const DU_CHUNK = 400;
+
+/** The bytes of many paths with one `du` per chunk; null when any chunk could not be measured. */
+async function bytesOfMany(
+  paths: readonly string[],
+  signal?: AbortSignal,
+  lowPriority = false,
+): Promise<number | null> {
+  let total = 0;
+  for (let at = 0; at < paths.length; at += DU_CHUNK) {
+    signal?.throwIfAborted();
+    const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
+    try {
+      const out = await (lowPriority
+        ? getExecutor().runFileAsync('nice', ['-n', '19', 'du', ...args], { timeoutMs: SIZE_TIMEOUT_MS, signal })
+        : getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
+      for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
+    } catch {
+      signal?.throwIfAborted();
+      return null;
+    }
+  }
+  return total;
+}
+
+/** Whether a target still over its cap after the other steps loses its idle units too, at normal and high; one place to turn off. */
+const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'none';
+
 /**
- * One trim per Cargo `target/` that is over `maintenance.cargoTargetMaxGb`: the bytes planned are the overage or
- * what the stale profiles and, past them, the `incremental` directories can free, whichever is less.
+ * What a trim of a Cargo `target/` removes at a disk level: normal covers the overage with stale profiles, then
+ * `incremental` data; high removes every stale profile and all `incremental` data whatever the cap; critical also
+ * removes every idle unit (which needs Exact's usage ledger). While still over the cap after those steps, idle units go
+ * too at normal and high.
+ */
+function cargoTrimPolicy(level: PressureLevel): {
+  incremental: 'toNeed' | 'all';
+  units: 'none' | 'toNeed' | 'all';
+} {
+  return {
+    incremental: level === 'normal' ? 'toNeed' : 'all',
+    units: level === 'critical' ? 'all' : UNITS_WHEN_OVER_CAP,
+  };
+}
+
+const LEVELS = { normal: undefined, high: 2, critical: 3 } as const;
+
+async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
+  const { thresholds } = diskThresholds(loadConfig());
+  return diskPressure(await readVolumeSpaceAsync([dir], signal), thresholds).level;
+}
+
+/**
+ * One trim per Cargo `target/` that is over `maintenance.cargoTargetMaxGb`, or at high or critical disk level every
+ * recognised one. The level is `level` when given (an explicit `stim gc --pressure`, which applies everywhere) and else
+ * the disk level of the volume the `target/` is on. Planned bytes are, at normal, the overage or what the steps can
+ * free, whichever is less, and at high and critical what they free.
  */
 export async function planCargoTargets({
   sizes,
@@ -161,19 +224,24 @@ export async function planCargoTargets({
   pinned,
   now,
   signal,
+  level,
+  diskLevel = measuredDiskLevel,
+  lowPriority = false,
 }: {
   sizes: readonly MaintenanceSize[];
   settings: MaintenanceSettings;
   pinned: (workspace: string) => boolean;
   now: number;
   signal?: AbortSignal;
+  level?: PressureLevel;
+  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
+  lowPriority?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   const cap = settings.cargoTargetMaxGb * GIB;
-  if (cap === 0) return plan;
   const targets = [
     ...sizes.flatMap((size) =>
-      size.name === CARGO_TARGET_SIZE && size.bytes > cap && size.workspace
+      size.name === CARGO_TARGET_SIZE && size.workspace
         ? [{ dir: size.dir, workspace: size.workspace, bytes: size.bytes }]
         : [],
     ),
@@ -185,44 +253,60 @@ export async function planCargoTargets({
       `${scan.unlisted.length} Cargo target/ of discovered checkouts were not measured this scan (at most ${MAX_DISCOVERED_TARGETS} are per scan, the least recently measured first): ${scan.unlisted.join(', ')}`,
     );
   for (const { dir, workspace, bytes } of targets) {
-    const over =
-      bytes === null
-        ? `${dir} is too large to measure within ${SIZE_TIMEOUT_MS / 1000}s, so only its stale profiles are trimmed`
-        : `${dir} is ${(bytes / GIB).toFixed(1)}G, over the ${settings.cargoTargetMaxGb}G cargo target cap`;
+    signal?.throwIfAborted();
+    const tightened = level ?? (await diskLevel(dir, signal));
+    const capped = cap > 0 && (bytes === null || bytes > cap);
+    if (!capped && tightened === 'normal') continue;
+    const policy = cargoTrimPolicy(tightened);
+    const overBytes = bytes === null || cap === 0 ? 0 : Math.max(0, bytes - cap);
+    const why =
+      tightened === 'normal'
+        ? bytes === null
+          ? `${dir} is too large to measure within ${SIZE_TIMEOUT_MS / 1000}s, so only its stale profiles are trimmed`
+          : `${dir} is ${(bytes / GIB).toFixed(1)}G, over the ${settings.cargoTargetMaxGb}G cargo target cap`
+        : `disk is at the ${tightened} level for ${dir}${bytes === null ? ', which is too large to measure' : ` (${(bytes / GIB).toFixed(1)}G)`}`;
     if (pinned(workspace)) {
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
-    if (bytes === null) plan.blocked.push(over);
+    if (bytes === null) plan.blocked.push(why);
     const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
       plan.skips.push({ target: dir, reason: stale.refusal, workspace });
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    let freeable = await bytesOf(gone, signal);
-    const overBytes = bytes === null ? 0 : bytes - cap;
-    if (freeable < overBytes) {
+    let freeable = await bytesOf(gone, signal, lowPriority);
+    if (policy.incremental === 'all' || freeable < overBytes) {
       const remaining = (cargoProfileDirs(dir) ?? []).filter(
         (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
       );
-      freeable += await bytesOf(remaining.map((profile) => join(profile, 'incremental')).filter(existsSync), signal);
+      freeable += await bytesOf(
+        remaining.map((profile) => join(profile, 'incremental')).filter(existsSync),
+        signal,
+        lowPriority,
+      );
+    }
+    if (policy.units === 'all' || (policy.units === 'toNeed' && freeable < overBytes)) {
+      const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority);
+      if (unitBytes === null) plan.blocked.push(`${dir}: the idle build units could not be measured`);
+      else freeable += unitBytes;
     }
     if (freeable === 0 && !existsSync(join(dir, '.stim-trimmed'))) {
-      if (bytes !== null)
-        plan.blocked.push(`${over}; every profile was used in the last day and none has an incremental cache`);
+      if (bytes !== null && tightened === 'normal')
+        plan.blocked.push(`${why}; every profile was used in the last day and none has anything idle to remove`);
       continue;
     }
+    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}, then the build units unused for a day${tightened === 'critical' ? ' (all of them)' : ' while still over the cap'}`;
     plan.actions.push({
       kind: 'would-clear-build-dirs',
       target: dir,
       workspace,
-      bytes: bytes === null ? freeable : Math.min(overBytes, freeable),
+      bytes: tightened === 'normal' ? Math.min(overBytes, freeable) : freeable,
+      overBytes,
+      ...(LEVELS[tightened] ? { level: LEVELS[tightened] } : {}),
       ...(bytes === null ? { olderThanDays: 1 } : {}),
-      reason:
-        bytes === null
-          ? `${over}; trims the profiles unused for a day`
-          : `${over}; trims the profiles unused for a day, then the incremental caches`,
+      reason: `${why}; ${steps}`,
     });
   }
   return plan;
@@ -240,6 +324,7 @@ async function stillManaged(root: string, operation?: StimContext): Promise<bool
 export async function trimCargoTargetAction(
   action: MaintenanceAction,
   operation?: StimContext,
+  lowPriority = false,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
@@ -248,7 +333,9 @@ export async function trimCargoTargetAction(
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const result = await trimCargoTarget(action.target, {
-    needBytes: action.olderThanDays === undefined ? action.bytes : 0,
+    needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
+    ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
+    lowPriority,
     signal: operation?.signal,
   });
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;

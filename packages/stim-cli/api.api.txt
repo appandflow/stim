@@ -815,6 +815,7 @@
 [*] interface MaintenanceAction { | kind: MaintenanceActionKind;
 [*] interface MaintenanceAction { | level?: 2 | 3;
 [*] interface MaintenanceAction { | olderThanDays?: number;
+[*] interface MaintenanceAction { | overBytes?: number;
 [*] interface MaintenanceAction { | reason: string;
 [*] interface MaintenanceAction { | target: string;
 [*] interface MaintenanceAction { | workspace?: string;
@@ -858,7 +859,9 @@
 [*] interface MaintenanceSize { | name: string;
 [*] interface MaintenanceSize { | workspace?: string;
 [*] interface MaintenanceStatus {
+[*] interface MaintenanceStatus { | check: MaintenanceCheck;
 [*] interface MaintenanceStatus { | claim?: {
+[*] interface MaintenanceStatus { | deferred?: {
 [*] interface MaintenanceStatus { | invalid?: string;
 [*] interface MaintenanceStatus { | lastChecks: {
 [*] interface MaintenanceStatus { | lastPass: MaintenancePass | null;
@@ -869,6 +872,7 @@
 [*] interface MaintenanceStatus { | recent: MaintenanceRecord[];
 [*] interface MaintenanceStatus { | removeCommand: string;
 [*] interface MaintenanceStatus { | running: {
+[*] interface MaintenanceStatus { | since: number;
 [*] interface MaintenanceStatus { | size: number | null;
 [*] interface MaintenanceStatus { | sizes: MaintenanceSize[];
 [*] interface MaintenanceStatus { | startedAt: string;
@@ -877,6 +881,7 @@
 [*] interface MaintenanceStatus { | unresolved: string;
 [*] interface MaintenanceStatus { | worktree: number | null;
 [*] interface MaintenanceStatus { | } | null;
+[*] interface MaintenanceStatus { | }[];
 [*] interface MemoryCulprit {
 [*] interface MemoryCulprit { | bytes: number;
 [*] interface MemoryCulprit { | command: string | null;
@@ -1489,6 +1494,7 @@
 [*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, {
 [*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "macos";
 [*] type MaintenanceActionKind = "would-clear-outputs" | "would-trim-cache" | "would-empty-cache" | "would-shutdown-device" | "would-stop-workspace" | "would-remove-worktree" | "would-remove-orphan" | "would-unregister-cache" | "would-delete-parked-device" | "would-delete-devices" | "would-clear-build-dirs" | "would-delete-dependencies" | "would-stop-gradle-daemons" | "would-stop-watchman" | "would-delete-gradle-version" | "would-delete-temp-leftovers" | "would-delete-trash" | "would-delete-status-caches" | "would-delete-process-locks" | "would-delete-device-lease" | "would-delete-expired-archives" | "would-dormant-stage" | "would-prune-project" | "would-delete-orphaned-devices" | "would-forget-stale-records" | "would-trim-workspace-logs" | "would-delete-recordings" | "would-delete-hosted-devices" | "would-delete-eas-sessions" | "would-delete-archives" | "would-delete-runtime" | "would-delete-unavailable-sim";
+[*] type MaintenanceCheck = "pressure" | "size" | "worktree" | "sweep" | "idle";
 [*] type MaintenanceMode = "off" | "report" | "on";
 [*] type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 [*] type MemoryKeptCode = "in-use" | "busy" | "unknown" | "build-running" | "stim-server";

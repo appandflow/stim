@@ -887,7 +887,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 25,
     env: 'STIM_MAINTENANCE_CARGO_TARGET_MAX_GB',
     description:
-      "Cap in GiB for one Cargo target/ (an Exact app's or a workspace root's, in a registered workspace or a discovered checkout), in use or not: above it, automatic maintenance removes the profiles and target triples no build wrote or read in the last day, and stops there; 0 means no cap",
+      "Cap in GiB for one Cargo target/ (an Exact app's or a workspace root's, in a registered workspace or a discovered checkout), in use or not: above it, automatic maintenance removes the profiles and target triples no build wrote or read in the last day, then incremental data, and stops there; high and critical disk pressure remove more whatever the cap, and critical also removes build units Exact's usage ledger shows no build used for a day; 0 means no cap and no pressure trim either",
   },
   {
     key: 'caches.buildCacheMaxGb',

@@ -154,6 +154,7 @@ export async function runMaintenanceAtLevel({
     worktrees: settings.removeFinishedWorktrees,
     refresh: act,
     operation,
+    ...(chosen ? { cargoLevel: chosen } : {}),
   });
   blocked.push(...plan.blocked);
   for (const skip of plan.skips)
