@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
+import { fileURLToPath } from 'node:url';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
@@ -137,4 +139,56 @@ parentPort.on('message', (message) => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 15_000);
+});
+
+describe.skipIf(process.platform === 'win32')('a job whose child cleanup is unverified', () => {
+  test.each([
+    [1, 'is watched on its thread, which keeps the claim until the child has stopped'],
+    [2, 'is not contained while another child of the operation runs, and keeps the claim'],
+  ])(
+    'with %i declared children it %s',
+    async (children) => {
+      const root = mkdtempSync(join(tmpdir(), 'stim-worker-job-'));
+      const entry = vi
+        .spyOn(entries, 'spawnEntry')
+        .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+      const threads = createThreadTable(() => {});
+      const sleepers: { pid: number; token: string | null }[] = [];
+      try {
+        const input = { cwd: root, children };
+        const failure: unknown = await threads.run('measure', input).catch((error: unknown) => error);
+        for (const pid of readFileSync(join(root, 'pids'), 'utf8').split(' ').map(Number))
+          sleepers.push({ pid, token: captureProcessToken(pid) });
+        expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+        const claimRoot = join(root, 'work.lock');
+        expect(readClaimSet(claimRoot).live).toHaveLength(1);
+        const named = sleepers[0];
+        assert(named?.token);
+        expect(Reflect.get(Object(failure), 'reportChild')).toEqual(
+          children === 1 ? { pid: named.pid, processToken: named.token } : undefined,
+        );
+        threads.settle();
+        await new Promise((done) => setTimeout(done, 200));
+        expect(readClaimSet(claimRoot).live).toHaveLength(1);
+        await stopFixture(named.pid, named.token);
+        const settledLength = children === 1 ? 0 : 1;
+        await vi.waitFor(
+          () => {
+            threads.settle();
+            expect(readClaimSet(claimRoot).live).toHaveLength(settledLength);
+          },
+          { timeout: 5000, interval: 100 },
+        );
+        threads.settle();
+        await new Promise((done) => setTimeout(done, 300));
+        expect(readClaimSet(claimRoot).live).toHaveLength(settledLength);
+      } finally {
+        entry.mockRestore();
+        await threads.close();
+        for (const { pid, token } of sleepers) if (token) await stopFixture(pid, token);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 });

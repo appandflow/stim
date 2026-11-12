@@ -2,8 +2,8 @@ import { isMainThread, parentPort, Worker, workerData } from 'node:worker_thread
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { reportChildOf } from '../engine/workspace-process-error.ts';
-import { childKey, createCleanupWatch } from './cleanup-watch.ts';
+import { childKey } from './cleanup-watch.ts';
+import { serveThreadJobs } from './thread-jobs.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -232,51 +232,23 @@ else if (thread && parentPort) {
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   const { processContext } = await import('../cli-operation.ts');
   let lane: MaintenanceLane | undefined;
-  let controller = new AbortController();
-  // @ref LLP 0007#stimd-stays-up-for-a-child-it-can-watch -- a job's cleanup check stays on its thread
-  const watch = createCleanupWatch(() => {});
-  port.on('message', async (message: { type: 'run'; input: ThreadInput } | { type: 'abort' } | { type: 'settle' }) => {
-    if (message.type === 'abort') return controller.abort();
-    if (message.type === 'settle') {
-      watch.settle();
-      return port.postMessage({ type: 'settled', pending: watch.keys() });
-    }
-    controller = new AbortController();
-    const { signal } = controller;
-    const { input } = message;
-    const operation = processContext(input.cwd, signal);
-    try {
+  serveThreadJobs<ThreadInput>(
+    port,
+    processContext,
+    async (input, operation) => {
       if ('act' in input) {
         const { createMaintenanceLane } = await import('../daemon/passes.ts');
         lane ??= createMaintenanceLane(log);
         lane.start({ ...input, operation }, input.act);
         await lane.settled();
-        port.postMessage({ type: 'done', result: lane.take() });
-      } else {
-        const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
-        await measureDependencyTrees(operation);
-        port.postMessage({ type: 'done', result: [] });
+        return lane.take();
       }
-    } catch (error) {
-      const cleanup = error instanceof Error && 'reportCleanup' in error;
-      const contained = watch.contain(error, signal.aborted) ? reportChildOf(error) : null;
-      if (contained) lane = undefined;
-      port.postMessage({
-        type: 'failed',
-        message: signal.aborted && !cleanup ? 'aborted' : error instanceof Error ? error.message : String(error),
-        ...(cleanup
-          ? {
-              reportCleanup: true,
-              ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? { code: error.code }
-                : {}),
-              ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
-                ? { remedy: error.remedy }
-                : {}),
-              ...(contained ? { contained } : {}),
-            }
-          : {}),
-      });
-    }
-  });
+      const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
+      await measureDependencyTrees(operation);
+      return [];
+    },
+    () => {
+      lane = undefined;
+    },
+  );
 }
