@@ -137,7 +137,18 @@ In on mode a pass runs, cheapest to rebuild first:
      leaves no trace in a profile's directory times: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap. Each is renamed
+     remaining profile, largest first, until under the cap, then, still over,
+     the build units no build used for a day in each remaining profile (see
+     CARGO UNITS below). The disk level of the volume holding a target/
+     tightens this: at high every recognised target/, in use or not, loses all
+     its stale profiles and all incremental/ data whatever the cap, and its
+     idle units only while it is over the cap; at critical it loses every idle
+     unit too. An explicit stim gc --pressure high|critical applies the level
+     to every target/. The level is read when the trim is planned, which is at
+     the hourly size scan, or hourly on its own while host load defers the size
+     scan (the cap is never held back by load, and its du runs at low priority,
+     one target/ at a time, 120 seconds at most each, ended at once by a
+     handover), and at once for stim gc. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
      moved back if a build took its .cargo-lock meanwhile, then deleted; a
      leftover .stim-trimmed is deleted first. A profile whose .cargo-lock a
@@ -1621,6 +1632,22 @@ setting measured on the selected API 36 profile. Set
 project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
+
+CARGO UNITS
+  A unit is one build of one crate in a profile: .fingerprint/<crate>-<hash>,
+  build/<crate>-<hash> and the deps/ files carrying the hash. Cargo keeps the
+  old ones whenever a crate's version, features or dependencies change. A unit
+  is idle when its last use is over a day old, taken from Exact's
+  .exact-sweep.json stamp (<profile>#<hash>) or the newest time in its
+  .fingerprint directory, whichever is later; the newest unit of each crate
+  stays whatever its age, and a unit whose time cannot be read stays. The
+  fingerprint directory is removed first, so an interrupted removal leaves
+  Cargo a unit it must rebuild and never a fingerprint that points at missing
+  files; then build/, then deps/. All of it is renamed aside under the same
+  lock recheck and rollback as profiles, skipping a profile whose lock a build
+  holds and a unit any of whose files a process holds open or names. A
+  removed unit costs a rebuild of that crate, never a wrong build. Hard links
+  Cargo made in the profile root keep the bytes of a removed deps/ file.
 
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,

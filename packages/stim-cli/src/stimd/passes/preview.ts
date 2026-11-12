@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { configDir, type StimContext } from '@stim-cli/core';
-import { loadConfig, type MaintenancePlanPart, type MaintenanceSize } from '@stim-cli/core/state';
+import { loadConfig, type PressureLevel, type MaintenancePlanPart, type MaintenanceSize } from '@stim-cli/core/state';
 import { findProjectRoot } from '../../workspace/project.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../../commands/gc/workspaces.ts';
@@ -37,6 +37,7 @@ export async function plannedMaintenance(
   {
     devices = true,
     caps = true,
+    cargoOnly = false,
     sweep = false,
     worktrees = false,
     idle = false,
@@ -44,16 +45,21 @@ export async function plannedMaintenance(
     background = false,
     operation,
     deviceActivity,
+    cargoLevel,
   }: {
     devices?: boolean;
     /** Plans the cap trims of the recorded sizes. */
     caps?: boolean;
+    /** Plans only the Cargo target trims of them. */
+    cargoOnly?: boolean;
     sweep?: boolean;
     worktrees?: boolean;
     idle?: boolean;
     refresh?: boolean;
     background?: boolean;
     operation?: StimContext;
+    /** An explicit level for the Cargo target trims, applied to every target; without one each target takes its volume's disk level. */
+    cargoLevel?: PressureLevel;
     /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
     deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
   } = {},
@@ -151,19 +157,23 @@ export async function plannedMaintenance(
     return value;
   };
   if (caps) {
-    const capped = plan({
-      sizes: currentSizes,
-      settings,
-      protectedRoot: root,
-      pinned,
-      recentlyUsed: (workspace) => recentUse(workspace, settings),
-    });
+    const capped =
+      cargoOnly && !sweep && !worktrees
+        ? { actions: [], blocked: [], skips: [] }
+        : plan({
+            sizes: currentSizes,
+            settings,
+            protectedRoot: root,
+            pinned,
+            recentlyUsed: (workspace) => recentUse(workspace, settings),
+          });
     const cargo = await planCargoTargets({
       sizes: currentSizes,
       settings,
       pinned,
       now: Date.now(),
       signal: operation?.signal,
+      ...(cargoLevel ? { level: cargoLevel } : {}),
     });
     merge('caps', {
       actions: [...capped.actions, ...cargo.actions],

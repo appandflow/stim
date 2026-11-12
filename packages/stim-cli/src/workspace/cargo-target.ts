@@ -3,6 +3,7 @@ import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
+import { cargoUnitPaths, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 const ASIDE = '.stim-trimmed';
@@ -54,10 +55,10 @@ export function staleCargoPaths(
 }
 
 /**
- * The newest unit time per profile in Exact's `.exact-sweep.json` ledger (`{ units: { "<profile>#<hash>": ms } }`),
- * which Exact refreshes from the fingerprint files a build read. Null when the text is not that shape.
+ * Exact's `.exact-sweep.json` ledger (`{ units: { "<profile>#<hash>": ms } }`): the stamp of each unit and the newest
+ * per profile, which Exact refreshes from the fingerprint files a build read. Null when the text is not that shape.
  */
-function parseSweepLedger(text: string): Map<string, number> | null {
+function parseSweepLedger(text: string): { units: Map<string, number>; newest: Map<string, number> } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -66,13 +67,15 @@ function parseSweepLedger(text: string): Map<string, number> | null {
   }
   const units = isRecord(parsed) ? parsed.units : undefined;
   if (!isRecord(units)) return null;
+  const stamps = new Map<string, number>();
   const newest = new Map<string, number>();
   for (const [key, at] of Object.entries(units)) {
     const profile = key.split('#')[0];
     if (!profile || typeof at !== 'number' || !Number.isFinite(at)) return null;
+    stamps.set(key, at);
     newest.set(profile, Math.max(newest.get(profile) ?? 0, at));
   }
-  return newest;
+  return { units: stamps, newest };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,6 +132,20 @@ function newestMtime(profile: string): number | null {
   return newest;
 }
 
+const EMPTY_LEDGER = { units: new Map<string, number>(), newest: new Map<string, number>() };
+
+function readLedger(target: string): typeof EMPTY_LEDGER | { refusal: string } {
+  const ledgerPath = join(target, '.exact-sweep.json');
+  if (!existsSync(ledgerPath)) return EMPTY_LEDGER;
+  let text: string;
+  try {
+    text = readFileSync(ledgerPath, 'utf8');
+  } catch {
+    return { refusal: `Exact's ${ledgerPath} cannot be read` };
+  }
+  return parseSweepLedger(text) ?? { refusal: `Exact's ${ledgerPath} is not a unit ledger` };
+}
+
 /**
  * What of an Exact app's Cargo `target/` no build used for a day, as paths relative to it, or why that cannot be told.
  * A profile is in use when a build wrote its directories or Exact's ledger stamps one of its units that recently; reads
@@ -142,24 +159,32 @@ export function staleCargoTargetPaths(
 ): { paths: string[] } | { refusal: string } {
   const listed = profilePaths(target);
   if (!listed) return { refusal: `${target} cannot be listed` };
-  let ledger = new Map<string, number>();
-  const ledgerPath = join(target, '.exact-sweep.json');
-  if (existsSync(ledgerPath)) {
-    let text: string;
-    try {
-      text = readFileSync(ledgerPath, 'utf8');
-    } catch {
-      return { refusal: `Exact's ${ledgerPath} cannot be read` };
-    }
-    const parsed = parseSweepLedger(text);
-    if (!parsed) return { refusal: `Exact's ${ledgerPath} is not a unit ledger` };
-    ledger = parsed;
-  }
+  const read = readLedger(target);
+  if ('refusal' in read) return read;
+  const ledger = read.newest;
   const profiles: CargoProfile[] = listed.profiles.map((path) => {
     const written = newestMtime(join(target, path));
     return { path, lastUsedMs: written === null ? null : Math.max(written, ledger.get(path) ?? 0) };
   });
   return { paths: staleCargoPaths(profiles, listed.extras, now, idleMs) };
+}
+
+/**
+ * The units no build used for a day in every profile of `target/` outside `skip`, as absolute paths: a unit's fingerprint
+ * directory, build-script directory and `deps` files. The newest unit of each crate is never among them.
+ */
+export function idleCargoUnitPaths(target: string, now: number, skip: readonly string[] = []): string[] {
+  const ledger = readLedger(target);
+  const stamps = 'refusal' in ledger ? EMPTY_LEDGER.units : ledger.units;
+  const found: string[] = [];
+  for (const profile of cargoProfileDirs(target) ?? []) {
+    if (skip.some((gone) => profile === gone || profile.startsWith(`${gone}/`))) continue;
+    const units = readCargoUnits(profile, stamps, profile.slice(target.length + 1));
+    if (!units) continue;
+    for (const [, paths] of cargoUnitPaths(profile, idleCargoUnits(units, now, CARGO_PROFILE_IDLE_MS)))
+      found.push(...paths.map((path) => join(profile, path)));
+  }
+  return found;
 }
 
 /** The profile directories of `target/` as absolute paths, or null when it cannot be listed. */
@@ -276,7 +301,19 @@ async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
  */
 export async function trimCargoTarget(
   registeredTarget: string,
-  { needBytes, now = Date.now(), signal }: { needBytes: number; now?: number; signal?: AbortSignal },
+  {
+    needBytes,
+    incremental = 'toNeed',
+    units = 'none',
+    now = Date.now(),
+    signal,
+  }: {
+    needBytes: number;
+    incremental?: 'toNeed' | 'all';
+    units?: 'none' | 'toNeed' | 'all';
+    now?: number;
+    signal?: AbortSignal;
+  },
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   let target: string;
@@ -304,6 +341,7 @@ export async function trimCargoTarget(
   if (used === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
+  const ledger = readLedger(target);
   let moved = 0;
   const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));
   const move = async (
@@ -363,24 +401,82 @@ export async function trimCargoTarget(
     result.removed.push(label);
     return true;
   };
-  for (const path of stale.paths) await move(join(target, path), path, null, profilesAt);
-  if (result.bytes < needBytes) {
-    const removedStale = new Set(stale.paths.map((path) => join(target, path)));
-    const candidates: { path: string; bytes: number }[] = [];
-    for (const profile of cargoProfileDirs(target) ?? [])
-      if (
-        ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)) &&
-        !inUse(used, profile)
-      ) {
-        const incremental = join(profile, 'incremental');
-        if (existsSync(incremental)) candidates.push({ path: incremental, bytes: await sizeOf(incremental, signal) });
+  const sweepUnits = async (profile: string, key: string): Promise<{ units: number; bytes: number; kept?: string }> => {
+    const none = { units: 0, bytes: 0 };
+    const all = readCargoUnits(profile, 'refusal' in ledger ? EMPTY_LEDGER.units : ledger.units, key);
+    if (!all) return { ...none, kept: 'its units cannot be listed' };
+    const idle = idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS);
+    const paths = [...cargoUnitPaths(profile, idle)].filter(
+      ([, unitPaths]) => !unitPaths.some((path) => inUse(used, join(profile, path))),
+    );
+    if (!paths.length) return none;
+    if (lockHeld(await lockOutcome(profile, signal))) return { ...none, kept: 'a build holds its .cargo-lock' };
+    const batch = join(aside, `units-${moved++}`);
+    const done: string[] = [];
+    const putBack = async (): Promise<string | null> => {
+      for (const path of done.toReversed()) {
+        try {
+          await rename(join(batch, path), join(profile, path));
+        } catch {
+          keepAside = true;
+          await writeFile(join(aside, STRANDED), '').catch(() => {});
+          return `${path} could not be put back; it stays in ${batch} for a person to merge or delete`;
+        }
       }
-    for (const path of selectIncremental(candidates, needBytes - result.bytes)) {
+      return null;
+    };
+    for (const path of removalOrder(paths.flatMap(([, unitPaths]) => unitPaths))) {
+      try {
+        await mkdir(dirname(join(batch, path)), { recursive: true });
+        await rename(join(profile, path), join(batch, path));
+        done.push(path);
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT') continue;
+        const stranded = await putBack();
+        return {
+          ...none,
+          kept: stranded ?? `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`,
+        };
+      }
+    }
+    if (!renameStands(await lockOutcome(profile))) {
+      const stranded = await putBack();
+      return { ...none, kept: stranded ?? 'a build took its .cargo-lock during the move' };
+    }
+    return { units: paths.length, bytes: await sizeOf(batch, signal) };
+  };
+  for (const path of stale.paths) await move(join(target, path), path, null, profilesAt);
+  const removedStale = new Set(stale.paths.map((path) => join(target, path)));
+  const remaining = (cargoProfileDirs(target) ?? []).filter(
+    (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
+  );
+  if (incremental === 'all' || result.bytes < needBytes) {
+    const candidates: { path: string; bytes: number }[] = [];
+    for (const profile of remaining) {
+      const dir = join(profile, 'incremental');
+      if (existsSync(dir)) candidates.push({ path: dir, bytes: await sizeOf(dir, signal) });
+    }
+    const chosen =
+      incremental === 'all'
+        ? candidates.map(({ path }) => path)
+        : selectIncremental(candidates, needBytes - result.bytes);
+    for (const path of chosen) {
       const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
       const parent = dirname(path);
       await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
     }
   }
+  if (units === 'all' || (units === 'toNeed' && result.bytes < needBytes))
+    for (const profile of remaining) {
+      signal?.throwIfAborted();
+      const key = profile.slice(target.length + 1);
+      const swept = await sweepUnits(profile, key);
+      if (swept.kept) result.kept.push(`${key}: ${swept.kept}`);
+      if (swept.units) {
+        result.bytes += swept.bytes;
+        result.removed.push(`${key}: ${swept.units} idle units`);
+      }
+    }
   if (keepAside) return result;
   try {
     await rm(aside, { recursive: true, force: true });

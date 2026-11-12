@@ -1987,10 +1987,12 @@ RULES
     with the time in it, or stopped.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
-                lastPass, running, recent, plan, invalid?, claim? }
+                lastPass, running, deferred?, recent, plan, invalid?, claim? }
     mode is off, report or on. Plan actions start with would-; the records
     of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
     remove-worktree, remove-orphan, unregister-cache).
+    deferred lists the checks host load is holding back, each with the epoch
+    milliseconds it was first deferred; it is absent when none is.
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes

@@ -151,16 +151,27 @@ export async function directorySizeAsync(
 
 export async function measuredDirectorySizeAsync(
   dir: string,
-  { timeoutMs, signal, operation }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext },
+  {
+    timeoutMs,
+    signal,
+    operation,
+    lowPriority = false,
+  }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext; lowPriority?: boolean },
 ): Promise<number | null> {
   let out: string;
   try {
-    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
-      timeoutMs,
-      killSignal: 'SIGKILL',
-      signal,
-      cwd: operation?.cwd,
-    });
+    out = await runOperationFile(
+      operation,
+      getExecutor(),
+      lowPriority ? 'nice' : 'du',
+      lowPriority ? ['-n', '19', 'du', '-sk', dir] : ['-sk', dir],
+      {
+        timeoutMs,
+        killSignal: 'SIGKILL',
+        signal,
+        cwd: operation?.cwd,
+      },
+    );
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
