@@ -2534,7 +2534,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cache, which can only be emptied whole, emptied once over half its
        cap); at critical the Metro and compilation caches emptied, the build
        cache trimmed to the entries a workspace, parked device or build still
-       uses, and the fingerprint memo emptied
+       uses, the fingerprint index and memo emptied, and every other cache
+       Stim registered emptied whole (ccache, the macOS artifact cache and the
+       React Native and Android caches; \`guide cleanup\` lists them)
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
