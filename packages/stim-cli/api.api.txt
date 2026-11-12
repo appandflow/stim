@@ -278,6 +278,7 @@
 [*] interface DaemonStatus { | intervalMs: number | null;
 [*] interface DaemonStatus { | lastTickAt: string | null;
 [*] interface DaemonStatus { | mode: DaemonMode;
+[*] interface DaemonStatus { | older?: {
 [*] interface DaemonStatus { | pid: number;
 [*] interface DaemonStatus { | pressure?: DaemonPressure;
 [*] interface DaemonStatus { | recent?: DaemonRecentAction[];
@@ -285,6 +286,7 @@
 [*] interface DaemonStatus { | running: {
 [*] interface DaemonStatus { | setting?: DaemonMode;
 [*] interface DaemonStatus { | since: string;
+[*] interface DaemonStatus { | stop: string;
 [*] interface DaemonStatus { | testWaiting?: DaemonTestWaiter[];
 [*] interface DaemonStatus { | unresolved: string;
 [*] interface DaemonStatus { | unverified?: UnverifiedCleanup[];

@@ -142,6 +142,8 @@ export interface DaemonStatus {
   /** The mode `daemon.mode` resolves to here, when the running daemon started in another one. */
   setting?: DaemonMode;
   running: { pid: number; since: string } | null;
+  /** A stim-daemon from before Stim 2.0 holds the daemon claim; it is not this home's running daemon. */
+  older?: { pid: number; stop: string };
   lastTickAt: string | null;
   intervalMs: number | null;
   claim?: { unresolved: string; removeCommand: string };

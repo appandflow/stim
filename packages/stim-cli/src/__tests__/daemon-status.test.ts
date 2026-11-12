@@ -82,8 +82,8 @@ test("status reports the running daemon's tick and mode, and the setting when th
   process.env.STIM_HOME = home;
   const claim = tryAcquireClaim({
     root: daemonClaimRoot(),
-    mode: 'exclusive',
-    label: 'stim-daemon',
+    mode: 'shared',
+    label: 'stimd',
     details: { mode: 'report' },
   }).acquired;
   onTestFinished(() => {
@@ -130,4 +130,27 @@ test("status reports the running daemon's tick and mode, and the setting when th
     }),
   );
   expect(daemonStatus({})).toMatchObject({ running: null, recent });
+});
+
+test("an exclusive holder of the daemon claim is reported as an older daemon, not as this home's running daemon", () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
+  process.env.STIM_HOME = home;
+  const claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'exclusive',
+    label: 'stim-daemon',
+    details: { socket: 'daemon.sock', mode: 'on' },
+  }).acquired;
+  onTestFinished(() => {
+    if (claim) releaseClaim(claim);
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const older = daemonStatus({});
+
+  expect(older).toMatchObject({ running: null, older: { pid: process.pid } });
+  expect(daemonLine(older, NOW)).toContain(`pid ${process.pid} from an older stim holds the daemon claim`);
+  const findings = daemonFindings(older, { now: NOW, serving: () => ['/app'] });
+  expect(findings.map((finding) => finding.title)).toEqual(['A stim-daemon from an older Stim holds the daemon claim']);
+  expect(findings[0]?.fix).toContain(`kill ${process.pid}`);
 });
