@@ -68,6 +68,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
   if (access !== undefined && access !== 'build' && access !== 'device-host' && access !== 'test') {
     return ctx.refuse(id, 'bad-request', 'params.access is build, device-host or test.', CLOSE_BAD_REQUEST);
   }
+  // @ref LLP 0020#test-approval -- the local socket never acts as a test client
   if (access === 'test' && ctx.local) {
     return ctx.refuse(
       id,

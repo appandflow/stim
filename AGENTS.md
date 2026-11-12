@@ -354,7 +354,7 @@ outside it moves to its own issue and pull request.
   [LLP 0009](./llp/0009-build-offload.decision.md) for placement, signing, job compatibility and worker cleanup.
   The `test` capability, which lets an approved machine run any command it sends,
   is a separate worker-side approval that never comes with another capability;
-  [LLP 0018](./llp/0018-test-offload.decision.md) owns it.
+  [LLP 0020](./llp/0020-test-offload.decision.md) owns it.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, logs, and archives under `archive/`. The CLI owns every write

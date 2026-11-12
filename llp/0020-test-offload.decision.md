@@ -1,4 +1,4 @@
-# LLP 0018: Test offload
+# LLP 0020: Test offload
 
 **Type:** Decision
 **Status:** Active
@@ -46,10 +46,12 @@ permission a worker should require
 ([#5529](https://github.com/appandflow/stim/issues/5529#issuecomment-6834426069)).
 
 A test-approved client may also ask the worker to update its engine
-(`engine.update`), as build and device-host clients can. This and the Windows
-refusal are coordinator proposals from the plan on #5529, not quoted decisions.
+(`engine.update`), as build and device-host clients can. That, the Linux
+approval and Windows refusal, `busy.tests` with the setup refusal, and the
+refusal over the local socket are coordinator proposals from the plan on
+#5529, not quoted decisions.
 
-## Planned: the stim test command
+## Planned (#5529): the stim test command
 
 Planned in [#5529](https://github.com/appandflow/stim/issues/5529); none of it is
 on `main` yet. `stim test -- <argv>` runs one whole test command, given as an

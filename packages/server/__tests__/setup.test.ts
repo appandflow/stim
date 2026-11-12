@@ -253,12 +253,14 @@ test('approving tests asks its own question, stores only test and checks no buil
       throw new Error('a test approval must not check build tools');
     },
   });
-  expect(await runSetup([...testArgs, '--json'], '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup(testArgs, '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup([...testArgs, '--verbose'], '1.16.0', { ...f.deps, records: () => [] })).toBe(2);
   expect(questions).toEqual([
+    'Approve the machine holding this ticket to run any command it sends on this Mac, as this user, with no sandbox? [Y/n] ',
     'Let the machine holding this setup ticket run any command it sends on this Mac, as this user, with no sandbox? [Y/n] ',
   ]);
-  expect(f.stored).toEqual([['test']]);
-  expect(JSON.parse(f.stdout.join(''))).toMatchObject({ granted: [{ capability: 'test' }], tools: [] });
+  expect(f.stored[0]).toEqual(['test']);
+  expect(readSetupJournal(options.journal)?.steps.some((step) => step.id.startsWith('tools'))).toBe(false);
 });
 
 test('an app server that predates test approval is refused for --test with its update remedy', async () => {

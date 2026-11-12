@@ -99,4 +99,4 @@ the workflow.
 - [LLP 0013](./0013-owned-devices.decision.md) covers owned devices, pools, and leases.
 - [LLP 0014](./0014-native-builds.decision.md) covers native build invocations, artifacts, and signing.
 - [LLP 0015](./0015-compatibility-removals.decision.md) covers the compatibility mechanisms that ended in 2.0.
-- [LLP 0018](./0018-test-offload.decision.md) covers the test approval and the planned `stim test` command.
+- [LLP 0020](./0020-test-offload.decision.md) covers the test approval and the planned `stim test` command.
