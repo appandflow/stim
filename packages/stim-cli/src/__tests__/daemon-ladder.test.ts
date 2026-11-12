@@ -726,9 +726,9 @@ describe('the ladder a build runs for its headroom', () => {
 
   function parked(count: number) {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-    vi.spyOn(gcDevices, 'deleteParkedSims').mockImplementation(async (sims) => {
-      deleted.push(...sims.map((sim) => sim.udid));
-      return sims.length;
+    vi.spyOn(gcDevices, 'deleteParkedSims').mockImplementation(async (taken) => {
+      deleted.push(...taken.map((sim) => sim.udid));
+      return taken.length;
     });
     const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
     saveConfig({
