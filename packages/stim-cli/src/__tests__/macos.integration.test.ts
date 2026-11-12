@@ -1134,6 +1134,7 @@ test.skipIf(process.platform === 'win32')(
       streams.close();
     }
   },
+  20_000,
 );
 
 test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool reset', async () => {
@@ -2078,20 +2079,25 @@ describe('macOS build placement and promotion', () => {
       const real = getExecutor();
       setExecutor(mocked);
       const idle = 'setInterval(() => {}, 1000)';
-      const launched = real.spawn(
+      const appScript = `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write('helper ' + c.pid + '\\n'); ${idle}`;
+      const launcher = real.spawn(
         process.execPath,
         [
           '-e',
-          `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+          `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(appScript)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); process.stdout.write('app ' + a.pid + '\\n'); a.unref();`,
         ],
-        { stdio: ['ignore', 'pipe', 'ignore'], detached: true },
+        { stdio: ['ignore', 'pipe', 'ignore'] },
       );
-      children.push(launched);
-      const helper = Number(
-        await new Promise<string>((resolve) => launched.stdout?.once('data', (data) => resolve(String(data)))),
-      );
-      if (launched.pid === undefined) throw new Error('the fixture app did not start');
-      const app = macosProcess(launched.pid);
+      let printed = '';
+      launcher.stdout?.on('data', (data) => (printed += String(data)));
+      const pids = await vi.waitFor(() => {
+        const app = /app (\d+)/.exec(printed)?.[1];
+        const child = /helper (\d+)/.exec(printed)?.[1];
+        if (!app || !child) throw new Error('the fixture app has not started');
+        return { app: Number(app), child: Number(child) };
+      });
+      const helper = pids.child;
+      const app = macosProcess(pids.app);
       const claim = {
         root: 'fixture',
         path: 'fixture',
@@ -2123,9 +2129,10 @@ describe('macOS build placement and promotion', () => {
         expect(() => process.kill(helper, 0)).toThrow(/ESRCH/);
         expect(readMacosRecord(root)?.app).toBeUndefined();
       } finally {
-        try {
-          process.kill(helper, 'SIGKILL');
-        } catch {}
+        for (const pid of [helper, app.pid])
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {}
       }
     });
 

@@ -342,11 +342,8 @@ export function tailMacosApp(
       waiting = false;
       try {
         if (unsettled) settle();
-      } catch {
-        reason = 'the macOS app output could not be read or recorded';
-        return false;
-      }
-      if (state.exited) return conclude();
+      } catch {}
+      if (!unsettled && state.exited) return conclude();
       if (!pump()) {
         reason = 'the macOS app output could not be read or recorded';
         return false;
