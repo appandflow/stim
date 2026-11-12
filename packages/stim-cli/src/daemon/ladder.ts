@@ -44,7 +44,8 @@ import {
   reportedCaches,
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
-import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
+import { clearDependency, rankDependencies, selectDependencies, SOURCE_RESTORE } from './dependencies.ts';
+import { sourceDependenciesDue } from '../policy/checkout-order.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -647,9 +648,71 @@ async function worktreesRung(context: RungContext): Promise<void> {
   }
 }
 
-/** Rung 8, at critical only: every device recording not being written, and the logs, recordings and agent actions of every archive. */
+/**
+ * Rung 8's first step, at critical only: the node_modules and Pods of source checkouts idle 2 minutes, longest-idle
+ * first, only on a volume still under the critical level and after rungs 5 and 7 took every linked worktree's
+ * dependencies and finished worktrees. A source checkout is what `stim worktree warm` copies from, so it goes last of the
+ * dependencies, and before the history and tool caches because one reinstall costs less than they do.
+ */
+async function sourceDependenciesStep(context: RungContext): Promise<void> {
+  const idle = (await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS)).filter(
+    (candidate) =>
+      candidate.role === 'source' &&
+      sourceDependenciesDue({
+        level: 'critical',
+        idleMs: candidate.idleMs,
+        dormantMs: 0,
+        criticalIdleMs: PRESSURE_IDLE_MS,
+      }) === 'critical',
+  );
+  if (!idle.length) return;
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const { take } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation, true), 'take');
+  if (!take.length) return;
+  const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
+  if (shortDevices?.size === 0) return;
+  const worktrees = await artifactWorktreesFor(context.operation);
+  for (const dependency of take) {
+    if (!onShortVolume([dependency.candidate.path], shortDevices)) continue;
+    if (!(await context.stillShort())) return;
+    const why = `${context.why}; the source checkout's dependencies go last`;
+    const plan: MaintenanceAction = {
+      kind: 'would-delete-dependencies',
+      target: dependency.candidate.path,
+      bytes: dependency.privateBytes ?? 0,
+      reason: why,
+      workspace: dependency.workspace,
+    };
+    const result = context.act
+      ? await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why, context.operation)
+      : {
+          status: 'would' as const,
+          bytes: context.measure
+            ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])))
+            : plan.bytes,
+          detail: wouldDetail(context),
+        };
+    recordAction(
+      context,
+      {
+        rung: 8,
+        kind: 'delete-dependencies',
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
+        outcome: result.status,
+        bytes: result.bytes,
+        detail: result.detail,
+        ...(result.status === 'done' ? { restore: SOURCE_RESTORE } : {}),
+      },
+      why,
+    );
+  }
+}
+
+/** Rung 8, at critical only: a source checkout's dependencies, then every device recording not being written, and the logs, recordings and agent actions of every archive. */
 async function historyRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
+  await sourceDependenciesStep(context);
   for (const action of await planHistory(context.operation)) {
     if (!(await context.stillShort())) return;
     await run(context, action);

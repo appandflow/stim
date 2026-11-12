@@ -479,6 +479,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Days without activity before a workspace goes dormant and is reduced to its minimal size: its regenerable build outputs and owned simulators and emulators are deleted (the parked pool is untouched), its logs are archived, and a linked worktree's node_modules and Pods are deleted for the next Stim command to restore; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never",
   },
   {
+    key: 'idle.sourceDormantDays',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 7,
+    description:
+      "Days without activity before a source (main) checkout's node_modules and Pods are deleted, at any pressure level; a stim worktree warm that copied from it counts as activity. Linked worktrees follow idle.dormantDays and go first. Fractions of a day are allowed; 0 never",
+  },
+  {
     key: 'macos.product',
     type: { kind: 'string', pattern: '^[A-Za-z0-9_-]+$', patternHelp: 'a Swift Package executable product name' },
     scopes: PROJECT,
@@ -808,7 +816,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'maintenance.olderThanDays',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
-    default: 7,
+    default: 3,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
     description:
       'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',

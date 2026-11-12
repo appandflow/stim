@@ -2411,7 +2411,13 @@ command in it: `stim worktree warm` puts back `node_modules` and `ios/Pods`. Whe
 warm cannot restore the same versions (the worktree's lockfile differs from the
 source checkout's, or the source checkout's dependencies were not installed from
 its own lockfile), the command refuses with `STIM_DEPS_FAILED` and asks for an
-install. The source checkout's `node_modules` is never deleted, and `gc` deletes
+install. A source (main) checkout's `node_modules` and `ios/Pods` are deleted only
+after every linked worktree's: once it has had no activity for
+`idle.sourceDormantDays` (7 by default; `0` never; a `worktree warm` that copied
+from it counts as activity) at any level, or at critical when the disk is still
+under the critical level, which `stim gc --pressure critical` always does. Then
+`stim worktree warm` and `stim status` say the source has no installed
+dependencies to copy, and since when, until you install them there. `gc` deletes
 only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.

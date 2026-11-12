@@ -196,7 +196,7 @@ In on mode a pass runs, cheapest to rebuild first:
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android; never
 at a set hour.
-maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
+maintenance.olderThanDays (3) is its age for steps 2, 3, 5 and 6; with 0 the
 sweep removes nothing in them by age, while step 1, step 7, finished
 worktrees and the cap and disk-driven parts of steps 2 and 3 still run.
 Kept for
@@ -585,8 +585,22 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
   or the source checkout's dependencies were not installed from its own
-  lockfile), refuses with STIM_DEPS_FAILED and asks for an install. The source
-  checkout's node_modules is never deleted. Only git-ignored regenerable
+  lockfile), refuses with STIM_DEPS_FAILED and asks for an install. A source
+  (main) checkout's node_modules and ios/Pods are deleted in two cases only,
+  after those of every linked worktree: it has had no activity for
+  idle.sourceDormantDays (7; 0 never; a worktree warm that copied from it is
+  activity), at any level, or the level is critical, the checkout is idle 2
+  minutes and its volume is still under the critical level (pressure ladder
+  rung 8, before the history and tool caches; \`stim gc --pressure critical\`
+  always takes it). Nothing that runs from or works in it, builds, drives,
+  leases, hosts or is pinned with maintenance.keep is touched. The deletion is
+  recorded in the checkout's workspace; \`stim worktree warm\` in a linked
+  worktree then says on stderr that the source has no installed dependencies
+  to copy and since when, \`stim status\` and --json sourceDependenciesCleared
+  show the same, and the record ends once they are installed again. A source
+  checkout is kept longer for a reason: it is what new worktrees warm from,
+  so keeping it installed is worth more than keeping one worktree installed.
+  Only git-ignored regenerable
   directories are deleted: a real directory inside the checkout whose files git
   ignores, with no tracked or unignored file, not reached through a link.
 

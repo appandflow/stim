@@ -1,4 +1,10 @@
-import { diskUsageCacheFile, readJsonObject, workspaceLightenedFile } from '@stim-cli/core/state';
+import {
+  currentSourceDependencies,
+  diskUsageCacheFile,
+  readJsonObject,
+  readWorkspaceState,
+  workspaceLightenedFile,
+} from '@stim-cli/core/state';
 import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
@@ -21,6 +27,7 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
+import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
 import { testContext } from './_context.ts';
 
 function recordedDirs(root: string): unknown {
@@ -141,12 +148,12 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
   return roots;
 }
 
-async function gcJson() {
+async function gcJson(pressure: 'high' | 'critical' = 'critical') {
   const stdout: string[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    await runGc({ dryRun: true, pressure: 'critical', json: true });
+    await runGc({ dryRun: true, pressure, json: true });
   } finally {
     log.mockRestore();
     error.mockRestore();
@@ -195,7 +202,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical deletes only those of an idle linked worktree that warm can restore and nothing runs in',
+  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical deletes those of an idle linked worktree that warm can restore and nothing runs in, then the source checkout',
   async () => {
     const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const roots = idleRepo([
@@ -215,6 +222,9 @@ test.skipIf(process.platform === 'win32')(
       const { payload }: { payload: LevelPayload } = await gcJson();
       const critical = payload.actions.filter((action) => action.kind === 'delete-dependencies');
       expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
+      expect(critical.map((action) => action.target).indexOf(join(at('repo'), 'node_modules'))).toBeGreaterThan(
+        critical.map((action) => action.target).indexOf(join(at('feature'), 'node_modules')),
+      );
       expect(critical.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
       await quietly(() => runGc({ pressure: 'normal' }));
       expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
@@ -226,7 +236,7 @@ test.skipIf(process.platform === 'win32')(
 
     expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
     expect(recordedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
-    for (const name of ['repo', 'busy', 'keyless', 'drifted'])
+    for (const name of ['busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
   },
@@ -322,6 +332,101 @@ test.skipIf(process.platform === 'win32')(
     expect(await restoreLightenedDependencies(root, context)).toBeNull();
     expect(existsSync(join(dir, 'partial'))).toBe(false);
     expect(warm.calls).toHaveLength(4);
+  },
+  60_000,
+);
+
+function ageCheckout(root: string, at: Date) {
+  recordWorkspaceUse(root, at);
+  utimesSync(workspaceStateFile(root), at, at);
+  ageTree(join(root, 'node_modules'), at);
+  ageTree(join(root, 'ios'), at);
+  const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', { cwd: root, encoding: 'utf-8' }).trim();
+  for (const file of ['index', 'HEAD', join('logs', 'HEAD')])
+    if (existsSync(join(gitDir, file))) utimesSync(join(gitDir, file), at, at);
+}
+
+const currentConfig = () => loadConfig() ?? { version: 2 as const, projects: {}, repos: {} };
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
+
+test.skipIf(process.platform === 'win32')(
+  'gc at critical takes the source checkout dependencies after the linked worktrees, records it, and the record ends once they are installed',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+
+    const { payload } = await gcJson();
+    const order = criticalDependencies(payload);
+    expect(order.indexOf(join(source, 'node_modules'))).toBeGreaterThan(
+      order.indexOf(join(roots.feature ?? '', 'node_modules')),
+    );
+    expect(order).toContain(join(source, 'ios', 'Pods'));
+    await quietly(() => runGc({ pressure: 'critical' }));
+
+    expect(existsSync(join(source, 'node_modules'))).toBe(false);
+    expect(existsSync(join(source, 'ios', 'Pods'))).toBe(false);
+    const cleared = currentSourceDependencies(readWorkspaceState(source));
+    expect(cleared?.dirs.toSorted()).toEqual([join(source, 'ios', 'Pods'), join(source, 'node_modules')]);
+    expect(readWorkspaceState(roots.feature ?? '')?.sourceDependenciesCleared).toBeUndefined();
+
+    write(join(source, 'node_modules', 'pkg', 'index.js'));
+    expect(currentSourceDependencies(readWorkspaceState(source))?.dirs).toEqual([join(source, 'ios', 'Pods')]);
+    write(join(source, 'ios', 'Pods', 'Manifest.lock'));
+    expect(currentSourceDependencies(readWorkspaceState(source))).toBeNull();
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'the source checkout dependencies are not a candidate at high, and critical keeps one a process runs in or maintenance.keep pins',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+
+    const high = await gcJson('high');
+    expect(criticalDependencies(high.payload).some((path) => path.startsWith(`${source}/`))).toBe(false);
+
+    const child = spawn('sleep', ['60'], { cwd: source, stdio: 'ignore' });
+    try {
+      await quietly(() => runGc({ pressure: 'critical' }));
+      expect(existsSync(join(source, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    } finally {
+      child.kill('SIGKILL');
+    }
+    writeFileSync(join(source, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(join(source, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    expect(existsSync(join(roots.feature ?? '', 'node_modules'))).toBe(false);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'at normal a source checkout idle idle.sourceDormantDays loses its dependencies; fewer days, a recent warm from it, or the setting 0 keep them',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const kept = () => existsSync(join(source, 'node_modules', 'pkg', 'index.js'));
+
+    ageCheckout(source, daysAgo(6));
+    await quietly(() => runGc({ pressure: 'normal' }));
+    expect(kept()).toBe(true);
+
+    ageCheckout(source, daysAgo(8));
+    recordWarmedFrom(source, daysAgo(2));
+    await quietly(() => runGc({ pressure: 'normal' }));
+    expect(kept()).toBe(true);
+
+    saveConfig({ ...currentConfig(), idle: { sourceDormantDays: 0 } });
+    ageCheckout(source, daysAgo(8));
+    await quietly(() => runGc({ pressure: 'normal' }));
+    expect(kept()).toBe(true);
+
+    saveConfig({ ...currentConfig(), idle: {} });
+    await quietly(() => runGc({ pressure: 'normal' }));
+    expect(kept()).toBe(false);
+    expect(currentSourceDependencies(readWorkspaceState(source))).not.toBeNull();
+    expect(existsSync(join(roots.feature ?? '', 'node_modules'))).toBe(true);
   },
   60_000,
 );

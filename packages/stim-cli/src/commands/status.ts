@@ -18,7 +18,7 @@ import { iosStatusName, liveProbes, readStatus, refreshLightFacts, type StatusSn
 import chalk from 'chalk';
 import { statSync } from 'fs';
 import { totalmem, userInfo } from 'os';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { quotedPath } from '@stim-cli/core';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
@@ -166,6 +166,11 @@ function timeIn(at: string, now: number): string {
   return Number.isFinite(since) ? ` for ${formatLongDuration(Math.max(0, now - since))}` : '';
 }
 
+/** A source checkout whose installed dependencies maintenance deleted, so a worktree warm has none to copy. */
+function sourceDependenciesLine(root: string, { at, dirs }: { at: string; dirs: string[] }): string {
+  return `  source checkout: ${dirs.map((dir) => relative(root, dir) || dir).join(' and ')} deleted ${at}; worktree warm has nothing to copy until they are installed here`;
+}
+
 /** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
 function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
   if (state.dormantStage) {
@@ -292,6 +297,8 @@ export function renderStatus(
     );
 
     if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));
+    if (!labelOnlyRoots[i] && state.sourceDependenciesCleared)
+      out.push(chalk.dim(sourceDependenciesLine(state.path, state.sourceDependenciesCleared)));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)

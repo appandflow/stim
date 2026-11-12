@@ -38,6 +38,7 @@ import {
   type RunningProcesses,
 } from '../../workspace/running-from.ts';
 import { finishLightened, recordLightened, restoreProblem } from '../../workspace/lightened.ts';
+import { recordSourceDependencies } from '../../workspace/source-dependencies.ts';
 import {
   listWorktrees,
   LOCKED_REASON,
@@ -138,14 +139,14 @@ export async function artifactWorktreesAsync(
     const entry = artifactWorktree(root, entries, source);
     if (entry) found.set(entry.path, entry);
   }
-  const linked = [...found.values()].filter((entry) => entry.linked);
-  if (linked.length) {
+  const checkouts = [...found.values()];
+  if (checkouts.length) {
     const agents = await agentSessionUse(
-      linked.map((entry) => entry.path),
+      checkouts.map((entry) => entry.path),
       Date.now(),
       signal,
     );
-    linked.forEach((entry, i) => {
+    checkouts.forEach((entry, i) => {
       entry.agents = agents[i] ?? [];
     });
   }
@@ -370,6 +371,8 @@ export async function collectArtifactsAsync(
     windowMs: number;
     protectedRoot: string;
     pinned: (workspace: string) => boolean | Promise<boolean>;
+    /** Dependencies of source checkouts, instead of those of linked worktrees. */
+    source?: boolean;
   },
   signal: AbortSignal,
   operation?: StimContext,
@@ -378,7 +381,7 @@ export async function collectArtifactsAsync(
   const skips: { target: string; reason: string }[] = [];
   const running = kind === 'dependencies' ? await readRunningProcessesAsync(signal) : null;
   for (const worktree of await artifactWorktreesAsync(signal, operation)) {
-    if (kind === 'dependencies' && !worktree.linked) continue;
+    if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
     const pinned = await pinsOf(worktree.keys, options.pinned);
@@ -469,6 +472,8 @@ export async function clearArtifact(
     worktrees: readonly ArtifactWorktree[];
     /** Keep dependencies that worktree warm could not restore with the same versions. */
     requireRestorable?: boolean;
+    /** The dependencies of a source checkout, which no worktree warm restores; their deletion is recorded in its workspace. */
+    source?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
     /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
     recheck?: (workspace: string) => Promise<string | null>;
@@ -483,14 +488,18 @@ export async function clearArtifact(
       (best, entry) => (best && best.path.length >= entry.path.length ? best : entry),
       null,
     );
-  if (kind === 'dependencies' && worktree && !worktree.linked)
-    return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
+  if (kind === 'dependencies' && worktree && worktree.linked === Boolean(options.source))
+    return {
+      status: 'kept',
+      bytes: 0,
+      detail: options.source ? 'it is in a linked worktree' : 'it is in the source checkout',
+    };
   if (!worktree || !isKnownDir(kind, action.target))
     return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
     return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
-  const agents = worktree.linked ? ((await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? []) : [];
+  const agents = (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [];
   const candidate = {
     worktree: worktree.path,
     path: action.target,
@@ -531,10 +540,11 @@ export async function clearArtifact(
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(key) : null;
     if (late) return late;
-    const record = kind === 'dependencies';
+    const record = kind === 'dependencies' && !options.source;
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
     if (record) finishLightened(candidate.keys, candidate.path);
+    if (kind === 'dependencies' && options.source) recordSourceDependencies(candidate.keys, candidate.path);
     return null;
   };
   const kept = key

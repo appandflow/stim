@@ -47,7 +47,7 @@ Resolution order, first match wins:
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile, idle.minutes and
-                     archive.enabled; idle.dormantDays is machine-only
+                     archive.enabled; idle.dormantDays and idle.sourceDormantDays are machine-only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -504,6 +504,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         ios/Pods deleted for the next Stim command to restore
                         (default 1; fractions allowed; 0 never). Every level
                         of \`stim gc\` and the stim-daemon apply it.
+  idle.sourceDormantDays
+                        days without activity before a source (main)
+                        checkout's node_modules and ios/Pods are deleted, at
+                        any level, after those of linked worktrees (default
+                        7; fractions allowed; 0 never; machine only). A
+                        \`stim worktree warm\` that copied from the checkout
+                        counts as activity. See \`guide cleanup disk\`.
                         Machine layer. See \`guide lifecycle budget\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos

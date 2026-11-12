@@ -34,6 +34,7 @@ import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
+import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
@@ -490,10 +491,19 @@ export async function warmWorktreeTarget(opts: {
               await relocateCarriedPods(root, target, result.copied, out);
               reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
+            const sourceApp = mainCheckoutAppDir(root, target, opts.cwd);
+            if (result.copied.length) recordWarmedFrom(sourceApp);
+            const noDependencies = sourceDependenciesNotice({
+              root,
+              appDir: sourceApp,
+              iosDir: appIosProjectDir(sourceApp).dir,
+              install: (dir) => dependencyInstallCommand(dir),
+              pods: (dir) => podInstallCommand(root, dir),
+            });
             out(
               phaseLine(
                 'carry',
-                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed${noDependencies ? `; ${noDependencies}` : ''}`,
               ),
             );
             if (result.failed.length) exitCode = 1;

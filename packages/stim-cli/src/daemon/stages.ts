@@ -32,9 +32,11 @@ import {
   unseenEmulatorError,
 } from '../stimd/passes/idle-stop.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { checkoutRoleOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
@@ -60,11 +62,19 @@ export interface StageCandidate {
   project: ProjectRecord;
   /** How long the workspace has had no activity. */
   idleMs: number;
+  /** A source checkout is taken after every linked worktree. */
+  role: CheckoutRole;
 }
 
 /** `idle.dormantDays` in milliseconds; 0 when the dormant stage is off. */
 export function dormantAfterMs(config: Config | null, env: NodeJS.ProcessEnv = process.env): number {
   const { value } = machineNumber('idle.dormantDays', config, env);
+  return (value ?? 0) * DAY_MS;
+}
+
+/** `idle.sourceDormantDays` in milliseconds; 0 when a source checkout's dependencies are never deleted for idleness. */
+export function sourceDormantAfterMs(config: Config | null, env: NodeJS.ProcessEnv = process.env): number {
+  const { value } = machineNumber('idle.sourceDormantDays', config, env);
   return (value ?? 0) * DAY_MS;
 }
 
@@ -195,7 +205,7 @@ async function idleWorkspaces(
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
   { discover = false }: { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
-  const readings: (Omit<StageCandidate, 'idleMs'> & { idleMs: number | null })[] = [];
+  const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
   const discovered = discover
     ? (await discoverCheckouts(config, listedRoots(), reading.operation)).map(({ path }): [string, ProjectRecord] => [
@@ -217,7 +227,11 @@ async function idleWorkspaces(
       reading.operation?.signal.throwIfAborted();
     }
   }
-  return longestIdleFirst(readings);
+  const idle = longestIdleFirst(readings);
+  const candidates: StageCandidate[] = [];
+  for (const entry of idle)
+    candidates.push(Object.assign(entry, { role: await checkoutRoleOf(entry.path, reading.operation) }));
+  return linkedFirst(candidates);
 }
 
 async function hasOutputs(path: string): Promise<boolean> {
@@ -233,7 +247,7 @@ export async function stillIdle(path: string, thresholdMs: number, operation?: S
   return (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked: true, operation })) !== null;
 }
 
-/** Workspaces with nothing running, idle `thresholdMs` by the activity definition, longest-idle first. */
+/** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
 export function idleStageCandidates(
   config: Config,
   reading: DeviceReading,

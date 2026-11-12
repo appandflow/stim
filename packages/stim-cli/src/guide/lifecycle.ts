@@ -1652,7 +1652,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   No CLI path erases a parked device and keeps it parked.
 
   Automatic maintenance's daily age sweep deletes the devices
-  parked for maintenance.olderThanDays (7; 0 never).
+  parked for maintenance.olderThanDays (3; 0 never).
 
   If simulator listing or deletion fails, \`gc\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
@@ -2550,9 +2550,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        command used for 7 days, only while maintenance.removeIdleWorktrees is
        true. The tick uses the pull request lookups the
        worktree check cached instead of calling gh; stim gc looks them up again
-    8. critical only: every device recording not being written, except those
-       of workspaces pinned with maintenance.keep or in use, and archived
-       logs, recordings and agent actions
+    8. critical only: first the node_modules and Pods of source (main)
+       checkouts idle 2 minutes, on a volume still under the critical level
+       and only after rungs 5 and 7 took every linked worktree's (a source
+       checkout is what worktree warm copies from, and one reinstall costs
+       less than losing the history and tool caches below; stim gc
+       --pressure critical always takes it); then every device recording not
+       being written, except those of workspaces pinned with maintenance.keep
+       or in use, and archived logs, recordings and agent actions
     9. last, at critical only, never in a STIM_HOME-scoped home and never in
        the in-process ladder a build command runs at disk.hardFloorGb: caches
        Stim does not own, each
@@ -2650,7 +2655,19 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   cannot restore the same versions (its lockfile differs from the source
   checkout's, or the source checkout's dependencies were not installed from
   its own lockfile), refuses with STIM_DEPS_FAILED and asks for an install.
-  The source checkout's node_modules is never deleted. The bytes it reports
+  Every stage takes linked worktrees before source (main) checkouts, longest
+  idle first in each. A source checkout's node_modules and ios/Pods go when it
+  has had no activity for idle.sourceDormantDays (7; 0 never; at any level, last
+  in this step; a worktree warm that copied from it is activity), or at
+  critical under rung 8; its build outputs follow the one-day rule like any
+  workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
+  in a linked worktree then adds to its carry line that the source has no
+  installed node_modules or ios/Pods to copy and since when, with the
+  installs to run (the source's own, and this worktree's: warm never installs,
+  and a build there without dependencies fails until they are installed); \`stim
+  status\` prints a source checkout line and --json carries
+  sourceDependenciesCleared { at, dirs }, until the directories are installed
+  again. The bytes it reports
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB

@@ -86,7 +86,10 @@ export async function restoreProblem(
   const facts = await pending;
   if (!facts) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
   const rel = relative(worktree, path);
-  if (!facts.carryable.has(rel)) return `worktree warm would not copy ${rel} back from the source checkout`;
+  if (!facts.carryable.has(rel))
+    return existsSync(join(facts.source, rel))
+      ? `worktree warm would not copy ${rel} back from the source checkout`
+      : `the source checkout has no installed ${rel} to copy, so worktree warm could not restore it`;
   const pods = basename(rel) === 'Pods';
   if ((pods ? podsOutOfSync(facts.source, [rel]) : depsOutOfSync(facts.source, facts.source, [rel])).length)
     return `the source checkout's ${rel} was not installed from its own lockfile, so worktree warm would restore other versions`;
