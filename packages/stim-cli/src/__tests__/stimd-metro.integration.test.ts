@@ -269,6 +269,7 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     mkdirSync(logs, { recursive: true });
     const raw = join(logs, macosAppLogName('off-mode', 'out'));
     writeFileSync(raw, 'off mode output\n');
+    writeFileSync(join(logs, macosAppLogName('off-mode', 'err')), '');
     writeWorkspaceState(root, {
       macos: {
         launchId: 'off-mode',

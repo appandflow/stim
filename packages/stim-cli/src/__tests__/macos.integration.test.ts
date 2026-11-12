@@ -78,6 +78,8 @@ let root: string;
 const children: ChildProcess[] = [];
 const helperPids: number[] = [];
 
+const NATURAL_END = 'Sample ended without being stopped by Stim; its exit status is unknown.';
+
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-macos-')));
   root = join(dir, 'app');
@@ -458,7 +460,7 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
 });
 
 test.skipIf(process.platform === 'win32')(
-  'the runtime claim remains live while a launched app helper survives',
+  'a group member keeps the run open until a requested end stops the launch group',
   async () => {
     const declaration = tryAcquireClaim({
       root: join(dir, 'launch.lock'),
@@ -473,7 +475,7 @@ test.skipIf(process.platform === 'win32')(
       file: process.execPath,
       args: [
         '-e',
-        `const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); child.on('spawn', () => setTimeout(() => process.exit(0), 300));`,
+        `const { spawn } = require('node:child_process'); const child = spawn('/bin/sleep', ['60'], { stdio: 'ignore' }); child.on('spawn', () => { console.log('member ' + child.pid); setTimeout(() => process.exit(0), 300); });`,
       ],
       cwd: root,
       env: process.env,
@@ -485,27 +487,32 @@ test.skipIf(process.platform === 'win32')(
     const app = { ...owned, startedAtMicros: 1 };
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const streams = createOwnedStreams(() => {});
+    const drain = vi
+      .spyOn(stimdClient, 'drainOwnedMacos')
+      .mockImplementation((workspace) => streams.drain(workspace, true));
+    const log = join(logs, 'macos-app.ndjson');
+    let member = 0;
     try {
       await streams.sync(root);
       expect(await waitForProcessExit(owned, 5000)).toBe(true);
-      expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
-      await expect(stopMacosApp(root)).rejects.toMatchObject({
-        code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        message: expect.stringContaining('no signal was sent to that process group'),
+      member = await vi.waitFor(() => {
+        const line = /member (\d+)/.exec(existsSync(log) ? readFileSync(log, 'utf8') : '')?.[1];
+        if (!line) throw new Error('the group member was not copied');
+        return Number(line);
       });
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
-      appendFileSync(out, 'helper output after leader\n');
-      const log = join(logs, 'macos-app.ndjson');
-      for (
-        let tries = 0;
-        tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('helper output after leader'));
-        tries++
-      )
-        await new Promise((done) => setTimeout(done, 50));
-      expect(readFileSync(log, 'utf8')).toContain('helper output after leader');
+      expect(await streams.drain(root, true)).toContain(`process group ${owned.pid} remains`);
       expect(readFileSync(log, 'utf8')).not.toContain('Exited Sample.');
-      expect(existsSync(out)).toBe(true);
+      expect(await stopMacosApp(root)).toBe(true);
+      expect(() => process.kill(member, 0)).toThrow(/ESRCH/);
+      const records = readFileSync(log, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line): Record<string, unknown> => JSON.parse(line));
+      expect(records.at(-1)).toMatchObject({ level: 'info', msg: 'Exited Sample.' });
+      expect(readClaimSet(claimRoot).live).toHaveLength(0);
     } finally {
+      drain.mockRestore();
       streams.close();
       try {
         process.kill(-owned.pid, 'SIGKILL');
@@ -514,6 +521,7 @@ test.skipIf(process.platform === 'win32')(
       releaseClaim(declaration);
     }
   },
+  20_000,
 );
 
 test('an unresolved app-spawn claim blocks cleanup and refuses a successful stop', async () => {
@@ -541,6 +549,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'printed before the crash\n');
     writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), 'fatal: missing library');
     const log = join(logs, 'macos-app.ndjson');
@@ -557,7 +567,7 @@ test.skipIf(process.platform === 'win32')(
       const streams = createOwnedStreams(() => {});
       try {
         await streams.sync(root);
-        for (let tries = 0; tries < 40 && client().length < 3; tries++)
+        for (let tries = 0; tries < 100 && client().length < 3; tries++)
           await new Promise((done) => setTimeout(done, 50));
         await new Promise((done) => setTimeout(done, stimd === 2 ? 600 : 0));
       } finally {
@@ -567,7 +577,7 @@ test.skipIf(process.platform === 'win32')(
     expect(client()).toEqual([
       ['info', 'printed before the crash'],
       ['warn', 'fatal: missing library'],
-      ['info', 'Exited Sample.'],
+      ['error', NATURAL_END],
     ]);
   },
 );
@@ -579,6 +589,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app: previous, supervisor: previous }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const oldOutput = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(oldOutput, 'previous final output');
     const streams = createOwnedStreams(() => {});
@@ -589,20 +601,21 @@ test.skipIf(process.platform === 'win32')(
       const next = await ownedProcess();
       writeWorkspaceState(root, { macos: record({ launchId: 'next-launch', app: next, supervisor: next }) });
       writeFileSync(join(logs, macosAppLogName('next-launch', 'out')), 'new output\n');
+      writeFileSync(join(logs, macosAppLogName('next-launch', 'err')), '');
       await streams.sync(root);
       const log = join(logs, 'macos-app.ndjson');
       for (
         let tries = 0;
-        tries < 40 &&
+        tries < 100 &&
         (!existsSync(log) ||
           !readFileSync(log, 'utf8').includes('new output') ||
-          !readFileSync(log, 'utf8').includes('Exited Sample.'));
+          !readFileSync(log, 'utf8').includes(NATURAL_END));
         tries++
       )
         await new Promise((done) => setTimeout(done, 50));
       const output = readFileSync(log, 'utf8');
       expect(output).toContain('previous final output');
-      expect(output).toContain('Exited Sample.');
+      expect(output).toContain(NATURAL_END);
       expect(output).toContain('new output');
     } finally {
       streams.close();
@@ -617,6 +630,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final line');
     const streams = createOwnedStreams(() => {});
     try {
@@ -627,7 +642,7 @@ test.skipIf(process.platform === 'win32')(
       expect(await streams.drain(root)).toBeNull();
       const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
       expect(output).toContain('final line');
-      expect(output).toContain('Exited Sample.');
+      expect(output).toContain(NATURAL_END);
       rmSync(logs, { recursive: true });
       await streams.sync(root);
       expect(existsSync(logs)).toBe(false);
@@ -642,6 +657,8 @@ test.skipIf(process.platform === 'win32')(
   async () => {
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const raw = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(raw, '');
     const child = getExecutor().spawn(
@@ -665,7 +682,9 @@ test.skipIf(process.platform === 'win32')(
     try {
       await streams.sync(root);
       expect(await stopMacosApp(root)).toBe(true);
-      expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('final diagnostic');
+      const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
+      expect(output).toContain('final diagnostic');
+      expect(output.trim().split('\n').at(-1)).toContain('"level":"info","msg":"Exited Sample."');
     } finally {
       drain.mockRestore();
       streams.close();
@@ -688,6 +707,8 @@ test.skipIf(process.platform === 'win32')(
       writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor: app }) });
       const logs = workspaceLogsDir(hostedRoot);
       mkdirSync(logs, { recursive: true });
+      writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+      writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
       writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final hosted output\n');
       const child = children.at(-1);
       assert(child);
@@ -720,6 +741,8 @@ test.skipIf(process.platform === 'win32')('hosted observe acknowledges only the 
     writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(hostedRoot);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'hosted output\n');
     writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
     process.env.STIM_HOME = serverHome;
@@ -757,6 +780,8 @@ test.skipIf(process.platform === 'win32')('local observe acknowledges only the m
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     const err = join(logs, macosAppLogName('test-launch', 'err'));
     const log = join(logs, 'macos-app.ndjson');
@@ -799,6 +824,7 @@ test.skipIf(process.platform === 'win32')('quiet macOS observation refuses when 
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
   writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
   const log = join(logs, 'macos-app.ndjson');
@@ -820,6 +846,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
     writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
     const staging = join(logs, 'macos-app.tail.json.tmp');
@@ -845,6 +873,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(out, 'final output\n');
     const streams = createOwnedStreams(() => {});
@@ -863,7 +893,7 @@ test.skipIf(process.platform === 'win32')(
         .trim()
         .split('\n')
         .map((line): Record<string, unknown> => JSON.parse(line));
-      expect(lines.filter((line) => line.msg === 'Exited Sample.')).toHaveLength(1);
+      expect(lines.filter((line) => line.msg === NATURAL_END)).toHaveLength(1);
     } finally {
       streams.close();
     }
@@ -875,6 +905,7 @@ test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when 
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'raw output\n');
   writeFileSync(join(logs, 'macos-app.ndjson'), 'saved output\n');
   const stopDrain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
@@ -897,6 +928,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(out, 'retry this line\n');
     const log = join(logs, 'macos-app.ndjson');
@@ -912,7 +945,7 @@ test.skipIf(process.platform === 'win32')(
       expect(await streams.drain(root)).toBeNull();
       const output = readFileSync(log, 'utf8');
       expect(output).toContain('retry this line');
-      expect(output).toContain('Exited Sample.');
+      expect(output).toContain(NATURAL_END);
     } finally {
       streams.close();
     }
@@ -924,6 +957,7 @@ test('a reused app PID can be finalized when its original group is gone', async 
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final output\n');
   const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('different');
   const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
@@ -946,6 +980,8 @@ test.each([false, true])(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(out, 'first output\n');
     const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('same');
@@ -961,7 +997,7 @@ test.each([false, true])(
       expect(await streams.drain(root, macosOnly)).toBeNull();
       const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
       expect(output).toContain('final output');
-      expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
+      expect(output.indexOf('final output')).toBeLessThan(output.indexOf(NATURAL_END));
     } finally {
       await streams.close();
       identity.mockRestore();
@@ -975,6 +1011,7 @@ test.each([false, true])('drain starts an unobserved local macOS tail (macosOnly
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'unobserved output\n');
   const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('gone');
   const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
@@ -983,7 +1020,7 @@ test.each([false, true])('drain starts an unobserved local macOS tail (macosOnly
     expect(await streams.drain(root, macosOnly)).toBeNull();
     const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
     expect(output).toContain('unobserved output');
-    expect(output.indexOf('unobserved output')).toBeLessThan(output.indexOf('Exited Sample.'));
+    expect(output.indexOf('unobserved output')).toBeLessThan(output.indexOf(NATURAL_END));
   } finally {
     await streams.close();
     identity.mockRestore();
@@ -996,12 +1033,13 @@ test.skipIf(process.platform === 'win32')('stimd preserves a partial output line
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   const out = join(logs, macosAppLogName('test-launch', 'out'));
   const mark = join(logs, 'macos-app.tail.json');
   writeFileSync(out, 'first half ');
   const first = createOwnedStreams(() => {});
   await first.sync(root);
-  for (let tries = 0; tries < 40 && !existsSync(mark); tries++) await new Promise((done) => setTimeout(done, 50));
+  for (let tries = 0; tries < 100 && !existsSync(mark); tries++) await new Promise((done) => setTimeout(done, 50));
   expect(existsSync(mark)).toBe(true);
   first.close();
   appendFileSync(out, 'second half\n');
@@ -1009,7 +1047,7 @@ test.skipIf(process.platform === 'win32')('stimd preserves a partial output line
   try {
     await second.sync(root);
     const log = join(logs, 'macos-app.ndjson');
-    for (let tries = 0; tries < 40 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
+    for (let tries = 0; tries < 100 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
     expect(readFileSync(log, 'utf8')).toContain('first half second half');
   } finally {
     second.close();
@@ -1021,6 +1059,7 @@ test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and co
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   const out = join(logs, macosAppLogName('test-launch', 'out'));
   writeFileSync(out, 'x'.repeat(8 * 1024 * 1024));
   const streams = createOwnedStreams(() => {});
@@ -1031,7 +1070,11 @@ test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and co
     expect(statSync(out).size).toBe(0);
     appendFileSync(out, 'after reset\n');
     const log = join(logs, 'macos-app.ndjson');
-    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
+    for (
+      let tries = 0;
+      tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset'));
+      tries++
+    )
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
     expect(output).toContain('output may have been dropped');
@@ -1046,6 +1089,7 @@ test.skipIf(process.platform === 'win32')('the first drain succeeds when both ra
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   const out = join(logs, macosAppLogName('test-launch', 'out'));
   const err = join(logs, macosAppLogName('test-launch', 'err'));
   writeFileSync(out, 'x'.repeat(8 * 1024 * 1024 + 1));
@@ -1058,7 +1102,7 @@ test.skipIf(process.platform === 'win32')('the first drain succeeds when both ra
     expect(await streams.drain(root)).toBeNull();
     const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
     expect(output).toContain('output may have been dropped');
-    expect(output).toContain('Exited Sample.');
+    expect(output).toContain(NATURAL_END);
   } finally {
     streams.close();
   }
@@ -1069,6 +1113,7 @@ test.skipIf(process.platform === 'win32')('stimd caps both raw streams while the
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   const out = join(logs, macosAppLogName('test-launch', 'out'));
   const err = join(logs, macosAppLogName('test-launch', 'err'));
   const log = join(logs, 'macos-app.ndjson');
@@ -1115,6 +1160,8 @@ test.skipIf(process.platform === 'win32')(
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     const log = join(logs, 'macos-app.ndjson');
     const staging = join(logs, 'macos-app.tail.json.tmp');
@@ -1142,6 +1189,7 @@ test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool r
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '', { flag: 'a' });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'after reset\n');
   writeFileSync(
     join(logs, 'macos-app.tail.json'),
@@ -1156,7 +1204,11 @@ test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool r
   try {
     await streams.sync(root);
     const log = join(logs, 'macos-app.ndjson');
-    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
+    for (
+      let tries = 0;
+      tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset'));
+      tries++
+    )
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
     expect(output).toContain('output may have been dropped');

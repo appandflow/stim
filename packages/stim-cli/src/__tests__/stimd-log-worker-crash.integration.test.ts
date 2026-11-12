@@ -108,7 +108,7 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 15_000);
-  test('owned output resumes after worker exit but drain and shutdown retain uncertainty', async () => {
+  test('macOS output resumes after worker exit and drains, while shutdown keeps the uncertainty', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
@@ -147,7 +147,10 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       await vi.waitFor(() => expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('after crash'));
       child.kill('SIGKILL');
       await once(child, 'exit');
-      expect(await streams.ownedDrain(root)).toContain('previous owned log worker exited');
+      writeFileSync(join(logs, macosAppLogName('fixture', 'err')), '');
+      await vi.waitFor(async () => expect(await streams.ownedDrain(root, true)).toBeNull(), { timeout: 10_000 });
+      expect(await streams.ownedDrain(root)).toBeNull();
+      expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('ended without being stopped by Stim');
       await expect(streams.close()).rejects.toThrow('previous owned log worker exited');
     } finally {
       child.kill('SIGKILL');

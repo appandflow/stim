@@ -1,11 +1,20 @@
 import { readMacosRecord, stimdClaimRoot, type MacosAppRecord, type MacosProcess } from '@stim-cli/core/state';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync, startedBy } from './instances.ts';
-import { macosAppStderr, macosAppStdout, macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import {
+  macosAppStderr,
+  macosAppStdout,
+  macosAppStopRequest,
+  macosRuntimeClaim,
+  requiredMacosRecord,
+} from './state.ts';
+import { drained } from '../stimd/logs/macos-tail.ts';
+import { signalProcessTreeAsync } from '../metro.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { drainOwnedMacos } from '../daemon/client.ts';
 import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -71,9 +80,60 @@ export async function stopHostedBundleInstances(area: string, operation?: StimCo
   await stopProcesses(await runningInstancesInAsync(hostedBundleDirs(area), operation), undefined, operation);
 }
 
+/** Records that Stim ends the app it launched as `launchId`, before it signals it. */
+export function requestMacosStop(root: string, launchId: string): void {
+  const file = macosAppStopRequest(root, launchId);
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, '', { mode: 0o600 });
+}
+
+async function groupGone(pgid: number, waitMs: number): Promise<boolean> {
+  for (const deadline = Date.now() + waitMs; processGroupAlive(pgid);) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+/**
+ * Ends what remains of the process group `spawnOwned` created for the app of `record` after its leader exited. A
+ * group whose end the output tail already recorded was empty once, so its id may name another group now; it refuses.
+ *
+ * @ref LLP 0017#the-launch-group -- a requested end stops the group Stim created for the launch
+ */
+async function stopLaunchGroup(root: string, record: MacosAppRecord, app: MacosProcess): Promise<void> {
+  if (
+    record.supervisor?.pid !== app.pid ||
+    app.pid === process.pid ||
+    process.platform === 'win32' ||
+    !['gone', 'different'].includes(inspectProcessIdentity(app)) ||
+    !processGroupAlive(app.pid)
+  )
+    return;
+  if (!drained(workspaceLogsDir(root), app))
+    for (const name of ['SIGTERM', 'SIGKILL'] as const) {
+      try {
+        await signalProcessTreeAsync(app.pid, name, { group: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+      if (await groupGone(app.pid, APP_EXIT_MS)) return;
+    }
+  throw Object.assign(
+    new Error(
+      `The macOS app leader exited but process group ${app.pid} remains and could not be stopped as this launch's group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying.`,
+    ),
+    {
+      code: 'STIM_MACOS_OWNER_UNVERIFIED',
+      remedy: 'Verify the remaining group members belong to this workspace before stopping them.',
+    },
+  );
+}
+
 export async function stopMacosAppHeld(root: string, operation?: StimContext): Promise<boolean> {
   operation?.signal.throwIfAborted();
   const record = requiredMacosRecord(root);
+  if (record?.app && !record.host) requestMacosStop(root, record.launchId);
   const started = await startedBy(
     [record?.supervisor, record?.app].filter((each) => each !== undefined),
     operation,
@@ -87,23 +147,7 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   await stopProcesses(instances, undefined, operation);
   operation?.signal.throwIfAborted();
   if (!record) return instances.length > 0;
-  // POSIX may reuse a process group ID after its leader exits; a numeric group alone does not prove ownership.
-  if (
-    app &&
-    process.platform !== 'win32' &&
-    ['gone', 'different'].includes(inspectProcessIdentity(app)) &&
-    processGroupAlive(app.pid)
-  ) {
-    throw Object.assign(
-      new Error(
-        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying.`,
-      ),
-      {
-        code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        remedy: 'Verify the remaining group members belong to this workspace before stopping them.',
-      },
-    );
-  }
+  if (app) await stopLaunchGroup(root, record, app);
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
     throw Object.assign(

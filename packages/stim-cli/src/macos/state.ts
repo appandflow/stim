@@ -8,12 +8,15 @@ import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace
 
 export const macosDir = (root: string): string => join(workspaceDir(root), 'macos');
 export const macosLogFile = (root: string): string => join(workspaceLogsDir(root), 'macos.ndjson');
-export const macosAppLogName = (launchId: string, stream: 'out' | 'err'): string =>
+export const macosAppLogName = (launchId: string, stream: 'out' | 'err' | 'stop'): string =>
   `macos-app-${createHash('sha256').update(launchId).digest('hex')}.${stream}`;
 export const macosAppStdout = (root: string, launchId: string): string =>
   join(workspaceLogsDir(root), macosAppLogName(launchId, 'out'));
 export const macosAppStderr = (root: string, launchId: string): string =>
   join(workspaceLogsDir(root), macosAppLogName(launchId, 'err'));
+/** Present while Stim ends the app it launched as `launchId`, so the end is not reported as the app's own. */
+export const macosAppStopRequest = (root: string, launchId: string): string =>
+  join(workspaceLogsDir(root), macosAppLogName(launchId, 'stop'));
 export const macosRuntimeClaim = (root: string): string => join(macosDir(root), 'runtime.lock');
 
 export const macosAppPresent = (root: string): boolean =>

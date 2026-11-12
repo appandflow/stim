@@ -49,7 +49,13 @@ import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { drainMacosOutput, stopBundleInstances, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
+import {
+  drainMacosOutput,
+  requestMacosStop,
+  stopBundleInstances,
+  stopMacosAppHeld,
+  stopMacosChildren,
+} from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { resolveBuildPlacement, resolveBuildMachine } from '../build-placement.ts';
@@ -469,6 +475,7 @@ async function cleanupFailedMacosLaunch(
 ): Promise<void> {
   try {
     if (owned) {
+      requestMacosStop(root, record.launchId);
       for (const claim of operationState(context).declaring) markClaimChildPending(claim);
       if (inspectProcessIdentity(owned) !== 'same') {
         const recorded = requiredMacosRecord(root);

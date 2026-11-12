@@ -198,21 +198,9 @@ function occupiedBy(records: HostedDeviceSession[], platform: HostedDeviceSessio
 const capacityUnknown = (why: string) => `Hosted device capacity is unknown: ${why}`;
 
 const HOSTED_PLATFORM_CAPS = {
-  ios: {
-    setting: 'concurrency.maxIosDevices',
-    label: 'iOS',
-    noun: 'iOS simulator',
-  },
-  android: {
-    setting: 'concurrency.maxAndroidDevices',
-    label: 'Android',
-    noun: 'Android emulator',
-  },
-  macos: {
-    setting: 'concurrency.maxMacosApps',
-    label: 'macOS',
-    noun: 'macOS app',
-  },
+  ios: { setting: 'concurrency.maxIosDevices', label: 'iOS', noun: 'iOS simulator' },
+  android: { setting: 'concurrency.maxAndroidDevices', label: 'Android', noun: 'Android emulator' },
+  macos: { setting: 'concurrency.maxMacosApps', label: 'macOS', noun: 'macOS app' },
 } as const;
 
 const used = (limit: { hosted: number; local: number | null }) => limit.hosted + (limit.local ?? 0);
@@ -324,15 +312,10 @@ export class DeviceHost {
         }
         const records = readHostedSessions();
         const result = fn(records);
-        writeJson(join(root, 'sessions.json'), {
-          version: 1,
-          sessions: records,
-        });
+        writeJson(join(root, 'sessions.json'), { version: 1, sessions: records });
         return result;
       },
-      {
-        ensureParent: () => mkdirSync(join(root, '..'), { recursive: true, mode: 0o700 }),
-      },
+      { ensureParent: () => mkdirSync(join(root, '..'), { recursive: true, mode: 0o700 }) },
     );
   }
 
@@ -354,10 +337,7 @@ export class DeviceHost {
       root: join(deviceHostRoot(), `${record.id}.claims`),
       mode: 'exclusive',
       label: 'hosted device session',
-      details: {
-        session: record.id,
-        ...(record.client === undefined ? {} : { client: record.client }),
-      },
+      details: { session: record.id, ...(record.client === undefined ? {} : { client: record.client }) },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
@@ -437,9 +417,7 @@ export class DeviceHost {
       if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
       const records = readHostedSessions();
       const local = counted
-        ? (native.resources.localPlatforms ?? {
-            unknown: 'Host local device count is unavailable.',
-          })
+        ? (native.resources.localPlatforms ?? { unknown: 'Host local device count is unavailable.' })
         : undefined;
       const capacity = hostedCapacity(
         records,
@@ -465,10 +443,7 @@ export class DeviceHost {
       }
       if (local && 'unknown' in local) declined = capacityUnknown(local.unknown);
       else if (capacity.full) declined = capacity.full;
-      const resources = {
-        ...native.resources,
-        maxLoadPerCore: maxLoadPerCore(),
-      };
+      const resources = { ...native.resources, maxLoadPerCore: maxLoadPerCore() };
       delete resources.localPlatforms;
       return {
         result: {
@@ -479,11 +454,7 @@ export class DeviceHost {
             running: capacity.running,
             max,
             available: local && 'unknown' in local ? 0 : capacity.available,
-            ...(local !== undefined
-              ? {
-                  local: 'unknown' in local ? local : local.ios + local.android,
-                }
-              : {}),
+            ...(local !== undefined ? { local: 'unknown' in local ? local : local.ios + local.android } : {}),
           },
         },
       };
@@ -525,29 +496,19 @@ export class DeviceHost {
       const candidate = await this.parkedCandidate(client, request, recordsBefore);
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
-      let local: HostedLocalPlatformCounts | { unknown: string } = {
-        ios: 0,
-        android: 0,
-      };
+      let local: HostedLocalPlatformCounts | { unknown: string } = { ios: 0, android: 0 };
       if (
         (max > 0 || cap > 0) &&
         request.platform !== 'macos' &&
         !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)
       ) {
-        const probe = await this.probe(client, {
-          mode: 'count',
-          exclude: hostedDeviceExclusions(recordsBefore),
-        });
+        const probe = await this.probe(client, { mode: 'count', exclude: hostedDeviceExclusions(recordsBefore) });
         if (this.closed || !this.options.allowed(client))
           return refused('forbidden', 'Current device-host approval is required.');
         local =
           probe.settled && !probe.notice
-            ? (parseHostedLocalPlatformCounts(probe.value) ?? {
-                unknown: 'Host local device count is unavailable.',
-              })
-            : {
-                unknown: probe.notice ?? 'Host local device count worker did not settle.',
-              };
+            ? (parseHostedLocalPlatformCounts(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
+            : { unknown: probe.notice ?? 'Host local device count worker did not settle.' };
       }
       const result = this.transaction((records) => {
         const retry = records.find((record) => record.client === client && record.attempt === request.attempt);
@@ -631,10 +592,7 @@ export class DeviceHost {
             'idleStop',
           ] as const)
             delete adopted[key];
-          Object.assign(adopted, request, {
-            state: 'preparing',
-            createdAt: new Date().toISOString(),
-          });
+          Object.assign(adopted, request, { state: 'preparing', createdAt: new Date().toISOString() });
           if (consolePort !== undefined) {
             adopted.consolePort = consolePort;
             adopted.device = {
@@ -750,11 +708,7 @@ export class DeviceHost {
     delete observed.parked;
     delete observed.stoppedAt;
     if (this.resuming.has(record.id))
-      return {
-        ...observed,
-        state: 'unknown',
-        notice: 'This server is resuming the session; attach again shortly.',
-      };
+      return { ...observed, state: 'unknown', notice: 'This server is resuming the session; attach again shortly.' };
     if (record.state !== 'stopped' && !this.owned.has(record.id))
       return {
         ...observed,
@@ -803,12 +757,7 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.id === session);
       if (!record) return refused('unknown-session', 'No such hosted session.');
       this.beginStop(record);
-      return {
-        result: {
-          id: record.id,
-          state: record.state === 'stopped' ? 'stopped' : 'stopping',
-        },
-      };
+      return { result: { id: record.id, state: record.state === 'stopped' ? 'stopped' : 'stopping' } };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
@@ -822,12 +771,7 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
       this.beginStop(record);
-      return {
-        result: this.observed({
-          ...record,
-          state: record.state === 'stopped' ? 'stopped' : 'stopping',
-        }),
-      };
+      return { result: this.observed({ ...record, state: record.state === 'stopped' ? 'stopped' : 'stopping' }) };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
@@ -870,9 +814,7 @@ export class DeviceHost {
         return { result: { port } };
       }
       const clientMetroPort = typeof params.clientMetroPort === 'number' ? params.clientMetroPort : undefined;
-      return {
-        result: { port: await this.openMetro(record, owned, clientMetroPort) },
-      };
+      return { result: { port: await this.openMetro(record, owned, clientMetroPort) } };
     } catch (error) {
       return refused(
         (error as { code?: unknown }).code === 'device-busy' ? 'device-busy' : 'action-failed',
@@ -1104,9 +1046,7 @@ export class DeviceHost {
         ports.includes(record.clientMetroPort)
       )
         throw new Error(`Port ${record.clientMetroPort} is the session's Metro port, which Stim already bridges.`);
-      return {
-        result: { ports: await this.syncReverses(record, owned, ports) },
-      };
+      return { result: { ports: await this.syncReverses(record, owned, ports) } };
     } catch (error) {
       return refused(
         error instanceof Error && 'code' in error && error.code === 'device-busy' ? 'device-busy' : 'action-failed',
@@ -1346,12 +1286,7 @@ export class DeviceHost {
           adb(['shell', 'getprop', 'ro.product.cpu.abi']) !== device.architecture)
       )
         throw new Error('The hosted Android device identity or running ABI changed.');
-      return {
-        platform: 'android',
-        session: { ...record, device: record.device },
-        home,
-        claim: owned.claim,
-      };
+      return { platform: 'android', session: { ...record, device: record.device }, home, claim: owned.claim };
     }
     if (record.platform === 'macos') {
       if (!('appSlot' in record.device) || record.device.appSlot !== record.appSlot)
@@ -1408,12 +1343,7 @@ export class DeviceHost {
     assertHostedDeviceLedger(home, record.device.udid);
     if (readHostedDevice(home).udid !== record.device.udid)
       throw new Error('The device record no longer matches this session.');
-    return {
-      platform: 'ios',
-      session: { ...record, device: record.device },
-      home,
-      claim: owned.claim,
-    };
+    return { platform: 'ios', session: { ...record, device: record.device }, home, claim: owned.claim };
   }
 
   bindView(client: string, session: string, close: () => Promise<void>): () => void {
@@ -1658,9 +1588,7 @@ export class DeviceHost {
           more:
             page.more || (record.state === 'ready' && !owned?.stopping && !owned?.installing && !!owned?.logs?.more),
           ...(record.platform !== 'macos'
-            ? {
-                checkpoint: readHostedNativeLogsCheckpoint(home, record.platform)?.until,
-              }
+            ? { checkpoint: readHostedNativeLogsCheckpoint(home, record.platform)?.until }
             : {}),
         },
       };
@@ -1671,12 +1599,7 @@ export class DeviceHost {
 
   private takeLogsClaim(session: ClaimHandle): ClaimHandle {
     const root = `${session.root}.logs`;
-    const attempt = tryAcquireClaim({
-      root,
-      mode: 'exclusive',
-      label: 'hosted logs',
-      details: session.details,
-    });
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: 'hosted logs', details: session.details });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
       throw new ClaimRefusedError({
@@ -1694,10 +1617,7 @@ export class DeviceHost {
     if (record.platform === 'macos' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
       return Promise.resolve();
     const claim = this.takeLogsClaim(owned.claim);
-    const logs = (owned.logs = {
-      started: Date.now(),
-      more: false,
-    } as NonNullable<OwnedSession['logs']>);
+    const logs = (owned.logs = { started: Date.now(), more: false } as NonNullable<OwnedSession['logs']>);
     try {
       const run = (logs.run = this.run(record, owned, 'logs', attempt, claim, final));
       logs.pending = run.done.then((outcome) => {
@@ -1770,11 +1690,127 @@ export class DeviceHost {
     }
   }
 
-  // eslint-disable-next-line complexity -- the existing install path coordinates the hosted session lifecycle.
+  /** Stops and drains the hosted macOS app an earlier attempt launched; false when the install was interrupted. */
+  private async replacePreviousMacosApp(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    attempt: string,
+    interrupted: () => boolean,
+  ): Promise<boolean> {
+    const previousApp =
+      record.platform === 'macos' ? readHostedMacosApp(join(deviceHostArea(record.id), 'home')) : null;
+    if (previousApp?.app) {
+      const previous = this.run(record, owned, 'stop-app', attempt);
+      owned.run = previous;
+      const outcome = await previous.done;
+      if (interrupted()) return false;
+      const stoppedDevice = isJsonObject(outcome.value) && parseHostedPlatformDevice(outcome.value.device, 'macos');
+      const stopped =
+        isJsonObject(outcome.value) &&
+        outcome.value.state === 'stopped' &&
+        stoppedDevice &&
+        record.device &&
+        hostedDeviceId(stoppedDevice) === hostedDeviceId(record.device);
+      if (!outcome.settled || outcome.notice || !stopped)
+        throw new Error(outcome.notice ?? 'The previous macOS app could not be stopped.');
+      const error = this.options.drainHosted
+        ? await this.options.drainHosted(record.id)
+        : 'the hosted macOS observer is unavailable';
+      if (interrupted()) return false;
+      if (error !== null) throw new Error(`Could not drain the previous macOS app output: ${error}`);
+      if (interrupted() || this.closed || !this.options.allowed(record.client)) return false;
+    }
+    return true;
+  }
+
+  /** Requires stimd to observe the hosted macOS app just launched, or stops and drains it; false when interrupted. */
+  private async observeInstalledMacosApp(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    attempt: string,
+    value: Record<string, unknown>,
+    interrupted: () => boolean,
+  ): Promise<boolean> {
+    const { observeHosted, drainHosted } = this.options;
+    if (!observeHosted || !drainHosted) throw new Error('The hosted macOS observer is unavailable.');
+    const observed = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+    if (
+      typeof value.pid !== 'number' ||
+      !Number.isSafeInteger(value.pid) ||
+      value.pid <= 0 ||
+      !observed?.app ||
+      observed.app.pid !== value.pid ||
+      observed.supervisor?.pid !== value.pid
+    )
+      throw new Error('The hosted macOS app record changed; the reservation was retained.');
+    let error: string | null;
+    try {
+      error = await observeHosted(record.id, value.pid, observed.app.processToken, observed.launchId);
+    } catch (failure) {
+      error = (failure instanceof Error ? failure.message : String(failure)) || 'the hosted observer failed';
+    }
+    if (interrupted()) return false;
+    if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
+      error ??= 'the hosted session is no longer available';
+    if (error === null && inspectProcessIdentity(observed.app) !== 'same')
+      error = 'the hosted macOS app exited or its identity could not be verified';
+    let agentStarted = false;
+    if (error === null) {
+      await this.startAgent(record, attempt, value.pid);
+      agentStarted = true;
+      if (interrupted()) return false;
+      if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
+        error = 'the hosted session is no longer available';
+      const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+      if (
+        current?.launchId !== observed.launchId ||
+        current.app?.pid !== value.pid ||
+        current.app.processToken !== observed.app.processToken ||
+        inspectProcessIdentity(observed.app) !== 'same'
+      )
+        error ??= 'the hosted macOS app exited or its identity could not be verified';
+    }
+    if (error !== null) {
+      if (agentStarted) await this.stopAgent(record.id, true);
+      if (interrupted()) return false;
+      const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+      if (
+        current?.launchId !== observed.launchId ||
+        current.app?.pid !== value.pid ||
+        current.app.processToken !== observed.app.processToken
+      )
+        throw new Error('The hosted macOS app record changed; the reservation was retained.');
+      const cleanup = this.run(record, owned, 'stop-current', attempt, owned.claim, false, {
+        expectedApp: {
+          pid: value.pid,
+          token: observed.app.processToken,
+          launchId: observed.launchId,
+        },
+      });
+      owned.run = cleanup;
+      const stopped = await cleanup.done;
+      const stoppedDevice = isJsonObject(stopped.value) && parseHostedPlatformDevice(stopped.value.device, 'macos');
+      if (interrupted()) return false;
+      if (
+        !stopped.settled ||
+        stopped.notice ||
+        !isJsonObject(stopped.value) ||
+        stopped.value.state !== 'stopped' ||
+        !stoppedDevice ||
+        !record.device ||
+        hostedDeviceId(stoppedDevice) !== hostedDeviceId(record.device)
+      )
+        throw new Error(`Could not stop the unobserved hosted macOS app: ${stopped.notice ?? error}`);
+      const drain = await drainHosted(record.id);
+      if (interrupted()) return false;
+      if (drain !== null) throw new Error(`Could not drain the unobserved hosted macOS app: ${drain}`);
+      throw new Error(`Could not observe the hosted macOS app: ${error}`);
+    }
+    return true;
+  }
+
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     const generation = owned.stopGeneration ?? 0;
-    const observeHosted = this.options.observeHosted;
-    const drainHosted = this.options.drainHosted;
     const interrupted = () => {
       const current = readHostedSessions().find((entry) => entry.id === record.id);
       return (
@@ -1785,7 +1821,7 @@ export class DeviceHost {
       );
     };
     try {
-      if (record.platform === 'macos' && (!observeHosted || !drainHosted))
+      if (record.platform === 'macos' && (!this.options.observeHosted || !this.options.drainHosted))
         throw new Error('The hosted macOS observer is unavailable.');
       if (record.platform !== 'macos' || this.options.agents.access(record.id))
         await this.stopAgent(
@@ -1806,29 +1842,7 @@ export class DeviceHost {
       await this.settleLogs(owned);
       if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
-      const previousApp =
-        record.platform === 'macos' ? readHostedMacosApp(join(deviceHostArea(record.id), 'home')) : null;
-      if (previousApp?.app) {
-        const previous = this.run(record, owned, 'stop-app', attempt);
-        owned.run = previous;
-        const outcome = await previous.done;
-        if (interrupted()) return;
-        const stoppedDevice = isJsonObject(outcome.value) && parseHostedPlatformDevice(outcome.value.device, 'macos');
-        const stopped =
-          isJsonObject(outcome.value) &&
-          outcome.value.state === 'stopped' &&
-          stoppedDevice &&
-          record.device &&
-          hostedDeviceId(stoppedDevice) === hostedDeviceId(record.device);
-        if (!outcome.settled || outcome.notice || !stopped)
-          throw new Error(outcome.notice ?? 'The previous macOS app could not be stopped.');
-        const error = this.options.drainHosted
-          ? await this.options.drainHosted(record.id)
-          : 'the hosted macOS observer is unavailable';
-        if (interrupted()) return;
-        if (error !== null) throw new Error(`Could not drain the previous macOS app output: ${error}`);
-        if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
-      }
+      if (!(await this.replacePreviousMacosApp(record, owned, attempt, interrupted))) return;
       if (interrupted()) return;
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
@@ -1846,80 +1860,8 @@ export class DeviceHost {
         record.device !== null &&
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
-      if (installed && record.platform === 'macos' && observeHosted && drainHosted && isJsonObject(value)) {
-        const observed = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
-        if (
-          typeof value.pid !== 'number' ||
-          !Number.isSafeInteger(value.pid) ||
-          value.pid <= 0 ||
-          !observed?.app ||
-          observed.app.pid !== value.pid ||
-          observed.supervisor?.pid !== value.pid
-        )
-          throw new Error('The hosted macOS app record changed; the reservation was retained.');
-        let error: string | null;
-        try {
-          error = await observeHosted(record.id, value.pid, observed.app.processToken, observed.launchId);
-        } catch (failure) {
-          error = (failure instanceof Error ? failure.message : String(failure)) || 'the hosted observer failed';
-        }
-        if (interrupted()) return;
-        if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
-          error ??= 'the hosted session is no longer available';
-        if (error === null && inspectProcessIdentity(observed.app) !== 'same')
-          error = 'the hosted macOS app exited or its identity could not be verified';
-        let agentStarted = false;
-        if (error === null) {
-          await this.startAgent(record, attempt, value.pid);
-          agentStarted = true;
-          if (interrupted()) return;
-          if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
-            error = 'the hosted session is no longer available';
-          const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
-          if (
-            current?.launchId !== observed.launchId ||
-            current.app?.pid !== value.pid ||
-            current.app.processToken !== observed.app.processToken ||
-            inspectProcessIdentity(observed.app) !== 'same'
-          )
-            error ??= 'the hosted macOS app exited or its identity could not be verified';
-        }
-        if (error !== null) {
-          if (agentStarted) await this.stopAgent(record.id, true);
-          if (interrupted()) return;
-          const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
-          if (
-            current?.launchId !== observed.launchId ||
-            current.app?.pid !== value.pid ||
-            current.app.processToken !== observed.app.processToken
-          )
-            throw new Error('The hosted macOS app record changed; the reservation was retained.');
-          const cleanup = this.run(record, owned, 'stop-current', attempt, owned.claim, false, {
-            expectedApp: {
-              pid: value.pid,
-              token: observed.app.processToken,
-              launchId: observed.launchId,
-            },
-          });
-          owned.run = cleanup;
-          const stopped = await cleanup.done;
-          const stoppedDevice = isJsonObject(stopped.value) && parseHostedPlatformDevice(stopped.value.device, 'macos');
-          if (interrupted()) return;
-          if (
-            !stopped.settled ||
-            stopped.notice ||
-            !isJsonObject(stopped.value) ||
-            stopped.value.state !== 'stopped' ||
-            !stoppedDevice ||
-            !record.device ||
-            hostedDeviceId(stoppedDevice) !== hostedDeviceId(record.device)
-          )
-            throw new Error(`Could not stop the unobserved hosted macOS app: ${stopped.notice ?? error}`);
-          const drain = await drainHosted(record.id);
-          if (interrupted()) return;
-          if (drain !== null) throw new Error(`Could not drain the unobserved hosted macOS app: ${drain}`);
-          throw new Error(`Could not observe the hosted macOS app: ${error}`);
-        }
+      if (installed && record.platform === 'macos' && isJsonObject(value)) {
+        if (!(await this.observeInstalledMacosApp(record, owned, attempt, value, interrupted))) return;
       }
       if (installed) owned.installedAttempt = attempt;
       if (installed && record.platform !== 'macos') await this.startAgent(record, attempt, value.pid as number);
@@ -2010,10 +1952,7 @@ export class DeviceHost {
       const image = this.runWorker({
         cwd: dirname(this.options.worker),
         env: this.options.env,
-        input: {
-          mode: 'image',
-          ...(record.systemImage ? { systemImage: record.systemImage } : {}),
-        },
+        input: { mode: 'image', ...(record.systemImage ? { systemImage: record.systemImage } : {}) },
         claim: owned.claim,
         timeoutMs: this.limits.imageInstallMs,
         maxOutputBytes: 16_384,
@@ -2509,10 +2448,7 @@ export class DeviceHost {
       if (!ownsNoDevice(join(area, 'home'), record?.platform)) return;
       for (const entry of readdirSync(area)) {
         if (!entry.endsWith('.claims')) continue;
-        const cleared = clearFreeClaimSet({
-          root: join(area, entry),
-          label: 'hosted agent driver',
-        });
+        const cleared = clearFreeClaimSet({ root: join(area, entry), label: 'hosted agent driver' });
         if (cleared.status !== 'cleared') return;
       }
       await rm(area, { recursive: true, force: true });

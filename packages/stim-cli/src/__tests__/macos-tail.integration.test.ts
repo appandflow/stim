@@ -30,6 +30,16 @@ const messages = (dir: string): unknown[] =>
         })
     : [];
 
+const records = (dir: string): Record<string, unknown>[] =>
+  readFileSync(join(dir, MACOS_APP_SINK), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const value: unknown = JSON.parse(line);
+      if (!isJsonObject(value)) throw new Error('a sink line is not a record');
+      return value;
+    });
+
 const readMark = (file: string): Record<string, unknown> => {
   const mark: unknown = JSON.parse(readFileSync(file, 'utf8'));
   if (!isJsonObject(mark)) throw new Error('the tail mark is not an object');
@@ -67,7 +77,7 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
         stdio: ['ignore', 'inherit', 'inherit'],
       });
       console.log('app line ' + helper.pid);
-      setTimeout(() => process.exit(0), 200);
+      setTimeout(() => process.kill(process.pid, 'SIGKILL'), 200);
     `;
     const fd = openSync(out, 'a');
     const app = spawn(process.execPath, ['-e', script], {
@@ -88,7 +98,7 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
       pids.push(helper);
       await vi.waitFor(() => expect(messages(dir)).toContain('helper line'));
       expect(await tail.drain()).toBe(false);
-      expect(tail.blocked()).toContain(`pid ${helper} still holds its output open`);
+      expect(tail.blocked()).toContain(`pid ${helper} still holds its output open; stop it (kill ${helper})`);
       expect(drained(dir, record)).toBe(false);
       expect(existsSync(out)).toBe(true);
       process.kill(helper, 'SIGKILL');
@@ -98,7 +108,10 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
       expect(drained(dir, record)).toBe(true);
       expect(existsSync(out)).toBe(false);
       expect(messages(dir).filter((msg) => msg === 'helper line')).toHaveLength(1);
-      expect(messages(dir).at(-1)).toBe('Exited Fixture.');
+      expect(records(dir).at(-1)).toMatchObject({
+        level: 'error',
+        msg: expect.stringContaining('Fixture ended without being stopped by Stim; its exit status is unknown.'),
+      });
     } finally {
       tail.close();
       if (inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
@@ -120,68 +133,66 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
     first.close();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.']);
     const mark = join(dir, 'macos-app.tail.json');
-    const committed = readMark(mark);
     const sink = join(dir, MACOS_APP_SINK);
-    const sinkSize = readFileSync(sink).length;
     const ino = statSync(sink, { bigint: true }).ino.toString();
-    appendFileSync(out, 'three\n');
-    const next = {
-      ...committed,
-      out: Number(committed.out) + 6,
-      processToken: undefined,
+    const line = (msg: string) => `${JSON.stringify({ src: 'client', platform: 'macos', level: 'info', msg })}\n`;
+    const inFlight = (next: Record<string, unknown>, text: string, written: string) => {
+      const size = readFileSync(sink).length;
+      writeFileSync(
+        mark,
+        JSON.stringify({
+          ...readMark(mark),
+          pending: { ino, size, end: size + Buffer.byteLength(text), next: { ...next, processToken: undefined } },
+        }),
+      );
+      appendFileSync(sink, written);
     };
-    writeFileSync(mark, JSON.stringify({ ...committed, pending: { ino, size: sinkSize, next } }));
-    appendFileSync(sink, `${JSON.stringify({ src: 'client', platform: 'macos', level: 'info', msg: 'three' })}\n`);
-    const landed = tailMacosApp(dir, record, 'Fixture', 'fixture');
-    if (!landed) throw new Error('the tail did not resume');
-    expect(landed.ready()).toBeNull();
-    landed.close();
+    const resume = () => {
+      const tail = tailMacosApp(dir, record, 'Fixture', 'fixture');
+      if (!tail) throw new Error('the tail did not resume');
+      expect(tail.ready()).toBeNull();
+      tail.close();
+    };
+    appendFileSync(out, 'three\n');
+    inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 6 }, line('three'), line('three'));
+    resume();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three']);
     appendFileSync(out, 'four\n');
-    const position = readMark(mark);
-    writeFileSync(
-      mark,
-      JSON.stringify({
-        ...position,
-        pending: {
-          ino,
-          size: readFileSync(sink).length,
-          next: {
-            ...position,
-            out: Number(position.out) + 5,
-            processToken: undefined,
-          },
-        },
-      }),
-    );
-    const notLanded = tailMacosApp(dir, record, 'Fixture', 'fixture');
-    if (!notLanded) throw new Error('the tail did not resume');
-    expect(notLanded.ready()).toBeNull();
-    notLanded.close();
+    inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('four'), line('four').slice(0, 20));
+    resume();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four']);
+    appendFileSync(out, 'five\n');
+    inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('five'), '');
+    resume();
+    expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four', 'five']);
     process.kill(record.pid, 'SIGKILL');
     await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
-    const last = readMark(mark);
-    writeFileSync(
-      mark,
-      JSON.stringify({
-        ...last,
-        pending: {
-          ino,
-          size: readFileSync(sink).length,
-          next: { ...last, exited: true, processToken: undefined },
-        },
-      }),
-    );
-    appendFileSync(
-      sink,
-      `${JSON.stringify({ src: 'client', platform: 'macos', level: 'info', msg: 'Exited Fixture.' })}\n`,
-    );
+    inFlight({ ...readMark(mark), exited: true }, line('Exited Fixture.'), line('Exited Fixture.'));
     const finished = tailMacosApp(dir, record, 'Fixture', 'fixture');
     if (!finished) throw new Error('the tail did not resume');
     expect(await finished.drain()).toBe(true);
     expect(messages(dir).filter((msg) => msg === 'Exited Fixture.')).toHaveLength(1);
     expect(existsSync(out)).toBe(false);
     expect(drained(dir, record)).toBe(true);
+  });
+
+  test('an end Stim requested is an info exit record', async () => {
+    writeFileSync(join(dir, macosAppLogName('fixture', 'out')), '');
+    writeFileSync(join(dir, macosAppLogName('fixture', 'err')), '');
+    const app = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    pids.push(await started(app));
+    const record = macosProcess(pids[0] ?? 0);
+    const tail = tailMacosApp(dir, record, 'Fixture', 'fixture');
+    if (!tail) throw new Error('the tail did not start');
+    try {
+      writeFileSync(join(dir, macosAppLogName('fixture', 'stop')), '');
+      process.kill(record.pid, 'SIGTERM');
+      await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
+      await vi.waitFor(async () => expect(await tail.drain()).toBe(true));
+      expect(records(dir).at(-1)).toMatchObject({ level: 'info', msg: 'Exited Fixture.' });
+      expect(existsSync(join(dir, macosAppLogName('fixture', 'stop')))).toBe(false);
+    } finally {
+      tail.close();
+    }
   });
 });

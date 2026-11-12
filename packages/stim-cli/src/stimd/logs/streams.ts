@@ -32,6 +32,7 @@ import {
   unregisterStream,
   unregisterStreamAll,
 } from './state.ts';
+import { readWebRecord } from '../../web/state.ts';
 import { createLogWriters, type LogSink, type LogWriters } from './writer.ts';
 
 export interface StreamSpec {
@@ -1029,11 +1030,17 @@ export function createStreams(
       }
     },
     async ownedDrain(root, macosOnly) {
-      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+      const browserUnverified = () =>
+        !macosOnly && ownedUnverified && readWebRecord(root) !== null
+          ? 'the previous owned log worker exited before the browser output could be verified'
+          : null;
+      const refusal = browserUnverified();
+      if (refusal) return refusal;
       ownedPending++;
       try {
         await (await getWriters()).ownedDrain(root, macosOnly);
-        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+        const late = browserUnverified();
+        if (late) return late;
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
@@ -1075,11 +1082,9 @@ export function createStreams(
       }
     },
     async ownedDrainHosted(session) {
-      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
       ownedPending++;
       try {
         await (await getWriters()).ownedDrainHosted(session);
-        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the hosted drain failed';

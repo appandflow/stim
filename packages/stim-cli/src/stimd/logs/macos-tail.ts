@@ -1,7 +1,9 @@
 import {
   appendFileSync,
   closeSync,
+  existsSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   renameSync,
@@ -10,6 +12,7 @@ import {
   truncateSync,
   writeFileSync,
 } from 'node:fs';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, ensurePrivateDir, rotateLog } from '@stim-cli/core';
 import { isJsonObject, type MacosProcess } from '@stim-cli/core/state';
@@ -20,6 +23,9 @@ import { processGroupAlive, releaseClaim, tryAcquireClaim, type ClaimHandle } fr
 
 const TAIL_MS = 250;
 const WRITERS_PROBE_MS = 2000;
+const WRITERS_PROBE_MAX_MS = 30_000;
+const CRASH_REPORT_WAIT_MS = 2000;
+const CRASH_REPORT_BYTES = 16 * 1024;
 const CHUNK_BYTES = 64 * 1024;
 const LINE_BYTES = 65536;
 const TAIL_MARK = 'macos-app.tail.json';
@@ -40,8 +46,8 @@ interface TailState {
 
 interface Mark extends TailState {
   processToken: string;
-  /** A sink append in flight: the sink's identity and size before it, and the state once it landed. */
-  pending?: { ino: string | null; size: number; next: TailState };
+  /** A sink append in flight: the sink's identity, its size before and after the append, and the state once it landed. */
+  pending?: { ino: string | null; size: number; end: number; next: TailState };
 }
 
 const EMPTY: TailState = {
@@ -89,7 +95,7 @@ export function drained(dir: string, app: MacosProcess): boolean {
 
 /** Removes an app's raw output files once its end is recorded; a failure leaves them to workspace removal. */
 export function removeRawOutput(dir: string, launchId: string): void {
-  for (const stream of ['out', 'err'] as const)
+  for (const stream of ['out', 'err', 'stop'] as const)
     try {
       rmSync(join(dir, macosAppLogName(launchId, stream)), { force: true });
     } catch {}
@@ -106,17 +112,44 @@ function sinkIdentity(sink: string): { ino: string; size: number } | null {
 }
 
 /**
- * The state a tail resumes from: the committed one, or the one after an append whose landing the sink proves. Only
- * this tail appends to its sink and rotates it, so a grown sink with the recorded identity holds the append.
+ * The state a tail resumes from: the committed one, or the one after an append the sink holds exactly. Only this tail
+ * appends to its sink and rotates it, so the sink holds the append when it has the recorded identity and end size. A
+ * sink that grew short of that end holds part of the append; it is cut back to its size before the append, which the
+ * resumed tail then appends again.
  */
 function resumeState(mark: Record<string, unknown> | null, token: string, sink: string): TailState {
   if (mark?.processToken !== token) return EMPTY;
   const pending = mark.pending;
   if (!isJsonObject(pending)) return tailState(mark);
   const now = sinkIdentity(sink);
-  const before = typeof pending.size === 'number' ? pending.size : 0;
-  const landed = now !== null && (pending.ino === null ? now.size > 0 : now.ino === pending.ino && now.size > before);
-  return landed ? tailState(pending.next) : tailState(mark);
+  const before = offset(pending.size);
+  const same = now !== null && (pending.ino === null || now.ino === pending.ino);
+  if (same && now.size === offset(pending.end) && now.size > before) return tailState(pending.next);
+  if (same && now.size > before) truncateSync(sink, before);
+  return tailState(mark);
+}
+
+/** The macOS crash report of `executable` that names `pid`, written since `since` (ms), or null. Read-only. */
+function crashReport(executable: string, pid: number, since: number): string | null {
+  try {
+    const dir = join(userInfo().homedir, 'Library', 'Logs', 'DiagnosticReports');
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(`${executable}-`) || !/\.(ips|crash)$/.test(name)) continue;
+      const path = join(dir, name);
+      if (statSync(path).mtimeMs < since) continue;
+      const fd = openSync(path, 'r');
+      const head = Buffer.alloc(CRASH_REPORT_BYTES);
+      let read = 0;
+      try {
+        read = readSync(fd, head, 0, CRASH_REPORT_BYTES, 0);
+      } finally {
+        closeSync(fd);
+      }
+      if (new RegExp(`"pid"\\s*:\\s*${pid}\\b|^Process:.*\\[${pid}\\]`, 'm').test(head.toString('utf8', 0, read)))
+        return path;
+    }
+  } catch {}
+  return null;
 }
 
 /** Complete lines of `pending` + `chunk`, each at most LINE_BYTES, and the rest; `final` also ends the rest. */
@@ -183,8 +216,8 @@ export interface MacosTail {
  * repeating or skipping a line. Null while another live stimd tails the same directory. The exit code is not known:
  * no parent waits on the app.
  *
- * @ref LLP 0016#every-writer-gone -- the run ends only when no process holds the output open
- * @ref LLP 0016#each-line-once -- appends are recorded before and after, and one stimd tails a directory
+ * @ref LLP 0017#every-writer-gone -- the run ends only when no process holds the output open
+ * @ref LLP 0017#each-line-once -- appends are recorded before and after, and one stimd tails a directory
  */
 export function tailMacosApp(
   dir: string,
@@ -231,14 +264,16 @@ export function tailMacosApp(
         rotateLog(sink, LOG_ROTATE_BYTES);
       } catch {}
       const before = sinkIdentity(sink);
+      const text = lines.join('');
+      const size = before?.size ?? 0;
       unsettled = true;
       writeMark({
         processToken: app.processToken,
         ...state,
-        pending: { ino: before?.ino ?? null, size: before?.size ?? 0, next },
+        pending: { ino: before?.ino ?? null, size, end: size + Buffer.byteLength(text), next },
       });
       ensurePrivateDir(dir);
-      appendFileSync(sink, lines.join(''), { mode: 0o600 });
+      appendFileSync(sink, text, { mode: 0o600 });
     }
     writeMark({ processToken: app.processToken, ...next });
     state = next;
@@ -322,6 +357,7 @@ export function tailMacosApp(
   let reason: string | null = null;
   let waiting = false;
   let probedAt = 0;
+  let probeEvery = WRITERS_PROBE_MS;
   let finishing: Promise<boolean> | null = null;
   const stop = () => {
     if (done) return;
@@ -335,6 +371,15 @@ export function tailMacosApp(
     stop();
     removeRawOutput(dir, launchId);
     return true;
+  };
+  const exitRecord = async (): Promise<string> => {
+    if (existsSync(join(dir, macosAppLogName(launchId, 'stop')))) return record('info', `Exited ${product}.`);
+    await new Promise((resolve) => setTimeout(resolve, CRASH_REPORT_WAIT_MS));
+    const report = crashReport(product, app.pid, app.startedAtMicros / 1000);
+    return record(
+      'error',
+      `${product} ended without being stopped by Stim; its exit status is unknown.${report ? ` Crash report: ${report}` : ''}`,
+    );
   };
   const finish = (force: boolean): Promise<boolean> => {
     if (done) return Promise.resolve(state.exited);
@@ -359,7 +404,7 @@ export function tailMacosApp(
         waiting = true;
         return false;
       }
-      if (!force && Date.now() - probedAt < WRITERS_PROBE_MS) return false;
+      if (!force && Date.now() - probedAt < probeEvery) return false;
       probedAt = Date.now();
       const writers = await outputWriters(files.map((file) => file.path));
       if (done) return state.exited;
@@ -368,10 +413,13 @@ export function tailMacosApp(
         return false;
       }
       if (writers.length) {
-        reason = `the macOS app exited but pid ${writers.join(', ')} still holds its output open`;
+        probeEvery = Math.min(probeEvery * 2, WRITERS_PROBE_MAX_MS);
+        reason = `the macOS app exited but pid ${writers.join(', ')} still holds its output open; stop it (kill ${writers.join(' ')}) and run the command again`;
         waiting = true;
         return false;
       }
+      const exit = await exitRecord();
+      if (done) return state.exited;
       if (!pump()) {
         reason = 'the macOS app output could not be read or recorded';
         return false;
@@ -382,7 +430,7 @@ export function tailMacosApp(
           const split = splitLines(Buffer.from(state[file.pending], 'base64'), Buffer.alloc(0), true);
           lines.push(...split.lines.map((line) => record(file.level, line)));
         }
-        lines.push(record('info', `Exited ${product}.`));
+        lines.push(exit);
         commit(lines, {
           ...state,
           outPending: '',

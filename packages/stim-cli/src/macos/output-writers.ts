@@ -16,17 +16,16 @@ function parseLsofPids(stdout: string): number[] | null {
 
 /**
  * The processes other than this one that hold any of `files` open, through `lsof`, or null when that cannot be
- * established. An app's output file can outlive the app in a helper that left its process group, so only this list,
+ * established, including when a file is gone: an unlinked file can still be open. An app's output file can outlive the app in a helper that left its process group, so only this list,
  * empty, proves that every writer closed it.
  *
- * @ref LLP 0016#every-writer-gone -- the app's group and leader are not the set of writers
+ * @ref LLP 0017#every-writer-gone -- the app's group and leader are not the set of writers
  */
 export async function outputWriters(files: readonly string[]): Promise<number[] | null> {
-  const present = files.filter((file) => existsSync(file));
-  if (!present.length) return [];
+  if (!files.every((file) => existsSync(file))) return null;
   let stdout: string;
   try {
-    stdout = await getExecutor().runFileAsync('lsof', ['-w', '-t', '--', ...present], {
+    stdout = await getExecutor().runFileAsync('lsof', ['-w', '-t', '--', ...files], {
       timeoutMs: 10_000,
       killSignal: 'SIGKILL',
     });
