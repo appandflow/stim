@@ -558,6 +558,7 @@ function removeAbandonedStaging(root: string): void {
  * so a claim published between the survey that reported the set stale and this call is kept, not
  * deleted; a set whose state cannot be established is refused rather than removed.
  */
+// @ref LLP 0007#short-transactions-and-claim-set-removal -- a cleanup survey cannot clear a new claim
 export function clearFreeClaimSet({ root, label = 'ownership' }: { root: string; label?: string }): ClaimSetClearance {
   let attempt: ClaimAttempt;
   try {

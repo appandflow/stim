@@ -29,6 +29,7 @@ function recordedAsOwned(platform: DevicePlatform, id: string): boolean {
   return false;
 }
 
+// @ref LLP 0013#prove-ownership-in-this-stim-home -- device names are shared across Stim homes
 /**
  * Whether this Stim home created the device: its created-devices ledger lists it, or, while `STIM_HOME` is unset,
  * its config records it as owned from before the ledger. A scoped home owns only what its ledger lists.

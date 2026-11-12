@@ -5,6 +5,7 @@ const PROOF = /^[A-Za-z0-9_-]{43}$/;
 const INPUT_ERROR = 'The Desktop key in run/desktop.key is invalid.';
 
 /** stimd's private Desktop key; challenges and replies do not expose its value. */
+// @ref LLP 0008#desktop-proves-local-authority -- the local socket alone does not grant Desktop authority
 export class DesktopBootstrap {
   readonly #key: Buffer;
 

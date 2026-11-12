@@ -285,6 +285,7 @@ function signingConfiguration(input: SigningGateInput): string {
 
 export type ProfileGateResult = { ok: true; profile: ProvisioningProfile } | SigningRefusal;
 
+// @ref LLP 0014#provisioning-is-an-explicit-operation -- installation checks the profile already in the app
 export function profileGate(input: SigningGateInput): ProfileGateResult {
   const now = input.now ?? Date.now();
   if (!input.profilePresent) {

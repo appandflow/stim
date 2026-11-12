@@ -95,6 +95,7 @@ export interface OpenedRoute {
  * to the listener's loopback port. It is taken under an exclusive ownership claim recording the port and target, so
  * a later stim-server removes it after a crash.
  */
+// @ref LLP 0011#own-the-route-and-capture-only-on-demand -- cleanup verifies the exact Funnel route
 export class ShareRoute {
   private claim: ClaimHandle | null = null;
   private route: FunnelRoute | null = null;
