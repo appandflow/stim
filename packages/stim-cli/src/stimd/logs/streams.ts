@@ -1230,7 +1230,7 @@ export function createStreams(
           reason: `the logs worker failed again (${error.message}) after stimd restarted this stream; logging stopped here. The next stim ios|android in this workspace, or a stimd restart, starts it again`,
         })),
         ...lost
-          .filter((stream) => stream.spec.physical)
+          .filter((stream) => stream.spec.physical && !stream.stopping)
           .map((stream) => ({
             stream,
             reason: `the logs worker failed (${error.message}); restarting a physical device console would launch the app again`,

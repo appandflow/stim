@@ -342,7 +342,10 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   test('a CI hold keeps a quiescent persistent daemon alive through off mode', async () => {
     const running = runStimd({ mode: 'on', tickMs: 500 });
     await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
-    const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
+    const releaseHold = await vi.waitFor(() => holdCIStimd({ ...process.env, STIM_HOME: home }, home, null), {
+      timeout: 10_000,
+      interval: 50,
+    });
     try {
       await new Promise((done) => setTimeout(done, 1200));
       expect(existsSync(stimdRecordFile())).toBe(true);
