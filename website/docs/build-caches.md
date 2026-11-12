@@ -633,9 +633,9 @@ Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` 
 ### Disk pressure
 
 Pressure is the `stim-daemon`'s, not a maintenance check. Each tick classifies
-the machine **normal**, **high** (free disk under `disk.minFreeGb`, 20 GB,
+the machine **normal**, **high** (free disk under `disk.minFreeGb`, 40 GB,
 on any volume Stim writes to; macOS memory pressure warning for 10 minutes; or
-under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 6 GB,
+under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 20 GB,
 or under `disk.hardFloorGb` when that is higher; or critical memory pressure),
 and above normal runs one ladder top-down until the level clears:
 

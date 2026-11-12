@@ -21,7 +21,7 @@ import { dormantAfterMs, idleStageCandidates, stillIdle, type DeviceReading, typ
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
  * A copy-on-write clone from `worktree warm` shares nearly all its blocks; a reinstalled React Native tree holds 1 to 2
- * GB of its own. 256 MB is about 4% of the 6 GB critical free-disk floor (`disk.criticalFreeGb`).
+ * GB of its own. 256 MB is about 1% of the 20 GB critical free-disk floor (`disk.criticalFreeGb`).
  */
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;

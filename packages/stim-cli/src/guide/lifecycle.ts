@@ -2499,10 +2499,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   registered project, the build worker root) and memory:
 
     normal    otherwise
-    high      free disk under disk.minFreeGb (20 GB) on any volume,
+    high      free disk under disk.minFreeGb (40 GB) on any volume,
               macOS memory pressure warning for 10 minutes, or available
               memory under 10% of RAM
-    critical  free disk under disk.criticalFreeGb (6 GB), or under
+    critical  free disk under disk.criticalFreeGb (20 GB), or under
               disk.hardFloorGb when that is higher, or macOS memory
               pressure critical
 
@@ -2637,7 +2637,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   and dormant off, and an explicit 0 stays 0.
 
   The thresholds apply in every Stim home, a STIM_HOME one included. Change
-  one with \`stim settings set disk.minFreeGb 30 --scope machine\`. The
+  one with \`stim settings set disk.minFreeGb 60 --scope machine\`. The
   memory rules are fixed; \`guide settings\` lists the removed settings.
   \`stim doctor\` prints the current level and a finding while it is above
   normal. See \`guide errors STIM_LOW_DISK\`.`,

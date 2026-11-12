@@ -280,7 +280,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
-  "disk": { "minFreeGb": 20, "hardFloorGb": 5 },
+  "disk": { "minFreeGb": 40, "hardFloorGb": 5 },
   "iosSimulatorApp": "xcode",
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
@@ -769,9 +769,9 @@ a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 
 The disk thresholds keep parallel agents from filling the disk. Each
 `stim-daemon` tick classifies the machine from free disk on every volume Stim
-writes to and from memory: **high** under `disk.minFreeGb` (20 GB), after
+writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 10 minutes of macOS memory pressure warning, or with under 10% of RAM
-available; **critical** under `disk.criticalFreeGb` (6 GB), or under
+available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
 clears: idle stage for every workspace idle 2 minutes, parked devices, the
@@ -794,7 +794,7 @@ it never refuses, and the ladder's memory rules are fixed.
 <BudgetSettings />
 
 ```bash
-stim settings set disk.minFreeGb 40 --scope machine
+stim settings set disk.minFreeGb 60 --scope machine
 ```
 
 The `stim-daemon` also shuts down a workspace's owned simulators and emulators,

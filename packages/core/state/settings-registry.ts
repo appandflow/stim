@@ -731,7 +731,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.minFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 20,
+    default: 40,
     env: 'STIM_DISK_MIN_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
@@ -749,7 +749,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.criticalFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 6,
+    default: 20,
     env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',

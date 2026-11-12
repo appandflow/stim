@@ -641,8 +641,8 @@ what each cap does.
 DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
 In ~/.stim/config.json, or the environment, which overrides the file:
 
-  disk.minFreeGb          STIM_DISK_MIN_FREE_GB          default 20
-  disk.criticalFreeGb     STIM_DISK_CRITICAL_FREE_GB     default 6
+  disk.minFreeGb          STIM_DISK_MIN_FREE_GB          default 40
+  disk.criticalFreeGb     STIM_DISK_CRITICAL_FREE_GB     default 20
   disk.hardFloorGb        STIM_DISK_HARD_FLOOR_GB        default 5
 
 Under disk.minFreeGb on a volume Stim writes to the pressure level is high,
