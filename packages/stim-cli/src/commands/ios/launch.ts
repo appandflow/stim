@@ -649,7 +649,7 @@ async function cleanIosAppState({
     return {
       code: 'STIM_BAD_ARG',
       message: `cleanAppState clears only a simulator Stim owns, and ${deviceLabel(device, udid)} is not one.`,
-      remedy: 'Run `stim gc` to clear the assignment so Stim creates an owned simulator.',
+      remedy: 'Run `stim worktree remove` to clear the assignment so Stim creates an owned simulator.',
     };
   const failure = await sweepIosAppState({
     d,

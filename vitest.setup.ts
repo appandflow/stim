@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
+import { MACHINE_CLEANUP_TEST_GUARD_ENV } from './packages/stim-cli/src/stimd/passes/machine-cleanup-guard-env.ts';
 
 // The machine running the suite may legitimately export STIM_* overrides
 // (this machine relocates the shared caches to an external SSD via
@@ -27,6 +28,8 @@ process.env.USERPROFILE = home;
 
 // gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
 process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());
+// Simulator runtimes and other tools' caches are never deleted for real from a test.
+process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] = '1';
 
 // Keep gh from reaching GitHub with the developer's credentials: with an empty
 // config dir and no token it exits 4 (signed out) without a network call.

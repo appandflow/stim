@@ -857,6 +857,11 @@ export function resetExecutor(): void {
   active = debugExecutor;
 }
 
+/** Whether child processes reach the real system: true unless a test replaced the executor's async runner. */
+export function runsRealCommands(): boolean {
+  return active.runFileAsync === debugExecutor.runFileAsync;
+}
+
 export function getExecutor(): Executor {
   return active;
 }

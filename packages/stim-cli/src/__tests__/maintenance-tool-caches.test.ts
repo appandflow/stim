@@ -1,5 +1,5 @@
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { cleanToolCache, planToolCaches, type ToolCache } from '../stimd/passes/unowned.ts';
+import { cleanToolCache, planToolCaches, surveyToolCaches, type ToolCache } from '../stimd/passes/unowned.ts';
 
 const npm: ToolCache = {
   tool: 'npm',
@@ -30,18 +30,27 @@ describe('cleaning a tool cache', () => {
         calls.push([file, ...args]);
         return '';
       },
-      runFileQuietAsync: async (file) => (file === 'ps' ? ps : file === 'lsof' ? `p${process.pid}\nn/\n` : null),
+      runFileQuietAsync: async (file, args) =>
+        file === 'ps'
+          ? ps
+          : file === 'lsof'
+            ? `p${process.pid}\nn/\n`
+            : file === 'npm' && args.join(' ') === 'config get cache'
+              ? '/nonexistent/stim-test/.npm\n'
+              : null,
+      findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
     });
   });
   afterEach(() => resetExecutor());
 
-  test('runs the tool command itself and nothing on a dry run', async () => {
-    const plan = { cache: npm, bytes: 1024, kept: null };
+  test('runs npm cache clean --force only when acting, on the cache npm reports', async () => {
+    const [plan] = await surveyToolCaches();
+    expect(plan?.cache.paths).toEqual(['/nonexistent/stim-test/.npm']);
+    if (!plan) return;
     expect((await cleanToolCache(plan, false)).outcome).toBe('would');
-    expect(calls).toEqual([]);
-    const result = await cleanToolCache(plan, true);
-    expect(result.outcome).toBe('done');
-    expect(calls).toEqual([['npm', 'cache', 'clean', '--force']]);
+    expect(calls.filter(([file]) => file === 'npm')).toEqual([]);
+    expect((await cleanToolCache(plan, true)).outcome).toBe('done');
+    expect(calls.filter(([file]) => file === 'npm')).toEqual([['npm', 'cache', 'clean', '--force']]);
   });
 
   test('keeps the cache when an install started after the plan', async () => {

@@ -6,6 +6,7 @@ import { teardownUnavailableOwnedIosSim } from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { SimRuntimeRecord } from '../commands/gc/inventory.ts';
 import { collectsEngineStore } from '../commands/gc.ts';
+import { testContext } from './_context.ts';
 import {
   deleteRuntimeAction,
   runtimePins,
@@ -40,6 +41,24 @@ test.each([
     take: [],
   },
   {
+    name: 'a runtime of the active Xcode SDK major version stays though no simulator uses it',
+    runtimes: [
+      runtime('26.2', { lastUsedAt: '2020-01-01T00:00:00Z' }),
+      runtime('27.0', { lastUsedAt: '2020-01-01T00:00:00Z' }),
+      runtime('18.6', { lastUsedAt: '2020-01-01T00:00:00Z' }),
+    ],
+    sims: [sim('18.6')],
+    recent: { sdk: '27.1', since: Date.parse('2026-01-01T00:00:00Z') },
+    take: ['IMG-26.2'],
+  },
+  {
+    name: 'a runtime simctl records as used recently, or never, stays',
+    runtimes: [runtime('26.2', { lastUsedAt: '2026-06-01T00:00:00Z' }), runtime('26.1'), runtime('27.0')],
+    sims: [sim('27.0')],
+    recent: { sdk: '27.0', since: Date.parse('2026-01-01T00:00:00Z') },
+    take: [],
+  },
+  {
     name: 'a runtime a project pins with ios.runtime stays though no simulator uses it',
     runtimes: [runtime('26.2'), runtime('27.0')],
     sims: [sim('27.0')],
@@ -52,41 +71,37 @@ test.each([
     sims: [],
     take: ['IMG-26.2', 'IMG-26.10'],
   },
-])('$name', ({ runtimes, sims, pinned = [], take }) => {
-  expect(selectUnusedRuntimes(runtimes, sims, pinned).take.map((entry) => entry.identifier)).toEqual(take);
+])('$name', ({ runtimes, sims, pinned = [], recent, take }) => {
+  expect(selectUnusedRuntimes(runtimes, sims, pinned, recent).take.map((entry) => entry.identifier)).toEqual(take);
 });
 
 describe('deleting a runtime', () => {
   const calls: string[][] = [];
   let simsJson = '';
-  const runtimesJson = JSON.stringify({
-    'IMG-26.2': {
-      identifier: 'IMG-26.2',
-      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
-      version: '26.2',
-      deletable: true,
-      sizeBytes: 8e9,
-      platformIdentifier: 'com.apple.platform.iphonesimulator',
-    },
-    'IMG-27.0': {
-      identifier: 'IMG-27.0',
-      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
-      version: '27.0',
-      deletable: true,
-      sizeBytes: 8e9,
-      platformIdentifier: 'com.apple.platform.iphonesimulator',
-    },
+  let home = '';
+  const image = (version: string) => ({
+    identifier: `IMG-${version}`,
+    runtimeIdentifier: `com.apple.CoreSimulator.SimRuntime.iOS-${version.replace('.', '-')}`,
+    version,
+    deletable: true,
+    sizeBytes: 8e9,
+    lastUsedAt: '2020-01-01T00:00:00Z',
+    platformIdentifier: 'com.apple.platform.iphonesimulator',
   });
-  const device = (runtimeId: string) =>
+  const runtimesJson = JSON.stringify({ 'IMG-26.2': image('26.2'), 'IMG-27.0': image('27.0') });
+  const device = (runtimeId: string, isAvailable = true) =>
     JSON.stringify({
       devices: {
-        [runtimeId]: [
-          { udid: 'U1', name: 'My iPhone', state: 'Shutdown', deviceTypeIdentifier: 'x', isAvailable: true },
-        ],
+        [runtimeId]: [{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', deviceTypeIdentifier: 'x', isAvailable }],
       },
     });
+  const unscoped = () => testContext({ env: { ...process.env, STIM_HOME: undefined } });
+  const remove = (operation = unscoped()) =>
+    deleteRuntimeAction({ kind: 'would-delete-runtime', target: 'IMG-26.2', bytes: 0, reason: '' }, operation);
 
   beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-runtime-delete-'));
+    vi.stubEnv('STIM_HOME', home);
     calls.length = 0;
     setExecutor({
       ...getExecutor(),
@@ -96,32 +111,34 @@ describe('deleting a runtime', () => {
         if (args[1] === 'runtime' && args[2] === 'list') return runtimesJson;
         return '';
       },
+      runFileQuietAsync: async (file, args) => (file === 'xcrun' && args[0] === '--sdk' ? '27.1\n' : null),
     });
   });
-  afterEach(() => resetExecutor());
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
 
   test('runs simctl runtime delete for an unused image after listing again', async () => {
     simsJson = device('com.apple.CoreSimulator.SimRuntime.iOS-27-0');
-    const outcome = await deleteRuntimeAction({
-      kind: 'would-delete-runtime',
-      target: 'IMG-26.2',
-      bytes: 0,
-      reason: '',
-    });
-    expect(outcome.status).toBe('done');
+    expect((await remove()).status).toBe('done');
     expect(calls).toContainEqual(['xcrun', 'simctl', 'runtime', 'delete', 'IMG-26.2']);
   });
 
-  test('keeps an image a simulator started using since the plan', async () => {
-    simsJson = device('com.apple.CoreSimulator.SimRuntime.iOS-26-2');
-    const outcome = await deleteRuntimeAction({
-      kind: 'would-delete-runtime',
-      target: 'IMG-26.2',
-      bytes: 0,
-      reason: '',
-    });
-    expect(outcome).toMatchObject({ status: 'kept', detail: '1 simulator uses it' });
+  test.each([
+    { name: 'a simulator started using it since the plan', available: true },
+    { name: 'only an unavailable simulator uses it', available: false },
+  ])('keeps an image when $name', async ({ available }) => {
+    simsJson = device('com.apple.CoreSimulator.SimRuntime.iOS-26-2', available);
+    expect(await remove()).toMatchObject({ status: 'kept', detail: '1 simulator uses it' });
     expect(calls.some((call) => call.includes('delete'))).toBe(false);
+  });
+
+  test('refuses from a scoped home and keeps the image', async () => {
+    simsJson = device('com.apple.CoreSimulator.SimRuntime.iOS-27-0');
+    expect((await remove(testContext())).status).toBe('kept');
+    expect(calls).toEqual([]);
   });
 });
 

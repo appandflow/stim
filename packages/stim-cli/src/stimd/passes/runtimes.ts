@@ -16,6 +16,8 @@ import { getExecutor } from '../../exec.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import type { ActionOutcome } from './act.ts';
 import type { MaintenancePlan } from './plan.ts';
+import { resolveMaintenanceSettings } from './settings.ts';
+import { machineCleanupRefusal } from './unowned.ts';
 
 const SIMCTL_TIMEOUT_MS = 60_000;
 const RUNTIME_DELETE_TIMEOUT_MS = 10 * 60_000;
@@ -110,6 +112,17 @@ export function unavailableSimsToDelete<T extends Pick<IosSimRecord, 'udid' | 'a
   return owned.filter((sim) => !sim.available && !inWorkspace.has(sim.udid));
 }
 
+const majorOf = (version: string | null): string | null => /^\d+/.exec(version ?? '')?.[0] ?? null;
+
+async function simulatorSdk(operation?: StimContext): Promise<string | null> {
+  const out = await getExecutor().runFileQuietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'], {
+    timeoutMs: SIMCTL_TIMEOUT_MS,
+    signal: operation?.signal,
+  });
+  const version = out?.trim() ?? '';
+  return /^\d+(\.\d+)*$/.test(version) ? version : null;
+}
+
 function versionKey(version: string | null): number[] {
   return (version ?? '').split('.').map((part) => Number(part) || 0);
 }
@@ -130,6 +143,7 @@ export function selectUnusedRuntimes(
   runtimes: readonly SimRuntimeRecord[],
   sims: readonly Pick<IosSimRecord, 'runtime'>[],
   pinned: readonly string[] = [],
+  recent?: { sdk: string; since: number },
 ): {
   take: SimRuntimeRecord[];
   kept: { runtime: SimRuntimeRecord; reason: string }[];
@@ -158,6 +172,15 @@ export function selectUnusedRuntimes(
       });
     else if (pinned.some((pin) => pinsVersion(pin, runtime.version)))
       kept.push({ runtime, reason: 'a registered project pins it with ios.runtime' });
+    else if (recent && majorOf(runtime.version) === majorOf(recent.sdk))
+      kept.push({ runtime, reason: `it matches the active Xcode's iOS ${recent.sdk} simulator SDK` });
+    else if (recent && !(Date.parse(runtime.lastUsedAt ?? '') < recent.since))
+      kept.push({
+        runtime,
+        reason: runtime.lastUsedAt
+          ? `simctl records a use at ${runtime.lastUsedAt}, within maintenance.olderThanDays`
+          : 'simctl records no use of it, so its age is unknown',
+      });
     else if (!runtime.deletable) kept.push({ runtime, reason: 'simctl does not mark it deletable' });
     else take.push(runtime);
   }
@@ -183,6 +206,9 @@ async function listRuntimes(operation?: StimContext): Promise<SimRuntimeRecord[]
     }),
   );
 }
+
+const recentSince = (operation?: StimContext): number =>
+  Date.now() - resolveMaintenanceSettings(loadConfig(), operation?.env ?? process.env).olderThanDays * 86_400_000;
 
 const label = (runtime: SimRuntimeRecord) => `iOS ${runtime.version ?? '?'} simulator runtime (${runtime.identifier})`;
 
@@ -218,7 +244,12 @@ export async function planRuntimes(operation?: StimContext): Promise<Maintenance
   const { pins, unresolved } = runtimePins(await projectPins(operation));
   if (unresolved.length)
     blocked.push(`Simulator runtimes stay until these projects' settings can be read: ${unresolved.join('; ')}`);
-  const { take, kept } = unresolved.length ? { take: [], kept: [] } : selectUnusedRuntimes(runtimes, sims, pins);
+  const sdk = await simulatorSdk(operation);
+  if (!sdk) blocked.push("Simulator runtimes stay: the active Xcode's simulator SDK version cannot be read");
+  const { take, kept } =
+    unresolved.length || !sdk
+      ? { take: [], kept: [] }
+      : selectUnusedRuntimes(runtimes, sims, pins, { sdk, since: recentSince(operation) });
   for (const runtime of take)
     actions.push({
       kind: 'would-delete-runtime',
@@ -239,6 +270,8 @@ export async function planRuntimes(operation?: StimContext): Promise<Maintenance
 
 /** Deletes one runtime after listing again and finding it still unused and still not the only one. */
 export async function deleteRuntimeAction(action: MaintenanceAction, operation?: StimContext): Promise<ActionOutcome> {
+  const refusal = machineCleanupRefusal(operation?.env ?? process.env);
+  if (refusal) return { status: 'kept', bytes: 0, detail: refusal };
   try {
     const sims = await listAllIosSimsAsync({
       includeUnavailable: true,
@@ -249,7 +282,9 @@ export async function deleteRuntimeAction(action: MaintenanceAction, operation?:
     const { pins, unresolved } = runtimePins(await projectPins(operation));
     if (unresolved.length)
       return { status: 'kept', bytes: 0, detail: `project settings cannot be read: ${unresolved.join('; ')}` };
-    const { take, kept } = selectUnusedRuntimes(runtimes, sims, pins);
+    const sdk = await simulatorSdk(operation);
+    if (!sdk) return { status: 'kept', bytes: 0, detail: "the active Xcode's simulator SDK version cannot be read" };
+    const { take, kept } = selectUnusedRuntimes(runtimes, sims, pins, { sdk, since: recentSince(operation) });
     const runtime = take.find((entry) => entry.identifier === action.target);
     if (!runtime)
       return {

@@ -36,6 +36,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import * as sweepPasses from '../stimd/passes/sweep.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -646,6 +647,56 @@ describe('the ladder stim gc forces', () => {
 
     expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
   });
+
+  const forced = (level: 'high' | 'critical', fromRung: number, operation = testContext()) => {
+    const config = loadConfig();
+    if (!config) throw new Error('the test home has no config');
+    return runLadder(
+      {
+        config,
+        act: false,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('normal'),
+        force: { level, why: 'stim gc' },
+        fromRung,
+        operation,
+      },
+      pressure('normal'),
+    );
+  };
+
+  test('rung 9 plans the other tools cache cleaners only at critical, and never from a scoped home', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '',
+      runFileQuietAsync: async (file, args) =>
+        file === 'ps'
+          ? `${process.pid} node vitest\n`
+          : file === 'lsof'
+            ? `p${process.pid}\nn/\n`
+            : file === 'npm' && args.join(' ') === 'config get cache'
+              ? '/nonexistent/stim-test/.npm\n'
+              : null,
+      findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
+    });
+    const unscoped = testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } });
+    const planned = async (level: 'high' | 'critical', operation = unscoped) =>
+      (await forced(level, 9, operation)).actions.filter((action) => action.kind === 'clean-tool-cache');
+
+    expect(await planned('high')).toEqual([]);
+    expect(await planned('critical', testContext())).toEqual([]);
+    expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
+  });
+
+  test('rung 7 removes no finished worktree while maintenance.removeFinishedWorktrees is false', async () => {
+    const planned = vi.spyOn(sweepPasses, 'planWorktrees');
+    vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
+    const { actions } = await forced('critical', 7);
+    expect(actions.filter((action) => action.rung === 7)).toEqual([]);
+    expect(planned).not.toHaveBeenCalled();
+  });
 });
 
 describe('rung 5', () => {
@@ -740,11 +791,12 @@ describe('rung 5', () => {
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
     () => {
-      test('at high it deletes node_modules and Pods of a linked worktree idle 10 minutes, and at critical of one idle 2', async () => {
+      test('at high it deletes node_modules and Pods of a linked worktree idle 1 hour, and at critical of one idle 2 minutes', async () => {
         const { idle, recent } = linkedWorktrees(['idle', 'recent']);
         register(idle);
         register(recent);
-        recordWorkspaceUse(recent, new Date(Date.now() - 5 * MINUTE_MS));
+        recordWorkspaceUse(idle, new Date(Date.now() - 2 * HOUR_MS));
+        recordWorkspaceUse(recent, new Date(Date.now() - 30 * MINUTE_MS));
         const high = await ladder('high');
         expect(existsSync(join(idle, 'node_modules'))).toBe(false);
         expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);

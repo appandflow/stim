@@ -36,8 +36,6 @@ import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import { cleanToolCache, reportedBytes, reportedCaches, surveyToolCaches } from '../stimd/passes/unowned.ts';
-import { measureDisk } from './measure.ts';
-import { diskThresholds } from './pressure.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -53,6 +51,7 @@ const GIB = 1024 ** 3;
 const SIZE_TIMEOUT_MS = 120_000;
 /** Under high pressure the dormant stage takes workspaces idle this long (ladder rung 4). */
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
+const DEPENDENCIES_HIGH_IDLE_MS = 60 * MINUTE_MS;
 const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
 let unownedRunAt = -Infinity;
 
@@ -494,13 +493,13 @@ function canonicalOrNull(path: string): string | null {
 }
 
 /**
- * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 10 minutes at high and 2
+ * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at high and 2
  * minutes at critical by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
  * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
  * copy-on-write clone below the threshold is kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
-  const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
+  const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const { take, kept } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation), 'take');
@@ -592,11 +591,14 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
 }
 
 /**
- * Rung 7, finished worktrees: at high, the clean ones whose branch is merged or whose pull request ended, without
- * waiting out `gc.worktreeGraceMinutes`; at critical also clean, pushed ones no Stim command used for 7 days. Every
- * other keep rule of the worktree check holds: in use, leased, locked, pinned, unpushed, or not provably merged.
+ * Rung 7, finished worktrees, only while `maintenance.removeFinishedWorktrees` is on: at high, the clean ones whose
+ * branch is merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without the grace period,
+ * and also clean, pushed ones no Stim command used for 7 days. Every other keep rule of the worktree check holds: in
+ * use, leased, locked, pinned, unpushed, or not provably merged. The stim-daemon's own ladder reads the pull request
+ * lookups the worktree check cached; `stim gc` looks them up again.
  */
 async function worktreesRung(context: RungContext): Promise<void> {
+  if (!context.settings.removeFinishedWorktrees) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const pins = new Map<string, boolean>();
   const planned = await planWorktrees({
@@ -607,8 +609,8 @@ async function worktreesRung(context: RungContext): Promise<void> {
       return value;
     },
     now: Date.now(),
-    graceMs: 0,
-    refresh: context.act,
+    ...(context.level === 'critical' ? { graceMs: 0 } : {}),
+    refresh: context.act && Boolean(context.force),
     idleDays: context.level === 'critical' ? DEFAULT_WORKTREE_IDLE_DAYS : null,
     operation: context.operation,
   });
@@ -647,14 +649,14 @@ async function historyRung(context: RungContext): Promise<void> {
 /**
  * Rung 9, the last: the caches of tools Stim does not own, each emptied through the tool's own command while no
  * process of that tool runs, with its size before and after; Android NDKs, unused system images and Exact's cache are
- * only reported with the command a person runs. At critical always, at high only while free disk stays under
- * `disk.minFreeGb` after the rungs above, and never from a home STIM_HOME scopes, since those caches are machine-wide.
- * The stim-daemon's own ladder runs it at most hourly; `stim gc` runs it every time.
+ * only reported with the command a person runs. Only at critical, after the rungs above and while still short, and never
+ * from a home STIM_HOME scopes, since those caches are machine-wide. The stim-daemon's own ladder runs it at most
+ * hourly; `stim gc --pressure critical` runs it every time.
  */
 async function unownedRung(context: RungContext): Promise<void> {
-  if (isScopedHome(context.operation?.env ?? process.env)) return;
+  if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
-  if (context.level === 'high' && !(await diskShort(context))) return;
+  if (!(await context.stillShort())) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
     const result = await cleanToolCache(plan, context.act, context.operation);
@@ -704,13 +706,6 @@ async function unownedRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
-}
-
-/** Whether free disk on a volume Stim uses is still under `disk.minFreeGb`, measured now. */
-async function diskShort(context: RungContext): Promise<boolean> {
-  const { thresholds } = diskThresholds(context.config, context.operation?.env);
-  const disk = await measureDisk(context.config, context.operation?.signal);
-  return disk.some((volume) => volume.freeMb < thresholds.highMb);
 }
 
 const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {

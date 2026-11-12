@@ -1,11 +1,15 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readdirSync, renameSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { StimContext } from '@stim-cli/core';
+import { basename, dirname, join } from 'node:path';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { androidHome } from '../../devices/android.ts';
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, runsRealCommands } from '../../exec.ts';
+import { listBuildLocks } from '../../engine/build-lock.ts';
+import { listBuildSlots } from '../../engine/build-slots.ts';
+import { MACHINE_CLEANUP_TEST_GUARD_ENV } from './machine-cleanup-guard-env.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { readRunningProcessesAsync } from '../../workspace/running-from.ts';
@@ -57,7 +61,7 @@ const commandText = (argv: readonly string[]): string => argv.join(' ');
 function toolEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return {
     ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
+    COREPACK_ENABLE_NETWORK: '0',
     LANG: 'en_US.UTF-8',
     LC_ALL: 'en_US.UTF-8',
   };
@@ -74,6 +78,24 @@ async function lookup(argv: readonly string[], env: NodeJS.ProcessEnv, signal?: 
   });
   const line = out?.trim().split('\n').at(-1)?.trim();
   return line && line.startsWith('/') ? line : null;
+}
+
+/** Yarn 1's cache, where Yarn itself would report it; looked up by path so no package manager runs or downloads. */
+function yarnCacheDirs(env: NodeJS.ProcessEnv): string[] {
+  if (env.YARN_CACHE_FOLDER) return [env.YARN_CACHE_FOLDER];
+  return [
+    process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Caches', 'Yarn')
+      : join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'yarn'),
+  ];
+}
+
+/** pnpm's default content-addressed store, looked up by path so no package manager runs or downloads. */
+function pnpmStoreDir(env: NodeJS.ProcessEnv): string {
+  if (env.PNPM_HOME) return join(env.PNPM_HOME, 'store');
+  return process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'pnpm', 'store')
+    : join(env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'pnpm', 'store');
 }
 
 function gradleHome(env: NodeJS.ProcessEnv): string {
@@ -111,19 +133,19 @@ async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal):
       });
   }
   if (present('yarn')) {
-    const dir = await lookup(['yarn', 'cache', 'dir'], env, signal);
-    if (dir)
+    const dirs = yarnCacheDirs(env).filter((dir) => existsSync(dir));
+    if (dirs.length)
       found.push({
         tool: 'yarn',
         label: 'Yarn cache',
-        paths: [dir],
+        paths: dirs,
         command: ['yarn', 'cache', 'clean'],
         running: /(^|[\s/])yarn(\.c?js)?(\s|$)/,
       });
   }
   if (present('pnpm')) {
-    const dir = await lookup(['pnpm', 'store', 'path'], env, signal);
-    if (dir)
+    const dir = pnpmStoreDir(env);
+    if (existsSync(dir))
       found.push({
         tool: 'pnpm',
         label: 'pnpm store, unreferenced packages',
@@ -215,6 +237,22 @@ export async function surveyToolCaches(operation?: StimContext): Promise<ToolCac
 }
 
 /** Empties one tool cache through its tool's command, or removes the caches of Gradle and SwiftPM, which have none, measuring before and after. */
+/**
+ * Why a machine-wide cleanup must not act from here: a home STIM_HOME scopes, or the test runner with the process
+ * executor, which would reach the developer's real tools and caches.
+ */
+export function machineCleanupRefusal(env: NodeJS.ProcessEnv): string | null {
+  if (isScopedHome(env)) return 'STIM_HOME scopes this config, and these caches are machine-wide';
+  if (process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] && runsRealCommands())
+    return 'the test runner never cleans the real machine';
+  return null;
+}
+
+function stimBuildRunning(): string | null {
+  const held = [...listBuildLocks(), ...listBuildSlots()].find((entry) => entry.alive || entry.unresolved);
+  return held ? `a Stim build holds ${held.path}${held.unresolved ? ', or its holder cannot be verified' : ''}` : null;
+}
+
 export async function cleanToolCache(
   plan: ToolCachePlan,
   act: boolean,
@@ -237,6 +275,12 @@ export async function cleanToolCache(
       detail: `stim gc would run ${how}`,
     };
   const signal = operation?.signal;
+  const refusal = machineCleanupRefusal(operation?.env ?? process.env);
+  if (refusal) return { outcome: 'kept', before: plan.bytes, after: plan.bytes, detail: refusal };
+  if (!cache.command) {
+    const building = stimBuildRunning();
+    if (building) return { outcome: 'kept', before: plan.bytes, after: plan.bytes, detail: building };
+  }
   const running = await readRunningProcessesAsync(signal);
   const again = planToolCaches(
     [cache],
@@ -259,7 +303,13 @@ export async function cleanToolCache(
         env: toolEnv(operation?.env ?? process.env),
         cwd: homedir(),
       });
-    } else for (const path of cache.paths) await rm(path, { recursive: true, force: true });
+    } else
+      for (const path of cache.paths) {
+        if (!existsSync(path)) continue;
+        const aside = join(dirname(path), `.${basename(path)}.stim-delete-${randomBytes(6).toString('hex')}`);
+        renameSync(path, aside);
+        await rm(aside, { recursive: true, force: true });
+      }
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     signal?.throwIfAborted();

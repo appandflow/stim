@@ -2669,7 +2669,7 @@ test('a dry run reports a registered cache with its size, without being asked fo
   );
 });
 
-test('gc never deletes the shared Gradle build cache at any level', async () => {
+test('gc keeps the shared Gradle build cache below critical, and at critical under a scoped home', async () => {
   const previous = process.env.GRADLE_USER_HOME;
   const gradleHome = join(fakeHome, 'gradle-home');
   const cachesRoot = join(gradleHome, 'caches');

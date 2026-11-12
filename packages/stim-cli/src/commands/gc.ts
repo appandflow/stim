@@ -438,27 +438,28 @@ export async function withGcMaintenanceClaim<T>(
   }
 }
 
+function realOrNull(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether gc collects the engine store at `store`: always from the default home, and from a home STIM_HOME scopes only
  * when the store lies inside that home, since the shared store under `~/.stim/engine` serves every home.
  */
 export function collectsEngineStore(env: NodeJS.ProcessEnv, store: string, home: string): boolean {
   if (!isScopedHome(env)) return true;
-  const real = (path: string) => {
-    try {
-      return realpathSync(path);
-    } catch {
-      return null;
-    }
-  };
-  const [root, scope] = [real(store), real(home)];
+  const [root, scope] = [realOrNull(store), realOrNull(home)];
   return root !== null && scope !== null && (root === scope || root.startsWith(`${scope}${sep}`));
 }
 
 const gc: Op = defineOp({
   name: 'gc',
   description:
-    "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes, unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods. At high, the pressure ladder to its end as well: idle dev servers and their build outputs, parked devices, shared caches trimmed to half their caps, idle workspaces made dormant, node_modules and Pods of idle linked worktrees, idle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean merged worktrees without the grace period. At critical, every shared cache Stim registered emptied, clean pushed worktrees idle 7 days, every device recording and archived content, then the caches of other tools through their own commands (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM), which high also runs while free disk stays under disk.minFreeGb. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
+    "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes, unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods. At high, the pressure ladder to its end as well: idle dev servers and their build outputs, parked devices, shared caches trimmed to half their caps, idle workspaces made dormant, node_modules and Pods of linked worktrees idle an hour, idle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean merged worktrees after their grace period. At critical, every shared cache Stim registered emptied, clean merged worktrees without the grace period, clean pushed worktrees idle 7 days, every device recording and archived content, then, while the disk is still short, the caches of other tools through their own commands (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Finished worktrees go only while maintenance.removeFinishedWorktrees is true. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
   options: {
     dryRun: { flags: '--dry-run', description: 'report what the run would delete, and delete nothing' },
     pressure: {

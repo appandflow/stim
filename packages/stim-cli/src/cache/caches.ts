@@ -45,7 +45,7 @@ function gradleBuildCache(env: NodeJS.ProcessEnv, cwd: string): CacheDescriptor 
     name: 'Gradle build cache',
     dir,
     prune: 'report-only',
-    note: 'shared with every Gradle build; report only, never pruned or emptied by Stim',
+    note: "shared with every Gradle build; Stim never prunes or empties it as a registered cache, and only gc's last rung removes it, at critical",
   };
 }
 
@@ -233,7 +233,7 @@ function protectGradleCache(cache: CacheDescriptor, gradleDir: string | null): C
   if (!gradleDir || !cachePathsOverlap(canonicalCacheDir(cache.dir), gradleDir)) return cache;
   return Object.assign({}, cache, {
     prune: 'report-only' as const,
-    note: 'shared with every Gradle build; report only, never pruned or emptied by Stim',
+    note: "shared with every Gradle build; Stim never prunes or empties it as a registered cache, and only gc's last rung removes it, at critical",
   });
 }
 
