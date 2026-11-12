@@ -132,10 +132,8 @@ const results = await runCacheProviderContract({
 });
 ```
 
-`cacheProviderContractChecks()` returns the same checks as individual cases for
-a test runner that reports each one separately. Both helpers check advertised
-build capabilities, bound every check with a deadline, and
-verify that a call settles once its `AbortSignal` aborts.
+It checks advertised build capabilities, bounds every check with a deadline,
+and verifies that a call settles once its `AbortSignal` aborts.
 
 ## Budgets
 

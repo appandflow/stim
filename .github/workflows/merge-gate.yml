@@ -112,7 +112,11 @@ jobs:
       - if: github.event_name == 'merge_group'
         run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver,api
       - if: github.event_name == 'merge_group'
-        run: node scripts/plugin-api-report.mjs
+        env:
+          BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          node scripts/plugin-api-report.mjs --base "$BASE"
       - if: github.event_name == 'merge_group'
         run: pnpm run typecheck
       - if: github.event_name == 'merge_group'

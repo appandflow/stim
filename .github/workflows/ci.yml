@@ -112,8 +112,17 @@ jobs:
       - name: Hot-path closures of the built CLI
         run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver,api
 
-      - name: stim and stim/plugin API reports match their baselines
-        run: node scripts/plugin-api-report.mjs
+      - name: stim and stim/plugin API reports match their baselines and the base branch's
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ] && [ -n "$PR_BASE" ]; then
+            git fetch --no-tags --depth=1 origin "$PR_BASE"
+            node scripts/plugin-api-report.mjs --base "$PR_BASE"
+          else
+            node scripts/plugin-api-report.mjs
+          fi
 
       - name: Committed Action bundle matches source
         id: action-bundle

@@ -718,7 +718,11 @@ command when a named machine does not answer.
 Offload runs this machine's exact Stim build on the worker, so the two machines
 can run different Stim releases. A service installed while the Stim engine is
 installed (`stim engine install`) runs the engine's `bin/stimd`, so it follows
-the engine. To move the remote machine to another build, run one of these there:
+the engine on macOS and Linux (a Windows task runs the build it was installed
+with, [#5602](https://github.com/appandflow/stim/issues/5602)). A Linux service
+installed before the engine moves onto the shim by itself: its first boot on this
+Stim rewrites the unit, and the service restarts once when idle, about 30 s down,
+which disconnects connected phones and Desktop until it is back. To move the remote machine to another build, run one of these there:
 
 ```bash
 stim engine update          # the newest release on the engine's channel

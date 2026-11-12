@@ -1172,7 +1172,7 @@ RULES
                               entries directly in TMPDIR (root, resolved).
                               kind is stim (stim-claim-*, stim-host-*,
                               stim-fakehome-*, stim-hosted-macos-*,
-                              stim-server-*, stim-ws-* directories), xctrace
+                              stim-server-*, stim-ws-*, stim-parity-* directories), xctrace
                               (instruments*.ktrace), swiftpm
                               (TemporaryDirectory.* directories) or jest (Jest's
                               jest_<uid in base 36> cache, never deleted). deleteCount
