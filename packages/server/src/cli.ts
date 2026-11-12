@@ -1,12 +1,19 @@
 import { mkdirSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
-import { pinnedReleaseFloor, readHostedSessions } from '@stim-cli/core/state';
+import { readHostedSessions } from '@stim-cli/core/state';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
 import { readAudit } from './actions.ts';
-import { installService, rewriteUnitToShim, serviceStatus, statusLines, uninstallService } from './service.ts';
+import {
+  installService,
+  listenerPids,
+  rewriteUnitToShim,
+  serviceStatus,
+  statusLines,
+  uninstallService,
+} from './service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
@@ -39,9 +46,6 @@ import { hostFromExecutable, hostPermissionPanes } from './stim-host.ts';
 import { defaultSetupDeps, runSetup } from './setup.ts';
 import { startServer, type RunningServer } from './server.ts';
 import { DesktopBootstrap } from './desktop-bootstrap.ts';
-// compat C23 until removal-minor
-import { legacyServerRefusal } from './legacy-server-probe.ts';
-// compat end
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
 import type { TailscaleState } from '@stim-cli/transport-tailscale';
@@ -147,10 +151,6 @@ export async function serve(
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
   Object.assign(process.env, env);
   const currentEnv = () => ({ ...serveEnvironment(() => {}), ...(env.STIM_HOME ? { STIM_HOME: env.STIM_HOME } : {}) });
-  // compat C23 until removal-minor
-  const legacy = await legacyServerRefusal(port, pinnedReleaseFloor('stimd'));
-  if (legacy) throw new NetRefusal(legacy);
-  // compat end
 
   const tailnet = createTailnet(env);
   const stopTriggers = loopbackOnly
@@ -193,10 +193,14 @@ export async function serve(
     lanSetting.stop();
     lan.close?.();
     tailnet.close();
-    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      const [pid] = await listenerPids(port);
       throw new NetRefusal(
-        `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
+        pid
+          ? `port ${port} is held by pid ${pid}; stop it (kill ${pid}), or run stim serve --port <n>.`
+          : `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
       );
+    }
     throw error;
   }
   const label = serviceManagerOrNull()?.runningLabel(process.env);

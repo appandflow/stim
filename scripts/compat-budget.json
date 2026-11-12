@@ -80,11 +80,6 @@
       "end": "removal minor",
       "mechanism": "the resident daemon takes over an older daemon's exclusive claim"
     },
-    "C23": {
-      "loc": 40,
-      "end": "removal minor",
-      "mechanism": "the net thread stays off while an older stim-server holds its port"
-    },
     "C26": {
       "loc": 25,
       "end": "permanent",
