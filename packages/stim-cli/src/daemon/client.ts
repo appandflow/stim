@@ -360,6 +360,119 @@ function askStimd(
   });
 }
 
+/**
+ * The admitted operation's token: the operation's own when it has a stimd connection, else one admitted for this
+ * request (held in `held`), starting a stimd first whatever `daemon.mode` says. `answer` is what to return instead
+ * when no operation could be admitted.
+ */
+async function admitOperation(
+  root: string,
+  operation: StimContext | undefined,
+  held: Socket[],
+): Promise<{ opToken: string } | { answer: Record<string, unknown> | null }> {
+  const existing = operationToken(operation);
+  if (existing) return { opToken: existing };
+  const env = operation?.env ?? process.env;
+  const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
+  if ('code' in context) return { answer: { op: 'error', ...context } };
+  await ensureStimd(env, process.platform, true, held, 'stim start', true, { ...context, workspace: root }, true);
+  const opToken = admittedOpToken(held);
+  if (opToken) return { opToken };
+  const refused = otherBuildRefusal();
+  return { answer: refused ? { op: 'error', ...refused } : null };
+}
+
+/** What `tunnel.ensure` sends besides the workspace. */
+export interface TunnelLaunchParams {
+  root: string;
+  port: number;
+  mode: string;
+  isExpo: boolean;
+  ngrokUrl: string | null;
+}
+
+/**
+ * Asks this home's stimd to run the workspace's managed tunnel (`tunnel.ensure`), under the admitted operation's
+ * environment. Resolves with stimd's answer, or null when no stimd answers within `timeoutMs` or `signal` aborts.
+ */
+export async function ensureTunnelThroughStimd(
+  params: TunnelLaunchParams,
+  timeoutMs: number,
+  operation?: StimContext,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const held: Socket[] = [];
+  try {
+    const admitted = await admitOperation(params.root, operation, held);
+    if ('answer' in admitted) return admitted.answer;
+    return await askStimd(
+      'tunnel.ensure',
+      timeoutMs,
+      { opToken: admitted.opToken, params: { ...params, requireReachable: false } },
+      signal,
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
+    return {
+      op: 'error',
+      code: error.code,
+      message: error.message,
+      ...('remedy' in error && typeof error.remedy === 'string' ? { remedy: error.remedy } : {}),
+    };
+  } finally {
+    for (const socket of held) socket.destroy();
+  }
+}
+
+/** Whether {@link stopTunnelThroughStimd} stopped the tunnel (`missing`: it ran no more), else why not. */
+export type TunnelStop = { status: 'stopped' | 'missing' } | { status: 'failed'; reason: string };
+
+/**
+ * Stops a workspace's managed tunnel through this home's stimd (`tunnel.stop`), starting a stimd when a tunnel claim
+ * or a recorded tunnel shows one may be left, since only stimd stops tunnels. A stimd of another build that holds the
+ * home refuses with what to do.
+ */
+export async function stopTunnelThroughStimd(
+  root: string,
+  record: { pid: number; processToken: string | null },
+  signal?: AbortSignal,
+): Promise<TunnelStop> {
+  const ask = () =>
+    askStimd(
+      'tunnel.stop',
+      40_000,
+      { params: { root, pid: record.pid, processToken: record.processToken ?? undefined } },
+      signal,
+    );
+  const daemon = readClaimSet(stimdClaimRoot());
+  if (daemon.live.length === 0 && daemon.unresolved.length === 0) {
+    const launched = await ensureStimd(
+      process.env,
+      process.platform,
+      false,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+    ).catch(() => false);
+    if (launched) await waitForStimdHello();
+  }
+  let answer = await ask();
+  if (!answer && stimdRefused() && !signal?.aborted && successorExpected() && (await successorBound()))
+    answer = await ask();
+  if (answer?.op === 'tunnel.stopped' && (answer.state === 'stopped' || answer.state === 'missing'))
+    return { status: answer.state };
+  if (answer?.op === 'tunnel.stopped')
+    return { status: 'failed', reason: typeof answer.reason === 'string' ? answer.reason : 'stimd could not stop it' };
+  if (answer) return { status: 'failed', reason: typeof answer.message === 'string' ? answer.message : 'stimd refused' };
+  const refused = otherBuildRefusal();
+  return {
+    status: 'failed',
+    reason: refused ? `${refused.message} ${refused.remedy}` : `stimd did not answer; tunnel pid ${record.pid} still runs.`,
+  };
+}
+
 /** What `metro.ensure` sends besides the workspace and its port. */
 export interface MetroLaunchParams {
   root: string;
@@ -384,26 +497,9 @@ export async function ensureMetroThroughStimd(
 ): Promise<Record<string, unknown> | null> {
   const held: Socket[] = [];
   try {
-    let opToken = operationToken(operation);
-    if (!opToken) {
-      const env = operation?.env ?? process.env;
-      const context = (await import('../stimd/forwarded.ts')).invocation(params.root, env);
-      if ('code' in context) return { op: 'error', ...context };
-      await ensureStimd(
-        env,
-        process.platform,
-        true,
-        held,
-        'stim start',
-        true,
-        { ...context, workspace: params.root },
-        true,
-      );
-      opToken = admittedOpToken(held);
-      const refused = opToken ? null : otherBuildRefusal();
-      if (refused) return { op: 'error', ...refused };
-      if (!opToken) return null;
-    }
+    const admitted = await admitOperation(params.root, operation, held);
+    if ('answer' in admitted) return admitted.answer;
+    const { opToken } = admitted;
     const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
     if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
     const answer = await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);

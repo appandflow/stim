@@ -637,6 +637,7 @@ export async function startTunnel({
 }
 
 export interface StartTunnelSequenceOptions {
+  env?: NodeJS.ProcessEnv;
   claims?: readonly ClaimHandle[];
   signal?: AbortSignal;
   providers: readonly ManagedProvider[];
@@ -658,6 +659,7 @@ export type StartTunnelSequenceResult =
   | { failed: true; reason: string; cleanupFailed?: true };
 
 export async function startTunnelSequence({
+  env,
   claims = [],
   signal,
   providers,
@@ -670,6 +672,7 @@ export async function startTunnelSequence({
   for (const provider of providers) {
     if (signal?.aborted) return { failed: true, reason: 'Metro tunnel startup was cancelled.' };
     const result = await start({
+      env,
       claims,
       signal,
       provider,

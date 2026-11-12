@@ -13,7 +13,14 @@ import {
 import { existsSync, realpathSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { drainOwned, ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
+import {
+  drainOwned,
+  ensurePersistentStimd,
+  stopDeviceLogStream,
+  stopMetroTree,
+  stopTunnelThroughStimd,
+  type TunnelStop,
+} from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   BROWSER_LOCK,
@@ -31,7 +38,6 @@ import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import {
   MODE_COMMAND,
-  clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
@@ -51,7 +57,6 @@ import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
-import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -205,11 +210,14 @@ async function defaultStopSession(root: string, sessionId: string, operation?: S
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-type StopMetroTunnelFn = (record: ManagedTunnelRecord, operation?: StimContext) => Promise<StopTunnelResult>;
+type StopMetroTunnelFn = (
+  root: string,
+  record: ManagedTunnelRecord,
+  operation?: StimContext,
+) => Promise<TunnelStop>;
 
-function defaultStopMetroTunnel(record: ManagedTunnelRecord, operation?: StimContext): Promise<StopTunnelResult> {
-  return stopTunnel(record, { operation });
-}
+const defaultStopMetroTunnel: StopMetroTunnelFn = (root, record, operation) =>
+  stopTunnelThroughStimd(root, record, operation?.signal);
 
 async function reclaimMetroTunnel(
   root: string,
@@ -220,9 +228,9 @@ async function reclaimMetroTunnel(
 ): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
   const record = readMetroTunnel(root);
   if (record?.kind !== 'managed') return { stopped: null, failed: null };
-  let result: StopTunnelResult;
+  let result: TunnelStop;
   try {
-    result = await stopMetroTunnel(record, operation);
+    result = await stopMetroTunnel(root, record, operation);
     operation?.signal.throwIfAborted();
   } catch (err) {
     throwIfCleanupInterrupted(err, operation);
@@ -235,18 +243,8 @@ async function reclaimMetroTunnel(
         platform: 'ios',
         name: `${record.provider} tunnel (pid ${record.pid})`,
         reason:
-          `${result.reason ?? 'stop failed'} The process identity could not be verified or the stop could not be confirmed. ` +
+          `${result.reason || 'stop failed'} The process identity could not be verified or the stop could not be confirmed. ` +
           'The ownership record is kept. Inspect the process and retry `stim worktree remove`.',
-      },
-    };
-  }
-  if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)))) {
-    return {
-      stopped: null,
-      failed: {
-        platform: 'ios',
-        name: 'replacement managed tunnel',
-        reason: 'A replacement managed tunnel record appeared during cleanup and is retained for a later stop.',
       },
     };
   }

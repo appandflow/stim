@@ -214,20 +214,15 @@ export function clearExpoMetroTunnel(root: string): void {
   });
 }
 
-export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): boolean {
+export function clearManagedMetroTunnel(root: string, expected: Pick<ManagedTunnelRecord, 'pid' | 'processToken'>): boolean {
   if (!existsSync(workspaceStateFile(root))) return true;
   return clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
     if (typeof value !== 'object' || value === null) return false;
     const record = value as Partial<ManagedTunnelRecord>;
     return (
       record.kind === 'managed' &&
-      record.provider === expected.provider &&
       record.pid === expected.pid &&
-      record.url === expected.url &&
-      record.port === expected.port &&
-      record.startedAt === expected.startedAt &&
-      (record.processToken ?? null) === (expected.processToken ?? null) &&
-      (record.logFile ?? null) === (expected.logFile ?? null)
+      (record.processToken ?? null) === (expected.processToken ?? null)
     );
   });
 }

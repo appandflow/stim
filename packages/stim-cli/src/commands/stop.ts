@@ -59,7 +59,6 @@ import {
 } from '../stimd/metro/stop-cause.ts';
 import {
   MODE_COMMAND,
-  clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSession,
@@ -79,12 +78,18 @@ import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree, type MetroTreeStop } from '../daemon/client.ts';
+import {
+  ensurePersistentStimd,
+  stopDeviceLogStream,
+  stopMetroTree,
+  stopTunnelThroughStimd,
+  type MetroTreeStop,
+  type TunnelStop,
+} from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
-import { stopTunnel } from '../engine/tunnel.ts';
 import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { waitForTreeExit } from '../process-group-exit.ts';
 import {
@@ -567,7 +572,7 @@ async function stopWorkspace({
   remoteDevice = undefined,
   teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
   metroTunnel = undefined,
-  stopMetroTunnel = stopTunnel,
+  stopMetroTunnel = (projectRoot, record, signal) => stopTunnelThroughStimd(projectRoot, record, signal),
   releaseLeases = releaseWorkspaceLeasesAsync,
   freePort = defaultFreePort,
   clearRegistration = (projectRoot, expected) => defaultClearRegistration(projectRoot, expected, report),
@@ -601,7 +606,7 @@ async function stopWorkspace({
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
-  stopMetroTunnel?: typeof stopTunnel;
+  stopMetroTunnel?: (root: string, record: { pid: number; processToken: string | null }, signal?: AbortSignal) => Promise<TunnelStop>;
   releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
   teardownRemoteSession?: (
     root: string,
@@ -896,38 +901,24 @@ async function stopWorkspace({
   const tunnel = metroTunnel === undefined ? readMetroTunnel(root) : metroTunnel;
   let tunnelHolding: string | null = null;
   if (tunnel?.kind === 'managed') {
-    const result = await stopMetroTunnel(tunnel);
+    const result = await stopMetroTunnel(root, tunnel, operation?.signal);
+    const reason = result.status === 'failed' ? result.reason : undefined;
     outcomes.metroTunnel = {
       status: result.status,
       provider: tunnel.provider,
-      reason: result.reason,
+      reason,
     };
     if (result.status === 'failed') {
       ok = false;
-      tunnelHolding = result.reason ?? `could not stop the ${tunnel.provider} tunnel`;
+      tunnelHolding = reason ?? `could not stop the ${tunnel.provider} tunnel`;
       if (!stillHolding) stillHolding = tunnelHolding;
       report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
-      if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, tunnel)))) {
-        tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
-        stillHolding = stillHolding ?? tunnelHolding;
-        ok = false;
-        outcomes.metroTunnel = {
-          status: 'failed',
-          provider: tunnel.provider,
-          reason: tunnelHolding,
-        };
-        report(chalk.red(phaseLine('lan', tunnelHolding)));
-      } else {
-        report(
-          chalk.dim(
-            phaseLine(
-              'lan',
-              result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`,
-            ),
-          ),
-        );
-      }
+      report(
+        chalk.dim(
+          phaseLine('lan', result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`),
+        ),
+      );
     }
   } else if (tunnel?.kind === 'expo') {
     outcomes.metroTunnel = { status: 'not-managed' };

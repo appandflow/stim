@@ -8,6 +8,7 @@ import {
   IDLE_STOP_KEY,
   isJsonObject,
   readDevServerStopRequest,
+  TUNNEL_MODES,
   type DaemonMode,
   readJsonObject,
   type DevServerStopRecord,
@@ -25,7 +26,13 @@ import {
   type ClaimHolder,
 } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
-import { recordForeignMetro, resolveProjectMetro, signalProcessTree, signalProcessTreeAsync } from '../../metro.ts';
+import {
+  pidExists,
+  recordForeignMetro,
+  resolveProjectMetro,
+  signalProcessTree,
+  signalProcessTreeAsync,
+} from '../../metro.ts';
 import { createNdjsonWriter, type NdjsonRecord, type NdjsonWriter } from '../../ndjson.ts';
 import { isMetroRunning } from '../../ports.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
@@ -49,7 +56,7 @@ import { shutDownIdleDevices } from '../../devices/idle-shutdown.ts';
 import { workspaceDeviceLastUseAt } from '../../devices/activity.ts';
 import { withIdleWorkspace } from '../../workspace/in-use.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
-import { PUBLIC_METRO_ENV } from '../../engine/metro-reach.ts';
+import { detectProviders, planMetroReach, PUBLIC_METRO_ENV } from '../../engine/metro-reach.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { metroRequestAt } from '../passes/idle-stop.ts';
@@ -71,7 +78,16 @@ import { metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
 import { startCommandServer } from './server-command.ts';
 import { recordFromLine, repositoryRoot, startExpoServer } from './server-expo.ts';
-import { clearExpoMetroTunnel, clearWorkspaceSupervisor, MODE_BARE, MODE_COMMAND, MODE_EXPO } from './state.ts';
+import {
+  clearExpoMetroTunnel,
+  clearManagedMetroTunnel,
+  clearWorkspaceSupervisor,
+  MODE_BARE,
+  MODE_COMMAND,
+  MODE_EXPO,
+  readMetroTunnel,
+  type ManagedTunnelRecord,
+} from './state.ts';
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 type Answer = Record<string, unknown>;
@@ -83,7 +99,6 @@ const STOP_MS = 5000;
 const SUCCESSOR_WAIT_MS = 10_000;
 const IDLE_POINT_MS = 2 * 60_000;
 const GROUPS = process.platform !== 'win32';
-const PROVIDERS: ManagedProvider[] = ['cloudflared', 'ngrok', 'tailscale'];
 
 /** How a workspace's Metro starts, kept in its claim so that a restart or an adopting stimd starts it the same way. */
 interface Launch {
@@ -129,6 +144,7 @@ interface TunnelChild {
   pid: number;
   processToken: string;
   url: string;
+  startedAt: string;
 }
 
 const invocations = new Map<string, Invocation & { workspace: string }>();
@@ -1004,7 +1020,7 @@ function adoptAt(path: string, log: Log): void {
   }
   for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
     const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
-    if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url) });
+    if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url), startedAt: holder.startedAt });
   }
 }
 
@@ -1167,11 +1183,85 @@ function restartAt(
   });
 }
 
+const normalizeUrl = (url: string): string => url.trim().replace(/\/+$/, '');
+
+const recordOf = (tunnel: TunnelChild): ManagedTunnelRecord => ({
+  kind: 'managed',
+  provider: tunnel.claim.details.provider as ManagedProvider,
+  pid: tunnel.pid,
+  url: tunnel.url,
+  port: Number(tunnel.claim.details.port),
+  startedAt: tunnel.startedAt,
+  processToken: tunnel.processToken,
+  ...(typeof tunnel.claim.details.logFile === 'string' ? { logFile: tunnel.claim.details.logFile } : {}),
+});
+
+const tunnelAnswer = (tunnel: TunnelChild, reused: boolean): Answer => {
+  const { kind: _kind, ...record } = recordOf(tunnel);
+  return { op: 'tunnel', reused, ...record };
+};
+
+const unreachable = (message: string, remedy: string): Answer => ({
+  op: 'error',
+  code: 'STIM_REMOTE_METRO_UNREACHABLE',
+  message,
+  remedy,
+});
+
+/** Takes over a tunnel an earlier CLI recorded in the workspace state without a claim, by its verified identity. */
+function adoptRecordedTunnel(root: string): { tunnel: TunnelChild } | { refusal: Answer } | null {
+  const recorded = readMetroTunnel(root);
+  if (recorded?.kind !== 'managed' || !pidExists(recorded.pid)) return null;
+  const refuse = (message: string, remedy: string) => ({
+    refusal: { op: 'error', code: 'STIM_REMOTE_START_REQUIRED', message, remedy },
+  });
+  if (!recorded.processToken)
+    return refuse(
+      'The recorded managed Metro tunnel has no process identity token.',
+      'Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+    );
+  const identity = { pid: recorded.pid, processToken: recorded.processToken };
+  if (inspectProcessIdentity(identity) !== 'same')
+    return refuse(
+      `The recorded ${recorded.provider} tunnel pid ${recorded.pid} no longer has its recorded process identity.`,
+      'Run `stim stop`, resolve any ownership refusal, then retry `stim start --remote`.',
+    );
+  const attempt = tryAcquireClaim({
+    root: claimRoot(root, 'tunnel'),
+    mode: 'exclusive',
+    label: 'tunnel',
+    details: { provider: recorded.provider, port: recorded.port, url: recorded.url, logFile: recorded.logFile },
+  });
+  if (attempt.pending) releaseClaim(attempt.pending);
+  if (!attempt.acquired) return null;
+  setClaimChild(attempt.acquired, identity);
+  const tunnel = { claim: attempt.acquired, ...identity, url: recorded.url, startedAt: recorded.startedAt };
+  tunnels.set(root, tunnel);
+  return { tunnel };
+}
+
+function recordTunnel(root: string, tunnel: TunnelChild): void {
+  const record = recordOf(tunnel);
+  withWorkspaceStateLock(root, () => writeWorkspaceState(root, { metroTunnel: { ...record } }));
+  const stored = readMetroTunnel(root);
+  if (stored?.kind !== 'managed' || stored.pid !== record.pid || stored.processToken !== record.processToken)
+    throw new Error('The workspace did not retain this tunnel ownership record.');
+}
+
 /**
- * `tunnel.ensure {root, provider, port, ngrokUrl?, requireReachable?}`: the workspace's tunnel provider as a child of
- * this stimd in its own process group with file stdio, claimed under `tunnel.claim`, answering `{op: 'tunnel', url}`.
+ * `tunnel.ensure {root, port, mode, isExpo?, ngrokUrl?, requireReachable?}`: the workspace's managed tunnel as a child of
+ * this stimd in its own process group with file stdio, claimed under `tunnel.claim`, recorded as the workspace's
+ * `metroTunnel`, answering `{op: 'tunnel', url, pid, provider, reused}`. Which providers run and in what order is decided
+ * here: with `auto`, ngrok then cloudflared, each tried until one prints a URL; a named provider alone. A running
+ * tunnel of the same port and a provider this call would try is reused; another one refuses.
+ * @ref LLP 0008#stimd-runs-the-managed-tunnel -- one owner for the tunnel, its provider order and its record
  */
-export function ensureTunnel(params: unknown, operationEnv?: NodeJS.ProcessEnv): Promise<Answer> {
+export function ensureTunnel(
+  params: unknown,
+  log: Log,
+  operationEnv?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<Answer> {
   if (closingChildren) return Promise.resolve({ op: 'error', code: 'metro', message: 'The Stim daemon is ending.' });
   const fields = isJsonObject(params) ? params : {};
   let root: string;
@@ -1180,62 +1270,153 @@ export function ensureTunnel(params: unknown, operationEnv?: NodeJS.ProcessEnv):
   } catch {
     return Promise.resolve({ op: 'error', code: 'bad-root', message: `no workspace at ${String(fields.root)}` });
   }
-  const provider = PROVIDERS.find((name) => name === fields.provider);
-  if (!provider)
-    return Promise.resolve({
-      op: 'error',
-      code: 'bad-provider',
-      message: `no tunnel provider ${String(fields.provider)}`,
-    });
+  const mode = TUNNEL_MODES.find((name) => name === fields.mode);
+  if (!mode || mode === 'off')
+    return Promise.resolve({ op: 'error', code: 'bad-mode', message: `no managed tunnel mode ${String(fields.mode)}` });
   const port = Number(fields.port);
   if (!Number.isInteger(port) || port <= 0)
     return Promise.resolve({ op: 'error', code: 'bad-port', message: `no port ${String(fields.port)}` });
-  return serialize(`tunnel:${root}`, () =>
-    startTunnelChild(root, provider, port, fields, operationEnv ?? invocations.get(root)?.forwarded.env),
-  );
+  const env = operationEnv ?? invocations.get(root)?.forwarded.env;
+  const available = detectProviders((bin) => {
+    try {
+      return Boolean(getExecutor().findExecutable(bin, env ? { env } : undefined));
+    } catch {
+      return false;
+    }
+  }, mode);
+  const plan = planMetroReach({ mode, metroPort: port, isExpo: fields.isExpo === true, available });
+  if ('failed' in plan) return Promise.resolve(unreachable(plan.failed, plan.remedy));
+  if (!('start' in plan))
+    return Promise.resolve({ op: 'error', code: 'bad-mode', message: `no managed tunnel for mode ${mode}` });
+  const candidates: readonly ManagedProvider[] = mode === 'auto' ? available : [plan.start];
+  const ngrokUrl = typeof fields.ngrokUrl === 'string' ? fields.ngrokUrl : null;
+  const requireReachable = fields.requireReachable !== false;
+  return serialize(`tunnel:${root}`, async () => {
+    adoptAt(root, log);
+    const owned = tunnels.get(root);
+    const adopted = owned ? { tunnel: owned } : adoptRecordedTunnel(root);
+    if (adopted && 'refusal' in adopted) return adopted.refusal;
+    const known = adopted?.tunnel;
+    if (known && inspectProcessIdentity(known) === 'same') {
+      const reusable =
+        known.claim.details.port === port &&
+        candidates.includes(known.claim.details.provider as ManagedProvider) &&
+        (!ngrokUrl || normalizeUrl(known.url) === normalizeUrl(ngrokUrl));
+      if (!reusable)
+        return {
+          op: 'error',
+          code: 'STIM_REMOTE_START_REQUIRED',
+          message: 'A different managed Metro tunnel is already running for this workspace.',
+          remedy: 'Run `stim stop`, then `stim start --remote`.',
+        };
+      return tunnelAnswer(known, true);
+    }
+    if (known) forgetTunnel(root, known);
+    return startTunnelChild(root, port, candidates, ngrokUrl, requireReachable, env, signal);
+  });
 }
 
 async function startTunnelChild(
   root: string,
-  provider: ManagedProvider,
   port: number,
-  fields: Record<string, unknown>,
-  env?: NodeJS.ProcessEnv,
+  providers: readonly ManagedProvider[],
+  ngrokUrl: string | null,
+  requireReachable: boolean,
+  env: NodeJS.ProcessEnv | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<Answer> {
-  const known = tunnels.get(root);
-  if (known && inspectProcessIdentity(known) === 'same') {
-    if (known.claim.details.provider === provider && known.claim.details.port === port)
-      return { op: 'tunnel', url: known.url, pid: known.pid };
-    await stopTunnel(root, known);
-  }
   const attempt = tryAcquireClaim({
     root: claimRoot(root, 'tunnel'),
     mode: 'exclusive',
     label: 'tunnel',
-    details: { provider, port },
+    details: { port },
   });
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired)
     return { op: 'error', code: 'tunnel-claimed', message: `another process holds ${claimRoot(root, 'tunnel')}` };
-  const { startTunnel } = await import('../../engine/tunnel.ts');
-  const started = await startTunnel({
-    env,
-    claims: [attempt.acquired],
-    provider,
-    port,
-    ngrokUrl: typeof fields.ngrokUrl === 'string' ? fields.ngrokUrl : null,
-    requireReachable: fields.requireReachable !== false,
-  });
+  const claim = attempt.acquired;
+  const { startTunnelSequence } = await import('../../engine/tunnel.ts');
+  const started = await startTunnelSequence({ env, claims: [claim], signal, providers, port, ngrokUrl, requireReachable });
   if ('failed' in started) {
-    if (started.cleanupFailed) throw unverifiedChild(attempt.acquired, { pid: 0 }, started.reason);
-    releaseClaim(attempt.acquired);
-    return { op: 'error', code: 'tunnel-start', message: started.reason };
+    if (started.cleanupFailed) throw unverifiedChild(claim, { pid: 0 }, started.reason);
+    releaseClaim(claim);
+    return unreachable(`Could not start a managed Metro tunnel for port ${port}.`, started.reason);
   }
-  const claim =
-    updateClaimDetails(attempt.acquired, { provider, port, url: started.url, logFile: started.logFile }) ??
-    attempt.acquired;
-  tunnels.set(root, { claim, pid: started.pid, processToken: started.processToken, url: started.url });
-  return { op: 'tunnel', url: started.url, pid: started.pid };
+  const tunnel: TunnelChild = {
+    claim:
+      updateClaimDetails(claim, {
+        provider: started.provider,
+        port,
+        url: normalizeUrl(started.url),
+        logFile: started.logFile,
+      }) ?? claim,
+    pid: started.pid,
+    processToken: started.processToken,
+    url: normalizeUrl(started.url),
+    startedAt: new Date().toISOString(),
+  };
+  try {
+    recordTunnel(root, tunnel);
+  } catch (error) {
+    const message = `Could not record the managed Metro tunnel: ${error instanceof Error ? error.message : String(error)}`;
+    const stopped = await started.cleanup();
+    if (stopped.status === 'failed')
+      throw unverifiedChild(claim, started, `${message} ${stopped.reason ?? 'Cleanup failed.'}`);
+    releaseClaim(tunnel.claim);
+    return unreachable(
+      message,
+      'The tunnel process was stopped. Fix the workspace write error, then retry `stim start --remote`.',
+    );
+  }
+  tunnels.set(root, tunnel);
+  return tunnelAnswer(tunnel, false);
+}
+
+/**
+ * `tunnel.stop {root, pid, processToken}`: stops the workspace's managed tunnel, one this stimd runs or one an earlier
+ * CLI recorded without a claim, by its verified identity, and clears its record. Answers `{op: 'tunnel.stopped', state}`
+ * with `state` `stopped`, `missing` (it already ran no more) or `failed` and a `reason`.
+ */
+export function stopManagedTunnel(params: unknown, log: Log): Promise<Answer> {
+  const fields = isJsonObject(params) ? params : {};
+  let root: string;
+  try {
+    root = realpathSync(String(fields.root));
+  } catch {
+    return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
+  }
+  return serialize(`tunnel:${root}`, async () => {
+    adoptAt(root, log);
+    const owned = tunnels.get(root);
+    if (owned) {
+      if (owned.pid !== fields.pid || owned.processToken !== fields.processToken)
+        return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
+      try {
+        await stopTunnel(root, owned);
+      } catch (error) {
+        if (error instanceof Error && 'reportCleanup' in error) failedCleanup(error);
+        return {
+          op: 'tunnel.stopped',
+          state: 'failed',
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      return { op: 'tunnel.stopped', state: 'stopped' };
+    }
+    const recorded = readMetroTunnel(root);
+    if (recorded?.kind !== 'managed') return { op: 'tunnel.stopped', state: 'missing' };
+    if (recorded.pid !== fields.pid || (recorded.processToken ?? undefined) !== fields.processToken)
+      return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
+    const { stopTunnel: stopRecorded } = await import('../../engine/tunnel.ts');
+    const result = await stopRecorded(recorded);
+    if (result.status !== 'failed')
+      withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, recorded));
+    return {
+      op: 'tunnel.stopped',
+      state: result.status,
+      ...(result.reason ? { reason: result.reason } : {}),
+    };
+  });
 }
 
 async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
@@ -1278,6 +1459,9 @@ async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
 
 function forgetTunnel(root: string, tunnel: TunnelChild): void {
   tunnels.delete(root);
+  try {
+    withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, tunnel));
+  } catch {}
   releaseClaim(tunnel.claim);
   if (typeof tunnel.claim.details.logFile === 'string') rmSync(tunnel.claim.details.logFile, { force: true });
 }
