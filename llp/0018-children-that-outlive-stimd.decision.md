@@ -52,7 +52,9 @@ Re.Pack, the Rock or React Native CLI bin. stimd keeps building the fixed
 invocation (invariant 3) in `server-expo.ts`, `server-command.ts`,
 `server-repack.ts` and `spawnHost`; their existing `spawnFn` seam launches the
 helper with that argv after `--`, the cwd, and the env as the helper's own env,
-which it passes on unchanged. No env reaches disk. The managed tunnel stays a
+which it passes on unchanged. No env reaches disk. The helper opens the pipes,
+and the dev server's identity comes from the handshake, not from the spawned
+process's pid. The managed tunnel stays a
 stimd child (LLP 0016); it should follow later, since its exit code matters less
 than Metro's but it shares the Windows hold.
 
@@ -62,13 +64,15 @@ stimd `unref`s it. On POSIX the dev server leads its own group as today, so a
 group signal to it never reaches the helper.
 
 **Claim and liveness.** stimd keeps `metro.claim` exactly as today: owner stimd,
-details as today plus `helper: {pid, processToken, protocol: 1}`. The child goes
-pending, then the helper (right after spawn), then the dev server (after the
-handshake). The dev server stays the claim child, so `retake()`, the claim checks in `stopMetroTree`
-(`daemon/client.ts`) and a rolled-back build all keep working. stimd judges the dev
-server running while the helper's identity reads `same`; the helper exits only
-after its child's group is gone and the exit is on disk. The helper holds no
-claim of its own.
+details as today plus `helper: {pid, processToken, protocol: 1}`. The child stays
+pending (`{"record":null}`, never recovered, LLP 0007) until the helper reports
+the dev server, which then becomes the child. The dev server stays the claim
+child, so `retake()`, the claim checks in `stopMetroTree` (`daemon/client.ts`)
+and a rolled-back build keep working. stimd judges the dev server running while
+the helper's identity reads `same`; the helper exits only after its child's
+group is gone and the exit is on disk. A helper whose identity reads neither
+`same` nor `gone` is a `STIM_CLAIM_UNAVAILABLE` refusal naming `metro.claim` and
+its remove command. The helper holds no claim of its own.
 
 **Protocol.**
 
@@ -86,9 +90,16 @@ claim of its own.
 - Exit: at the leader's `exit` the helper keeps the code or signal and reads on
   until both pipes close, or until the group is proven gone plus 1 s. It then
   writes `metro-run.exit.json` (`{pid, processToken, code, signal, exitedAt}`,
-  atomic, workspace dir) and exits. stimd, on its tick or at boot, finds the
-  helper gone, reads that file, writes the one `supervisor_stopped` line and the
-  stop record through today's `forgetExited`, then deletes the file. stimd stays
+  atomic, workspace dir) and exits. stimd settles that file at boot, on every
+  tick and before `start` spawns: it scans the workspace directories of the
+  registered projects for the file itself, since a claim whose owner and child
+  are both gone is no longer live and adoption never sees it. A file whose
+  `{pid, processToken}` matches the recorded `supervisor` gets the one
+  `supervisor_stopped` line and the stop record through today's
+  `forgetExited`; a file that matches nothing gets a warn line naming the pid and
+  code. Either way stimd then deletes it. Core's stop-cause reader reads a
+  matching file before it calls a supervisor vanished, so `status` shows the
+  code even before stimd settles it. stimd stays
   the only writer of `supervisor_stopped` and of the stop cause, which it reads
   from the stop request in workspace state as today.
 - Readiness and heartbeat: unchanged. The heartbeat carries the dev server's pid,
@@ -99,8 +110,9 @@ claim of its own.
   to go. When it does not, or it went while the group lives, stimd stops the group
   itself through the claim child as it stops an adopted child today; an unproven
   end is today's `STIM_CLAIM_UNAVAILABLE` refusal naming `metro.claim` and its
-  remove command. `reclaim` keeps killing the recorded dev server tree; the
-  helper records that exit.
+  remove command. `metro.stop` answers only after the helper is gone, so
+  `reclaim`, which stops through `stopMetroTree`, removes no workspace directory
+  the helper still writes.
 
 **Events.**
 
@@ -121,12 +133,13 @@ claim of its own.
 - Dev server crash: the exit file carries the code; `status` shows it as today.
 - Machine reboot: claim owner and child are gone, so the claim is recovered; with
   no exit file the stop is today's "gone and recorded no cause".
-- A known window: a helper killed before `accept` leaves the claim child set to
-  the helper, so the claim frees while the dev server may still run unclaimed.
+- A helper killed before it reports its dev server leaves the claim child
+  pending: the claim stays held and refuses with its remove command, as a
+  pending child does today.
 
-**Windows.** Not checked. libuv adds non-detached children to a kill-on-close job
-object, so a detached helper should outlive stimd and its non-detached dev server
-should end with the helper. Until a `ci-full` run of the new integration test
+**Windows.** Not checked. The untested assumption is that a detached helper
+outlives stimd and that its non-detached dev server ends with it. Until a
+`ci-full` run of the new integration test
 (stimd exits, helper and dev server keep running, the successor stops them)
 passes on Windows, Windows keeps stopping dev servers at stimd's exit and the
 `heldBy: "dev-servers"` hold. Two Stim builds on one home (audit A6) are unchanged.
@@ -143,11 +156,14 @@ output.
 started: adopted as today (file tail, exit code unknown) and restarted at its
 workspace's next idle point. That branch is a marked compat row, the next free
 one (C30 when written), ending in 2.1.0. A rollback to a pre-helper build adopts
-the claim as today; the helper keeps writing the raw files it tails.
+the claim as today and tails the raw files the helper still writes, at a known
+cost: every line lands in `metro.ndjson` twice (the helper's and the tail's),
+the exit settles as unknown, and the exit file stays until a helper-aware stimd
+finds it matching nothing.
 
 **Pull requests.** (1) The helper for all four modes on POSIX: `run.ts`,
 `spawn-entry.ts`, `tsdown.config.ts`, `children.ts`, `child-server.ts`, the
-three `server-*.ts` files, `guide/metro.ts`, `compat-budget.json`, this document
+three `server-*.ts` files, `stop-cause.ts` and its core reader, `guide/metro.ts`, `compat-budget.json`, this document
 and the `llp/0000` index, and tests extended in
 `stimd-metro-adopt-identity.integration.test.ts` (exit code and complete output
 across a killed stimd, a leader that exits while its group writes) and
