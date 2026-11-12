@@ -50,6 +50,49 @@ The unresolved-claim reason in `stim status`, `stim gc` and maintenance names
 the claim path, its owner (pid and claim time, and whether it still runs) and the
 command that removes the claim and child files.
 
+## stimd stays up for a child it can watch
+
+A cleanup refusal that names one child and carries a way to tell when that
+child has stopped does not end stimd, whether it comes from the tick, a Metro or
+tunnel stop, or a job on the passes or measure thread. stimd logs
+`daemon_cleanup_unverified`, holds idle exit and engine switches, and checks
+the child again on every tick; once it has stopped, the claims only that
+failure retained are released. Any other unverified cleanup, a thread that
+crashes, and a net thread failure end stimd; its home, daemon and engine claims
+stay complete, so the next start recovers them once that stimd is gone.
+
+A thread job's refusal is watched only when no other child its operation
+declared is still running. #5510 kept every thread refusal fatal because a
+claim must stay held until every child of the operation has stopped, and an
+error from exec carries every claim the operation declared while naming only
+the child that refused; a second running child would be invisible to the
+check. With other children running, the refusal still ends stimd.
+
+A watched job's check stays on its thread, which also releases the claims the
+job retained, since the checks are functions that cannot be posted between
+threads. The failure crosses to stimd's main thread as its message, code,
+remedy and the child's pid and identity token, and stimd's main thread reads a
+flag the thread updates when stimd asks it to check again. The thread does not
+end on idle while it watches a child, and a thread that ends while it watches
+one ends stimd, since nothing can release what that child held any more.
+
+The tick's own containment has no such operation check: the tick's errors reach
+stimd's main loop without their operation.
+
+While stimd waits, `stim status` (and `daemon.unverified` in its JSON) and
+`stim doctor` list each child with its pid, when the wait started and its
+remedy. The remedy says that the wait ends when that child's process group has
+stopped, and that stopping this stimd (`kill <pid>`, `taskkill /PID <pid> /F`
+on Windows) is safe: its home and daemon claims stay complete, the boot is not
+marked abnormal, and the next command starts a new stimd. A command of another
+build that this stimd refuses names the children it waits for. The wait has no
+time limit: no clock proves that a child stopped, and a stimd that ended for it
+would only move the wait to the claims.
+
+This rule was chosen by the coordinator and the lane that implemented #5499,
+not by the maintainer. The maintainer's requirement it serves, from #5499:
+Maintainer decision: "We really need to fix stimd crashing and not being able to restart automatically", 2026-11-11.
+
 ## Releasing a claim after a killed fingerprint child
 
 The fingerprint child (`bin/fingerprint-precompute.ts`) runs project code in
@@ -119,3 +162,4 @@ Related: #5498, #5510, #5546.
 - `packages/stim-cli/src/fingerprint/detached-groups.ts`: the ledger and the
   owner's check.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
+- `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.

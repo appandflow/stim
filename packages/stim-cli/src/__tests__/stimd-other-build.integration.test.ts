@@ -18,7 +18,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
-import { stimBuildId, stimdClaimRoot, stimdRecordFile, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  stimBuildId,
+  stimdClaimRoot,
+  stimdRecordFile,
+  stimdRunDir,
+  stimdSocket,
+} from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -29,6 +36,7 @@ const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
 let home: string;
 let server: Server | null = null;
 let claim: ClaimHandle | null = null;
+let daemonClaim: ClaimHandle | null = null;
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-other-build-')));
@@ -40,6 +48,8 @@ afterEach(async () => {
   server = null;
   releaseClaim(claim);
   claim = null;
+  releaseClaim(daemonClaim);
+  daemonClaim = null;
   vi.resetModules();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
@@ -70,13 +80,30 @@ test.each([
     message: 'serves live web shares',
     remedy: 'kill 4242',
   },
+  {
+    stimd: 'that waits for a child whose cleanup it could not verify',
+    reply: { version: '1.0.0-other' },
+    waiting: 5150,
+    message: 'waits for child 5150',
+    remedy: 'kill 4242',
+  },
 ])(
   'share list names a stimd $stimd and how to replace it, not that no stimd runs',
-  async ({ reply, message, remedy }) => {
+  async ({ reply, message, remedy, waiting }) => {
     const socket = stimdSocket();
     mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
     mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
     claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
+    if (waiting)
+      daemonClaim =
+        tryAcquireClaim({
+          root: daemonClaimRoot(),
+          mode: 'shared',
+          label: 'test stimd',
+          details: {
+            unverified: [{ since: new Date().toISOString(), child: waiting, message: 'fixture', remedy: 'fixture' }],
+          },
+        }).acquired ?? null;
     server = createServer((connection) => {
       connection.resume();
       connection.end(`${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', pid: 4242, ...reply })}\n`);

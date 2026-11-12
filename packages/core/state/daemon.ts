@@ -1,4 +1,4 @@
-import { readJsonObject } from './json-file.ts';
+import { isJsonObject, readJsonObject } from './json-file.ts';
 import { daemonSnapshotFile } from './paths.ts';
 
 export type DaemonMode = 'on' | 'report' | 'off';
@@ -102,6 +102,31 @@ export interface DaemonSnapshot {
   waiting?: DaemonWaiter[];
 }
 
+/** A child whose cleanup the running stimd could not verify, which keeps it up until the child has stopped. */
+export interface UnverifiedCleanup {
+  since: string;
+  /** The child's pid, whose process group ending ends the wait. */
+  child: number;
+  message: string;
+  /** How to check the child, how the wait ends, and that stopping this stimd is safe. */
+  remedy: string;
+}
+
+/** The well-formed entries of a daemon claim's `unverified` details. */
+export function parseUnverifiedCleanups(value: unknown): UnverifiedCleanup[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.child === 'number' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, child: entry.child, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
+}
+
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
 export interface DaemonStatus {
   /** The running daemon's mode, else the mode `daemon.mode` resolves to here. */
@@ -118,6 +143,8 @@ export interface DaemonStatus {
   waiting?: DaemonWaiter[];
   /** The last actions a daemon of this home took, oldest first, from its snapshot. */
   recent?: DaemonRecentAction[];
+  /** The children the running daemon stays up for, from its claim. */
+  unverified?: UnverifiedCleanup[];
 }
 
 function isDaemonSnapshot(record: Record<string, unknown> | null): record is Record<string, unknown> & DaemonSnapshot {
