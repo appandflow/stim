@@ -374,12 +374,12 @@ test('a pass that stimd aborts while it lists devices plans no device action and
   });
   const operation = testContext({ env: { ...process.env, STIM_HOME: undefined }, signal: controller.signal });
 
-  const plan = planRecords({ devices: true, background: true, operation }).then(
+  const planned = planRecords({ devices: true, background: true, operation }).then(
     (result) => result.actions,
     () => [],
   );
   await vi.waitFor(() => expect(listing).toBe(true));
   controller.abort();
 
-  expect((await plan).filter((action) => action.kind === 'would-delete-orphaned-devices')).toEqual([]);
+  expect((await planned).filter((action) => action.kind === 'would-delete-orphaned-devices')).toEqual([]);
 });
