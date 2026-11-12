@@ -110,6 +110,7 @@ export class ClaimRefusedError extends Error {
   readonly claimPath: string;
   readonly reason: string;
   readonly removeCommand: string;
+  readonly blockingFile: boolean;
 
   constructor({
     claimPath,
@@ -137,6 +138,7 @@ export class ClaimRefusedError extends Error {
     this.claimPath = claimPath;
     this.reason = reason;
     this.removeCommand = removeCommand;
+    this.blockingFile = blockingFile;
   }
 }
 

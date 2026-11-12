@@ -115,7 +115,7 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       if (inspectProcessIdentity(outer) !== 'same') throw new Error('verification child identity changed');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).not.toMatchObject({ reportCleanup: true });
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
       expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const native = workspaceProcessLockPath(join(home, 'workspaces', workspaceName(root)), NATIVE_RUN_LOCK, true);
       expect(readClaimSet(native)).toMatchObject({ live: [], dead: [], unresolved: [] });

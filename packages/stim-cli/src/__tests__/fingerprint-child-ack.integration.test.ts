@@ -25,7 +25,7 @@ import { readClaimSet } from '../ownership-claim.ts';
 import { markObserving, recordDetachedGroups } from '../fingerprint/detached-groups.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { testContext } from './_context.ts';
-import { goneClaimOwner, recycledClaimOwner } from './_factories.ts';
+import { claimOwnerStartedAfter } from './_factories.ts';
 
 const MOBILE_MODULES = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
 const BOOTSTRAP = fileURLToPath(new URL('../../dist/fingerprint-precompute.mjs', import.meta.url));
@@ -133,7 +133,7 @@ module.exports = { name: 'fp', slug: 'fp' };`,
     const evaluator = Number(readFileSync(marker, 'utf8'));
     controller.abort(new Error('the report budget ended'));
     const outcome = await running;
-    expect(outcome).not.toMatchObject({ reportCleanup: true });
+    expect(outcome).toMatchObject({ message: 'the report budget ended' });
     expect(() => process.kill(evaluator, 0)).toThrow(/ESRCH/);
     const lock = lockOf(context.home, root);
     expect(readClaimSet(lock)).toMatchObject({ live: [], dead: [], unresolved: [] });
@@ -141,9 +141,11 @@ module.exports = { name: 'fp', slug: 'fp' };`,
   },
 );
 
+type Reference = { pid: number; processToken: string };
+
 async function killedChild(
   root: string,
-  ledger: (directory: string) => void | Promise<void>,
+  ledger: (directory: string, child: Reference) => void | Promise<void>,
   { observing = true }: { observing?: boolean } = {},
 ) {
   const context = testContext({ projectRoot: root, env: env() });
@@ -155,8 +157,10 @@ async function killedChild(
       const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
       const exited = new Promise((resolve) => child.once('exit', resolve));
       options.onSpawn?.(child);
+      const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      if (child.pid === undefined || !captured?.ok) throw new Error('the fixture child has no identity');
       if (observing) markObserving(request.ownership.directory);
-      await ledger(request.ownership.directory);
+      await ledger(request.ownership.directory, { pid: child.pid, processToken: captured.token });
       child.kill('SIGKILL');
       await exited;
       throw Object.assign(new Error('the child was killed'), { code: 'ABORT_ERR' });
@@ -165,7 +169,7 @@ async function killedChild(
   return { context, run: () => readFingerprint(context, { root, platform: 'ios', embedMode: 'development' }) };
 }
 
-async function detachedSleep(): Promise<{ pid: number; processToken: string }> {
+async function detachedSleep(): Promise<Reference> {
   const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
   child.unref();
   const pid = child.pid;
@@ -173,6 +177,9 @@ async function detachedSleep(): Promise<{ pid: number; processToken: string }> {
   if (pid === undefined || !captured?.ok) throw new Error('the fixture process has no identity');
   return { pid, processToken: captured.token };
 }
+
+const record = (directory: string, value: unknown) =>
+  write(join(directory, 'group-1.json'), typeof value === 'string' ? value : JSON.stringify({ record: value }));
 
 test.skipIf(process.platform === 'win32')('a child killed before it started anything releases the claim', async () => {
   const root = expoApp({});
@@ -185,8 +192,8 @@ test.skipIf(process.platform === 'win32')(
   'a child killed with every recorded process group gone releases the claim',
   async () => {
     const root = expoApp({});
-    const { context, run } = await killedChild(root, (directory) =>
-      write(join(directory, 'group-1.json'), JSON.stringify({ record: goneClaimOwner() })),
+    const { context, run } = await killedChild(root, (directory, child) =>
+      record(directory, claimOwnerStartedAfter(child, 999999901)),
     );
     await expect(run()).rejects.toThrow('the child was killed');
     expect(existsSync(lockOf(context.home, root))).toBe(false);
@@ -194,42 +201,52 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'the owner stops a recorded group that still runs and releases the claim',
+  'the owner stops a recorded group that started after the child and releases the claim',
   async () => {
     const root = expoApp({});
-    const group = await detachedSleep();
-    const { context, run } = await killedChild(root, (directory) =>
-      write(join(directory, 'group-1.json'), JSON.stringify({ record: group })),
-    );
+    let group: Reference | undefined;
+    const { context, run } = await killedChild(root, async (directory) => {
+      group = await detachedSleep();
+      record(directory, group);
+    });
     await expect(run()).rejects.toThrow('the child was killed');
-    expect(inspectProcessIdentity(group)).not.toBe('same');
+    expect(group && inspectProcessIdentity(group)).not.toBe('same');
     expect(existsSync(lockOf(context.home, root))).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a record naming a live process older than the child is not killed and the claim is retained',
+  async () => {
+    const root = expoApp({});
+    const older = await detachedSleep();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const { context, run } = await killedChild(root, (directory) => record(directory, older));
+      await expect(run()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+      expect(inspectProcessIdentity(older)).toBe('same');
+      expect(readClaimSet(lockOf(context.home, root)).live[0]).toMatchObject({ childDeclared: true, child: null });
+    } finally {
+      process.kill(-older.pid, 'SIGKILL');
+    }
   },
 );
 
 test.each([
   [
     'a group that cannot be proven gone',
-    (directory: string) => write(join(directory, 'group-1.json'), JSON.stringify({ record: recycledClaimOwner() })),
+    (directory: string, child: Reference) => record(directory, claimOwnerStartedAfter(child, process.pid)),
     true,
   ],
-  [
-    'a group recorded before its spawn finished',
-    (directory: string) => write(join(directory, 'group-1.json'), JSON.stringify({ record: null })),
-    true,
-  ],
-  ['a record that cannot be read', (directory: string) => write(join(directory, 'group-1.json'), '{'), true],
+  ['a group recorded before its spawn finished', (directory: string) => record(directory, null), true],
+  ['a record that cannot be read', (directory: string) => record(directory, '{'), true],
   ['no evidence that the child observed its groups', () => {}, false],
-])(
-  'a child killed with %s retains the claim',
-  async (_name, ledger, observing) => {
-    const root = expoApp({});
-    const { context, run } = await killedChild(root, ledger, { observing });
-    await expect(run()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-    expect(readClaimSet(lockOf(context.home, root)).live[0]).toMatchObject({ childDeclared: true, child: null });
-  },
-  40_000,
-);
+])('a child killed with %s retains the claim', async (_name, ledger, observing) => {
+  const root = expoApp({});
+  const { context, run } = await killedChild(root, ledger, { observing });
+  await expect(run()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+  expect(readClaimSet(lockOf(context.home, root)).live[0]).toMatchObject({ childDeclared: true, child: null });
+});
 
 test.skipIf(process.platform === 'win32')(
   'the observer records a detached child before it can run and removes the record once its group is gone',

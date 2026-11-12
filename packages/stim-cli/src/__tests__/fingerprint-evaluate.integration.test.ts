@@ -448,7 +448,7 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       if (inspectProcessIdentity(outer) !== 'same') throw new Error('verification child identity changed');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).not.toMatchObject({ reportCleanup: true });
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
       expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const lock = workspaceProcessLockPath(
         join(context.home, 'workspaces', workspaceName(root)),
@@ -553,7 +553,7 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       expect(inspectProcessIdentity(outer)).toBe('same');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).not.toMatchObject({ reportCleanup: true });
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
       expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const lock = workspaceProcessLockPath(
         join(operation.home, 'workspaces', workspaceName(root)),

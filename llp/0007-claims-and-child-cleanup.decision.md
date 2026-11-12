@@ -30,11 +30,12 @@ claim only when all of these hold:
   identity;
 - the child wrote `observing.json` next to the acknowledgement, so its ledger of
   detached groups was installed;
-- every `group-*.json` entry in the owner directory is a complete record, and
-  the owner has stopped each group whose leader identity still matches (never by
-  pid alone) and proven it gone.
+- every `group-*.json` entry in the owner directory is a complete record whose
+  leader started at or after the child did (compared through the start times in
+  the two process records); the owner stops each group whose leader identity
+  still matches (never by pid alone) and proves it gone.
 
-An entry that is pending, unreadable or not provably gone, a missing marker, or
+An entry that is pending, unreadable, older than the child or not provably gone (a record that reads as a different process ends the wait at once), a missing marker, or
 a platform without process groups, keeps the claim as `{"record":null}`. No
 file time and no staleness threshold decides anything.
 
@@ -49,13 +50,27 @@ What the ledger cannot see: a process that project code starts itself outside
 exec, for example one that detaches into its own session. The acknowledgement
 could not see it either; neither proves that nothing runs.
 
-The child answers a SIGTERM during its module load itself, because a signal
-before its handler exists would kill it unacknowledged. A report with too
-little budget left, or on a host above the precompute's load limit, does not
-start a fingerprint child.
+The ledger is trusted only as far as the project code the child runs, in both
+directions. That code runs as the same user and can write the directory, so a
+forged entry can draw a kill of a group whose leader is newer than the child, and
+a deleted entry can draw a release while an evaluator still runs. No privilege
+boundary is crossed: the code could send the same signal itself. The start-time
+rule keeps a forged entry from naming a process that was already running when the
+child started.
 
-The rule was chosen by the coordinator and the reviews of #5547, not by the
-maintainer.
+A child killed before it writes `observing.json` (starved during module load,
+before its signal handler runs) keeps the claim as `{"record":null}`; that is a
+known remaining way to a stuck claim, rare because reports and the daemon
+precompute do not start children under load.
+
+The child answers a SIGTERM during its module load itself, because a signal
+before its handler exists would kill it unacknowledged. A Desktop report with too
+little budget left, or on a host above the precompute's load limit, does not
+start a fingerprint child: the prebuild-record check, the fingerprint notes and
+the parity check are each replaced by a note saying so.
+
+The rule, including the start-time condition, was chosen by the coordinator and
+the reviews of #5547, not by the maintainer.
 
 Related: #5498, #5510, #5546.
 

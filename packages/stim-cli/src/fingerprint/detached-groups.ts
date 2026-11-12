@@ -4,7 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import type { DetachedChildObserver } from '../exec.ts';
 import { processGroupAlive } from '../ownership-claim.ts';
-import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
+import {
+  captureProcessIdentity,
+  inspectProcessIdentity,
+  startedNotBefore,
+  type ProcessRecord,
+} from '../process-identity.ts';
 
 const ENTRY = /^group-[0-9a-f-]+\.json$/;
 
@@ -82,23 +87,28 @@ export async function settleDetachedGroups(
   if (process.platform === 'win32' || !child || !groupGone(child.pid, child.processToken)) return false;
   const records = readRecords(directory);
   if (!records) return false;
+  const named: { pid: number; processToken: string }[] = [];
   for (const record of records) {
-    if (inspectProcessIdentity(record) !== 'same' || typeof record.pid !== 'number') continue;
+    if (typeof record.pid !== 'number' || typeof record.processToken !== 'string') return false;
+    if (!startedNotBefore(record, child)) return false;
+    named.push({ pid: record.pid, processToken: record.processToken });
+  }
+  for (const record of named) {
+    if (inspectProcessIdentity(record) !== 'same') continue;
     try {
       process.kill(-record.pid, 'SIGKILL');
     } catch {}
   }
   const deadline = performance.now() + budgetMs;
-  while (
-    !records.every(
-      (record) =>
-        typeof record.processToken === 'string' &&
-        typeof record.pid === 'number' &&
-        groupGone(record.pid, record.processToken),
-    )
-  ) {
+  for (;;) {
+    let settled = true;
+    for (const record of named) {
+      const status = inspectProcessIdentity(record);
+      if (status !== 'same' && status !== 'gone') return false;
+      if (status === 'same' || processGroupAlive(record.pid)) settled = false;
+    }
+    if (settled) return true;
     if (performance.now() >= deadline) return false;
     await delay(SETTLE_POLL_MS);
   }
-  return true;
 }

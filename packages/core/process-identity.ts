@@ -33,6 +33,22 @@ export function inspectProcessIdentity(record: ProcessRecord | null | undefined)
   return result.ok ? result.value : 'unknown';
 }
 
+function startOf(record: ProcessRecord): bigint | null {
+  if (typeof record.processToken !== 'string') return null;
+  const decoded = decode(record.processToken);
+  if (!decoded.ok) return null;
+  const match = /^(\d+)(?::(\d+))?$/.exec(String(decoded.value.startTime));
+  if (!match) return null;
+  return BigInt(match[1] ?? '0') * 1_000_000n + BigInt(match[2] ?? '0');
+}
+
+/** Whether `record` started at or after `reference`; false when either start time cannot be read. */
+export function startedNotBefore(record: ProcessRecord, reference: ProcessRecord): boolean {
+  const started = startOf(record);
+  const earlier = startOf(reference);
+  return started !== null && earlier !== null && started >= earlier;
+}
+
 export type ProcessStart = { status: 'running'; startedAtMs: number } | { status: 'gone' } | { status: 'unknown' };
 
 /** Start time of a live process, read from the same OS identity that `captureProcessIdentity` records. */
