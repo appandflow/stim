@@ -1185,8 +1185,7 @@ describe('linked worktree sweep classification', () => {
   });
 
   test('a tracked file hidden from git status keeps the worktree even when its changes could be archived', () => {
-    const hidden =
-      'its tracked file a.txt is marked skip-worktree (by a sparse checkout or by hand), so git status may not show an edit to it';
+    const hidden = 'its tracked file a.txt is marked skip-worktree, so git status may not show an edit to it';
     expect(worktreeSkipReason(linked({ hiddenEdit: hidden, archiveDirty: true, merge: merged() }), null)).toMatchObject(
       {
         code: 'dirty',
@@ -2939,6 +2938,16 @@ test.skipIf(process.platform === 'win32')(
   240_000,
 );
 
+test('a sparse checkout alone does not keep a finished registered worktree', async () => {
+  const wt = repoWithTwoBranches({ files: { 'notes.txt': 'tracked\n', 'ios/a.txt': 'a\n' } }).worktrees.merged ?? '';
+  execSync('git sparse-checkout set --no-cone /ios/', { cwd: wt, timeout: 15_000 });
+  expect(existsSync(join(wt, 'notes.txt'))).toBe(false);
+  const found = (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() })).worktrees.find(
+    (w) => realpathSync.native(w.path) === wt,
+  );
+  expect(found).toMatchObject({ skipCode: null });
+}, 240_000);
+
 describe('a finished registered worktree whose uncommitted state is pod churn, a hand edit or hidden from git status', () => {
   const PBX = ['// !$*UTF8*$!', '{', '\tDEVELOPMENT_TEAM = AAA;', '\tname = App;', '}', ''];
   const files = {
@@ -2976,7 +2985,6 @@ describe('a finished registered worktree whose uncommitted state is pod churn, a
   test.each([
     ['assume-unchanged', 'update-index --assume-unchanged notes.txt', /notes\.txt is marked assume-unchanged/],
     ['skip-worktree', 'update-index --skip-worktree notes.txt', /notes\.txt is marked skip-worktree/],
-    ['a sparse checkout', 'sparse-checkout set --no-cone /ios/', /marked skip-worktree \(by a sparse checkout/],
   ])(
     '%s keeps it',
     async (_name, command, message) => {

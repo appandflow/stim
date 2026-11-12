@@ -1691,15 +1691,22 @@ not on any remote"  (worktree remove)
   A native build rewrites tracked files, and Stim RESTORES the one class it can
   prove is not work: a modified \`<app>/ios/Podfile.lock\` (tracked and
   unstaged) whose text \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes,
-  holds too. When the only dirt left is such a lock, \`worktree remove\` runs the
-  checkout itself and says so. Stim cannot tell what \`pod install\` changed in
-  \`*.xcodeproj/project.pbxproj\` from a hand edit, so that file, and a lock
-  whose Pods were deleted or differ, count as uncommitted work. ONE other
-  dirty path and the whole set is refused, so this never eats real work.
-  A tracked file marked assume-unchanged or skip-worktree hides edits from git
-  status, so \`worktree remove\` refuses and names it; \`--force\` overrides.
-  A sparse checkout marks the files it leaves out skip-worktree too, so it is
-  refused the same way.
+  holds too, or that is unchanged since gc deleted \`ios/Pods\` while the two
+  matched. When the only dirt left is such a lock, \`worktree remove\` runs the
+  checkout itself and says so. Known hole: a deliberate \`pod update\` (or a
+  hand-resolved lock) followed by an install leaves the same evidence, so
+  commit it before removing or it is restored as churn. Stim cannot tell what
+  \`pod install\` changed in \`*.xcodeproj/project.pbxproj\` from a hand edit,
+  so that file, and a lock without the evidence, count as uncommitted work.
+  ONE other dirty path and the whole set is refused, so this never eats real
+  work.
+  A tracked file marked assume-unchanged, or skip-worktree with the file on
+  disk, hides edits from git status, so \`worktree remove\` refuses and names
+  it with the command that shows the edit:
+  \`git -C <worktree> update-index --no-skip-worktree <file>\` (or
+  \`--no-assume-unchanged\`), then commit or discard it; \`--force\` is the last
+  resort. Files a sparse checkout leaves out are absent from disk and do not
+  count.
   Untracked \`.watchman-cookie-*\` files, which watchman writes into the roots
   it watches, are not work either: \`worktree remove\` deletes them itself and
   ignores them when it counts dirty paths. Any other untracked file still

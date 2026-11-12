@@ -28,6 +28,7 @@ import { startOp } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordLightened } from '../workspace/lightened.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -1660,6 +1661,25 @@ test('action: the bare repository directory itself is refused as a removal targe
   expect(errs.join('\n')).toMatch(/is the bare repository, not a worktree/);
 });
 
+test('a lock gc saw match its Manifest.lock stays churn after gc deletes Pods, until the lock changes', () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-pod-lightened-')));
+  try {
+    const ios = join(base, 'ios');
+    mkdirSync(join(ios, 'Pods'), { recursive: true });
+    writeFileSync(join(ios, 'Podfile.lock'), 'PODS: []\n');
+    writeFileSync(join(ios, 'Pods', 'Manifest.lock'), 'PODS: []\n');
+    ensureWorkspaceStorage(base);
+    const lock = [' M ios/Podfile.lock'];
+    recordLightened([base], join(ios, 'Pods'));
+    rmSync(join(ios, 'Pods'), { recursive: true });
+    expect(provenPodChurn(base, lock, [], [base])).toEqual(['ios/Podfile.lock']);
+    writeFileSync(join(ios, 'Podfile.lock'), 'PODS:\n  - edited\n');
+    expect(provenPodChurn(base, lock, [], [base])).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('pod-install churn is recognised in an app whose Xcode project is outside ios/, and only with the install output beside it', () => {
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-pod-custom-')));
   try {
@@ -1928,12 +1948,25 @@ const KEPT_EDITS: [string, (wt: string) => void, RegExp][] = [
     },
     /apps\/app\/App\.tsx is marked skip-worktree/,
   ],
-  [
-    'a sparse checkout',
-    (wt) => execSync('git sparse-checkout set --no-cone /apps/app/ios/', { cwd: wt, timeout: 15_000 }),
-    /is marked skip-worktree \(by a sparse checkout or by hand\)/,
-  ],
 ];
+
+test('against a real repo: a sparse checkout alone does not keep the worktree, but a skip-worktree file on disk does', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-sparse-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = podChurnRepo(base);
+    execSync('git sparse-checkout set --no-cone /apps/app/ios/', { cwd: wt, timeout: 15_000 });
+    expect(existsSync(join(wt, 'apps', 'app', 'App.tsx'))).toBe(false);
+    await removeAndRead(wt);
+    expect(process.exitCode).not.toBe(1);
+    expect(existsSync(wt)).toBe(false);
+  } finally {
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test.each(KEPT_EDITS)(
   'against a real repo: worktree remove refuses %s and changes nothing',

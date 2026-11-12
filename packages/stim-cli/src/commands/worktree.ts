@@ -87,6 +87,7 @@ import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
+import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -664,15 +665,19 @@ interface PodChurnResult {
  * The modified `Podfile.lock` files among `lines` that are `pod install` output, which removal restores. Stim keeps no
  * record of its own pod installs, so the evidence is the install's output in the worktree: `Pods/Manifest.lock` is a
  * copy of the `Podfile.lock` the install wrote, so the two match only when it ran there and nothing edited the lock
- * since. Stim cannot tell what `pod install` changed in a `project.pbxproj` from a hand edit, so that file, and a
- * `Podfile.lock` without that evidence, stay in the dirty list.
+ * since. When gc deleted `Pods` while they matched, it recorded the lock's hash, and a lock that still has that hash
+ * with `Pods` absent counts too. Stim cannot tell what `pod install` changed in a `project.pbxproj` from a hand edit,
+ * so that file, and a lock without that evidence, stay in the dirty list. A deliberate `pod update` followed by an
+ * install leaves the same evidence, so an uncommitted one is restored as churn.
  */
 export function provenPodChurn(
   path: string,
   lines: readonly string[] | null | undefined,
   iosDirs: readonly CustomIosDir[] = [],
+  keys: readonly string[] = reclaimKeys(path),
 ): string[] {
   const proven: string[] = [];
+  let recorded: Record<string, string> | null = null;
   for (const line of lines || []) {
     const file = porcelainPath(line);
     if (!file || !String(line).startsWith(' M ') || !SAFE_DIFF_PATH.test(file)) continue;
@@ -680,7 +685,15 @@ export function provenPodChurn(
     if (dir === null) continue;
     const state = readPodState(path, join(path, dir));
     const status = podsAreStale(state.lockText, state.manifestText);
-    if (!status.noPods && !status.stale) proven.push(file);
+    if (!status.noPods && !status.stale) {
+      proven.push(file);
+      continue;
+    }
+    if (state.lockText === null || existsSync(join(path, dir, 'Pods'))) continue;
+    recorded ??= lightenedPodLocks(keys);
+    try {
+      if (recorded[join(realpathSync(path), file)] === podLockHash(state.lockText)) proven.push(file);
+    } catch {}
   }
   return proven;
 }

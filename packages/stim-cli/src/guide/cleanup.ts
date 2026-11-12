@@ -815,10 +815,10 @@ SWEEPING FINISHED WORKTREES
   includes every worktree outside maintenance.discoverRoots),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; a Podfile.lock
-  that Pods/Manifest.lock matches (project.pbxproj always counts) and
+  that Pods/Manifest.lock matches, or that matched when gc deleted Pods (project.pbxproj always counts) and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), a tracked file
-  marked assume-unchanged or skip-worktree (hidden from git status; a sparse
-  checkout counts), which is never archived, unpushed
+  marked assume-unchanged or skip-worktree with the file on disk (hidden from
+  git status; sparse-excluded files do not count), which is never archived, unpushed
   (commits no remote-tracking ref or other local branch reaches), or has
   initialized submodules. The report leaves out the
   source checkout and roots outside git.

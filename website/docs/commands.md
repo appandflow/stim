@@ -2332,12 +2332,15 @@ with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
 
 Removal restores a modified `ios/Podfile.lock` itself only when
-`Pods/Manifest.lock`, the copy `pod install` makes, holds the same text. Any
-other change to it, and every change to `project.pbxproj`, is treated as your
-edit and refused like any uncommitted change. A tracked file marked
-`assume-unchanged` or `skip-worktree` hides edits from `git status`, so removal
-refuses and names it until you pass `--force`; a sparse checkout marks the files it leaves out the
-same way.
+`Pods/Manifest.lock`, the copy `pod install` makes, holds the same text, or when
+gc deleted `Pods` while they matched and the lock has not changed since. A
+deliberate `pod update` followed by an install leaves the same evidence, so
+commit it before removing. Any other change to the lock, and every change to
+`project.pbxproj`, is treated as your edit and refused like any uncommitted
+change. A tracked file marked `assume-unchanged`, or `skip-worktree` with the
+file on disk, hides edits from `git status`, so removal refuses and names it
+with the `git update-index` command that shows it, until you pass `--force`.
+Files a sparse checkout leaves out are not on disk and do not count.
 
 ## `gc`
 

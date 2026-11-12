@@ -103,9 +103,7 @@ export interface WorktreeFacts {
   discovered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
-  /** The modified files among `porcelain` proven to be `pod install` output, which do not make the worktree dirty. */
   podChurn?: readonly string[];
-  /** Why a tracked file hidden from git status (assume-unchanged, skip-worktree, sparse checkout) keeps the worktree. */
   hiddenEdit?: string | null;
   unpushed: string[] | null;
   submodules: boolean | null;
@@ -872,7 +870,7 @@ export async function collectWorktreeSweep({
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
-    const podChurn = linked && !discoveredOnly ? provenPodChurn(path, porcelain) : [];
+    const podChurn = linked && !discoveredOnly ? provenPodChurn(path, porcelain, [], keys) : [];
     const hiddenEdit = linked && !discoveredOnly ? await hiddenEditHold(path, operation?.signal) : null;
     const dirty = linked ? dirtyLines(porcelain, podChurn).length : 0;
     const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
