@@ -187,7 +187,7 @@ engine later flips under a shim service, the stimd hands its home to a transient
 unit's restarted process attaches to that successor, so one stimd owns the home. A unit with a drop-in that sets
 `ExecStart=`, or a multi-line `ExecStart=`, is not rewritten; the server logs it and `stim doctor` reports the
 drop-in. A launchd job re-reads its plist only at bootstrap, so the macOS rewrite does not take effect on an exit and
-restart; it needs a `launchctl bootout` and `bootstrap`. That gap is not closed here.
+restart; it needs a `launchctl bootout` and `bootstrap`, and the server requests no restart there (#5608). A Windows task runs the build it was installed with, since the engine writes no Windows `stimd` entry (#5602). After an engine flip the unit's main process is a waiter attached to the transient service that holds the home, so stopping the unit does not stop the server (#5610). Connected phones and Desktop are disconnected by the one idle restart.
 
 A per-user service keeps worker ownership with the approving user. A version-neutral launchd or systemd shim lets the engine switch after work drains without replacing service setup or pairings. [Engine integration](https://github.com/appandflow/stim/pull/5380).
 

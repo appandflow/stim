@@ -211,8 +211,11 @@ export async function serve(
     void rewriteUnitToShim(label).then(
       (rewritten) => {
         if (rewritten) {
-          console.log(`Rewrote ${label} to start the Stim engine's stimd shim; restarting once idle to run it.`);
-          requestRestart('its service unit now starts the engine shim');
+          const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
+          console.log(
+            `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
+          );
+          if (reloaded) requestRestart('its service unit now starts the engine shim');
         }
         return rewritten;
       },

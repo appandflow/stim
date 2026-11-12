@@ -272,67 +272,75 @@ const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: st
   return text.startsWith('signal') ? { failed: true, text } : null;
 };
 
+function overrideFindings(service: InstalledServerService): Finding[] {
+  if (!service.override || service.installed.script?.endsWith('/bin/stimd')) return [];
+  return [
+    {
+      code: 'server-service-override',
+      level: 'note',
+      title: `A systemd drop-in overrides the command of the ${service.label} service`,
+      detail: `${service.override}, so the service cannot move onto the engine's stimd shim and keeps running the build that command names.`,
+      fix: `Remove ExecStart= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+    },
+  ];
+}
+
 function serviceStateFindings(setup: ServerSetup): Finding[] {
-  return setup.services.flatMap((service): Finding[] => {
-    if (service.override)
-      return [
-        {
-          code: 'server-service-override',
-          level: 'note',
-          title: `A systemd drop-in overrides the command of the ${service.label} service`,
-          detail: `${service.override}, so the service cannot move onto the engine's stimd shim and keeps running the build that command names.`,
-          fix: `Remove ExecStart= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
-        },
-      ];
-    const { job, installed } = service;
-    const server = setup.servers.find((each) => each.kind === 'service' && each.label === service.label);
-    const log = installed.logPath ? ` The log is ${installed.logPath}.` : '';
-    const rollback = installed.script?.endsWith('/bin/stimd')
-      ? ' It runs the Stim engine: `stim engine rollback` switches the engine back to its previous build.'
-      : '';
-    const last = lastExit(job);
-    const failed = last?.failed === true;
-    const exit = failed ? `, and its last exit was ${last?.text}` : '';
-    if (!job) {
-      return [
-        {
-          code: 'server-service-crash',
-          level: 'cost',
-          title: `The ${service.label} service is installed but not running`,
-          detail: `${service.manager === 'launchd' ? 'launchd' : 'systemd'} has no running job for ${service.label}, so nothing serves this Stim home through it.${log}`,
-          fix:
-            service.manager === 'launchd'
-              ? `Run \`launchctl bootstrap gui/${process.getuid?.() ?? 501} ~/Library/LaunchAgents/${service.label}.plist\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`
-              : `Run \`systemctl --user restart ${service.label}.service\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`,
-        },
-      ];
-    }
-    const runs = job.runs ?? 0;
-    const down = job.pid === null || server === undefined || server.health === null;
-    if (down && failed) {
-      return [
-        {
-          code: 'server-service-crash',
-          level: 'cost',
-          title: `The ${service.label} service keeps stopping`,
-          detail: `Its job has started ${runs} time${runs === 1 ? '' : 's'}${exit}, and it does not answer on port ${installed.port ?? DEFAULT_SERVER_PORT} now.${log}`,
-          fix: `${installed.logPath ? `Read the end of ${installed.logPath} for the error. ` : ''}Fix what it reports, then restart the service.${rollback}`.trim(),
-        },
-      ];
-    }
-    if (failed && runs >= FLAPPING_RUNS) {
-      return [
-        {
-          code: 'server-service-crash',
-          level: 'note',
-          title: `The ${service.label} service has restarted ${runs - 1} times`,
-          detail: `It runs now (pid ${job.pid})${exit}. Repeated restarts end running builds and hosted devices.${log}`,
-          fix: `${installed.logPath ? `Read ${installed.logPath} for what stopped it.` : 'Read its log for what stopped it.'}${rollback}`,
-        },
-      ];
-    }
-    return [];
-  });
+  return setup.services.flatMap((service): Finding[] => [
+    ...overrideFindings(service),
+    ...crashFindings(setup, service),
+  ]);
+}
+
+function crashFindings(setup: ServerSetup, service: InstalledServerService): Finding[] {
+  const { job, installed } = service;
+  const server = setup.servers.find((each) => each.kind === 'service' && each.label === service.label);
+  const log = installed.logPath ? ` The log is ${installed.logPath}.` : '';
+  const rollback = installed.script?.endsWith('/bin/stimd')
+    ? ' It runs the Stim engine: `stim engine rollback` switches the engine back to its previous build.'
+    : '';
+  const last = lastExit(job);
+  const failed = last?.failed === true;
+  const exit = failed ? `, and its last exit was ${last?.text}` : '';
+  if (!job) {
+    return [
+      {
+        code: 'server-service-crash',
+        level: 'cost',
+        title: `The ${service.label} service is installed but not running`,
+        detail: `${service.manager === 'launchd' ? 'launchd' : 'systemd'} has no running job for ${service.label}, so nothing serves this Stim home through it.${log}`,
+        fix:
+          service.manager === 'launchd'
+            ? `Run \`launchctl bootstrap gui/${process.getuid?.() ?? 501} ~/Library/LaunchAgents/${service.label}.plist\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`
+            : `Run \`systemctl --user restart ${service.label}.service\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`,
+      },
+    ];
+  }
+  const runs = job.runs ?? 0;
+  const down = job.pid === null || server === undefined || server.health === null;
+  if (down && failed) {
+    return [
+      {
+        code: 'server-service-crash',
+        level: 'cost',
+        title: `The ${service.label} service keeps stopping`,
+        detail: `Its job has started ${runs} time${runs === 1 ? '' : 's'}${exit}, and it does not answer on port ${installed.port ?? DEFAULT_SERVER_PORT} now.${log}`,
+        fix: `${installed.logPath ? `Read the end of ${installed.logPath} for the error. ` : ''}Fix what it reports, then restart the service.${rollback}`.trim(),
+      },
+    ];
+  }
+  if (failed && runs >= FLAPPING_RUNS) {
+    return [
+      {
+        code: 'server-service-crash',
+        level: 'note',
+        title: `The ${service.label} service has restarted ${runs - 1} times`,
+        detail: `It runs now (pid ${job.pid})${exit}. Repeated restarts end running builds and hosted devices.${log}`,
+        fix: `${installed.logPath ? `Read ${installed.logPath} for what stopped it.` : 'Read its log for what stopped it.'}${rollback}`,
+      },
+    ];
+  }
+  return [];
 }
 
 const homeOf = (server: ServerReading): string | null => server.health?.stimHome ?? null;
