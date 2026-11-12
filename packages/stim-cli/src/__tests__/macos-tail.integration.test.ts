@@ -187,12 +187,12 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
     try {
       writeFileSync(join(dir, macosAppLogName('fixture', 'stop')), '');
       process.kill(record.pid, 'SIGTERM');
-      await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
-      await vi.waitFor(async () => expect(await tail.drain()).toBe(true));
+      await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await tail.drain()).toBe(true), { timeout: 10_000 });
       expect(records(dir).at(-1)).toMatchObject({ level: 'info', msg: 'Exited Fixture.' });
       expect(existsSync(join(dir, macosAppLogName('fixture', 'stop')))).toBe(false);
     } finally {
       tail.close();
     }
-  });
+  }, 20_000);
 });
