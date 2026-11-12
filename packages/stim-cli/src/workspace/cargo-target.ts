@@ -339,6 +339,7 @@ export async function trimCargoTarget(
               } catch (error) {
                 throw new Error(
                   `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
+                  { cause: error },
                 );
               }
               return there;
