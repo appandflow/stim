@@ -68,7 +68,10 @@ function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
   return (child) => {
     if (child.pid === undefined) return;
     const captured = captureProcessIdentity(child.pid);
-    if (!captured.ok) throw new Error(`Cannot record the disk usage walk: ${captured.reason}`);
+    if (!captured.ok) {
+      if (captured.code === 'NOT_FOUND') return;
+      throw new Error(`Cannot record the disk usage walk: ${captured.reason}`);
+    }
     setClaimChild(claim, { pid: child.pid, processToken: captured.token });
   };
 }

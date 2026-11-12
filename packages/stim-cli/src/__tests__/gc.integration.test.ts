@@ -77,7 +77,7 @@ import { forgetStaleLedgerEntries } from '../commands/gc/ledger.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import * as reclaim from '../devices/reclaim.ts';
-import { makeConfig, makeIosSim, goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import { IMPOSSIBLE_PID, makeConfig, makeIosSim, goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
 vi.mock('node:fs', async (importOriginal) => {
@@ -3019,7 +3019,7 @@ test('gc removes the stale lock and leaves the live one alone', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const live = writeLock({ pid: process.pid, projectRoot: '/w/alive' });
-  const stale = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+  const stale = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
 
   await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(existsSync(stale)).toBe(false);
@@ -3036,7 +3036,7 @@ describe('gc --json', () => {
 
   test('a dry run prints one payload with every section and deletes nothing', async () => {
     saveConfig({ version: 2, projects: { [deadPath()]: { metroPort: 8101, ports: { web: 8102 } } }, repos: {} });
-    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
     const before = loadConfig();
 
     const { stdout } = await captureJson(() => cli(['--dry-run', '--pressure', 'normal', '--json']));
@@ -3051,7 +3051,7 @@ describe('gc --json', () => {
     expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
     expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
     expect(payload.sections.staleBuildLocks).toEqual([
-      { path: lock, platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' },
+      { path: lock, platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' },
     ]);
     expect(Object.keys(payload.sections)).toEqual([
       'deadProjects',
@@ -3104,7 +3104,7 @@ describe('gc --json', () => {
   });
 
   test('an acting run prints the actions it took and the failure count', async () => {
-    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
 
     const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
 
@@ -3164,7 +3164,7 @@ test('gc keeps a lock whose holder cannot be identified', async () => {
 test('a dry run removes no lock at all', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
-  const stale = writeLock({ pid: 999999 });
+  const stale = writeLock({ pid: IMPOSSIBLE_PID });
   await captureLog(() => sweepingGc({ dryRun: true, pressure: 'normal' }));
   expect(existsSync(stale)).toBe(true);
 });
@@ -3189,7 +3189,7 @@ test('gc removes the stale build slot and leaves a live one alone', async () => 
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
   const live = writeSlot({ index: 0, pid: process.pid, projectRoot: '/w/alive' });
-  const stale = writeSlot({ index: 1, pid: 999999, projectRoot: '/w/dead' });
+  const stale = writeSlot({ index: 1, pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
 
   await captureLog(() => sweepingGc({ pressure: 'normal' }));
   expect(existsSync(stale)).toBe(false);
@@ -3322,8 +3322,8 @@ describe('gc against a claim taken while gc is deleting', { timeout: 60_000 }, (
     );
 
   const claimSets = [
-    { kind: 'build lock', set: () => writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 }) },
-    { kind: 'build slot', set: () => writeSlot({ index: 1, pid: 999999 }) },
+    { kind: 'build lock', set: () => writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID }) },
+    { kind: 'build slot', set: () => writeSlot({ index: 1, pid: IMPOSSIBLE_PID }) },
   ];
 
   for (const { kind, set } of claimSets) {
@@ -3362,7 +3362,7 @@ describe('gc against a claim taken while gc is deleting', { timeout: 60_000 }, (
   test('a claim that becomes unresolvable while gc deletes it is left alone, not removed', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();
-    const claimSet = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 });
+    const claimSet = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID });
     const file = (name: string) => join(scratch, name);
 
     const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
@@ -4262,7 +4262,7 @@ describe('the gc log', () => {
     installExecutor();
     writeLeaseFile({ id: 'UDID-OLD', expiresInMs: -1000 });
     writeLeaseFile({ id: 'UDID-BAD', expiresInMs: -1000 });
-    writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
     const remove = deviceLease.removeExpiredLeaseAsync;
     vi.spyOn(deviceLease, 'removeExpiredLeaseAsync').mockImplementation(async (entry, signal) => {
       if (entry.id === 'UDID-BAD') throw new Error('permission denied');
@@ -4303,7 +4303,7 @@ describe('the gc log', () => {
   test('a deleting run that only keeps things writes no record', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();
-    writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
     vi.spyOn(ownershipClaim, 'clearFreeClaimSet').mockReturnValue({ status: 'refused', reason: 'builder unresolved' });
     await captureLog(() => sweepingGc({ pressure: 'normal' }));
     expect(existsSync(gcLogFile())).toBe(false);
