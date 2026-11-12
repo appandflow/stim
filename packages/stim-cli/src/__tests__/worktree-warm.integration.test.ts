@@ -356,6 +356,8 @@ test.each([
   'different npm config',
   'stale source npm config',
   'removed patch',
+  'patch deleted in source before warm',
+  'declared patch directory deleted in source before warm',
   'stale source install',
   'mismatched installed package',
   'patch removed after warm',
@@ -364,7 +366,12 @@ test.each([
 ])(
   'the cache gate checks the carried npm install with %s',
   async (scenario) => {
-    const manifest = '{"name":"warm-fixture","dependencies":{"react-native":"1.0.0"}}';
+    const removedDirectory = scenario === 'declared patch directory deleted in source before warm';
+    const manifest = JSON.stringify({
+      name: 'warm-fixture',
+      dependencies: { 'react-native': '1.0.0' },
+      ...(removedDirectory ? { scripts: { postinstall: 'patch-package' } } : {}),
+    });
     const lockfile = 'package-lock.json';
     const stamp = 'node_modules/.package-lock.json';
     const patch = 'patches/react-native+1.0.0.patch';
@@ -377,7 +384,8 @@ test.each([
     write(root, lockfile, lock);
     write(target, lockfile, scenario === 'changed lockfile' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
     write(root, patch, 'patch applied in source');
-    if (scenario !== 'removed patch') write(target, patch, 'patch applied in source');
+    if (scenario !== 'removed patch' && scenario !== 'patch deleted in source before warm' && !removedDirectory)
+      write(target, patch, 'patch applied in source');
     if (scenario === 'different npm config' || scenario === 'stale source npm config') {
       write(root, '.npmrc', 'ignore-scripts=true\n');
       write(target, '.npmrc', scenario === 'different npm config' ? 'ignore-scripts=false\n' : 'ignore-scripts=true\n');
@@ -392,6 +400,10 @@ test.each([
     utimesSync(join(root, stamp), installed, installed);
     utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
     utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);
+    const patchDir = join(root, dirname(patch));
+    utimesSync(patchDir, beforeInstall, beforeInstall);
+    if (scenario === 'patch deleted in source before warm') rmSync(join(root, patch));
+    if (removedDirectory) rmSync(patchDir, { recursive: true });
     utimesSync(join(target, lockfile), checkout, checkout);
 
     expect((await runWarm(target)).code).toBe(0);

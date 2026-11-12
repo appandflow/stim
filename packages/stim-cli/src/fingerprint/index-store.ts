@@ -491,25 +491,34 @@ export const checkoutTag = (project: string): string => sha256(project).slice(0,
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
-function installInputs(roots: Roots): string[] | Uncertain {
+function installInputs(roots: Roots): { paths: string[]; patchDirectories: string[] } | Uncertain {
   const discovered = patches(roots);
   if (isUncertain(discovered)) return discovered;
   const seen = new Set<string>();
+  const patchDirectories = new Set<string>();
   const files = (dir: string): string[] => {
     const info = statSync(dir, { throwIfNoEntry: false });
     if (!info) return [];
     if (!info.isDirectory()) return [dir];
     const real = realpathSync.native(dir);
+    patchDirectories.add(dir);
     if (seen.has(real)) return [];
     seen.add(real);
     return readdirSync(dir).flatMap((name) => files(join(dir, name)));
   };
   const dirs = [...new Set([roots.project, roots.install])];
-  return [
+  const paths = [
     ...LOCKFILES.map((name) => join(roots.install, name)),
     ...discovered.files,
     ...[...discovered.dirs, ...dirs.flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name)))].flatMap(files),
   ];
+  // A missing declared directory may have been removed with its last patch. The surviving parent records the removal.
+  for (const dir of discovered.dirs) {
+    let parent = dir;
+    while (mtime(parent) === undefined && dirname(parent) !== parent) parent = dirname(parent);
+    patchDirectories.add(parent);
+  }
+  return { paths, patchDirectories: [...patchDirectories] };
 }
 
 const npmStamp = (roots: Roots) => join(roots.install, 'node_modules', '.package-lock.json');
@@ -549,8 +558,8 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
     const sourceStampHash = readHash(sourceStampPath);
     const inputs = installInputs(source);
     if (!sourceStampHash || isUncertain(inputs)) return null;
-    const sourceFiles = npmInstallInputs(source, inputs);
-    if (sourceFiles.some((path) => (mtime(path) ?? 0) > installedAt)) return null;
+    const sourceFiles = npmInstallInputs(source, inputs.paths);
+    if ([...sourceFiles, ...inputs.patchDirectories].some((path) => (mtime(path) ?? 0) > installedAt)) return null;
     const digest = installInputDigest(source, sourceFiles);
     return (copied) => {
       if (!copied.includes(dirname(npmStamp(target)))) return;
@@ -558,10 +567,11 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
         const sourceInputs = installInputs(source);
         const targetInputs = installInputs(target);
         if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
-        const currentSourceFiles = npmInstallInputs(source, sourceInputs);
-        const targetFiles = npmInstallInputs(target, targetInputs);
-        const inputStats = installInputStats(target, targetFiles);
-        if (currentSourceFiles.some((path) => (mtime(path) ?? 0) > installedAt)) return;
+        const currentSourceFiles = npmInstallInputs(source, sourceInputs.paths);
+        const targetFiles = npmInstallInputs(target, targetInputs.paths);
+        const inputStats = installInputStats(target, [...targetFiles, ...targetInputs.patchDirectories]);
+        if ([...currentSourceFiles, ...sourceInputs.patchDirectories].some((path) => (mtime(path) ?? 0) > installedAt))
+          return;
         if (
           installInputDigest(source, currentSourceFiles) !== digest ||
           installInputDigest(target, targetFiles) !== digest
@@ -596,7 +606,7 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
     const installed = Math.max(...stamps);
     const inputs = installInputs(roots);
     if (isUncertain(inputs)) return inputs;
-    const pending = inputs.find((path) => (mtime(path) ?? 0) > installed);
+    const pending = inputs.paths.find((path) => (mtime(path) ?? 0) > installed);
     if (!pending) return null;
     const record = readWarmedNpmInstall(roots.project);
     if (!record) return pending;
@@ -606,7 +616,8 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
       stamp &&
       mtime(stampPath) === installed &&
       record.stamp === stamp.key &&
-      record.inputStats === installInputStats(roots, npmInstallInputs(roots, inputs)) &&
+      record.inputStats ===
+        installInputStats(roots, [...npmInstallInputs(roots, inputs.paths), ...inputs.patchDirectories]) &&
       statKey(stampPath)?.key === stamp.key
     )
       return null;
