@@ -32,6 +32,7 @@ import {
   type StatusViews,
   readShareLinks,
   shareLinkKey,
+  shareRouteClaimRoot,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
 import { loadAudit } from './actions.ts';
@@ -892,7 +893,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!options.loopbackOnly) void tailnet.load('funnel share');
     },
   };
-  const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
+  const shareRoute = new ShareRoute(shareRouteClaimRoot(), funnel);
   const exposedRoute = new ExposedRoute(
     shareRoute,
     () => {
@@ -1122,7 +1123,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void hostedDevices.reclaimEndedHomes();
     }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
-    if (!options.shareServer) restoredShares ??= restoreShares();
+    restoredShares ??= restoreShares();
     retireOnce ??= Promise.resolve()
       .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
       .then(() => hostedDevices.resumeSessions())
@@ -2232,9 +2233,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       pruneSetup();
       if (options.shareServer && !shareServerGrace) {
         const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
-        shareServerGrace = setTimeout(() => {
-          if (shares.isIdle()) idle();
-        }, graceMs);
+        const idleWhenRestored = () => {
+          void (restoredShares ?? Promise.resolve()).then(() => (shares.isIdle() ? idle() : undefined));
+        };
+        shareServerGrace = setTimeout(idleWhenRestored, graceMs);
         shareServerGrace.unref?.();
       }
       if (!options.shareServer && options.service?.label) {

@@ -46,7 +46,7 @@ stim share android --reuse --expires 60
 stim share stop --forget`}
 />
 
-`--reuse` restores the same link, access codes and permissions before the original expiry. Set `--expires` to change how long it lasts. `stim share stop` saves the link for later. Add `--forget` to delete it. With no saved link for the target (never started, expired or about to expire, or forgotten), `--reuse` warns on stderr and starts a new share instead; the flags you gave apply to it and its new link is saved. With a saved link, `--control`, `--password`, `--no-password`, `--view-password` and `--slug` fail with `STIM_BAD_ARG`, since the saved share brings its own setup. A full stim-server restarts saved, unexpired shares that were running before it stopped.
+`--reuse` restores the same link, access codes and permissions before the original expiry. Set `--expires` to change how long it lasts. `stim share stop` saves the link for later. Add `--forget` to delete it. With no saved link for the target (never started, expired or about to expire, or forgotten), `--reuse` warns on stderr and starts a new share instead; the flags you gave apply to it and its new link is saved. With a saved link, `--control`, `--password`, `--no-password`, `--view-password` and `--slug` fail with `STIM_BAD_ARG`, since the saved share brings its own setup. A stim-server restarts saved, unexpired shares that were running before it stopped, including shares started without Stim Desktop or a service: the next stimd to start, after an engine switch or a crash, restores them with the same link and expiry. Nothing starts a stimd by itself, so the link stays down until the next Stim command.
 
 ## When the device goes away
 

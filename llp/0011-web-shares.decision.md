@@ -39,14 +39,45 @@ of a link the file already holds with the same passwords keeps the entry's
 through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
 `live` from when `share` starts or reuses it, `stopped` after a deliberate
 `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
-leaves `live`, and a full stim-server (not a net thread `stim share` started) starts
+leaves `live`, and a stim-server starts
 every live, unexpired entry of its home again when it starts, through
 `share.start`'s own path with the saved token or slug, passwords and expiry
 (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
-yet starts stopped, a refused one is logged and stays `live`. `share.stop`
+yet starts stopped, a refused one is logged and stays `live`; a net thread `stim share`
+started restores them the same way (see below). `share.stop`
 marks the entry stopped through the same module.
 
 A restart can restore a live link created from either entry point. Deliberately stopped links remain available for explicit reuse, and restoring a link keeps its original expiry. [Reuse](https://github.com/appandflow/stim/pull/4975), [Server-side persistence](https://github.com/appandflow/stim/pull/5228).
+
+## A share-only net thread resumes with stimd
+
+A share started with no Desktop and no service lives in a share-only net thread
+of stimd. That thread is resumable like any other work of stimd: a planned
+handover (an engine switch) or a crash does not end the link. A stimd that
+starts without `stim serve` or a service unit, and not bound to a command, starts a share-only
+net thread (loopback only) when the home has a saved `live` share that has not
+expired, or a share route claim whose holder is gone. The thread restores each
+saved share with the same link, passwords and `expiresAt`, which re-arms its
+expiry, and, in tailscale exposure, removes the Funnel route a dead server left
+only while the serve config still holds exactly that route. A share that
+expired while no stimd ran is not restored, and its route is removed the same
+way. The thread ends once nothing is shared and the restore has settled. A stimd
+that has no work of this kind starts no net thread, and nothing starts a stimd on
+its own: the next command that starts one resumes the shares. A live share does
+not hold an engine switch of stimd's own follower; the switch carries it by
+restoring it in the successor. Restoring starts only shares `stim share` saved,
+so it never widens exposure, never enables Funnel for a link nobody shared, and
+never touches a route Stim does not own. The route claim path is
+`shareRouteClaimRoot` in `@stim-cli/core/state`.
+
+Maintainer decision: "another important consteaint of stimd is being resumable", 2026-11-12.
+[Issue #5579](https://github.com/appandflow/stim/issues/5579).
+
+Chosen by the lane that implemented [issue #5589](https://github.com/appandflow/stim/issues/5589), not by
+the maintainer: restoring from saved state at boot instead of carrying serve
+arguments (one path serves a handover and a crash), no hold of the follower's
+engine switch by a share, a stimd of another build still held by live shares as
+before, and no stimd started by a saved share alone.
 
 ## A temporary device gap pauses the share
 
@@ -138,5 +169,6 @@ Maintainer decision: "Lets remove and keep stats panel", 2026-11-05.
 
 ## Code
 
+- [Boot trigger and successor](../packages/stim-cli/src/stimd/main.ts) (`shareWorkPending`).
 - [Viewer sessions](../packages/server/src/share.ts), [password permissions](../packages/server/src/share-identity.ts), and [route claim](../packages/server/src/share-route.ts).
 - [Local share RPCs](../packages/server/src/handlers/share.ts), [saved-link restoration](../packages/server/src/share-restore.ts), and [CLI reuse](../packages/stim-cli/src/commands/share.ts).

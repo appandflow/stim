@@ -176,8 +176,9 @@ WHAT IT NEEDS
   host that runs the device.
 - A stim-server for this Stim home: the net thread inside its stimd, which
   stim talks to through stimd's socket. The share lives inside it, and a
-  restart ends every share until the next one starts and restores the saved
-  ones. When none runs, stim share asks stimd, started when none runs, to
+  restart or an engine switch ends every share until the next stimd starts,
+  which restores the saved, unexpired ones with the same link and expiry; any
+  stim command starts a stimd, and nothing starts one by itself. When none runs, stim share asks stimd, started when none runs, to
   start one for shares (loopback only, no Tailscale listener). That net
   thread stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and

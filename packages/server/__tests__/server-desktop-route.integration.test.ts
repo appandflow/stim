@@ -316,6 +316,74 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
   });
 
+  it('a share-only server starts the saved live shares again, not an expired or stopped one, and ends only once that settled', async () => {
+    const saved = {
+      slot: 'default',
+      physical: false,
+      control: false,
+      password: 'saved-password',
+      auth: 'generated',
+      viewAuth: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    writeFileSync(
+      workspaceShareLinksFile(workspace),
+      JSON.stringify({
+        version: 1,
+        links: {
+          ios: { ...saved, platform: 'ios', token: 'A'.repeat(43), state: 'live' },
+          'ios@old': {
+            ...saved,
+            platform: 'ios',
+            slot: 'old',
+            token: 'B'.repeat(43),
+            state: 'live',
+            expiresAt: new Date(Date.now() - 1000).toISOString(),
+          },
+          android: { ...saved, platform: 'android', token: 'C'.repeat(43), state: 'stopped' },
+        },
+      }),
+    );
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = vi.spyOn(ShareHub.prototype, 'start').mockImplementation(async () => {
+      await gate;
+      return {
+        id: 'w1',
+        workspace,
+        platform: 'ios',
+        slot: 'default',
+        physical: false,
+        control: false,
+        viewers: 0,
+        auth: 'generated',
+        viewAuth: null,
+        url: 'https://x.test/s/x/',
+        expiresAt: saved.expiresAt,
+      };
+    });
+    const idle = vi.fn<() => void>();
+    await start({
+      tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
+      shareServer: { idle, graceMs: 50 },
+    });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'ios', token: 'A'.repeat(43), expiresAt: Date.parse(saved.expiresAt) }),
+      { restore: true },
+    );
+    await new Promise((done) => setTimeout(done, 250));
+    expect(idle).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(idle).toHaveBeenCalledTimes(1));
+    expect(started).toHaveBeenCalledTimes(1);
+  });
+
   it("saves a share started over share.start, keeps the first start's password kind on a start under the same link, and share.stop pauses it", async () => {
     const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
     const expiresAt = new Date(Date.now() + 3_600_000).toISOString();

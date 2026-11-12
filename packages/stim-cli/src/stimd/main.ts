@@ -34,6 +34,8 @@ import {
   stimBuildId,
   macosAppState,
   readMacosRecord,
+  readLiveShareLinks,
+  shareRouteClaimRoot,
   readDaemonSnapshot,
   readMaintenanceState,
   readHostedSessions,
@@ -1502,6 +1504,12 @@ async function runStimdInner(
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  else if (attached === undefined && shareWorkPending()) {
+    // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
+    const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
+    netServes = options;
+    void net.ensure(options);
+  }
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
@@ -1758,9 +1766,20 @@ function hostedNativeWork(session: HostedDeviceSession): boolean {
 }
 
 /**
+ * Whether this home has a saved share to restore or a share route claim whose holder is gone, which a share-only net
+ * thread restores or removes. A share started with no service and no Desktop lives only in such a thread, so a
+ * successor stimd (a handover or a start after a crash) finds its work here, not in its arguments.
+ */
+function shareWorkPending(): boolean {
+  const claims = readClaimSet(shareRouteClaimRoot());
+  return readLiveShareLinks().length > 0 || claims.dead.length > 0 || claims.orphans.length > 0;
+}
+
+/**
  * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
- * that only serves `stim share` is not carried over, and one no service unit or `stim serve` started is marked
- * `--carried`, so its successor does not count as a service.
+ * that only serves `stim share` is not carried over by arguments (its successor restores the saved shares at boot, see
+ * `shareWorkPending`), and one no service unit or `stim serve` started is marked `--carried`, so its successor does not
+ * count as a service.
  */
 function serveArgs(serve: ServeOptions | null, service: boolean): string[] {
   if (!serve || serve.shareOnly) return [];
