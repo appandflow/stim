@@ -1,3 +1,4 @@
+import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
@@ -139,6 +140,8 @@ import {
 } from './attached.ts';
 
 const TICK_MS = 60_000;
+const HOME_WATCH_MS = 15_000;
+const HOME_WATCH_MISSES = 2;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
 const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
@@ -630,6 +633,8 @@ interface RunStimdOptions {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
+  /** How often a detached stimd checks that its `run/` directory still exists: 15 seconds, and it stops after two misses. */
+  homeWatchMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
   /** Starts the net thread at boot with these options, for `stim serve` and a service unit. */
@@ -685,6 +690,7 @@ async function runStimdInner(
   {
     tickMs = TICK_MS,
     slowTickMs = tickMs * SLOW_TICKS,
+    homeWatchMs = HOME_WATCH_MS,
     mode: startMode = daemonMode({}),
     serve,
     desktopKey,
@@ -1566,6 +1572,14 @@ async function runStimdInner(
   const syncOwned = () => {
     if (!closing) void logs.ownedSync();
   };
+  let runDirMisses = 0;
+  const homeWatch = attached
+    ? undefined
+    : setInterval(() => {
+        runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
+        if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
+      }, homeWatchMs);
+  homeWatch?.unref();
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1765,6 +1779,7 @@ async function runStimdInner(
     await shutdownDone;
     await relaunchDone;
     await writerDone;
+    clearInterval(homeWatch);
     clearTimeout(attachedWatchdog);
   }
   return true;

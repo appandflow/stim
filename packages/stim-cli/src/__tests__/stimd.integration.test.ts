@@ -1268,6 +1268,15 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
   }, 20_000);
 
+  test('exits when its run directory is removed from a home that remains', async () => {
+    normalMeasurement();
+    const running = runStimd({ mode: 'on', tickMs: 60_000, homeWatchMs: 50 });
+    await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000 });
+    rmSync(dirname(stimdRecordFile()), { recursive: true });
+    await running;
+    expect(daemonLog()).toContain('its run directory was removed');
+  }, 20_000);
+
   function normalMeasurement(level: 'normal' | 'warning' = 'normal'): void {
     const measureTick = measure.measureTick;
     const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
