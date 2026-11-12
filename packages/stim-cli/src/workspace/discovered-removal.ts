@@ -98,6 +98,7 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
   return null;
 }
 
+// @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files
 /**
  * What stops Stim removing a discovered linked worktree, or null: it must have had no activity for `idleMs` by the full
  * evidence (source writes including git-ignored files, last commit, git writes, a completed scan), nothing running from

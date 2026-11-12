@@ -21,6 +21,7 @@ function real(path: string): string | null {
   }
 }
 
+// @ref LLP 0004#scope -- other tools own worktrees under temp and home dot-folders
 /**
  * Whether a path lies under the system temporary directory, or under a dot-folder directly inside the home directory
  * (`~/.codex`, `~/.config`, `~/.exact`): other tools own what is there, so Stim never acts on it. A path that does not

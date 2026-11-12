@@ -80,6 +80,7 @@ import {
   readMacosRecord,
   readBuildDetail,
   readDeviceIdleShutdowns,
+  currentSourceDependencies,
   currentStage,
   readDormantStage,
   readIdleStage,
@@ -490,6 +491,8 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
       if (!state.live) applyStages(state, saved);
+      const sourceDependencies = currentSourceDependencies(saved);
+      if (sourceDependencies) state.sourceDependenciesCleared = sourceDependencies;
       const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
       const phase = workspacePhase(state.live, saved, { now: leaseNow });
       Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {

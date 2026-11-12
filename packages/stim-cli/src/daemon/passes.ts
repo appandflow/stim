@@ -22,7 +22,13 @@ import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
-import { clearStoppedOutputs, dormantAfterMs, runDormantPass, stoppedOutputCandidates } from './stages.ts';
+import {
+  clearStoppedOutputs,
+  dormantAfterMs,
+  runDormantPass,
+  sourceDormantAfterMs,
+  stoppedOutputCandidates,
+} from './stages.ts';
 
 interface HomePassPhases {
   measureMs: number;
@@ -316,6 +322,7 @@ async function runCommandLadder(
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
+        // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
         ...(headroom ? { operation: headroom.operation } : {}),
@@ -364,6 +371,7 @@ async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<
     if (headroom.stop.aborted) return NORMAL_PRESSURE;
     throw error;
   }
+  // @ref LLP 0006#only-the-builds-own-device-counts -- other volumes do not help this build
   const volume = disk.find((entry) => entry.device === headroom.device);
   if (!volume) return NORMAL_PRESSURE;
   if (headroom.acted && headroom.lastFreeMb !== null && volume.freeMb <= headroom.lastFreeMb) headroom.helpless = true;
@@ -496,7 +504,7 @@ export async function runDormantReduction({
 }): Promise<DaemonLadderAction[]> {
   const config = loadConfig();
   const afterMs = dormantAfterMs(config);
-  if (!config || afterMs <= 0) return [];
+  if (!config || (afterMs <= 0 && sourceDormantAfterMs(config) <= 0)) return [];
   const measured = await measureTick(config, Date.now(), {
     probe: act,
     signal: operation?.signal,
@@ -513,7 +521,7 @@ export async function runDormantReduction({
   };
   try {
     const actions: DaemonLadderAction[] = [];
-    for (const candidate of await stoppedOutputCandidates(config, reading, afterMs)) {
+    for (const candidate of afterMs > 0 ? await stoppedOutputCandidates(config, reading, afterMs) : []) {
       const result = act
         ? await clearStoppedOutputs(candidate, config, afterMs, operation)
         : {
@@ -535,7 +543,7 @@ export async function runDormantReduction({
             : {}),
         });
     }
-    actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+    if (afterMs > 0) actions.push(...(await runDormantPass({ config, act, log, ...reading })));
     actions.push(
       ...(await runDormantDependencies({
         config,

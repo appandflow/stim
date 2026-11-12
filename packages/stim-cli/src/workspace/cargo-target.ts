@@ -124,6 +124,7 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   return { profiles, extras };
 }
 
+// @ref LLP 0005#the-size-cap -- modification times only; APFS records no reads
 function newestMtime(profile: string): number | null {
   let newest = -Infinity;
   for (const path of [profile, ...PROFILE_PARTS.map((part) => join(profile, part))]) {
@@ -415,6 +416,7 @@ export async function trimCargoTarget(
           await rename(there, dir);
           result.kept.push(`${label}: a build took its ${lockName} during the move`);
         } catch {
+          // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
           const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
           const home = await rename(there, stranded).then(
             () => stranded,

@@ -35,6 +35,7 @@ import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/pro
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { prepareNpmInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
+import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
@@ -438,6 +439,8 @@ export async function warmWorktreeTarget(opts: {
               exitCode = 1;
               return;
             }
+            const sourceApp = mainCheckoutAppDir(root, target, opts.cwd);
+            recordWarmedFrom(sourceApp);
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
             const generatedFrom = new Map<string, string>();
@@ -508,10 +511,18 @@ export async function warmWorktreeTarget(opts: {
                   .filter((path) => !stale.some(({ dir }) => path === join(target, dir, 'node_modules'))),
               );
             }
+            const noDependencies = sourceDependenciesNotice({
+              root,
+              target,
+              appDir: sourceApp,
+              iosDir: appIosProjectDir(sourceApp).dir,
+              install: (dir) => dependencyInstallCommand(dir),
+              pods: (dir) => `cd '${dir.replaceAll("'", "'\\''")}' && ${podInstallCommand(root, dir)}`,
+            });
             out(
               phaseLine(
                 'carry',
-                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed${noDependencies ? `; ${noDependencies}` : ''}`,
               ),
             );
             if (result.failed.length) exitCode = 1;

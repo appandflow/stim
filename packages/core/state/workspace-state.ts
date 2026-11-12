@@ -89,6 +89,31 @@ export function readDormantStage(state: WorkspaceState | null | undefined): Dorm
   };
 }
 
+export const SOURCE_DEPENDENCIES_KEY = 'sourceDependenciesCleared';
+
+/** The node_modules and Pods that maintenance or `stim gc` deleted from a source checkout, and when. */
+export interface SourceDependenciesRecord {
+  at: string;
+  dirs: string[];
+}
+
+export function readSourceDependencies(state: WorkspaceState | null | undefined): SourceDependenciesRecord | null {
+  const record = state?.[SOURCE_DEPENDENCIES_KEY];
+  if (!isJsonObject(record) || typeof record.at !== 'string' || !Array.isArray(record.dirs)) return null;
+  const dirs = record.dirs.filter((dir): dir is string => typeof dir === 'string');
+  return dirs.length ? { at: record.at, dirs } : null;
+}
+
+/** The record while any of its directories is still missing; null once every one is installed again. */
+export function currentSourceDependencies(
+  state: WorkspaceState | null | undefined,
+  exists: (dir: string) => boolean = existsSync,
+): SourceDependenciesRecord | null {
+  const record = readSourceDependencies(state);
+  const missing = record?.dirs.filter((dir) => !exists(dir)) ?? [];
+  return record && missing.length ? { at: record.at, dirs: missing } : null;
+}
+
 /** A stage record the daemon wrote, while no Stim command has run in the workspace since; null otherwise. */
 export function currentStage<T extends { at: string }>(
   state: WorkspaceState | null | undefined,

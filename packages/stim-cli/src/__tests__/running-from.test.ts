@@ -1,4 +1,4 @@
-import { othersAmong, type RunningProcesses } from '../workspace/running-from.ts';
+import { othersAmong, runningFromReason, type RunningProcesses } from '../workspace/running-from.ts';
 
 const SELF = 300;
 const listed = (...pids: number[]): RunningProcesses => ({
@@ -34,4 +34,16 @@ test.each([
   ['a table that does not list this process', '  500     1'],
 ])('%s proves nothing, so nothing is dropped and the caller keeps the folder', (_, table) => {
   expect(othersAmong(listed(500), table, SELF)).toBeNull();
+});
+
+test.each([
+  { line: 'node /repo/main/node_modules/.bin/metro start', named: true },
+  { line: 'tool --root=/repo/main', named: true },
+  { line: 'tool /repo/main --flag', named: true },
+  { line: 'tool /repo/main-other/file', named: false },
+  { line: 'tool /other/repo/main', named: false },
+])('a command line $line names the checkout root: $named', ({ line, named }) => {
+  const running: RunningProcesses = { commands: [{ pid: 1, line }], cwds: [] };
+  const reason = runningFromReason('/repo/main', running);
+  expect(reason === 'process 1 runs from it').toBe(named);
 });

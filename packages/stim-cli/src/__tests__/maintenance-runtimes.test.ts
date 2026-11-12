@@ -251,6 +251,32 @@ describe.skipIf(process.platform !== 'darwin')('planning runtime cleanup', () =>
     expect(result.blocked).toEqual([expect.stringContaining('settings can be read')]);
   });
 
+  test.each([
+    { usedDaysAgo: 5, planned: [] },
+    { usedDaysAgo: 9, planned: ['IMG-26.2'] },
+  ])(
+    'keeps a runtime simctl recorded as used $usedDaysAgo days ago only when that is within 7 days, whatever maintenance.olderThanDays is',
+    async ({ usedDaysAgo, planned: expected }) => {
+      vi.stubEnv('STIM_MAINTENANCE_OLDER_THAN_DAYS', '3');
+      const lastUsedAt = new Date(Date.now() - usedDaysAgo * 86_400_000).toISOString();
+      setExecutor({
+        ...getExecutor(),
+        runFileAsync: async (_file, args) =>
+          args[1] === 'list'
+            ? JSON.stringify({ devices: {} })
+            : args[1] === 'runtime'
+              ? JSON.stringify({
+                  'IMG-26.2': { ...image('26.2'), lastUsedAt },
+                  'IMG-27.0': { ...image('27.0'), lastUsedAt },
+                  'IMG-28.0': { ...image('28.0'), lastUsedAt: new Date().toISOString() },
+                })
+              : '',
+        runFileQuietAsync: async (file, args) => (file === 'xcrun' && args[0] === '--sdk' ? '27.1\n' : null),
+      });
+      expect(await planned()).toEqual(expected);
+    },
+  );
+
   test('keeps every runtime while maintenance.olderThanDays is 0', async () => {
     vi.stubEnv('STIM_MAINTENANCE_OLDER_THAN_DAYS', '0');
     expect(await planned()).toEqual([]);

@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -229,6 +229,11 @@ export async function regenerableDirProblem(
   }
   if (canonicalPath(path) !== join(canonicalPath(root), rel))
     return 'it or a directory above it is a link, or it lies outside its project';
+  try {
+    if (statSync(path).dev !== statSync(dirname(path)).dev) return 'it is a mount point';
+  } catch {
+    return 'it is gone';
+  }
   const tracked = await gitQuietAsync(root, ['ls-files', '--', rel], { signal });
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';

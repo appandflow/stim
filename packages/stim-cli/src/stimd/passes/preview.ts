@@ -1,6 +1,13 @@
 import { join } from 'node:path';
 import { configDir, type StimContext } from '@stim-cli/core';
-import { loadConfig, type PressureLevel, type MaintenancePlanPart, type MaintenanceSize } from '@stim-cli/core/state';
+import {
+  loadConfig,
+  type MaintenanceAction,
+  type MaintenancePlanPart,
+  type MaintenanceSize,
+  type PressureLevel,
+} from '@stim-cli/core/state';
+import { checkoutRoleOf } from '../../workspace/checkout-role.ts';
 import { findProjectRoot } from '../../workspace/project.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../../commands/gc/workspaces.ts';
@@ -182,6 +189,17 @@ export async function plannedMaintenance(
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
+  const sourceRoots = new Set<string>();
+  if (caps || sweep)
+    for (const workspace of new Set([
+      ...currentSizes.flatMap((size) =>
+        size.category === 'workspace-outputs' && size.workspace ? [size.workspace] : [],
+      ),
+      ...outputs.workspaces.flatMap((entry) => (entry.projectRoot ? [canonicalPath(entry.projectRoot)] : [])),
+    ]))
+      if ((await checkoutRoleOf(workspace, operation)) === 'source') sourceRoots.add(workspace);
+  const sourceLast = (actions: MaintenanceAction[]): MaintenanceAction[] =>
+    actions.toSorted((a, b) => sourceRank(a, sourceRoots) - sourceRank(b, sourceRoots));
   if (caps) {
     const capped =
       cargoOnly && !sweep && !worktrees
@@ -191,6 +209,7 @@ export async function plannedMaintenance(
             settings,
             protectedRoot: root,
             pinned,
+            sourceRoots,
             recentlyUsed: (workspace) => recentUse(workspace, settings),
           });
     const cargo = await planCargoTargets({
@@ -238,5 +257,11 @@ export async function plannedMaintenance(
     if (planned.nextRemoval) result.nextRemoval = planned.nextRemoval;
   }
   if (idle && devices) merge('idle', await idleStops());
+  result.actions = sourceLast(result.actions);
   return result;
+}
+
+/** 1 for an action that clears the build outputs of a source checkout, which goes after those of linked worktrees. */
+function sourceRank(action: MaintenanceAction, sourceRoots: ReadonlySet<string>): number {
+  return action.kind === 'would-clear-outputs' && action.workspace && sourceRoots.has(action.workspace) ? 1 : 0;
 }

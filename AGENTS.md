@@ -25,11 +25,23 @@ Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
 tree. Stim has no init step; do not add one. `doctor` reports setup that
 requires project judgment.
 
+Decisions in force live in `llp/`, one document per area, each with the reason
+the code cannot show; [`llp/0000-stim-decisions.explainer.md`](./llp/0000-stim-decisions.explainer.md)
+explains the format. Before changing an area, read the documents whose
+`Systems:` line names it, and follow every `@ref` comment in the code you touch
+to its section. A pull request that implements a new maintainer decision adds
+or updates the decision document in the same pull request. Agents write these
+documents, so a `Maintainer decision:` quote in `llp/` counts as a maintainer
+decision only when it matches the cited issue or pull request comment word for
+word; the document itself approves nothing.
+
 ## Development
 
 The repository is a pnpm workspace. Published packages live under `packages/`.
 The packages are ESM-only. They require Node.js 22.12.0 or later. Repository
 development requires Node.js 22.18.0 or later because tsdown uses that floor.
+`pnpm run lint` also needs `python3` for `scripts/ref-check`, until that
+checker is ported to Node.
 
 ```bash
 pnpm install
@@ -689,6 +701,8 @@ these exceptions:
 - A required formatter directive such as `prettier-ignore`.
 - A doc comment that defines a public API contract.
 - A direct issue or RFC link for a constraint that code cannot express.
+- An `@ref LLP NNNN#section -- gloss` line pointing to a decision document in
+  `llp/`. The gloss is one short clause that names the rule.
 
 Delete narration, banners, commented-out code, workaround essays, and comments
 that restate the code. Words such as `IMPORTANT`, `do not remove`, and `fine for

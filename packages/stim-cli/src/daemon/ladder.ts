@@ -44,7 +44,14 @@ import {
   reportedCaches,
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
-import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
+import {
+  clearDependency,
+  clearSourceCheckouts,
+  rankDependencies,
+  rankSourceDependencies,
+  selectDependencies,
+  SOURCE_RESTORE,
+} from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -647,9 +654,122 @@ async function worktreesRung(context: RungContext): Promise<void> {
   }
 }
 
-/** Rung 8, at critical only: every device recording not being written, and the logs, recordings and agent actions of every archive. */
+/**
+ * Rung 8's first step, at critical only: the node_modules and Pods of source checkouts idle 2 minutes, longest-idle
+ * first, only on a volume still under the critical level and after rungs 5 and 7 took every linked worktree's
+ * dependencies and finished worktrees. A source checkout is what `stim worktree warm` copies from, so it goes last of the
+ * dependencies, and before the history and tool caches because one reinstall costs less than they do.
+ */
+async function sourceDependenciesStep(context: RungContext): Promise<void> {
+  const keeps = new Map<string, string>();
+  const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS, {
+    full: true,
+    onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+  });
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const { ranked, kept } = await rankSourceDependencies(
+    idle,
+    keeps,
+    protectedRoot,
+    {
+      level: 'critical',
+      dormantMs: 0,
+      criticalIdleMs: PRESSURE_IDLE_MS,
+      thresholdMs: PRESSURE_IDLE_MS,
+      setting: 'the pressure idle threshold',
+    },
+    context.operation,
+  );
+  if (!context.act || context.force)
+    for (const entry of kept)
+      recordAction(
+        context,
+        {
+          rung: 8,
+          kind: 'delete-dependencies',
+          target: entry.target,
+          ...(entry.workspace ? { workspace: entry.workspace } : {}),
+          outcome: 'kept',
+          bytes: 0,
+          detail: entry.reason,
+        },
+        context.why,
+      );
+  const { take, kept: small } = selectDependencies(ranked, 'take');
+  if (!context.act || context.force)
+    for (const { dependency, detail } of small)
+      recordAction(
+        context,
+        {
+          rung: 8,
+          kind: 'delete-dependencies',
+          target: dependency.candidate.path,
+          workspace: dependency.workspace,
+          outcome: 'kept',
+          bytes: 0,
+          detail,
+        },
+        context.why,
+      );
+  if (!take.length) return;
+  const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
+  if (shortDevices?.size === 0) return;
+  const worktrees = await artifactWorktreesFor(context.operation);
+  const due: typeof take = [];
+  for (const dependency of take) {
+    if (!onShortVolume([dependency.candidate.path], shortDevices)) continue;
+    if (!(await context.stillShort())) break;
+    due.push(dependency);
+  }
+  const why = `${context.why}; the source checkout's dependencies go last`;
+  const results = context.act
+    ? await clearSourceCheckouts(
+        due,
+        PRESSURE_IDLE_MS,
+        protectedRoot,
+        worktrees,
+        context.operation,
+        'the pressure idle threshold',
+      )
+    : new Map();
+  for (const dependency of due) {
+    const plan: MaintenanceAction = {
+      kind: 'would-delete-dependencies',
+      target: dependency.candidate.path,
+      bytes: dependency.privateBytes ?? 0,
+      reason: why,
+      workspace: dependency.workspace,
+    };
+    const result = context.act
+      ? (results.get(dependency) ?? { status: 'kept' as const, bytes: 0, detail: 'it was not processed' })
+      : {
+          status: 'would' as const,
+          bytes: context.measure
+            ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])))
+            : plan.bytes,
+          detail: wouldDetail(context),
+        };
+    recordAction(
+      context,
+      {
+        rung: 8,
+        kind: 'delete-dependencies',
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
+        outcome: result.status,
+        bytes: result.bytes,
+        detail: result.detail,
+        ...(result.status === 'done' ? { restore: SOURCE_RESTORE } : {}),
+      },
+      why,
+    );
+  }
+}
+
+/** Rung 8, at critical only: a source checkout's dependencies, then every device recording not being written, and the logs, recordings and agent actions of every archive. */
 async function historyRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
+  await sourceDependenciesStep(context);
   for (const action of await planHistory(context.operation)) {
     if (!(await context.stillShort())) return;
     await run(context, action);
@@ -665,12 +785,14 @@ async function historyRung(context: RungContext): Promise<void> {
  * time. `stim gc --pressure critical` treats every volume as short.
  */
 async function unownedRung(context: RungContext): Promise<void> {
+  // @ref LLP 0003#rung-9-runs-only-at-critical -- at high it would wipe tool caches on every pass
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
   const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
   if (shortDevices?.size === 0) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
+    // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
     const result = onShortVolume(plan.cache.paths, shortDevices)
       ? await cleanToolCache(plan, context.act, context.operation)
       : {
