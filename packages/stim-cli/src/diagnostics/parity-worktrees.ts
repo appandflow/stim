@@ -95,7 +95,7 @@ export async function sweepParityLeftovers(root: string, signal?: AbortSignal): 
     const base = join(root, name);
     try {
       if ((await removeParityLeftover(base, signal)).removed) removed.push(base);
-    } catch (error) {
+    } catch {
       signal?.throwIfAborted();
     }
   }
