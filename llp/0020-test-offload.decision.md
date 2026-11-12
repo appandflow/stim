@@ -20,7 +20,11 @@ the key that holds one ticket, until one expiry. The terminal question is its
 own Y/n (Enter approves), and it says that the machine may run any command it
 sends, as this user, with no sandbox; `--yes` approves without a terminal. An
 SSH-driven run is not offered, and setup never enables Funnel or changes TCC
-for it. `stim pairings grant` and `devices grant` never grant it; they name
+for it. Approval is terminal-only: Stim Desktop's in-app approval
+(`desktop.setup.subscribe`) refuses a request that includes `test` and points
+to the terminal command, until Desktop shows the test wording. Stim Desktop
+lists a test record as a test client with the warning tone of a build client,
+never as a phone, and offers it no View or Control. `stim pairings grant` and `devices grant` never grant it; they name
 setup and `stim pairings revoke`. Test clients live in
 `server/test-clients.json`, apart from `devices.json`, `build-clients.json`
 and `device-host-clients.json`, and a `hello` with `access: 'test'` acts only
@@ -46,9 +50,11 @@ permission a worker should require
 ([#5529](https://github.com/appandflow/stim/issues/5529#issuecomment-6834426069)).
 
 A test-approved client may also ask the worker to update its engine
-(`engine.update`), as build and device-host clients can. That, the Linux
-approval and Windows refusal, `busy.tests` with the setup refusal, and the
-refusal over the local socket are coordinator proposals from the plan on
+(`engine.update`), as build and device-host clients can: to a newer exact npm
+release, never a downgrade, or to the client's own packed packages only while
+`server.acceptClientBuilds` is `true`. That, the Linux
+approval and Windows refusal, `busy.tests` with the setup refusal, the
+refusal over the local socket, and terminal-only approval are coordinator proposals from the plan on
 #5529, not quoted decisions.
 
 ## Planned (#5529): the stim test command

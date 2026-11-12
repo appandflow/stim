@@ -1135,7 +1135,8 @@ TEST ACCESS
 command it sends on the worker, as the worker's user, with no sandbox. It is
 its own approval with its own Y/n question, in test-clients.json; it never
 comes with read, control, build or device-host, and \`stim pairings grant\`
-never grants it. A Linux worker may approve it; a Windows worker refuses it.
+never grants it. Approval is terminal-only: Stim Desktop's in-app approval
+refuses --test. A Linux worker may approve it; a Windows worker refuses it.
 Setup refuses --test against a running server whose /health has no
 busy.tests, which predates it, and names the update. Agents never run
 \`stim setup\` or approve requests. The stim test command that uses this

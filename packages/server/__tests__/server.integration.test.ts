@@ -103,7 +103,7 @@ import {
   watchClientRegistries,
 } from '../src/registry.ts';
 import { pruneSetupJournals, writeSetupJournal } from '../src/setup-journal.ts';
-import { setupClaim, type SetupDeps } from '../src/setup.ts';
+import { runSetup, setupClaim, type SetupDeps } from '../src/setup.ts';
 import { fetchHealth } from '../src/service.ts';
 import type { InstalledService } from '../src/service-plist.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -2800,27 +2800,30 @@ describe('setup approval in Stim Desktop on this machine', () => {
     expect(readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8')).not.toContain(asked.ticket);
   });
 
-  it('records an approved test request only in the test registry, and the requester may update the engine', async () => {
-    const port = await start({ setupDeps });
+  it('refuses a test request, which only a terminal approves', async () => {
+    await start({ setupDeps });
     const desktopClient = await desktop();
+    for (const capabilities of [['test'], ['build', 'test']]) {
+      const asked = request(capabilities);
+      expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining('--test in a terminal') },
+      });
+      expect(asked.stored()).toBe(false);
+    }
+  });
+
+  it('records a test request approved in a terminal only in the test registry, and its client may update the engine', async () => {
+    const port = await start({ setupDeps });
     const asked = request(['test']);
-    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty('result.subscription');
-    await nextSetup(desktopClient, asking('test'));
-    await desktopClient.request('desktop.setup.answer', {
-      journal: asked.journal,
-      answer: 'approve',
-      capability: 'test',
-    });
-    await nextSetup(desktopClient, waitsForMachine);
+    const args = ['--expires', asked.params.expires, '--test', '--yes', '--port', String(port)];
+    const finished = runSetup(args, '1.2.3', { ...setupDeps(), ticket: asked.ticket });
+    await until(asked.stored);
     const keyPair = generateNoiseKeyPair();
     const requester = await connect(port, '100.64.0.2', { secret: asked.ticket, keyPair, name: 'Laptop' });
     expect(await requester.request('hello', { client: CLIENT, access: 'test' })).toHaveProperty('result.capabilities', [
       'test',
     ]);
-    expect(await nextSetup(desktopClient, ended)).toMatchObject({
-      exitCode: 0,
-      output: { granted: [{ capability: 'test' }] },
-    });
+    expect(await finished).toBe(0);
     expect(readTestClients()).toEqual([
       expect.objectContaining({ name: 'Laptop', publicKey: keyPair.publicKey.toString('base64url') }),
     ]);

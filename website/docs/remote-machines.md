@@ -740,8 +740,9 @@ access, and `stim pairings grant` never grants `build`, `device-host` or
 
 ### Test approval
 
-A machine asks for `test` with a setup ticket, like the other approvals, and a
-person on the worker approves it with `--test`:
+A person on the worker approves `test` by adding `--test` to the setup command
+the requesting machine printed. No Stim command asks for `test` yet; the
+`stim test` command that will use it is not released:
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -768,10 +769,10 @@ and `stim pairings` lists it with kind `test-client` and access `test`; revoke
 it with `stim pairings revoke <id>`. A Linux worker can approve `test`; a
 Windows worker refuses it. Setup refuses `--test` when the server it would
 reuse predates test approval, and names the update. Stim Desktop's approval on
-the worker does not take `--test` yet: run the command in a terminal there.
+the worker refuses `--test`: run the command in a terminal there. Stim Desktop
+lists a test client under the machines using this one, with a Test badge.
 
-A worker reports `busy.tests` on `/health` once it takes test approvals. The
-`stim test` command that uses this approval is not released yet.
+A worker reports `busy.tests` on `/health` once it takes test approvals.
 
 For hosting, setup asks for normal macOS screen recording and device control
 permissions on the worker. Missing screen recording prevents viewing; missing
