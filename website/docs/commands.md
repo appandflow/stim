@@ -220,6 +220,13 @@ no global equivalent. It reads the file only when it adds a root, so for a root
 it already watches run `watchman watch-del <checkout>`, then restart Watchman to
 free its memory now. Doctor never runs either command.
 
+On macOS, each stimd started by launchd registers a job named
+`dev.stim.stimd.<hash>.<id>` in your login domain. Doctor reports stopped jobs
+whose `STIM_HOME` folder no longer exists, which a deleted scratch or test home
+leaves behind. `--fix` removes them, and so does the next stimd that launchd
+starts. It never removes a running job, a job whose home exists, or a job whose
+home it cannot judge, such as one on an unmounted volume.
+
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and forgets

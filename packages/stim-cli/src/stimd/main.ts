@@ -84,6 +84,7 @@ import {
 import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
+import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
@@ -1809,6 +1810,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   delete process.env[LAUNCHD_LABEL_ENV];
   if (label) {
     removeExitedJobs(label);
+    void removeStaleHomeJobs().catch(() => {});
     delete process.env.XPC_SERVICE_NAME;
   }
   const at = argv.indexOf('--mode');
