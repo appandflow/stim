@@ -36,11 +36,11 @@ deletes instead of parking. Owned devices are disposable: the stim-daemon's
 dormant stage and pressure ladder, automatic maintenance and `gc`
 delete the owned devices of an idle workspace (one with no activity for
 `idle.dormantDays`, 1 by default, at every level), never of one that is in use,
-leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
-record names the installed app and its cache key. Parked devices are
-Stim-owned and listed in the pool record. Adoption removes other third-party
-apps except iOS XCUITest runners (`*.xctrunner`) and clears the adopting app's data before launch, on every adoption, and
-skips the install only after verifying the installed bytes. On Android that proof is the installed
+leased, driven, locked or pinned by `maintenance.keep`. Local parking keeps the
+device's apps and data. The pool record names the installed app and cache key.
+Parked devices stay Stim-owned. Local adoption removes other third-party apps
+except iOS XCUITest runners (`*.xctrunner`), clears the adopting app's data
+before launch, and skips the install only after verifying the installed bytes. On Android that proof is the installed
 APK's size and the SHA-256 of its tail, from the v2 or v3 signing block through the end of the file,
 matching the values recorded after one `apksigner verify` of the local APK; an APK without a recorded
 tail, or a device that cannot answer that probe, compares the SHA-256 of the whole APK. Android adoption
@@ -54,14 +54,17 @@ high or critical disk pressure, or automatic maintenance's age sweep after
 route uses centralized teardown and ownership revalidation. `gc` deletes parked
 hosted devices through their owning session home.
 
-A pool avoids booting a new device and reinstalling a cache-hit build for every
-worktree. Adoption resets privacy grants and the keychain at iOS boot, then
+The local pool avoids booting a new device and reinstalling a cache-hit build
+for every worktree. Local adoption resets privacy grants and the keychain at iOS boot, then
 terminates the retained app before clearing its data so it cannot recreate
 the old state. Keeping Xcode's runners saves reinstalling test tooling.
 A byte check is the condition for skipping install.
 [Pool design](../docs/specs/2026-09-02-simulator-pool-design.md),
 [First pooled adoption](https://github.com/appandflow/stim/pull/286),
 [Clean app state](https://github.com/appandflow/stim/pull/4584).
+
+[LLP 0010](./0010-hosted-devices.decision.md#resume-the-recorded-session)
+describes hosted parking and adoption.
 
 ## Unused runtimes and unavailable simulators
 

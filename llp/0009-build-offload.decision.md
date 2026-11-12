@@ -41,10 +41,13 @@ builds. Use `local`, `auto`, `remote`, `remote-only` or one machine.
 `auto` prefers the eligible local machine while it has capacity. `remote`
 prefers workers. Automatic placement skips members in
 `remote.buildPoolDisabled` and considers the remaining workers in
-`remote.machines` order with a free slot and load under their own
-`server.maxLoadPerCore`. A worker with the exact completed artifact can go
-ahead of this order. An explicit machine selects only that worker and bypasses
-the automatic load filter. `auto` and `remote` fall back after an offload
+`remote.machines` order. A fresh build needs a free slot and, when the worker
+reports its load, load below `server.maxLoadPerCore`. Use the client's limit
+when the worker does not report a limit. In `auto`, a worker with unknown load
+can take a build when local is disabled or every local slot is busy.
+A matching completed artifact ranks before fresh build offers and skips
+build capacity checks. An explicit machine selects only that worker and
+bypasses the automatic load filter. `auto` and `remote` fall back after an offload
 failure only while local placement is enabled. `remote-only` and named
 placement refuse when remote placement fails. No failure path writes the cache.
 
@@ -94,10 +97,11 @@ connection to the job as one frame (a 4-byte big-endian length, then the
 message's type byte and body) and each frame the job writes back as one
 message, and parses neither. A closed connection ends the job's stdin. An
 unexpected disconnect leaves it open for `job.start {attach}` during the
-detach grace period. Cancellation ends stdin and sends SIGTERM off Windows.
-On Windows, EOF gives the job a chance to cancel its build because Node
-implements SIGTERM there with `TerminateProcess`. This spawn and framing
-are frozen.
+detach grace period. An ordinary client cancellation closes its connection.
+On server-side stop, shutdown or revocation, the server ends stdin and sends
+SIGTERM off Windows, with a timed hard-kill fallback. On Windows, EOF gives
+the job a chance to cancel its build because Node implements SIGTERM there
+with `TerminateProcess`. This spawn and framing are frozen.
 
 Executing the client’s version keeps a worker update from changing the build recipe or forcing an otherwise eligible run back to the client. The resident server carries frames across versions while the job interprets its own protocol. [Exact client jobs](https://github.com/appandflow/stim/pull/5373), [Engine integration](https://github.com/appandflow/stim/pull/5380).
 

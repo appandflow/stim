@@ -25,8 +25,11 @@ The server owns its opaque journal under `server/device-host-sessions/` and
 app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
 uses a server-chosen private home under `device-host/sessions/` and the CLI's
 existing created-device ledger, ownership checks and centralized teardown.
-Parked hosted devices stay ledger-owned in their session home and are adopted
-only by the same client.
+Parked hosted devices stay ledger-owned in their session home. The same client
+can adopt a compatible device. A hosted reserve occurs before app selection,
+so adoption removes every third-party app. iOS adoption also resets privacy
+grants and the keychain. [Hosted parking and adoption](https://github.com/appandflow/stim/pull/2755).
+
 Keep a child-aware ownership claim across native work and a claim for the
 session lifetime. Server close leaves a ready iOS or Android session ready
 and its device booted when no native work is in flight, and the next server
