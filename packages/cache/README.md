@@ -68,7 +68,7 @@ The optional `files` capability stores opaque complete files with
 `store({ key, sourcePath, overwrite, signal })` and downloads them with
 `resolve({ key, destinationDir, signal })`. A hit returns a path inside
 `destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
-the `builds` adapter. A `metro` capability is ignored, including its shape; Metro uses its local store. Native Gradle APK caching consumes `files`
+the `builds` adapter. Native Gradle APK caching consumes `files`
 directly to share the APK together with its verification receipt; a files-only
 provider can support this flow. An optional
 `stat({ key, signal })` returns `{ size }` or `null` without downloading;
