@@ -5,8 +5,10 @@
 # drives the real CLI and the real cache library end to end with no compiler.
 # The macOS and Windows jobs below run only with `full`: the Full suite
 # workflow (nightly, before a stable release, on the `ci-full` label) passes
-# it, and so does a dispatch of this workflow. A pull request, the merge queue
-# and a push to main run the two Linux jobs only. The SLOW native builds live in
+# it, and so does a dispatch of this workflow. A pull request and the merge
+# queue run the two Linux jobs only; a push to main also runs them when it
+# changes packages/stim-cli/src/daemon, packages/stim-cli/src/stimd or
+# packages/core. The SLOW native builds live in
 # e2e-native.yml.
 name: CI
 
@@ -208,9 +210,27 @@ jobs:
       - name: Cross-platform e2e
         run: pnpm run test:e2e
 
+  native-paths:
+    name: native paths changed
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: diff
+        run: |
+          changed=false
+          if [ "$GITHUB_EVENT_NAME" = push ] && ! git diff --quiet HEAD^1 HEAD -- packages/stim-cli/src/daemon packages/stim-cli/src/stimd packages/core; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
   test-windows:
     name: test (windows)
-    if: inputs.full
+    needs: native-paths
+    if: always() && (inputs.full || needs.native-paths.outputs.changed == 'true')
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -262,7 +282,8 @@ jobs:
 
   test-macos:
     name: test (macos)
-    if: inputs.full
+    needs: native-paths
+    if: always() && (inputs.full || needs.native-paths.outputs.changed == 'true')
     runs-on: macos-15
     timeout-minutes: 30
     steps:
