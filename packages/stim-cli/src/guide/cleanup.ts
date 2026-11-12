@@ -512,7 +512,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance prune, N. Kept: path absence cannot be proven (invariant 8),
     holder alive.
   Workspace logs over their cap; recordings and archives past retention;
-  parked hosted devices; orphaned EAS sessions of the current project
+  parked hosted devices; orphaned EAS sessions of the current project when it
+  has an Expo config file
     maintenance prune, N. Kept: live session, live recording.
   Finished linked worktrees (branch merged, pull request merged or closed, or
   no commits of their own), after gc.worktreeGraceMinutes
@@ -1010,7 +1011,8 @@ THE PRESSURE LADDER
   shared caches over their caps, the age sweep, orphaned workspace
   directories, registry entries and owned devices of removed projects, stale
   records, archives past retention, workspace logs over 8 MiB, parked hosted
-  devices, orphaned EAS sessions of the current Expo project, unused iOS
+  devices, orphaned EAS sessions of the current project when it has an Expo
+  config file, unused iOS
   simulator runtimes, and finished linked worktrees past
   gc.worktreeGraceMinutes; and it reduces every workspace idle for
   idle.dormantDays (1) to its minimal size (the table under RUNNING GC).

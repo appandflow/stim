@@ -91,6 +91,19 @@ test('the EAS inventory skips a project without an Expo config file', async () =
   expect(runEasFile).toHaveBeenCalledTimes(1);
 });
 
+test('the EAS inventory is incomplete if the Expo config is removed between pages', async () => {
+  const root = join(home, 'app');
+  createExpoProject(root);
+  const runEasFile = vi.fn<() => string>(() => {
+    rmSync(join(root, 'app.json'));
+    return JSON.stringify({ sessions: [], pageInfo: { hasNextPage: true, endCursor: 'next' } });
+  });
+  const report = await collectEasSessionSweep(null, { ...dependencies(root), runEasFile });
+  expect(runEasFile).toHaveBeenCalledTimes(1);
+  expect(report.deletionSafe).toBe(false);
+  expect(report.notices.join(' ')).toContain('no longer has an Expo config');
+});
+
 test('a slow EAS inventory page leaves the event loop responsive while preserving pagination', async () => {
   const root = join(home, 'app');
   createExpoProject(root);

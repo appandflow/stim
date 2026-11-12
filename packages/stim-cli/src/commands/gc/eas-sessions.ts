@@ -174,6 +174,16 @@ function claimStateAbsence(claim: EasSessionClaim): { absent: boolean; notice: s
   return { absent: sessionId !== claim.sessionId, notice: null };
 }
 
+function hasExpoConfig(projectRoot: string): boolean {
+  return EXPO_CONFIG_FILES.some((name) => {
+    try {
+      return statSync(join(projectRoot, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): Promise<EasSessionSweep> {
   const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
   const empty = (notices: string[] = []): EasSessionSweep => ({
@@ -184,15 +194,7 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
   });
   if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) return empty();
   if (deps.easSweepBlockedNotice) return empty([deps.easSweepBlockedNotice]);
-  // EAS CLI's simulator:list creates app.json before authentication if it cannot find an Expo config file.
-  const hasExpoConfig = EXPO_CONFIG_FILES.some((name) => {
-    try {
-      return statSync(join(projectRoot, name)).isFile();
-    } catch {
-      return false;
-    }
-  });
-  if (!hasExpoConfig) return empty();
+  if (!hasExpoConfig(projectRoot)) return empty();
 
   const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(projectRoot);
   if (!eas) return empty(['EAS session sweep skipped: eas-cli is not available for the current Expo project.']);
@@ -226,6 +228,13 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
       return empty([...recorded.notices, `EAS session list exceeded its total time limit for ${projectRoot}.`]);
     }
 
+    // EAS CLI's simulator:list creates app.json if the checkout has no Expo config when the child reads it.
+    if (!hasExpoConfig(projectRoot)) {
+      return empty([
+        ...recorded.notices,
+        `EAS session list stopped because ${projectRoot} no longer has an Expo config.`,
+      ]);
+    }
     let stdout: string;
     try {
       stdout = await run(eas.file, listOwnedSessionsArgs(after), {
