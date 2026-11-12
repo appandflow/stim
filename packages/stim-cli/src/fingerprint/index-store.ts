@@ -491,11 +491,14 @@ export const checkoutTag = (project: string): string => sha256(project).slice(0,
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
-function installInputs(roots: Roots): { paths: string[]; patchDirectories: string[] } | Uncertain {
+function installInputs(
+  roots: Roots,
+): { paths: string[]; patchDirectories: string[]; missingPatchParents: string[] } | Uncertain {
   const discovered = patches(roots);
   if (isUncertain(discovered)) return discovered;
   const seen = new Set<string>();
   const patchDirectories = new Set<string>();
+  const missingPatchParents = new Set<string>();
   const files = (dir: string): string[] => {
     const info = statSync(dir, { throwIfNoEntry: false });
     if (!info) return [];
@@ -515,11 +518,12 @@ function installInputs(roots: Roots): { paths: string[]; patchDirectories: strin
   ];
   // When a patch directory disappears, its surviving parent is the only timestamp that can record the removal.
   for (const dir of patchRoots) {
+    patchDirectories.add(dir);
     let parent = dir;
     while (mtime(parent) === undefined && dirname(parent) !== parent) parent = dirname(parent);
-    patchDirectories.add(parent);
+    if (parent !== dir) missingPatchParents.add(parent);
   }
-  return { paths, patchDirectories: [...patchDirectories] };
+  return { paths, patchDirectories: [...patchDirectories], missingPatchParents: [...missingPatchParents] };
 }
 
 const npmStamp = (roots: Roots) => join(roots.install, 'node_modules', '.package-lock.json');
@@ -546,7 +550,11 @@ function installInputDigest(roots: Roots, inputs: string[]): string {
 
 function installInputStats(roots: Roots, inputs: string[]): string {
   const rows = inputs.map((path) => [relocate(path, roots), statKey(path)?.key ?? null]);
-  return sha256(canonicalJson(Object.fromEntries(rows)));
+  const modules = npmModuleDirectories(roots).map((path) => {
+    const stat = statSync(path, { bigint: true, throwIfNoEntry: false });
+    return [relocate(path, roots), stat ? `${stat.dev}:${stat.ino}` : null];
+  });
+  return sha256(canonicalJson({ inputs: Object.fromEntries(rows), modules }));
 }
 
 /** Records matching inputs and the exact install stamp only when warm copied the source's node_modules. */
@@ -564,7 +572,12 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
     const inputs = installInputs(source);
     if (!sourceStampHash || isUncertain(inputs)) return null;
     const sourceFiles = npmInstallInputs(source, inputs.paths);
-    if ([...sourceFiles, ...inputs.patchDirectories].some((path) => (mtime(path) ?? 0) > installedAt)) return null;
+    if (
+      [...sourceFiles, ...inputs.patchDirectories, ...inputs.missingPatchParents].some(
+        (path) => (mtime(path) ?? 0) > installedAt,
+      )
+    )
+      return null;
     const digest = installInputDigest(source, sourceFiles);
     return (copied) => {
       if (!copied.includes(dirname(npmStamp(target)))) return;
@@ -576,8 +589,12 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
         if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
         const currentSourceFiles = npmInstallInputs(source, sourceInputs.paths);
         const targetFiles = npmInstallInputs(target, targetInputs.paths);
-        const inputStats = installInputStats(target, [...targetFiles, ...targetInputs.patchDirectories, ...modules]);
-        if ([...currentSourceFiles, ...sourceInputs.patchDirectories].some((path) => (mtime(path) ?? 0) > installedAt))
+        const inputStats = installInputStats(target, [...targetFiles, ...targetInputs.patchDirectories]);
+        if (
+          [...currentSourceFiles, ...sourceInputs.patchDirectories, ...sourceInputs.missingPatchParents].some(
+            (path) => (mtime(path) ?? 0) > installedAt,
+          )
+        )
           return;
         if (
           installInputDigest(source, currentSourceFiles) !== digest ||
@@ -624,11 +641,7 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
       mtime(stampPath) === installed &&
       record.stamp === stamp.key &&
       record.inputStats ===
-        installInputStats(roots, [
-          ...npmInstallInputs(roots, inputs.paths),
-          ...inputs.patchDirectories,
-          ...npmModuleDirectories(roots),
-        ]) &&
+        installInputStats(roots, [...npmInstallInputs(roots, inputs.paths), ...inputs.patchDirectories]) &&
       statKey(stampPath)?.key === stamp.key
     )
       return null;

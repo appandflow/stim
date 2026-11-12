@@ -352,6 +352,7 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
 
 test.each([
   'matching inputs',
+  'generated native directory after warm',
   'changed lockfile',
   'different npm config',
   'stale source npm config',
@@ -411,6 +412,10 @@ test.each([
 
     expect((await runWarm(target)).code).toBe(0);
     expect(existsSync(join(target, stamp))).toBe(true);
+    if (scenario === 'generated native directory after warm') {
+      write(target, 'android/app/build.gradle', '// Generated');
+      write(target, 'node_modules/.cache/metro/index', 'bundler cache');
+    }
     if (scenario === 'patch removed after warm') rmSync(join(target, patch));
     if (scenario === 'patch rewritten after warm') {
       write(target, patch, 'patch applied in source');
@@ -418,7 +423,8 @@ test.each([
     }
     if (scenario === 'stamp replaced after warm') write(target, stamp, lock);
     const stale = expect.stringMatching(/package-lock.json changed after the last install/);
-    expect(fingerprintInstallProblem(target)).toEqual(scenario === 'matching inputs' ? null : stale);
+    const matches = scenario === 'matching inputs' || scenario === 'generated native directory after warm';
+    expect(fingerprintInstallProblem(target)).toEqual(matches ? null : stale);
   },
   30_000,
 );
