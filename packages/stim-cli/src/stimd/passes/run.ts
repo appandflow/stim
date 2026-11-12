@@ -13,6 +13,7 @@ import {
   type MaintenancePlanPart,
   type MaintenanceState,
   type MaintenanceRecord,
+  type MaintenanceSize,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
 import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
@@ -28,6 +29,8 @@ import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings
 import { due } from './due.ts';
 import { skipKey } from './plan.ts';
 import { capChildLog } from './attempt.ts';
+import { measureCargoTargets } from './cargo-target.ts';
+import { capDue, clearDeferred, deferCheck, markDeferred } from './defer.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
@@ -315,6 +318,66 @@ function throwUnverifiedCleanup(error: unknown): void {
   if (error instanceof Error && 'reportCleanup' in error) throw error;
 }
 
+async function deferIfLoaded(
+  state: MaintenanceState,
+  check: MaintenanceCheck,
+  operation: StimContext | undefined,
+  record: (
+    event: MaintenanceRecord['event'],
+    level: MaintenanceRecord['level'],
+    msg: string,
+    fields: Record<string, unknown>,
+  ) => void,
+  keepState: () => void,
+  cap: { ran: boolean },
+): Promise<boolean> {
+  if (!deferCheck(state, check, Date.now(), sizeScanDeferred())) return false;
+  record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
+    target: check,
+    reason: 'host load exceeds 4 per core',
+  });
+  markDeferred(state, check, Date.now());
+  keepState();
+  if (check !== 'size') return true;
+  try {
+    cap.ran = await measureCapOnly(state, Date.now(), operation);
+  } catch (error) {
+    throwUnverifiedCleanup(error);
+    operation?.signal.throwIfAborted();
+    const message = error instanceof Error ? error.message : String(error);
+    record('maintenance_failure', 'error', `The Cargo target cap could not measure: ${message}`, {
+      target: 'cargo target cap',
+      error: message,
+    });
+  }
+  return true;
+}
+
+/**
+ * While the size scan is deferred for host load, the Cargo target cap still measures its targets, at most hourly: one
+ * `du` at a time at low priority, each limited to 120 seconds and ended by the operation's abort. True when it ran.
+ */
+async function measureCapOnly(
+  state: MaintenanceState,
+  now: number,
+  operation: StimContext | undefined,
+): Promise<boolean> {
+  if (!capDue(state, now)) return false;
+  state.capAt = now;
+  const cargo = await measureCargoTargets(now, operation, state.sizes, { lowPriority: true });
+  state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
+  return true;
+}
+
+async function measureAllSizes(
+  now: number,
+  failure: Parameters<typeof measureSizes>[1],
+  operation: StimContext | undefined,
+  recorded: readonly MaintenanceSize[],
+): Promise<MaintenanceSize[]> {
+  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
+}
+
 /**
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
@@ -397,19 +460,13 @@ export async function runMaintenance(
     const failures: string[] = [];
     let measuredSizes = false;
     const ran = new Set<MaintenanceCheck>();
+    const cap = { ran: false };
     for (const check of checks) {
-      if (check !== 'pressure' && sizeScanDeferred()) {
-        record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
-          target: check,
-          reason: 'host load exceeds 4 per core',
-        });
-        state.deferredAt = { ...state.deferredAt, [check]: Date.now() };
-        keepState();
+      if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap)))
         continue;
-      }
       state.lastAt[check] = Date.now();
       ran.add(check);
-      delete state.deferredAt?.[check];
+      clearDeferred(state, check);
       keepState();
       try {
         if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
@@ -447,7 +504,7 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureSizes(state.lastAt[check]!, measureFailed, tick?.operation)),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
             ...(deviceSweepIsScoped()
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
@@ -471,7 +528,7 @@ export async function runMaintenance(
     }
     const plannedWorktrees =
       ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
-    const caps = ran.has('size') || ran.has('sweep') || plannedWorktrees;
+    const caps = [ran.has('size'), ran.has('sweep'), plannedWorktrees, cap.ran].some(Boolean);
     if (!caps && !ran.has('idle')) {
       writeState(state);
       return;
@@ -482,6 +539,7 @@ export async function runMaintenance(
     try {
       result = await plannedMaintenance(state.sizes, settings, {
         caps,
+        cargoOnly: cap.ran,
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
@@ -512,6 +570,7 @@ export async function runMaintenance(
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
+        lowPriority: cap.ran,
         ...(tick ? { operation: tick.operation } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];

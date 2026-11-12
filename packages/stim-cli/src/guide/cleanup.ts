@@ -122,15 +122,38 @@ In on mode a pass runs, cheapest to rebuild first:
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
-     app, in use or not, over maintenance.cargoTargetMaxGb (default 25, 0 no
-     cap; one du walk per target/; one that times out records no size, only its
-     stale profiles are trimmed, and it is reported as needing a person): first the profiles and target triples no build wrote in the last
+     app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
+     a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
+     (default 25, 0 no cap; one du walk per target/, at most 6 discovered
+     ones per size scan, the least recently measured first, so every one is
+     reached within a few scans; one that times out
+     records no size, only its stale profiles are trimmed, and it is reported
+     as needing a person). Only directories with Cargo's profile shape
+     (.fingerprint) are profiles; other directories in target/, and a nested
+     target/ inside it, are never removed, though they count in its size. A
+     target triple directory holding anything besides Cargo's CACHEDIR.TAG and
+     .rustc_info.json and its profiles keeps those files and loses only its
+     stale profiles: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap. Each is renamed
+     remaining profile, largest first, until under the cap. At critical only,
+     the idle build units of each remaining profile go too, where Exact's
+     ledger shows their use (see CARGO UNITS below). The disk level of the volume holding a target/
+     tightens this: at high every recognised target/, in use or not, loses all
+     its stale profiles and all incremental/ data whatever the cap, and
+     at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
+     to every target/. The level is read when the trim is planned, which is at
+     the hourly size scan, or hourly on its own while host load defers the size
+     scan (the cap is never held back by load, and its du runs at low priority,
+     one target/ at a time, 120 seconds at most each, ended at once by a
+     handover; the planning du, the trim's du, lsof and ps run niced, while
+     reading the units' directories is in-process and short), and at once
+     for stim gc. Without Exact's ledger, a build that changes nothing leaves
+     no trace in a profile's directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
-     moved back if a build took its .cargo-lock meanwhile, then deleted; a
-     leftover .stim-trimmed is deleted first. A profile whose .cargo-lock a
+     moved back if a build took one of the profile's lock files (.cargo-lock,
+     .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
+     leftover .stim-trimmed is deleted first. A profile whose lock file a
      build holds, and any path a process executes from or holds open (one lsof
      and one ps read; unreadable keeps everything), stay, so a server running
      from target/exact-filesystem-tool does not protect the rest
@@ -512,7 +535,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance prune, N. Kept: path absence cannot be proven (invariant 8),
     holder alive.
   Workspace logs over their cap; recordings and archives past retention;
-  parked hosted devices; orphaned EAS sessions of the current project
+  parked hosted devices; orphaned EAS sessions of the current project when it
+  has an Expo config file
     maintenance prune, N. Kept: live session, live recording.
   Finished linked worktrees (branch merged, pull request merged or closed, or
   no commits of their own), after gc.worktreeGraceMinutes
@@ -814,8 +838,11 @@ SWEEPING FINISHED WORKTREES
   or discovery source of this Stim home names it, which in a scoped STIM_HOME
   includes every worktree outside maintenance.discoverRoots),
   dirty and not finished, or dirty and finished when its changes cannot be
-  archived (ARCHIVED CHANGES below; untracked files count; pod install churn and
-  watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
+  archived (ARCHIVED CHANGES below; untracked files count; a Podfile.lock
+  that Pods/Manifest.lock matches, or that matched when gc deleted Pods (project.pbxproj always counts) and
+  watchman's untracked \`.watchman-cookie-*\` files alone do not), a tracked file
+  marked assume-unchanged or skip-worktree with the file on disk (hidden from
+  git status; sparse-excluded files do not count), which is never archived, unpushed
   (commits no remote-tracking ref or other local branch reaches), or has
   initialized submodules. The report leaves out the
   source checkout and roots outside git.
@@ -1010,7 +1037,8 @@ THE PRESSURE LADDER
   shared caches over their caps, the age sweep, orphaned workspace
   directories, registry entries and owned devices of removed projects, stale
   records, archives past retention, workspace logs over 8 MiB, parked hosted
-  devices, orphaned EAS sessions of the current Expo project, unused iOS
+  devices, orphaned EAS sessions of the current project when it has an Expo
+  config file, unused iOS
   simulator runtimes, and finished linked worktrees past
   gc.worktreeGraceMinutes; and it reduces every workspace idle for
   idle.dormantDays (1) to its minimal size (the table under RUNNING GC).
@@ -1612,6 +1640,32 @@ project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
 
+CARGO UNITS
+  A unit is one build of one crate in a profile: .fingerprint/<crate>-<hash>,
+  build/<crate>-<hash> and the deps/ files carrying the hash. Cargo keeps the
+  old ones whenever a crate's version, features or dependencies change. Cargo
+  does not touch the fingerprint of a fresh dependency, so modification times
+  say nothing about use; only Exact's .exact-sweep.json ledger does: its sweep
+  stamps a unit (<profile>#<hash>) when a build read the unit's fingerprint,
+  even if it compiled nothing. Units are swept only in a target that has that
+  ledger. A unit is idle when its stamp is over a day old and no build read
+  its fingerprint since that sweep (the access time Exact's sweep resets); a
+  unit with no stamp stays, and so does one unit per crate name, the most
+  recently used (its other units, whatever their kind, can go when idle). A
+  ledger whose own time is over 3 days old shows no use and its target keeps
+  its units. Units are swept at critical only. The
+  work goes in chunks of 25 units: the three lock files (.cargo-lock,
+  .cargo-build-lock, .cargo-artifact-lock) are checked before and after each
+  chunk and the sweep of that profile stops when one is held. A chunk is
+  renamed aside, fingerprints first, then build/, then deps/. When a lock turns
+  up after a chunk, the chunk is put back path by path without overwriting:
+  a path a build recreated since is left alone and its old copy deleted.
+  A unit removed while no build holds a lock costs a rebuild of that crate. The
+  remaining window is one chunk: a build that starts after a chunk's first
+  check and judged a unit fresh before that chunk moved it can still fail with
+  a missing file, and the next build recovers. Hard links Cargo made in the
+  profile root keep the bytes of a removed deps/ file.
+
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
   cache-provider/, js-swap-tmp/, macos/build, the staged macos/<Product>.app and macos/staging-*
@@ -1619,7 +1673,7 @@ WORKSPACE BUILD OUTPUTS
   android/.gradle, .build, the CMake directories android/.cxx and
   android/<module>/.cxx, a .dd directory laid out as Xcode DerivedData
   (a Build/ directory beside ModuleCache.noindex or Logs/), and an Exact
-  app's Cargo target/ (beside its exact.mjs; kept while
+  app's Cargo target/ (beside its exact.mjs; or any target/ directly in the checkout with Cargo's CACHEDIR.TAG; kept while
   another process, such as a shell or an exact.mjs command, runs from or
   works in the app, and on Windows, where processes cannot be listed) count
   with them

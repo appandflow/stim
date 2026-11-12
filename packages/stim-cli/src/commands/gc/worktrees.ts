@@ -52,6 +52,7 @@ import {
   excludeWatchmanCookies,
   nestedWorktrees,
   porcelainPath,
+  provenPodChurn,
   reclaimKeys,
   removeWorktreeTarget,
 } from '../worktree.ts';
@@ -63,6 +64,7 @@ import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
+import { hiddenEditHold } from '../../workspace/hidden-edits.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -101,6 +103,8 @@ export interface WorktreeFacts {
   discovered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
+  podChurn?: readonly string[];
+  hiddenEdit?: string | null;
   unpushed: string[] | null;
   submodules: boolean | null;
   inUse: string[];
@@ -257,9 +261,8 @@ export async function agentSessionUse(
   );
 }
 
-function dirtyLines(porcelain: string[] | null, podChurnIsDirty = false): string[] {
-  const lines = excludeWatchmanCookies(porcelain).lines;
-  return podChurnIsDirty ? lines : excludePodChurn(lines).lines;
+function dirtyLines(porcelain: string[] | null, podChurn: readonly string[] = []): string[] {
+  return excludePodChurn(excludeWatchmanCookies(porcelain).lines, podChurn).lines;
 }
 
 function finished(facts: Pick<WorktreeFacts, 'merge' | 'pullRequest'>): boolean {
@@ -326,8 +329,8 @@ function removalBlocker(
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
-  // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
-  const dirty = dirtyLines(facts.porcelain, facts.discovered);
+  if (facts.hiddenEdit) return skip('dirty', `dirty: ${facts.hiddenEdit}`);
+  const dirty = dirtyLines(facts.porcelain, facts.podChurn);
   if (dirty.length) {
     const paths = dirty.slice(0, DIRTY_PATHS_SHOWN).flatMap((line) => porcelainPath(line) ?? []);
     const more = dirty.length > DIRTY_PATHS_SHOWN ? ', ...' : '';
@@ -867,7 +870,10 @@ export async function collectWorktreeSweep({
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
-    const dirty = linked ? dirtyLines(porcelain, discoveredOnly).length : 0;
+    // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
+    const podChurn = linked && !discoveredOnly ? provenPodChurn(path, porcelain, [], keys) : [];
+    const hiddenEdit = linked && !discoveredOnly ? await hiddenEditHold(path, operation?.signal) : null;
+    const dirty = linked ? dirtyLines(porcelain, podChurn).length : 0;
     const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
@@ -884,6 +890,8 @@ export async function collectWorktreeSweep({
       discovered: discoveredOnly,
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
+      podChurn,
+      hiddenEdit,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
       submodules: linked ? await unlessTimedOut(() => hasPopulatedSubmodulesAsync(path, read), null) : false,
       inUse: linked ? stimCliUseOf(path, canonicalPath, cli) : [],

@@ -17,6 +17,7 @@ import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { measureCargoTargets } from './cargo-target.ts';
 import { measureSizes } from './measure.ts';
 import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
@@ -144,6 +145,7 @@ export async function runMaintenanceAtLevel({
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
   const sizes = [
     ...(await measureSizes(now, measureFailed, operation)),
+    ...(await measureCargoTargets(now, operation)),
     ...(deviceSweepIsScoped(env) ? [] : await measureOwnedDevices(now, measureFailed)),
   ];
   const plan = await plannedMaintenance(sizes, settings, {
@@ -152,6 +154,7 @@ export async function runMaintenanceAtLevel({
     worktrees: settings.removeFinishedWorktrees,
     refresh: act,
     operation,
+    ...(chosen ? { cargoLevel: chosen } : {}),
   });
   blocked.push(...plan.blocked);
   for (const skip of plan.skips)
