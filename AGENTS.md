@@ -756,7 +756,7 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. While the disk pressure level is high or critical it
+parked one before creating. While the disk pressure level is critical it
 deletes instead of parking. Owned devices are disposable: the stim-daemon's
 dormant stage and pressure ladder, automatic maintenance and `gc`
 delete the owned devices of an idle workspace (one with no activity for

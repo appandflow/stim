@@ -8,7 +8,7 @@
 ## Removed (breaking)
 
 - `stim gc` runs one automatic maintenance pass at the measured pressure level and deletes; `--dry-run` reports instead, and `--pressure <normal|high|critical>` sets the level. `--delete`, `--cache`, `--older-than` and `--worktrees` are gone. The API's `gc()` and `collectGarbage()` take `{ pressure }` instead of `{ olderThan, cache, worktrees, delete }`, and the payload is the level run (`level`, `actions`, `blocked`, `results`, plus the storage sections on a dry run). Stim Desktop deletes a single item through stim-server, and the API exposes it as `deleteGarbageItem({ item })`.
-- `idle.dormantDays` defaults to 1. A workspace idle that long is reduced to its minimal size at every level, including a linked worktree's `node_modules` and Pods when `worktree warm` cannot restore the same versions; the next Stim command asks for an install then. gc deletes unused iOS simulator runtimes, and at critical cleans the npm, Yarn, pnpm, CocoaPods, Gradle and SwiftPM caches, through their own commands where they have one.
+- `idle.dormantDays` defaults to 1. A workspace idle that long is reduced to its minimal size at every level, including a linked worktree's `node_modules` and Pods when `worktree warm` cannot restore the same versions; the next Stim command asks for an install then. gc deletes unused iOS simulator runtimes, and at critical, while the disk is still short, cleans the npm, Yarn, pnpm, CocoaPods, Gradle and SwiftPM caches, through their own commands where they have one. The ladder deletes `node_modules` and Pods of linked worktrees idle 1 hour at high. `stim worktree remove` parks devices unless the disk level is critical. Defaults change: `disk.criticalFreeGb` 6 to 20 and `disk.minFreeGb` 20 to 40.
 
 ## Changed
 

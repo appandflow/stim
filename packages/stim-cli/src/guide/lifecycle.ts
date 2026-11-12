@@ -2527,8 +2527,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
-    5. node_modules and Pods of idle linked worktrees, now at high (idle 10
-       minutes) and at critical (idle 2 minutes), only those \`stim worktree
+    5. node_modules and Pods of idle linked worktrees, now at high (idle 1
+       hour) and at critical (idle 2 minutes), only those \`stim worktree
        warm\` can restore, recorded so the next start, ios or android runs it.
        Each one holding 256 MB or more of its own (private) bytes goes, most
        first; a copy-on-write clone holding less frees almost nothing and is
@@ -2542,24 +2542,30 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        maintenance.gradleVersionIdleDays (at critical every unpinned one), Stim
        TMPDIR leftovers unmodified for 24 hours, and the worktree trash;
        automatic maintenance's daily sweep runs this rung at normal
-    7. worktrees: at high clean finished linked worktrees without the
-       gc.worktreeGraceMinutes wait; at critical also clean pushed worktrees no
-       Stim command used for 7 days
+    7. worktrees, only while maintenance.removeFinishedWorktrees is true: at
+       high clean finished linked worktrees after the gc.worktreeGraceMinutes
+       wait; at critical without it, and also clean pushed worktrees no Stim
+       command used for 7 days. The tick uses the pull request lookups the
+       worktree check cached instead of calling gh; stim gc looks them up again
     8. critical only: every device recording not being written, and archived
        logs, recordings and agent actions
-    9. last, at critical, and at high only while free disk stays under
-       disk.minFreeGb after the rungs above: caches Stim does not own, each
+    9. last, at critical only and only while the rungs above left the disk
+       short, never in a STIM_HOME-scoped home: caches Stim does not own, each
        through the tool's own command and only when that tool is installed and
        no process of that tool runs, each listed with its size before and
        after: \`npm cache clean --force\`, \`yarn cache clean\`, \`pnpm store
        prune\`, \`pod cache clean --all\`, and Gradle's version-independent
        caches (caches/modules-2, caches/transforms-N and caches/build-cache-N
        under GRADLE_USER_HOME, which Stim removes itself because Gradle has no
-       command, only while no Gradle or Kotlin daemon process runs; rung 6
-       stops the idle daemons first). Android NDKs, Android system images no
+       command) and SwiftPM's cache, those two only while no Stim build lock
+       or build slot is live or unresolved and no matching tool process runs,
+       by renaming the directory aside on the same volume and deleting the
+       renamed copy; rung 6 stops the idle daemons first. Yarn and pnpm
+       caches are found by path and the clean commands run with
+       COREPACK_ENABLE_NETWORK=0). Android NDKs, Android system images no
        AVD uses and ~/.cache/exact are only reported, with the command that
        removes them, and never deleted. The daemon runs this rung at critical
-       like \`stim gc --pressure critical\`
+       at most hourly; \`stim gc --pressure critical\` runs it each time
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of

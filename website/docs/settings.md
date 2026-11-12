@@ -776,11 +776,10 @@ available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 Above normal it runs one pressure ladder until the level
 clears: idle stage for every workspace idle 2 minutes, parked devices, the
 shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
-that `stim worktree warm` can restore (idle 10 minutes at high, 2 at critical),
+that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
 trash, finished and long-idle worktrees, at critical recordings and archived
-logs, and last, at critical or at high while free disk stays under
-`disk.minFreeGb`, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
+logs, and last, at critical only and only while the disk is still short, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
 a build, a driver, a lease, a live [web share](./share.md) or
 `maintenance.keep`, and takes the longest-idle
 workspace first; a level raised by memory alone runs only what frees memory.
@@ -993,7 +992,7 @@ entries, parked simulators and emulators, and clean, pushed linked worktrees
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
-`maintenance.removeFinishedWorktrees` controls the worktree check. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
+`maintenance.removeFinishedWorktrees` controls the worktree check; with it false no finished worktree is removed at any level. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
 build, including iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
 workspace whose device is hosted on a remote Mac, after
 `maintenance.idleStopHours` without real activity (removing a finished worktree

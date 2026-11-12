@@ -573,7 +573,7 @@ A linked worktree that has a Stim workspace loses its `node_modules` and
 `ios/Pods`, never the source checkout's, in two ways. `stim gc` and the
 `stim-daemon` delete them at every level once the workspace has had no activity
 for `idle.dormantDays` (1 day), and the [pressure ladder](#disk-pressure)
-deletes them at high (idle 10 minutes) and critical (idle 2 minutes) disk
+deletes them at high (idle 1 hour) and critical (idle 2 minutes) disk
 pressure, only when `stim worktree warm` can restore them. A worktree locked with
 `git worktree lock` always keeps them, so a rollback checkout stays runnable.
 Otherwise a worktree keeps them while its dev server runs or a native run or
@@ -646,11 +646,11 @@ and above normal runs one ladder top-down until the level clears:
 | 2    | Parked simulators and emulators, oldest first, until the level clears                                              | All parked devices                                                                                                                                                      |
 | 3    | Build and Metro caches trimmed, least recently used first, to half their caps                                      | Every registered shared cache emptied (compilation cache, ccache, build cache, Metro, macOS artifacts, React Native and Android caches), the fingerprint index and memo |
 | 4    | The dormant stage for workspaces idle 10 minutes                                                                   | The dormant stage for workspaces idle 2 minutes                                                                                                                         |
-| 5    | `node_modules` and `ios/Pods` of linked worktrees idle 10 minutes that `stim worktree warm` can restore            | Same, for worktrees idle 2 minutes                                                                                                                                      |
+| 5    | `node_modules` and `ios/Pods` of linked worktrees idle 1 hour that `stim worktree warm` can restore                | Same, for worktrees idle 2 minutes                                                                                                                                      |
 | 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash | Same, with every unpinned Gradle version                                                                                                                                |
-| 7    | Clean finished worktrees without the grace period                                                                  | Also clean pushed worktrees no Stim command used for 7 days                                                                                                             |
+| 7    | Clean finished worktrees after `gc.worktreeGraceMinutes`, if `maintenance.removeFinishedWorktrees`                 | Without the grace period; also clean pushed worktrees no Stim command used for 7 days                                                                                   |
 | 8    | Nothing                                                                                                            | Every device recording and archived logs, recordings and agent actions                                                                                                  |
-| 9    | Only while free disk stays under `disk.minFreeGb` after the rungs above: other tools' caches                       | Other tools' caches                                                                                                                                                     |
+| 9    | Nothing                                                                                                            | While the disk is still short after the rungs above: other tools' caches                                                                                                |
 
 Rung 9 is the last. It cleans caches Stim does not own, each through the tool's
 own command and only when that tool is installed and no process of that tool
@@ -658,10 +658,14 @@ runs, and lists each with its size before and after: `npm cache clean --force`,
 `yarn cache clean`, `pnpm store prune`, `pod cache clean --all`, and Gradle's
 version-independent caches (`caches/modules-2`, `caches/transforms-N` and
 `caches/build-cache-N` under `GRADLE_USER_HOME`, removed by Stim because Gradle
-has no command, only while no Gradle or Kotlin daemon runs; rung 6 stops idle
-daemons first). It only reports Android NDKs (`sdkmanager --uninstall
+has no command), and SwiftPM's cache, those two only while no Stim build lock or
+build slot is live or unresolved and no matching tool process runs, by renaming
+the directory aside on the same volume and deleting the renamed copy; rung 6
+stops idle daemons first. Yarn and pnpm caches are found by path and their clean
+commands run with `COREPACK_ENABLE_NETWORK=0`. Rung 9 never runs at high or in a
+`STIM_HOME`-scoped home. It only reports Android NDKs (`sdkmanager --uninstall
 "ndk;<version>"`), Android system images no AVD uses and `~/.cache/exact`, with
-the command, and never deletes them. The `stim-daemon` runs the same ladder.
+the command, and never deletes them. The `stim-daemon` runs the same ladder, rung 9 at most hourly; `stim gc --pressure critical` runs it each time.
 
 Cleanup protects active builds, leases, live shares and pinned workspaces. It can remove dependencies from idle linked worktrees: after `idle.dormantDays` (1 day) at every level, and by rung 5 under disk pressure. Run `stim worktree warm` to restore missing copies from the source checkout; the next Stim command in the worktree does it for you, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions. The source checkout's dependencies stay in place.
 
