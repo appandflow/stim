@@ -1140,7 +1140,11 @@ RULES
                               removing
     machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
                               deviceSupport, orphanedDerivedData, runnerBuilds }
-                              | null report-only, never deleted. gradle: { home, unusedVersions:
+                              | null. A report of these locations; gc removes
+                              some of them by its own rules: unused Gradle
+                              versions (rung 6), Gradle's modules cache (rung 9,
+                              critical) and unused simulator runtimes (every
+                              level). gradle: { home, unusedVersions:
                               [{ version, bytes, dirs, transforms, remedy }]
                               (transforms is null or { dir, bytes,
                               privateBytes, remedy } for caches/<version>/

@@ -3,7 +3,6 @@ import { existsSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
-  buildWorkerRoot,
   fingerprintIndexDir,
   fingerprintIndexLock,
   sharedCompilationCache,
@@ -21,7 +20,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
-import { formatBytes, measuredDirectorySizeAsync, volumeRootFor } from '../fs-util.ts';
+import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -40,7 +39,6 @@ import { diskThresholds } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import {
   cleanToolCache,
-  deviceOfPath,
   onShortVolume,
   reportedBytes,
   reportedCaches,
@@ -729,24 +727,13 @@ async function unownedRung(context: RungContext): Promise<void> {
   }
 }
 
-/**
- * The device ids of the volumes Stim uses whose free disk is under the critical level, measured now: the devices of the
- * config dir, the registered projects and the build worker root whose volume measures critical.
- */
+/** The device ids of the volumes Stim uses whose free disk is under the critical level, measured now, per device. */
 async function criticalDevices(context: RungContext): Promise<Set<number>> {
   const { thresholds } = diskThresholds(context.config, context.operation?.env);
   const devices = new Set<number>();
   if (thresholds.criticalMb <= 0) return devices;
-  const critical = new Set(
-    (await measureDisk(context.config, context.operation?.signal))
-      .filter((volume) => volume.freeMb < thresholds.criticalMb)
-      .map((volume) => volume.volume),
-  );
-  for (const path of [configDir(), ...Object.keys(context.config.projects), buildWorkerRoot(context.config)]) {
-    if (!critical.has(volumeRootFor(path))) continue;
-    const device = deviceOfPath(path);
-    if (device !== null) devices.add(device);
-  }
+  for (const volume of await measureDisk(context.config, context.operation?.signal))
+    if (volume.device !== undefined && volume.freeMb < thresholds.criticalMb) devices.add(volume.device);
   return devices;
 }
 

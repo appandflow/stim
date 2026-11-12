@@ -262,8 +262,7 @@ export function onShortVolume(
   });
 }
 
-/** The device id of `path`, or of its nearest existing ancestor; null when none can be read. */
-export function deviceOfPath(path: string): number | null {
+function deviceOfPath(path: string): number | null {
   let current = path;
   for (;;) {
     try {

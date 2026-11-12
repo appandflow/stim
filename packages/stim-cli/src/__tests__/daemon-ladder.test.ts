@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -696,12 +696,24 @@ describe('the ladder stim gc forces', () => {
     expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
     expect(await planned('critical', unscoped, { lastRung: 8 })).toEqual([]);
 
+    const cacheDevice = statSync(join(projects, '.npm')).dev;
     const disk = vi.spyOn(daemonMeasure, 'measureDisk');
-    disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024 }]);
+    disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024, device: cacheDevice }]);
     expect(await planned('critical', unscoped, { measured: true })).toEqual([]);
-    disk.mockResolvedValue([{ volume: '/', freeMb: 1024 }]);
+    disk.mockResolvedValue([{ volume: '/', freeMb: 1024, device: cacheDevice }]);
     expect(await planned('critical', unscoped, { measured: true })).toEqual([
       expect.objectContaining({ rung: 9, outcome: 'would' }),
+    ]);
+    disk.mockResolvedValue([
+      { volume: '/', freeMb: 1024, device: cacheDevice + 1 },
+      { volume: '/', freeMb: 500 * 1024, device: cacheDevice },
+    ]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([
+      expect.objectContaining({
+        rung: 9,
+        outcome: 'kept',
+        detail: expect.stringContaining('not under the critical level'),
+      }),
     ]);
   });
 });
