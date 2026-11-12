@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { configDir } from '../index.ts';
+import { configDir, workspaceStateDir } from '../index.ts';
+import { readJsonObject } from './json-file.ts';
 
 /** Changes whenever fingerprint input rows or their bytes change. */
 export const FINGERPRINT_SCHEMA = 2;
@@ -25,4 +26,15 @@ export function fingerprintEnvDir(home?: string): string {
 
 export function fingerprintIndexLock(home?: string): string {
   return join(home ?? configDir(), 'fingerprint.lock');
+}
+
+export function warmedNpmInstallFile(project: string): string {
+  return join(workspaceStateDir(project), 'warmed-npm-install.json');
+}
+
+export function readWarmedNpmInstall(project: string): { stamp: string; inputStats: string } | null {
+  const record = readJsonObject(warmedNpmInstallFile(project));
+  return typeof record?.stamp === 'string' && typeof record.inputStats === 'string'
+    ? { stamp: record.stamp, inputStats: record.inputStats }
+    : null;
 }
