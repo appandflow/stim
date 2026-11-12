@@ -27,9 +27,11 @@ import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/worksp
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
 import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
+  MODE_REPACK,
   readRemoteSession,
   readWorkspaceLaunches,
   revivesWithoutMetro,
+  workspaceDevServerMode,
   type RemoteSessionRecord,
   type WorkspaceLaunchPlatform,
   type WorkspaceLaunchRecord,
@@ -446,6 +448,10 @@ export async function runReload({
     sleep: (ms: number) => cancellableSleep(ms, { signal, what: 'reload' }),
     ...deps,
   };
+  if (workspaceDevServerMode(root) === MODE_REPACK) {
+    const reloadMetro = d.reloadMetro;
+    d.reloadMetro = (port, options) => reloadMetro(port, { ...options, protocolVersion: '2' });
+  }
   const project = d.getProject(root);
   if (!project) {
     return {

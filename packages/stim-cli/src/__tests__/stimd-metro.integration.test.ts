@@ -157,6 +157,12 @@ function alive(pid: unknown): boolean {
   }
 }
 
+async function stopSupervisor(root: string): Promise<void> {
+  if (!existsSync(workspaceStateFile(root))) return;
+  const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+  if (supervisor) await ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken });
+}
+
 function claimFile(root: string, kind: string): string {
   const exclusive = join(workspaceDir(root), `${kind}.claim`, 'exclusive');
   const name = readdirSync(exclusive).find((entry) => entry.endsWith('.claim'));
@@ -209,7 +215,7 @@ afterEach(async () => {
         }
       }
     }
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } finally {
     vi.unstubAllEnvs();
   }
@@ -236,10 +242,7 @@ test.skipIf(process.platform !== 'win32')(
       expect(claims.live).toEqual([]);
       await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
     } finally {
-      if (existsSync(workspaceStateFile(root))) {
-        const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
-        if (supervisor) await ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken });
-      }
+      await stopSupervisor(root);
     }
   },
   30_000,
@@ -263,7 +266,11 @@ test('a Metro that exits by itself releases its claim and stimd keeps serving', 
     code: 3,
   });
   expect(alive(pid)).toBe(true);
-  await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+  try {
+    await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+  } finally {
+    await stopSupervisor(root);
+  }
 }, 40_000);
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
