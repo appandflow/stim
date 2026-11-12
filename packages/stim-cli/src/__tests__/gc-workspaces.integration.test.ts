@@ -2491,7 +2491,7 @@ test('gc keeps merged linked worktrees where no stim command ran, and removes th
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
 }, 240_000);
 
-test('gc removes a merged worktree in a maintenance.discoverRoots folder like a used one, with no workspace directory', async () => {
+test('gc lists a merged worktree in a maintenance.discoverRoots folder and keeps it while it is recent, with no workspace directory', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
   const config = loadConfig();
   if (!config) throw new Error('no config');
@@ -2500,7 +2500,7 @@ test('gc removes a merged worktree in a maintenance.discoverRoots folder like a 
 
   const { payload } = await gcJson({ pressure: 'normal' });
 
-  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(false);
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(payload.discovered.map((entry: { path: string }) => basename(entry.path))).toContain('merged');
   expect(listWorkspaceDirs()).toHaveLength(before);

@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
-import { discoverCheckouts, selectDiscovered, type DiscoveryChild } from '../workspace/discovery.ts';
+import { discoverCheckouts, discoveredOutside, selectDiscovered, type DiscoveryChild } from '../workspace/discovery.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
@@ -102,7 +102,7 @@ describe('discoverCheckouts', () => {
     mkdirSync(join(roots, 'docs'));
     mkdirSync(join(roots, 'linked-out'));
     symlinkSync(join(roots, 'app'), join(roots, 'link'));
-    const config: Config = { maintenance: { discoverRoots: [roots, 'relative/dir'] }, projects: {}, repos: {} };
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
     const found = await discoverCheckouts(config, []);
     expect(found.map(({ path, origin }) => [path, origin])).toEqual([[join(roots, 'app'), 'root']]);
     expect(existsSync(join(base, 'home'))).toBe(false);
@@ -114,16 +114,19 @@ describe('discoverCheckouts', () => {
     app(repo);
     git(repo, 'init', '-q', '-b', 'main');
     git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
-    const linked = join(base, 'wt', 'feature');
+    const linked = join(base, 'dev', 'feature');
+    const elsewhere = join(base, 'wt', 'pin');
     mkdirSync(join(base, 'wt'));
     git(repo, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    git(repo, 'worktree', 'add', '-q', '--detach', elsewhere);
     app(join(base, 'dev', 'neighbour'));
     mkdirSync(join(base, 'dev', 'notes'));
     const config: Config = { projects: { [repo]: {} }, repos: {} };
     const found = await discoverCheckouts(config, [repo]);
     expect(found.map(({ path, origin }) => [path, origin])).toEqual([
-      [join(base, 'dev', 'neighbour'), 'sibling'],
       [linked, 'worktree'],
+      [join(base, 'dev', 'neighbour'), 'sibling'],
     ]);
+    expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
 });

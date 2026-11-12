@@ -44,7 +44,13 @@ describe('a discovered checkout in the idle stages', () => {
     mkdirSync(join(app, 'android', 'app', 'build'), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     const old = new Date(Date.now() - 3 * day);
-    for (const path of [app, join(app, 'package.json'), join(app, 'android'), join(app, 'android', 'app')])
+    for (const path of [
+      app,
+      join(app, 'package.json'),
+      join(app, 'android'),
+      join(app, 'android', 'app'),
+      join(app, 'android', 'app', 'build'),
+    ])
       utimesSync(path, old, old);
     const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
 
