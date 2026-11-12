@@ -287,8 +287,10 @@ export async function planCargoTargets({
         lowPriority,
       );
     }
+    let idleUnits = false;
     if (policy.units === 'all' || (policy.units === 'toNeed' && freeable < overBytes)) {
       const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority);
+      idleUnits = unitBytes !== 0;
       if (unitBytes === null) plan.blocked.push(`${dir}: the idle build units could not be measured`);
       else freeable += unitBytes;
     }
@@ -297,7 +299,7 @@ export async function planCargoTargets({
         plan.blocked.push(`${why}; every profile was used in the last day and none has anything idle to remove`);
       continue;
     }
-    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}${tightened === 'critical' ? ', then the build units unused for a day (all of them)' : ''}`;
+    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}${idleUnits ? ', then the build units unused for a day (all of them)' : ''}`;
     plan.actions.push({
       kind: 'would-clear-build-dirs',
       target: dir,
