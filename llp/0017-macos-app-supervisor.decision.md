@@ -12,7 +12,7 @@
 `stim macos` and a hosted macOS session's worker start the app through
 `macos-run`, a per-workspace supervisor process. It launches the app with piped
 stdout and stderr, copies each line into the workspace's `macos.ndjson`, holds
-the runtime claim with the app as its child, and records the app's exit code.
+the runtime claim with the app as its child, and writes the exit line with the app's exit code to the log.
 This is the one long-lived child that stays outside stimd; the others (Metro,
 the tunnel, the owned Chrome of `stim web`) moved into it. Do not replace the
 supervisor with a file that stimd tails unless the condition at the end of this
@@ -38,12 +38,13 @@ The cost is one extra Node process per running macOS app.
 
 ## Maintainer decision
 
-Maintainer decision: "if we're regressing on func i don't mind keeping the extra processes if it makes things simpler and more robust" (2026-11-12)
+Maintainer decision: "if we're regressing on func i don't mind keeping the extra processes if it makes things simpler and more robust", 2026-11-12.
 
 The maintainer said this to the coordinating session on 2026-11-12, after five
-reviews of PR #5559; the session relayed it. It is not on a GitHub thread. PR
-#5559 was closed with the words quoted in its closing comment, and issue #5382,
-which asked for the removal, was closed as not planned.
+reviews of PR #5559; the session relayed it, and quoted it in the closing
+comment of #5559
+(https://github.com/appandflow/stim/pull/5559#issuecomment-6833712226). Issue
+#5382, which asked for the removal, was closed as not planned.
 
 ## What was tried
 
