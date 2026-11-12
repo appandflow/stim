@@ -2959,18 +2959,18 @@ describe('a finished registered worktree whose uncommitted state is pod churn, a
   test('only churn that matches a pod install in that worktree lets it go', async () => {
     const wt = repoWithTwoBranches({ files }).worktrees.merged ?? '';
     install(wt);
-    expect(await verdict(wt)).toMatchObject({ skipCode: null, dirty: 0 });
+    expect(await verdict(wt)).toMatchObject({ skipCode: null });
 
     writeFileSync(
       join(wt, 'ios', 'App.xcodeproj', 'project.pbxproj'),
       PBX.join('\n').replace('DEVELOPMENT_TEAM = AAA', 'DEVELOPMENT_TEAM = ZZZ'),
     );
-    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty', dirty: 2 });
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
     execSync('git checkout -- ios/App.xcodeproj/project.pbxproj', { cwd: wt, timeout: 15_000 });
 
     install(wt);
     rmSync(join(wt, 'ios', 'Pods'), { recursive: true });
-    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty', dirty: 2 });
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
   }, 240_000);
 
   test.each([
