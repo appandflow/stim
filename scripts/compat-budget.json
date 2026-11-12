@@ -96,7 +96,7 @@
       "mechanism": "stimd adopts or stops, by its verified process identity, a managed tunnel an earlier CLI recorded without a claim"
     },
     "C30": {
-      "loc": 80,
+      "loc": 76,
       "end": "2.1.0",
       "mechanism": "stimd stops a pre-2.0 stim-daemon that holds the daemon claim, by its verified process identity, and the CLI refuses a holder it will not stop"
     }
