@@ -53,6 +53,11 @@ name built from the install path would differ between package managers and
 between hoisting outcomes of the same lockfile. Any other two rows of one name
 that disagree remain an error in the stage that produced them.
 
+Only rows of the files the evaluation loaded carry the copy's version. An
+`npm:` row from a walked tree or an environment path carries none, so if one
+ever meets a loaded row of another copy under one name, the key is still
+refused rather than guessed.
+
 ## Code
 
 - [Row naming and merging](../packages/stim-cli/src/fingerprint/key.ts) and [the version of each loaded content row](../packages/stim-cli/src/fingerprint/evaluate.ts).
