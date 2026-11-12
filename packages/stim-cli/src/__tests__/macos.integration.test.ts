@@ -2379,8 +2379,11 @@ describe('macOS build placement and promotion', () => {
         if (inspectProcessIdentity(owner) !== 'same') return false;
         process.kill(-owner.pid, 'SIGKILL');
         if (!(await waitForProcessExit(owner, 5000))) return false;
-        const members = real.runFile('/bin/ps', ['-A', '-o', 'pid=,pgid='], { timeoutMs: 2000 });
-        return !members.split('\n').some((line) => Number(line.trim().split(/\s+/)[1]) === owner.pid);
+        const members = real.runFile('/bin/ps', ['-A', '-o', 'pid=,pgid=,stat='], { timeoutMs: 2000 });
+        return !members.split('\n').some((line) => {
+          const [, pgid, stat] = line.trim().split(/\s+/);
+          return Number(pgid) === owner.pid && !stat?.startsWith('Z');
+        });
       });
       const streams = createOwnedStreams(() => {});
       let failedApp: MacosProcess | undefined;
