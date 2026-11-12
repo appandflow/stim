@@ -702,21 +702,20 @@ describe('fingerprint evaluators on a bare React Native app', () => {
 
   test('two loaded versions of one content package are two inputs, each in the key', SLOW, async () => {
     const root = colorApp({ 'node_modules/color': '1.0.0', 'node_modules/owner/node_modules/color': '2.0.0' }, true);
-    const compute = async () => {
-      const result = await fingerprint(
-        root,
-        { platform: 'ios' },
-        { env: baseEnv(), embedMode: 'development', index: 'skip' },
-      );
+    const compute = async (index: 'use' | 'skip' = 'skip') => {
+      const result = await fingerprint(root, { platform: 'ios' }, { env: baseEnv(), embedMode: 'development', index });
       if (isUncertain(result)) throw new Error(result.uncertain);
       return result;
     };
+    const colors = (result: { inputs: { name: string }[] }) =>
+      result.inputs.filter((input) => input.name.startsWith('npm:color')).map((input) => input.name);
+    await settleBareIndex();
     const first = await compute();
-    expect(first.inputs.filter((input) => input.name.startsWith('npm:color')).map((input) => input.name)).toEqual([
-      'npm:color@1.0.0/index.js',
-      'npm:color@2.0.0/index.js',
-    ]);
-    expect((await compute()).hash).toBe(first.hash);
+    expect(colors(first)).toEqual(['npm:color@1.0.0/index.js', 'npm:color@2.0.0/index.js']);
+    expect((await compute('use')).hash).toBe(first.hash);
+    const warm = await compute('use');
+    expect(warm).toMatchObject({ hash: first.hash, from: 'index' });
+    expect(colors(warm)).toEqual(colors(first));
     write(join(root, 'node_modules/owner/node_modules/color/index.js'), 'module.exports = "nested edit";\n');
     const nested = await compute();
     expect(nested.hash).not.toBe(first.hash);

@@ -239,6 +239,8 @@ describe('fingerprint key', () => {
     ]);
     expect(shared[1]?.[1]).not.toBe(names([v5, v7, { ...v7, hash: 'e'.repeat(64) }])[1]?.[1]);
     expect(shared[1]?.[1]).not.toBe(names([v5, v7, v7])[1]?.[1]);
+    const pkg: Input = { name: 'package:color', kind: 'package', hash: 'a'.repeat(64), version: '7.2.0' };
+    expect(() => mergeInputs([pkg, { ...pkg, hash: 'b'.repeat(64) }])).toThrow(/disagree/);
   });
 
   test('diffInputs reports added, removed and changed rows in name order whatever the input order', () => {

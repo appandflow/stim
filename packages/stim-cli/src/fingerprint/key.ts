@@ -112,6 +112,8 @@ function qualifyCopies(inputs: readonly Input[]): readonly Input[] {
   });
 }
 
+const npmCopy = (a: Input, b: Input) => a.name.startsWith('npm:') && a.version !== undefined && a.version === b.version;
+
 // @ref LLP 0022#copies-at-one-version-share-a-row -- an install path would make the name depend on the layout
 /**
  * The rows sorted by name, with rows two stages both produced merged. Installed copies of one package at one version
@@ -125,7 +127,7 @@ export function mergeInputs(inputs: readonly Input[]): Input[] {
     const known = byName.get(input.name);
     if (!known) byName.set(input.name, input);
     else if (known.kind === input.kind && known.hash === input.hash) continue;
-    else if (known.kind === input.kind && known.version !== undefined && known.version === input.version)
+    else if (known.kind === 'file' && input.kind === 'file' && npmCopy(known, input))
       copies.set(input.name, (copies.get(input.name) ?? new Set([known.hash])).add(input.hash));
     else throw new Error(`two fingerprint inputs named ${input.name} disagree`);
   }
