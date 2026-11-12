@@ -23,7 +23,11 @@ cannot be read, written or judged never blocks a run: it starts without the cap
 and says why on stderr. The claims live in `/tmp/stim-test-slots-<uid>`
 (the OS temp directory on Windows), not under `TMPDIR`, `HOME` or `STIM_HOME`,
 which agents and tests redirect and which would give each run its own count.
-A run started with `STIM_TEST_RUN` set takes no slot, so a caller that manages its own slot does not queue twice. `pnpm test` and runs started directly with `vitest` take no slot.
+A run started with `STIM_TEST_RUN` set takes no slot, so a caller that manages its own
+slot does not queue twice. `pnpm test` and runs started directly with `vitest` take no slot.
+The directory is created with mode 0700 and checked before every use: unless it is a
+real directory owned by the user with no group or other write bit, the run starts
+without the cap and says why.
 
 `pnpm run test:bench` runs the agent-benchmark harness tests separately, with the
 same setup and fake-clock rules. CI runs them when the harness or its inputs

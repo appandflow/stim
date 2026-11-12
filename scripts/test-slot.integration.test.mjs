@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -91,5 +91,23 @@ setInterval(() => {}, 1000);`,
     writeFileSync(join(dir, 'slot-0', 'exclusive', 'broken.claim'), 'not json');
     await take('unjudged').taken;
     expect(lines.some((line) => line.includes('running without the cap'))).toBe(true);
+  });
+
+  it('runs without the cap, and writes nothing, when the directory is a symlink', async () => {
+    const target = join(dir, 'elsewhere');
+    mkdirSync(target);
+    const link = join(dir, 'link');
+    symlinkSync(target, link);
+    const arrival = acquireTestSlot({ dir: link, slots: 1, details: {}, log: (line) => lines.push(line), pollMs: 10 });
+    open.push(await arrival);
+    expect(lines.join('\n')).toContain('cannot be trusted');
+    expect(existsSync(join(target, 'slot-0'))).toBe(false);
+  });
+
+  it('runs without the cap when the directory is a file', async () => {
+    const file = join(dir, 'file');
+    writeFileSync(file, '');
+    open.push(await acquireTestSlot({ dir: file, slots: 1, details: {}, log: (line) => lines.push(line), pollMs: 10 }));
+    expect(lines.join('\n')).toContain('cannot be trusted');
   });
 });

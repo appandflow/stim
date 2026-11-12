@@ -653,21 +653,24 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  terminateClients();
-  await server?.close();
-  for (const close of reloadBrowsers.splice(0)) await close();
-  const claims = readClaimSet(join(root, 'home', 'run', 'stimd'));
-  assert.deepEqual(claims.unresolved, []);
-  for (const { owner } of claims.live) {
-    assert.notEqual(owner.pid, process.pid);
-    const status = inspectProcessIdentity(owner);
-    if (status === 'gone' || status === 'different') continue;
-    assert.equal(status, 'same');
-    process.kill(owner.pid, 'SIGTERM');
-    await vi.waitFor(() => assert.match(inspectProcessIdentity(owner), /^(gone|different)$/), { timeout: 10_000 });
+  try {
+    terminateClients();
+    await server?.close();
+    for (const close of reloadBrowsers.splice(0)) await close();
+    const claims = readClaimSet(join(root, 'home', 'run', 'stimd'));
+    assert.deepEqual(claims.unresolved, []);
+    for (const { owner } of claims.live) {
+      assert.notEqual(owner.pid, process.pid);
+      const status = inspectProcessIdentity(owner);
+      if (status === 'gone' || status === 'different') continue;
+      assert.equal(status, 'same');
+      process.kill(owner.pid, 'SIGTERM');
+      await vi.waitFor(() => assert.match(inspectProcessIdentity(owner), /^(gone|different)$/), { timeout: 10_000 });
+    }
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
   }
-  delete process.env.STIM_HOME;
-  rmSync(root, { recursive: true, force: true });
 });
 
 export function liveLogFixture(logged: unknown[] = RECORDS): string {

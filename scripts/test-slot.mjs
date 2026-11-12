@@ -1,3 +1,4 @@
+import { lstatSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../packages/core/ownership-claim.ts';
@@ -19,11 +20,31 @@ function arrivalOrder(a, b) {
  * holder's process identity, so a dead holder frees its slot. A claim store that cannot be read, written or judged
  * (a corrupt claim, an unwritable `dir`) never blocks: the run proceeds without the cap and says so on stderr.
  */
+function untrustedReason(dir) {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const entry = lstatSync(dir);
+    if (!entry.isDirectory()) return 'it is not a real directory';
+    if (process.platform === 'win32') return null;
+    if (entry.uid !== process.getuid()) return 'it belongs to another user';
+    if (entry.mode & 0o022) return 'it is writable by others';
+    return null;
+  } catch (err) {
+    return err.message.split('\n')[0];
+  }
+}
+
 export async function acquireTestSlot({ dir, slots, details, log, pollMs = 500 }) {
+  const untrusted = untrustedReason(dir);
+  if (untrusted) {
+    log(`test slot: ${dir} cannot be trusted (${untrusted}); running without the cap.`);
+    return () => {};
+  }
   const queueRoot = join(dir, 'queue');
   const slotRoots = Array.from({ length: slots }, (_, index) => join(dir, `slot-${index}`));
   const warn = (what, err) => log(`test slot: ${what} (${err.message.split('\n')[0]}); running without the cap.`);
 
+  const warned = new Set();
   let queued = null;
   try {
     queued = tryAcquireClaim({ root: queueRoot, mode: 'shared', details, label: 'test queue' }).acquired ?? null;
@@ -51,7 +72,10 @@ export async function acquireTestSlot({ dir, slots, details, log, pollMs = 500 }
             if (attempt.held) busy.push(attempt.held);
           } catch (err) {
             unusable += 1;
-            warn(`${root} cannot be judged`, err);
+            if (!warned.has(root)) {
+              warned.add(root);
+              warn(`${root} cannot be judged`, err);
+            }
           }
         }
         if (busy.length === 0 && unusable > 0) {
