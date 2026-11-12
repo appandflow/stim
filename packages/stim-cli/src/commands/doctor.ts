@@ -724,8 +724,8 @@ async function assembleDoctorReport(
   if (missingRoots.length)
     findings.push({
       level: 'note',
-      title: 'maintenance.discoverRoots names folders that do not exist',
-      detail: `${missingRoots.join(', ')} ${missingRoots.length === 1 ? 'is' : 'are'} not a folder, so nothing is discovered there.`,
+      title: 'maintenance.discoverRoots names paths that are not folders',
+      detail: `${missingRoots.join(', ')} ${missingRoots.length === 1 ? 'is' : 'are'} missing or not a folder, so nothing is discovered there.`,
       fix: 'Correct the list with `stim settings set maintenance.discoverRoots <json array> --scope machine`.',
     });
   return {

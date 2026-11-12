@@ -10,14 +10,11 @@ import { gitQuietAsync } from './git.ts';
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
 
-const regenerable = (rel: string, isDirectory: boolean, folders: readonly string[]) => {
-  const segments = rel.split('/');
-  const directories = isDirectory ? segments : segments.slice(0, -1);
-  return (
-    directories.some((name) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name)) ||
-    folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`))
-  );
-};
+const outputNamed = (name: string) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name);
+
+/** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
+const regenerableFolder = (rel: string, folders: readonly string[]) =>
+  outputNamed(rel.split('/').at(-1) ?? '') || folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
 
 async function sameAsMain(path: string, main: string, rel: string, budget: { bytes: number }): Promise<boolean | null> {
   const mine = await lstat(join(path, rel));
@@ -37,7 +34,7 @@ async function sameAsMain(path: string, main: string, rel: string, budget: { byt
 
 /**
  * Why removing the worktree would lose a git-ignored file git cannot recover, or null: every ignored path outside the
- * regenerable folders (dependency folders and directories named like build output) must exist, byte for byte, at the same place in the repository's main checkout. More than
+ * regenerable folders (a directory git reports ignored whose name is node_modules or build output, or a folder the stages recognise) must exist, byte for byte, at the same place in the repository's main checkout. More than
  * MAX_IGNORED_FILES files, more than MAX_COMPARED_BYTES to compare, or anything unreadable keeps the worktree.
  */
 async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
@@ -82,7 +79,7 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
       const stat = await lstat(join(path, child)).catch(() => null);
       if (!stat) return unreadable;
       const directory = stat.isDirectory() && !stat.isSymbolicLink();
-      if (regenerable(child, directory, folders)) continue;
+      if (directory && regenerableFolder(child, folders)) continue;
       const hold = directory ? await walk(child) : await check(child);
       if (hold) return hold;
     }
@@ -90,9 +87,22 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
   };
   for (const entry of listed.split('\0').filter(Boolean)) {
     const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
-    if (regenerable(rel, entry.endsWith('/'), folders)) continue;
+    if (entry.endsWith('/') ? regenerableFolder(rel, folders) : folders.some((folder) => rel.startsWith(`${folder}/`)))
+      continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
     if (hold) return hold;
+  }
+  return null;
+}
+
+/** A tracked file hidden from git status (assume-unchanged or skip-worktree), whose edit removal would lose silently. */
+async function hiddenEditHold(path: string, signal?: AbortSignal): Promise<string | null> {
+  const listed = await gitQuietAsync(path, ['ls-files', '-v', '-z'], { signal });
+  if (listed === null) return 'git cannot list its tracked files';
+  for (const record of listed.split('\0')) {
+    const tag = record[0];
+    if (tag !== undefined && record.length > 2 && (tag === 'S' || (tag >= 'a' && tag <= 'z')))
+      return `its tracked file ${record.slice(2)} is marked ${tag === 'S' ? 'skip-worktree' : 'assume-unchanged'}, which hides edits from git status`;
   }
   return null;
 }
@@ -111,6 +121,9 @@ export async function discoveredRemovalHold(
     operation,
   }: { main: string | null; idleMs: number; reads: DiscoveredReads; operation?: StimContext },
 ): Promise<string | null> {
+  const folder = main ? relative(main, path).split('/')[0] : undefined;
+  if (folder?.startsWith('.') && folder !== '.worktrees' && !folder.startsWith('..'))
+    return `it is managed by another tool (inside ${folder} of its main checkout)`;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
   const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation }), {
@@ -120,5 +133,5 @@ export async function discoveredRemovalHold(
   });
   if (!decision.stop) return decision.reason;
   if (!main) return 'its main checkout is unknown, so its git-ignored files cannot be compared';
-  return ignoredFilesHold(path, main, operation?.signal);
+  return (await hiddenEditHold(path, operation?.signal)) ?? (await ignoredFilesHold(path, main, operation?.signal));
 }

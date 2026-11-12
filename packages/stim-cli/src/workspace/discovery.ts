@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, type Config } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -131,9 +131,20 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): { roots
   };
 }
 
-/** The `maintenance.discoverRoots` entries that name no folder, for doctor to report. */
+/** The `maintenance.discoverRoots` entries that do not name a folder, for doctor to report. */
 export function missingDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
-  return configuredRoots(config, env).roots.filter((root) => !existsSync(root));
+  return configuredRoots(config, env).roots.filter((root) => {
+    try {
+      return !statSync(root).isDirectory();
+    } catch {
+      return true;
+    }
+  });
+}
+
+/** The home directory and the filesystem root hold too much to count as a folder Stim manages. */
+function isBroadFolder(folder: string): boolean {
+  return folder === canonicalPath(homedir()) || folder === parse(folder).root;
 }
 
 const inside = (path: string, folder: string) => path === folder || path.startsWith(`${folder}${sep}`);
@@ -218,8 +229,11 @@ async function computeDiscovered(
       const repository = await read(root);
       if (!repository) continue;
       const holder = matchWorktreeEntry(repository.entries, root);
-      folders.set(dirname(canonicalPath(holder?.path ?? repository.main)), repository.main);
-      folders.set(dirname(canonicalPath(repository.main)), repository.main);
+      for (const folder of [
+        dirname(canonicalPath(holder?.path ?? repository.main)),
+        dirname(canonicalPath(repository.main)),
+      ])
+        if (!isBroadFolder(folder)) folders.set(folder, repository.main);
       if (!seen.has(repository.main)) {
         seen.add(repository.main);
         repositories.push(repository);

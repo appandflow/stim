@@ -129,4 +129,16 @@ describe('discoverCheckouts', () => {
     ]);
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
+
+  it('never takes the home directory as a folder that holds known projects', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    vi.stubEnv('HOME', join(base, 'home'));
+    const repo = join(base, 'home', 'repo');
+    app(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    app(join(base, 'home', 'neighbour'));
+    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    expect(await discoverCheckouts(config, [repo])).toEqual([]);
+  });
 });

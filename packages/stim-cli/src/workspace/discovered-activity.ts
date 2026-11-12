@@ -123,12 +123,18 @@ export async function discoveredEvidence(
   const scan = await scanSourceWrites(path, now - idleMs, signal);
   if ('newest' in scan) activity.push({ basis: 'file edit', at: scan.newest });
   else keep.push(scan.unknown);
+  const isGit = await lstat(join(path, '.git')).then(
+    () => true,
+    () => false,
+  );
   const git = await worktreeActivityOfAsync(path, [], operation);
   if (git) activity.push({ basis: 'git write', at: git.at });
+  else if (isGit) keep.push('its git activity cannot be read');
   const committed = Number(
     (await gitQuietAsync(path, ['log', '-1', '--format=%ct', 'HEAD'], { signal, cwd: operation?.cwd }))?.trim(),
   );
   if (Number.isFinite(committed) && committed > 0) activity.push({ basis: 'git commit', at: committed * 1000 });
+  else if (isGit) keep.push('its last commit cannot be read');
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);

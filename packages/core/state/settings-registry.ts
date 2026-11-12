@@ -1,4 +1,5 @@
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, parse, resolve } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
@@ -1275,11 +1276,16 @@ export function settingValueError(definition: SettingDefinition | string, value:
     }
   }
   if (type.kind === 'strings' && type.absolutePaths) {
-    const relative = (Array.isArray(value) ? value : []).find(
-      (entry) => !isAbsolute(entry) && !/^~(?:[\\/]|$)/.test(entry),
-    );
+    const entries = Array.isArray(value) ? value : [];
+    const relative = entries.find((entry) => !isAbsolute(entry) && !/^~(?:[\\/]|$)/.test(entry));
     if (relative !== undefined)
       return `an array of absolute paths (a leading ~ is the home folder), not ${JSON.stringify(relative)}`;
+    const broad = entries.find((entry) => {
+      const path = entry === '~' || entry.startsWith('~/') ? resolve(homedir(), entry.slice(2)) : resolve(entry);
+      return path === resolve(homedir()) || path === parse(path).root;
+    });
+    if (broad !== undefined)
+      return `an array of folders below the home folder, not ${JSON.stringify(broad)}: the home folder and the filesystem root are too broad to discover in`;
   }
   if (type.kind === 'path') {
     const path = value as string;

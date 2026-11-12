@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import * as reads from '../workspace/discovered-reads.ts';
+import { discoveredRemovalHold } from '../workspace/discovered-removal.ts';
 import { worktreeInScope } from '../workspace/discovery.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
@@ -74,12 +75,18 @@ describe('a discovered worktree on the removal path', () => {
     main = join(base, 'roots', 'main');
     mkdirSync(join(main, 'ios', 'App.xcodeproj'), { recursive: true });
     writeFileSync(join(main, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    writeFileSync(join(main, '.gitignore'), '.env\nlocal.db\nnotes/\nnode_modules/\ndist/\nAGENTS.override.md\n');
+    writeFileSync(
+      join(main, '.gitignore'),
+      '.env\nlocal.db\nnotes/\nnode_modules/\ndist/\nAGENTS.override.md\n*.prod.env\n',
+    );
     writeFileSync(join(main, 'ios', 'App.xcodeproj', 'project.pbxproj'), 'original\n');
+    mkdirSync(join(main, 'config', 'dist'), { recursive: true });
+    writeFileSync(join(main, 'config', 'dist', 'keep.txt'), 'tracked');
     git(main, 'init', '-q', '-b', 'main');
     git(base, 'init', '-q', '--bare', '-b', 'main', join(base, 'remote.git'));
     git(main, 'remote', 'add', 'origin', join(base, 'remote.git'));
     git(main, 'add', '-A');
+    git(main, 'add', '-f', 'config/dist/keep.txt');
     git(main, 'commit', '-q', '-m', 'init');
     git(main, 'push', '-q', '-u', 'origin', 'main');
     git(main, 'remote', 'set-head', 'origin', 'main');
@@ -121,15 +128,43 @@ describe('a discovered worktree on the removal path', () => {
     expect((await sweep()).nested?.skipped).toContain('AGENTS.override.md');
   });
 
-  it('keeps a worktree at removal when a file is edited between the plan and the act', async () => {
+  it('keeps a worktree at removal when a file is touched between the plan and the act, though it matches the main checkout', async () => {
+    writeFileSync(join(main, 'local.db'), 'same');
     const wt = worktree('late');
+    writeFileSync(join(wt, 'local.db'), 'same');
+    age(wt);
     const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
     expect(planned.worktrees.find((entry) => entry.path === wt)?.skipped).toBeNull();
-    writeFileSync(join(wt, 'local.db'), 'edited after the plan');
+    writeFileSync(join(wt, 'local.db'), 'same');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });
     expect(existsSync(wt)).toBe(true);
+  });
+
+  it('compares an ignored file inside a tracked dist directory, and keeps a worktree with a tracked file hidden from status', async () => {
+    const wt = worktree('tracked-dist');
+    writeFileSync(join(wt, 'config', 'dist', 'prod.prod.env'), 'secret');
+    age(wt);
+    expect((await sweep())['tracked-dist']?.skipped).toContain('prod.prod.env');
+    const hidden = worktree('hidden');
+    git(hidden, 'update-index', '--assume-unchanged', 'package.json');
+    writeFileSync(join(hidden, 'package.json'), '{"dependencies":{"expo":"*"},"edited":true}');
+    age(hidden);
+    utimesSync(join(git(hidden, 'rev-parse', '--absolute-git-dir').trim(), 'index'), old, old);
+    expect((await sweep()).hidden?.skipped).toContain('package.json');
+  });
+
+  it('never removes a worktree another tool keeps in a dot-folder of the main checkout', async () => {
+    const hold = await discoveredRemovalHold(join(main, '.claude', 'worktrees', 'x'), {
+      main,
+      idleMs: day,
+      reads: reads.discoveredReads(),
+    });
+    expect(hold).toContain('managed by another tool');
+    expect(
+      await discoveredRemovalHold(join(main, '.worktrees', 'x'), { main, idleMs: day, reads: reads.discoveredReads() }),
+    ).not.toContain('another tool');
   });
 
   it('keeps a hand edit to a tracked project.pbxproj as dirty work', async () => {

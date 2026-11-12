@@ -1105,8 +1105,8 @@ DISCOVERED CHECKOUTS
 A checkout no stim command ran in is managed like a registered workspace once
 discovery finds it: direct children of the folders that hold the checkouts of
 registered projects, direct children of the folders in maintenance.discoverRoots
-(a machine setting: absolute paths, a leading ~ expanded; doctor reports one
-that is not a folder), and linked worktrees (git worktree list) of their
+(a machine setting: absolute paths below the home folder, a leading ~ expanded;
+the home folder and / are refused, and doctor reports one that is not a folder), and linked worktrees (git worktree list) of their
 repositories. A child counts only when Stim's project detection recognises it as
 a project it handles, itself or through a direct child of its apps, examples or
 packages folder; any other folder is ignored. A linked worktree is acted on only
@@ -1115,7 +1115,8 @@ or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
 manages and gets no action of any kind. Nothing under the system temporary
 directory or a dot-folder directly inside the home directory is ever touched.
-A worktree nested in a registered root is left to that workspace. A scoped
+A worktree nested in a registered root is left to that workspace. The home
+directory and / are never a folder that holds known projects. A scoped
 STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery
 registers nothing, writes nothing and recomputes each run; no git fetch runs in
 a discovered repository and pull requests come from the cache.
@@ -1128,15 +1129,25 @@ process running from or working in it, an agent session in it, a pin by
 maintenance.keep, more source files than the scan reads, or evidence that
 cannot be read keeps it. Its regenerable build outputs go when it is idle; a
 linked one also loses node_modules and Pods, a main checkout keeps them. A
-target directory at a checkout root whose CACHEDIR.TAG carries Cargo's signature
-line and whose files git ignores counts as build output for every checkout.
+target directory at a checkout root whose CACHEDIR.TAG starts with the standard
+CACHEDIR.TAG signature line and whose files git ignores counts as build output
+for every checkout.
 Removing a discovered worktree needs a clean one whose work is merged or whose
 pull request ended, and, at every pressure level with no zero grace, that same
-idleness, no process or agent session, and every git-ignored file outside the
-regenerable folders present byte for byte in the main checkout (more than 200
-files or 16 MB to compare keeps it). Any change to a tracked file, even
-Podfile.lock or project.pbxproj, is dirty work and keeps it, and dirty work is
-never archived. stim gc --dry-run lists the discovered checkouts and what each
+idleness, no process or agent session, and every git-ignored file present byte
+for byte in the main checkout, except inside regenerable folders: directories
+git reports as ignored that are named node_modules or like build output (build,
+dist, target, .next, .turbo, .expo and the rest of the source scan's list) or
+that the stages recognise; the files inside them are deleted with the worktree.
+An ignored file elsewhere that the main checkout lacks, even inside a tracked
+dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
+Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
+work and keeps it, as does any tracked file marked assume-unchanged or
+skip-worktree, which hides edits from git status. A worktree inside a
+dot-folder of its main checkout other than .worktrees (.claude/worktrees) is
+managed by another tool and is never removed, though its outputs are reduced.
+Dirty work is never archived.
+stim gc --dry-run lists the discovered checkouts and what each
 would lose, or why it is kept; one over the scan bound is listed under Needs a
 person.
 

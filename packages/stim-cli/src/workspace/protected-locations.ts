@@ -1,26 +1,36 @@
 import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { relative, resolve, sep } from 'node:path';
-
-function real(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
-  }
-}
+import { relative, sep } from 'node:path';
 
 const TEMPORARY = ['/tmp', '/var/tmp', '/var/folders'];
 
+interface Roots {
+  home: string;
+  temps: readonly string[];
+}
+
+function defaultRoots(): Roots {
+  return { home: homedir(), temps: [tmpdir(), ...TEMPORARY] };
+}
+
+function real(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether a path lies under the system temporary directory, or under a dot-folder directly inside the home directory
- * (`~/.codex`, `~/.config`, `~/.exact`): other tools own what is there, so Stim never acts on it.
+ * (`~/.codex`, `~/.config`, `~/.exact`): other tools own what is there, so Stim never acts on it. A path that does not
+ * resolve counts as protected.
  */
-export function isProtectedLocation(path: string): boolean {
+export function isProtectedLocation(path: string, roots: Roots = defaultRoots()): boolean {
   const target = real(path);
+  if (target === null) return true;
   const inside = (folder: string) => target === folder || target.startsWith(`${folder}${sep}`);
-  if ([tmpdir(), ...TEMPORARY].some((folder) => inside(real(folder)))) return true;
-  const home = real(homedir());
-  if (!inside(home)) return false;
-  return relative(home, target).split(sep)[0]?.startsWith('.') === true;
+  if (roots.temps.some((folder) => inside(real(folder) ?? folder))) return true;
+  const home = real(roots.home) ?? roots.home;
+  return inside(home) && relative(home, target).split(sep)[0]?.startsWith('.') === true;
 }
