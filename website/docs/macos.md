@@ -1,6 +1,6 @@
 ---
-title: 'Native macOS prototype'
-description: 'Develop an owned Swift Package Debug app in Stim Desktop'
+title: "Native macOS prototype"
+description: "Develop an owned Swift Package Debug app in Stim Desktop"
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -93,8 +93,8 @@ An app that activates itself at launch or on reopen still takes focus. Hosted la
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
 output arrives per line instead of when the app exits. The app runs detached, started by the command (or by stimd
-for a Desktop or phone run) with that caller's environment; its stdout and stderr go to files in the workspace logs that stimd turns into those records,
-and its exit is an info record without an exit code. While stimd runs, each raw output file is reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down, the files can grow, and a replaced app that stimd never observed keeps its raw files until workspace cleanup without replaying them into `stim logs`. `macos --json` prints one launch
+for a Desktop or phone run) with that caller's environment; its stdout and stderr go to files in the workspace logs that stimd copies into those records, each line once even across a stimd restart or update.
+No process waits on the app, so its exit is an info record without an exit code, and a crash appears in `stim logs --errors` only through what the app wrote to stderr. While stimd runs, each raw output file is reset after reaching 8 MiB; it warns that output written during the reset may be dropped. The run ends only when the app, its process group and every other process holding its output open (seen through `lsof`) are gone: `stim stop`, the next `stim macos` and workspace removal wait up to 5 seconds for that, then fail and name the pid still holding the output. Stim does not signal that process; stop it and retry. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--slot` or `reload`.

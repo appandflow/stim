@@ -496,7 +496,7 @@ test.skipIf(process.platform === 'win32')(
       });
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
       appendFileSync(out, 'helper output after leader\n');
-      const log = join(logs, 'macos.ndjson');
+      const log = join(logs, 'macos-app.ndjson');
       for (
         let tries = 0;
         tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('helper output after leader'));
@@ -544,7 +544,7 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(logs, { recursive: true });
     writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'printed before the crash\n');
     writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), 'fatal: missing library');
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     const client = () =>
       existsSync(log)
         ? readFileSync(log, 'utf8')
@@ -591,7 +591,7 @@ test.skipIf(process.platform === 'win32')(
       writeWorkspaceState(root, { macos: record({ launchId: 'next-launch', app: next, supervisor: next }) });
       writeFileSync(join(logs, macosAppLogName('next-launch', 'out')), 'new output\n');
       await streams.sync(root);
-      const log = join(logs, 'macos.ndjson');
+      const log = join(logs, 'macos-app.ndjson');
       for (
         let tries = 0;
         tries < 40 &&
@@ -626,7 +626,7 @@ test.skipIf(process.platform === 'win32')(
       children.at(-1)!.kill('SIGKILL');
       expect(await waitForProcessExit(app, 5000)).toBe(true);
       expect(await streams.drain(root)).toBeNull();
-      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
       expect(output).toContain('final line');
       expect(output).toContain('Exited Sample.');
       rmSync(logs, { recursive: true });
@@ -666,7 +666,7 @@ test.skipIf(process.platform === 'win32')(
     try {
       await streams.sync(root);
       expect(await stopMacosApp(root)).toBe(true);
-      expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final diagnostic');
+      expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('final diagnostic');
     } finally {
       drain.mockRestore();
       streams.close();
@@ -698,7 +698,7 @@ test.skipIf(process.platform === 'win32')(
       const streams = createOwnedStreams(() => {});
       try {
         expect(await streams.drainHosted(session)).toBeNull();
-        expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final hosted output');
+        expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('final hosted output');
       } finally {
         streams.close();
       }
@@ -753,7 +753,7 @@ test.skipIf(process.platform === 'win32')('hosted observe acknowledges only the 
       expect(await streams.observeHosted(session, app.pid, 'wrong', 'test-launch')).toContain('record changed');
       expect(await streams.observeHosted(session, app.pid, app.processToken, 'wrong')).toContain('record changed');
       expect(await streams.observeHosted(session, app.pid, app.processToken, 'test-launch')).toBeNull();
-      const log = join(logs, 'macos.ndjson');
+      const log = join(logs, 'macos-app.ndjson');
       for (
         let tries = 0;
         tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('hosted output'));
@@ -784,7 +784,7 @@ test.skipIf(process.platform === 'win32')('local observe acknowledges only the m
     mkdirSync(logs, { recursive: true });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     const err = join(logs, macosAppLogName('test-launch', 'err'));
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     writeFileSync(out, '');
     writeFileSync(err, '');
     expect(await streams.observeMacos(root, app.pid, 'wrong', 'test-launch')).toContain('record changed');
@@ -831,7 +831,7 @@ test.skipIf(process.platform === 'win32')('quiet macOS observation refuses when 
   mkdirSync(logs, { recursive: true });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
   writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
-  const log = join(logs, 'macos.ndjson');
+  const log = join(logs, 'macos-app.ndjson');
   writeFileSync(log, '');
   const create = ndjson.createNdjsonWriter;
   const writer = vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((file, options) => {
@@ -867,7 +867,7 @@ test.skipIf(process.platform === 'win32')(
       rmSync(staging, { recursive: true });
       expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
       expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
-      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
       expect(output.match(/Observing Sample output\./g)).toHaveLength(1);
     } finally {
       streams.close();
@@ -896,7 +896,7 @@ test.skipIf(process.platform === 'win32')(
       expect(existsSync(out)).toBe(true);
       rmSync(staging, { recursive: true });
       expect(await streams.drain(root)).toBeNull();
-      const lines = readFileSync(join(logs, 'macos.ndjson'), 'utf8')
+      const lines = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')
         .trim()
         .split('\n')
         .map((line): Record<string, unknown> => JSON.parse(line));
@@ -913,13 +913,13 @@ test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when 
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'raw output\n');
-  writeFileSync(join(logs, 'macos.ndjson'), 'saved output\n');
+  writeFileSync(join(logs, 'macos-app.ndjson'), 'saved output\n');
   const stopDrain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
   const drain = vi.spyOn(stimdClient, 'drainOwned').mockResolvedValue('fixture refusal');
   try {
     const result = await reclaimProject(root, { deleteOwnedDevices: false });
     expect(result.keptEntry).toBe(true);
-    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('saved output\n');
+    expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('saved output\n');
     expect(drain).toHaveBeenCalledOnce();
   } finally {
     stopDrain.mockRestore();
@@ -936,7 +936,7 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(logs, { recursive: true });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
     writeFileSync(out, 'retry this line\n');
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     mkdirSync(log);
     const streams = createOwnedStreams(() => {});
     try {
@@ -968,7 +968,7 @@ test('a reused app PID can be finalized when its original group is gone', async 
   try {
     await streams.sync(root);
     expect(await streams.drain(root)).toBeNull();
-    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final output');
+    expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('final output');
   } finally {
     streams.close();
     identity.mockRestore();
@@ -996,7 +996,7 @@ test.each([false, true])(
         return 'gone';
       });
       expect(await streams.drain(root, macosOnly)).toBeNull();
-      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
       expect(output).toContain('final output');
       expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
     } finally {
@@ -1018,7 +1018,7 @@ test.each([false, true])('drain starts an unobserved local macOS tail (macosOnly
   const streams = createOwnedStreams(() => {});
   try {
     expect(await streams.drain(root, macosOnly)).toBeNull();
-    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
     expect(output).toContain('unobserved output');
     expect(output.indexOf('unobserved output')).toBeLessThan(output.indexOf('Exited Sample.'));
   } finally {
@@ -1045,7 +1045,7 @@ test.skipIf(process.platform === 'win32')('stimd preserves a partial output line
   const second = createOwnedStreams(() => {});
   try {
     await second.sync(root);
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     for (let tries = 0; tries < 40 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
     expect(readFileSync(log, 'utf8')).toContain('first half second half');
   } finally {
@@ -1067,7 +1067,7 @@ test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and co
       await new Promise((done) => setTimeout(done, 50));
     expect(statSync(out).size).toBe(0);
     appendFileSync(out, 'after reset\n');
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
@@ -1093,7 +1093,7 @@ test.skipIf(process.platform === 'win32')('the first drain succeeds when both ra
   try {
     await streams.sync(root);
     expect(await streams.drain(root)).toBeNull();
-    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    const output = readFileSync(join(logs, 'macos-app.ndjson'), 'utf8');
     expect(output).toContain('output may have been dropped');
     expect(output).toContain('Exited Sample.');
   } finally {
@@ -1108,7 +1108,7 @@ test.skipIf(process.platform === 'win32')('stimd caps both raw streams while the
   mkdirSync(logs, { recursive: true });
   const out = join(logs, macosAppLogName('test-launch', 'out'));
   const err = join(logs, macosAppLogName('test-launch', 'err'));
-  const log = join(logs, 'macos.ndjson');
+  const log = join(logs, 'macos-app.ndjson');
   mkdirSync(log);
   writeFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
   writeFileSync(err, 'err\n'.repeat(2 * 1024 * 1024 + 1));
@@ -1153,7 +1153,7 @@ test.skipIf(process.platform === 'win32')(
     const logs = workspaceLogsDir(root);
     mkdirSync(logs, { recursive: true });
     const out = join(logs, macosAppLogName('test-launch', 'out'));
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     const staging = join(logs, 'macos-app.tail.json.tmp');
     mkdirSync(log);
     mkdirSync(staging);
@@ -1191,7 +1191,7 @@ test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool r
   const streams = createOwnedStreams(() => {});
   try {
     await streams.sync(root);
-    const log = join(logs, 'macos.ndjson');
+    const log = join(logs, 'macos-app.ndjson');
     for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
@@ -1750,7 +1750,7 @@ describe('macOS build placement and promotion', () => {
         expect(inspectProcessIdentity(app)).toBe('same');
         expect(readMacosRecord(root)).toMatchObject({ app, supervisor: app, runId: 'macos-launch' });
         expect(readClaimSet(macosRuntimeClaim(root)).live.map((holder) => holder.owner.pid)).toEqual([app.pid]);
-        const log = join(workspaceLogsDir(root), 'macos.ndjson');
+        const log = join(workspaceLogsDir(root), 'macos-app.ndjson');
         const recorded = async (msg: string) => {
           for (let tries = 0; tries < 100; tries++) {
             const lines = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];

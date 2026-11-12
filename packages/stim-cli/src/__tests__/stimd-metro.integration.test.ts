@@ -284,12 +284,12 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     });
     try {
       await startStimd('off');
-      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('off mode output'));
+      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('off mode output'));
       appendFileSync(raw, 'final off mode output\n');
       child.kill('SIGKILL');
       await once(child, 'exit');
       expect(await ask('logs.drain', { root })).toMatchObject({ op: 'logs.drained', error: null });
-      expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final off mode output');
+      expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('final off mode output');
     } finally {
       child.kill('SIGKILL');
     }

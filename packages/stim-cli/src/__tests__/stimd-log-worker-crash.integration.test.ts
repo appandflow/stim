@@ -137,14 +137,14 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
     });
     try {
       expect(await streams.ownedSync(root)).toBeNull();
-      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('before crash'));
+      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('before crash'));
       const worker = captured.workers.at(-1);
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
       expect(streams.ownedRunning()).toBe(true);
       appendFileSync(raw, 'after crash\n');
       expect(await streams.ownedSync(root)).toBeNull();
-      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('after crash'));
+      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos-app.ndjson'), 'utf8')).toContain('after crash'));
       child.kill('SIGKILL');
       await once(child, 'exit');
       expect(await streams.ownedDrain(root)).toContain('previous owned log worker exited');

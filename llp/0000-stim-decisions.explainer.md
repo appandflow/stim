@@ -82,3 +82,4 @@ the workflow.
 - LLP 0005: Cargo `target/` directories.
 - LLP 0006: making room before a build.
 - LLP 0007: claims and child cleanup.
+- LLP 0016: macOS app output without a supervisor.

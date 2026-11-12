@@ -151,19 +151,24 @@ and compileSteps is SwiftPM's step total. An offloaded build reports the worker'
 steps the same way.
 The app runs detached, started by the command (or by stimd for a Desktop or
 phone run) with that caller's environment; a hosted app gets the host's
-restricted environment. Its stdout and stderr go to per-launch files in the workspace
-logs, which stimd follows into client records (stdout at info,
-stderr at warn) while the app runs, and its exit becomes an info record
-without an exit code; build output becomes build records, all with platform
-"macos".
+restricted environment. Its stdout and stderr go to per-launch files in the
+workspace logs, which stimd copies into logs/macos-app.ndjson as client records
+(stdout at info, stderr at warn), each line once even when stimd restarts or is
+updated. Build output becomes build records in logs/macos.ndjson, all with
+platform "macos". No process waits on the app, so its exit is an info record
+without an exit code, and a crash shows in stim logs --errors only through what
+the app wrote to stderr.
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
 line instead of when the app exits. While stimd runs, each raw output file is
-reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down,
-the files can grow, and a replaced app that stimd never observed keeps its raw
-files until workspace cleanup without replaying them into stim logs.
-If a reset checkpoint cannot be written and stimd crashes before the warning is
-recorded, the warning can be lost. A raw file that cannot be inspected or
-truncated can grow.
+reset after reaching 8 MiB; it warns that output written during the reset may
+be dropped. If stimd stays down, the files grow until a stimd copies them.
+The run ends only when the app and its process group are gone and lsof shows no
+other process holding either output file open. stim stop, the next stim macos,
+a hosted stop or replacement, and workspace removal wait up to 5 s for that and
+otherwise fail, naming the pid that still holds the output (a helper the app
+started outside its process group, for example). Stim sends that process no
+signal: stop it yourself, then retry. A process of another user is invisible to
+lsof.
 An app launch requires its output observer. If the observer cannot start, Stim
 stops the app and drains its output before releasing ownership. If cleanup or
 drain cannot be verified, the app record and ownership remain for reconciliation.
