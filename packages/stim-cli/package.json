@@ -42,12 +42,12 @@
       "default": "./dist/api.mjs"
     },
     "./package.json": "./package.json",
-    "./api-self": {
+    "./internal/api-self": {
       "types": "./dist/api-self.d.mts",
       "module-sync": "./dist/api-self.mjs",
       "default": "./dist/api-self.mjs"
     },
-    "./engine-state": {
+    "./internal/engine-state": {
       "types": "./dist/engine-state.d.mts",
       "module-sync": "./dist/engine-state.mjs",
       "default": "./dist/engine-state.mjs"
@@ -57,22 +57,22 @@
       "module-sync": "./dist/cache-manifest.mjs",
       "default": "./dist/cache-manifest.mjs"
     },
-    "./pull-requests": {
+    "./internal/pull-requests": {
       "types": "./dist/pull-requests.d.mts",
       "module-sync": "./dist/pull-requests.mjs",
       "default": "./dist/pull-requests.mjs"
     },
-    "./share-links": {
+    "./internal/share-links": {
       "types": "./dist/share-links.d.mts",
       "module-sync": "./dist/share-links.mjs",
       "default": "./dist/share-links.mjs"
     },
-    "./attached-stimd": {
+    "./internal/attached-stimd": {
       "types": "./dist/attached-stimd.d.mts",
       "module-sync": "./dist/attached-stimd.mjs",
       "default": "./dist/attached-stimd.mjs"
     },
-    "./build-artifact-cache": {
+    "./internal/build-artifact-cache": {
       "types": "./dist/build-artifact-cache.d.mts",
       "module-sync": "./dist/build-artifact-cache.mjs",
       "default": "./dist/build-artifact-cache.mjs"

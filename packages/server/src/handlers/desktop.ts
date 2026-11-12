@@ -12,7 +12,7 @@ import {
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { realpathSync, lstatSync } from 'node:fs';
 import { StimError, type StimPlanOptions } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createStim } from 'stim/internal/api-self';
 import { SLOT_NAME } from '../control.ts';
 import { decodeSecret, secretValues } from '@stim-cli/core/noise-session';
 import { type DesktopSetup, startDesktopSetup, type DesktopSetupAnswer } from '../desktop-setup.ts';

@@ -1140,15 +1140,16 @@
 [*] interface StatsPlacement { | reason: string;
 [*] interface StatsPlacement { | slotWaitMs?: number;
 [*] interface StimClient {
+[*] interface StimClient { | @internal deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
+[*] interface StimClient { | @internal deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
+[*] interface StimClient { | @internal identity(options?: StimReadOptions): Promise<string>;
+[*] interface StimClient { | @internal requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { | build(options: StimBuildOptions): Promise<StimBuildResult>;
 [*] interface StimClient { | build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
 [*] interface StimClient { | collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
-[*] interface StimClient { | deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
-[*] interface StimClient { | deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
 [*] interface StimClient { | diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
 [*] interface StimClient { | doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { | followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void, onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>): Promise<() => void>;
-[*] interface StimClient { | identity(options?: StimReadOptions): Promise<string>;
 [*] interface StimClient { | logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
 [*] interface StimClient { | plan(options: StimPlanOptions): Promise<StimPlan>;
 [*] interface StimClient { | previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
@@ -1157,7 +1158,6 @@
 [*] interface StimClient { | remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
 [*] interface StimClient { | removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
 [*] interface StimClient { | repairDoctor(options?: StimDoctorRepairOptions): Promise<{
-[*] interface StimClient { | requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { | run(options: StimRunOptions): Promise<StimRunResult>;
 [*] interface StimClient { | run<P extends StimPlatform>(options: StimRunOptions & {
 [*] interface StimClient { | setSetting(key: string, value: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
@@ -1231,7 +1231,7 @@
 [*] interface StimMachineAccessOptions extends StimReadOptions {
 [*] interface StimMachineAccessOptions extends StimReadOptions { | ticket?: string;
 [*] interface StimOptions {
-[*] interface StimOptions { | admission?: "command" | "none";
+[*] interface StimOptions { | @internal admission?: "command" | "none";
 [*] interface StimOptions { | buildCacheDir?: string;
 [*] interface StimOptions { | env?: NodeJS.ProcessEnv;
 [*] interface StimOptions { | home?: string;

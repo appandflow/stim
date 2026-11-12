@@ -33,7 +33,7 @@ with the workspace, by `share stop --forget` and once expired) so that
 `share ios|android --reuse` can start the same link again through
 `share.start`'s `token` and `expiresAt`; stim-server writes this file only
 through the CLI's own `saveShareLinkAsync` and `pauseShareLinks`, exported as
-`stim/share-links`, and an expired link is never extended or reused. A start
+`stim/internal/share-links`, and an expired link is never extended or reused. A start
 of a link the file already holds with the same passwords keeps the entry's
 `auth`, `viewAuth` and `createdAt`, and the restore start does not pass
 through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:

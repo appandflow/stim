@@ -97,7 +97,7 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:ci)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|pull-requests|share-links|build-artifact-cache|ci|ci/artifacts)$)"
+                "regex": "^@stim-cli/(?!(?:ci)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|internal/pull-requests|internal/share-links|internal/build-artifact-cache|ci|ci/artifacts)$)"
               }
             ]
           }
@@ -113,7 +113,7 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:server|agent-driver|agent-driver-agent-device|core|transport|transport-local|transport-tailscale)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|pull-requests|share-links|build-artifact-cache|ci|ci/artifacts)$)"
+                "regex": "^@stim-cli/(?!(?:server|agent-driver|agent-driver-agent-device|core|transport|transport-local|transport-tailscale)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|internal/pull-requests|internal/share-links|internal/build-artifact-cache|ci|ci/artifacts)$)"
               }
             ]
           }

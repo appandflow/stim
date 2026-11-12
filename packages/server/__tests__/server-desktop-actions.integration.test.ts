@@ -24,7 +24,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { readWorkspaceState, isJsonObject, loadConfig } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { readAudit } from '../src/actions.ts';

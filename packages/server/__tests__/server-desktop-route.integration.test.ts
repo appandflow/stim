@@ -42,7 +42,7 @@ import {
 } from '@stim-cli/core/state';
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { type ServerMessage } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
 import {

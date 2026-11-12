@@ -34,6 +34,16 @@ try {
 }
 ```
 
+## What the API covers
+
+The `stim` package root, `stim/plugin`, `stim/ci`, `stim/ci/artifacts` and
+`stim/cache-manifest` (`register`, `unregister` and `CacheEntry`) are the
+public entries. The `stim/internal/*` entries exist for the stim-server and CI
+runner bundled in the same package and carry no compatibility. Members whose
+doc comment starts with `@internal` (`identity()`, `deviceTool()`,
+`requestMachineAccess()`, `deleteGarbageItem()` and the `admission` option)
+serve Stim Desktop and stim-server and may change in any release.
+
 ## Client context
 
 `createStim` resolves `projectRoot` to its canonical path once. It accepts

@@ -305,12 +305,20 @@ Normal ownership, device creation, cache locks and coordination remain active.
 All concurrent artifact-cache writers must share the same coordinating home.
 Do not point independent Stim homes at a concurrently writable shared cache.
 
+The public entries are stim, stim/plugin, stim/ci, stim/ci/artifacts and
+stim/cache-manifest (register, unregister, CacheEntry). stim/internal/* exists
+for the bundled stim-server and CI runner and carries no compatibility, and so
+do identity(), deviceTool(), requestMachineAccess(), deleteGarbageItem() and the
+admission option, which serve Stim Desktop and stim-server.
+
 PLUGINS
 
 A plugin declares the kinds it implements and their integers in its
 package.json, such as "stimPlugin": { "kinds": { "transport": 1 } }, and
 imports only types from 'stim/plugin'; a runtime import of stim fails its test.
-The kinds are cache-provider, transport and agent-driver. runContract(kind,
+The kinds are cache-provider, transport and agent-driver. Only cache-provider
+is stable in 2.x; transport and agent-driver are experimental, and their
+contracts and integers may change in a minor release. runContract(kind,
 options) from 'stim/plugin' runs a kind's contract kit.
 
   stim plugin list [--json]

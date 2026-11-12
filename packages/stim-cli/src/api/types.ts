@@ -43,7 +43,7 @@ export interface StimOptions {
    */
   onProgress?: (event: StimProgress) => void;
   /**
-   * `command` (the default) applies the matching CLI command's policy before an operation runs: `start`, `build` and
+   * @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. `command` (the default) applies the matching CLI command's policy before an operation runs: `start`, `build` and
    * `run` refuse while a removed or leftover-off setting is present and make sure the home's daemon runs; `gc` and
    * `collectGarbage` take the same refusals. The daemon's passes never run in the calling process. `none` skips it, for
    * a caller that already runs inside a Stim resident process such as stim-server.
@@ -273,7 +273,7 @@ export interface StimClient {
   readonly projectRoot: string;
   /** Starts or reuses the app's dev server; resources remain workspace-owned until stop is called. */
   start(options?: StimStartOptions): Promise<StimStartResult>;
-  /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
+  /** @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
   identity(options?: StimReadOptions): Promise<string>;
   /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
@@ -283,9 +283,9 @@ export interface StimClient {
   repairDoctor(options?: StimDoctorRepairOptions): Promise<{ report: StimDoctorReport; exitCode: 0 | 1 }>;
   /** Releases only this project's device leases, optionally filtered by platform and slot. */
   unlockDevice(options?: StimDeviceUnlockOptions): Promise<import('../engine/device-lease.ts').ReleasedLease[]>;
-  /** Changes only this workspace's owned local virtual device, with a 60 second execution and 35 second cleanup budget. Cancellation before admission refuses mutation; an admitted change finishes within that budget. */
+  /** @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. Changes only this workspace's owned local virtual device, with a 60 second execution and 35 second cleanup budget. Cancellation before admission refuses mutation; an admitted change finishes within that budget. */
   deviceTool(options: StimDeviceToolOptions): Promise<import('../commands/device-tools.ts').ToolResult>;
-  /** Requests build/device-host approval with a 120 second execution and 35 second cleanup budget. Never grants access or repairs project state. */
+  /** @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. Requests build/device-host approval with a 120 second execution and 35 second cleanup budget. Never grants access or repairs project state. */
   requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
   /** Predicts the configured native build with a 60 second execution and 35 second cleanup budget; never builds or launches. */
   plan(options: StimPlanOptions): Promise<StimPlan>;
@@ -293,7 +293,7 @@ export interface StimClient {
   previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
   /** Runs one maintenance pass at the measured or given pressure level and deletes, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
-  /** Deletes one shared cache, the idle workspaces' build outputs, one archive or part of it, or a helper daemon's memory, under maintenance admission. */
+  /** @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. Deletes one shared cache, the idle workspaces' build outputs, one archive or part of it, or a helper daemon's memory, under maintenance admission. */
   deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
   /** Copies missing ignored state from the source checkout into this linked worktree. */
   warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;

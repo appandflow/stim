@@ -87,9 +87,9 @@ import {
   type VideoCodec,
 } from './protocol.ts';
 import { StimError } from 'stim';
-import { createStim } from 'stim/api-self';
-import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync } from 'stim/share-links';
+import { createStim } from 'stim/internal/api-self';
+import { worktreePullRequests } from 'stim/internal/pull-requests';
+import { pauseShareLinkAsync } from 'stim/internal/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs } from './share-save.ts';

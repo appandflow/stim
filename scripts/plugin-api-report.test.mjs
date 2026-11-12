@@ -69,12 +69,16 @@ test('a new required member of an interface a plugin implements breaks; optional
   expect(apiReportVerdict({ baseline: [], current: baseline, notes: '' }).status).toBe('additive');
 });
 
-test('a doc comment tagged @internal keeps its tag in the report', () => {
+test('a doc comment tagged @internal keeps its tag in the report, and a change to that line breaks nothing', () => {
   const report = normalizeDeclarations(
     declarations({ members: ['/** Host only. @internal */', 'close?(): Promise<void>;', 'watch?(): void;'] }),
   );
   expect(report).toContain('[transport] interface Transport { | @internal close?(): Promise<void>;');
   expect(report).toContain('[transport] interface Transport { | watch?(): void;');
+  const changed = normalizeDeclarations(
+    declarations({ members: ['/** Host only. @internal */', 'close?(): void;', 'watch?(): void;'] }),
+  );
+  expect(apiReportVerdict({ baseline: report, current: changed, notes: '' }).status).toBe('additive');
 });
 
 const root = (version, member) =>

@@ -2,7 +2,7 @@ import { send, type ConnectionContext } from './context.ts';
 import type { RequestId } from '../protocol.ts';
 import { isJsonObject } from '@stim-cli/core/state';
 import { readWorkspaceDiff } from '../workspace-diff.ts';
-import { createStim } from 'stim/api-self';
+import { createStim } from 'stim/internal/api-self';
 
 export function workspaceChanges(
   ctx: ConnectionContext,

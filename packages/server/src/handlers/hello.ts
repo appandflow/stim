@@ -14,7 +14,7 @@ import { send, type ConnectionContext } from './context.ts';
 import { isJsonObject, validRunId } from '@stim-cli/core/state';
 import { CLOSE_REFUSED, HOME_UNAVAILABLE_MESSAGE } from '@stim-cli/core/noise-session';
 import { homedir } from 'node:os';
-import { engineRoot, readRecords } from 'stim/engine-state';
+import { engineRoot, readRecords } from 'stim/internal/engine-state';
 
 export const CLOSE_BAD_REQUEST = 4400;
 

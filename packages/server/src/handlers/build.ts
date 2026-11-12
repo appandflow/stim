@@ -3,7 +3,7 @@ import { type RequestId, BUILD_METHODS, ENGINE_UPDATE_METHODS } from '../protoco
 import { isJsonObject } from '@stim-cli/core/state';
 import { SLOT_NAME } from '../control.ts';
 import { type StimPlanOptions, StimError } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createStim } from 'stim/internal/api-self';
 import type { DesktopPlanRefusal } from '@stim-cli/core/protocol';
 import type { PairedDevice } from '../registry.ts';
 import { updateMethod } from './engine.ts';

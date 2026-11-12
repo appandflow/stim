@@ -9,7 +9,7 @@ import {
   type StimWorktreeWarmOptions,
   type StimWorktreeRemoveOptions,
 } from 'stim';
-import { createStim, type EngineClient } from 'stim/api-self';
+import { createStim, type EngineClient } from 'stim/internal/api-self';
 import { realpathSync, lstatSync } from 'node:fs';
 import {
   readFailure,

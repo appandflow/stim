@@ -12,7 +12,13 @@ const notesFile = 'docs/releases/unreleased.md';
  * that owns the root's lines, which come from no plugin kind's module: a change to them needs the `stim` integer.
  */
 const REPORTS = [
-  { name: 'stim/plugin', entry: 'plugin', source: 'src/plugin.ts', baselineFile: 'packages/stim-cli/plugin.api.txt' },
+  {
+    name: 'stim/plugin',
+    entry: 'plugin',
+    source: 'src/plugin.ts',
+    baselineFile: 'packages/stim-cli/plugin.api.txt',
+    note: 'The agent-driver and transport kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.',
+  },
   {
     name: 'stim',
     entry: 'api',
@@ -22,8 +28,10 @@ const REPORTS = [
   },
 ];
 
-const header = (report) =>
-  `// The ${report.name} API report. Regenerate it with \`node scripts/plugin-api-report.mjs --update\`; see that script.`;
+const header = (report) => [
+  `// The ${report.name} API report. Regenerate it with \`node scripts/plugin-api-report.mjs --update\`; see that script.`,
+  ...(report.note ? [`// ${report.note}`] : []),
+];
 
 /** The plugin kind whose contract a source module of `stim/plugin` defines; others belong to no one kind. */
 const MODULE_KINDS = {
@@ -123,6 +131,9 @@ export function normalizeDeclarations(text) {
   return [...new Set(lines)].toSorted();
 }
 
+/** A line of a declaration, or a member, whose doc comment says it is `@internal`: not part of the API. */
+const INTERNAL = /^\[[\w*-]+\] @internal |^[^|]* \|+ @internal /;
+
 /** Lines of `from` that `to` lacks. */
 function missing(from, to) {
   const have = new Set(to);
@@ -160,14 +171,16 @@ function requiredMembers(added, baseline) {
  * What a new report means against the baseline: `same`; `additive` when it only adds lines; `accepted` when it
  * removes or changes lines, or adds a required member to an interface a plugin implements, and, for each kind that
  * owns one of them, that kind's integer went up and the unreleased notes' `## Removed (breaking)` section names the
- * new integer as `<kind> <integer>`; else `breaking`. A line tagged `[*]` belongs to `untagged` when the report names
+ * new integer as `<kind> <integer>`; else `breaking`. Removing or changing a line tagged `@internal` is additive. A
+ * line tagged `[*]` belongs to `untagged` when the report names
  * one; otherwise it belongs to no one kind and needs at least one kind bumped. `needs` lists what is missing.
  */
 export function apiReportVerdict({ baseline, current, notes, untagged }) {
   const removed = missing(baseline, current);
   const added = missing(current, baseline);
   const required = requiredMembers(added, baseline);
-  if (removed.length === 0 && required.length === 0)
+  const breaks = [...removed.filter((line) => !/_API_VERSION: \d+;$/.test(line) && !INTERNAL.test(line)), ...required];
+  if (breaks.length === 0 && !removed.some((line) => /_API_VERSION: \d+;$/.test(line)))
     return {
       status: added.length === 0 ? 'same' : 'additive',
       added,
@@ -179,7 +192,7 @@ export function apiReportVerdict({ baseline, current, notes, untagged }) {
   const after = kindIntegers(current);
   const bumped = Object.keys(after).filter((kind) => before[kind] !== undefined && after[kind] > before[kind]);
   const owners = new Set(
-    [...removed.filter((line) => !/_API_VERSION: \d+;$/.test(line)), ...required].map((line) => {
+    breaks.map((line) => {
       const owner = /^\[([\w*-]+)\]/.exec(line)?.[1] ?? '*';
       return owner === '*' && untagged ? untagged : owner;
     }),
@@ -228,7 +241,7 @@ export function readBaseline(report = REPORTS[0]) {
   if (!existsSync(path)) return [];
   return readFileSync(path, 'utf8')
     .split('\n')
-    .filter((line) => line !== '' && line !== header(report));
+    .filter((line) => line !== '' && !line.startsWith('//'));
 }
 
 const RUN_UPDATE = 'node scripts/plugin-api-report.mjs --update';
@@ -255,7 +268,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       );
       process.exitCode = 1;
     } else if (update) {
-      writeFileSync(join(root, baselineFile), `${[header(report), ...current].join('\n')}\n`);
+      writeFileSync(join(root, baselineFile), `${[...header(report), ...current].join('\n')}\n`);
       console.log(`Updated ${baselineFile} (${verdict.status}):\n${listing}`);
     } else {
       console.error(

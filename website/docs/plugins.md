@@ -19,6 +19,10 @@ A Stim plugin is a package that implements one or more plugin kinds:
 cache provider with the `cache.provider` setting; transports and agent drivers
 are built-in only for now.
 
+Only the `cache-provider` contract is stable in 2.x. The `transport` and
+`agent-driver` kinds are experimental: their contracts and integers may change
+in a minor release.
+
 ## Write a plugin
 
 Declare each kind and the integer its contract speaks in `package.json`, and

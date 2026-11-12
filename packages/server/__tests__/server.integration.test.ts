@@ -63,7 +63,7 @@ import {
   settingsJsonSchema,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';

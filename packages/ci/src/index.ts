@@ -2,7 +2,7 @@ import { failure, prepareCI, writeJson, type CIContextOptions } from './context.
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
-import { bindCIEngine, type AttachedHost } from 'stim/attached-stimd';
+import { bindCIEngine, type AttachedHost } from 'stim/internal/attached-stimd';
 import { runCommand, type CommandResult } from './command.ts';
 import { copyDiagnosticLogs } from './artifacts.ts';
 

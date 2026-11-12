@@ -23,7 +23,7 @@ vi.mock('stim', () => ({
     return lifecycle;
   },
 }));
-vi.mock('stim/attached-stimd', () => ({
+vi.mock('stim/internal/attached-stimd', () => ({
   bindCIEngine: async () => ({
     host: lifecycle.host,
     release: lifecycle.release,

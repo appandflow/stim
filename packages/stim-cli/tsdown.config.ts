@@ -23,7 +23,7 @@ export default defineConfig({
     'stim-service-runner': '../server/src/service-runner.ts',
     protocol: '../server/src/protocol.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
-    'cache-manifest': 'src/cache/cache-manifest.ts',
+    'cache-manifest': 'src/cache-manifest.ts',
     'pull-requests': 'src/pull-request-state.ts',
     'share-links': 'src/workspace/share-links.ts',
     'attached-stimd': 'src/stimd/attached.ts',
