@@ -18,7 +18,7 @@ import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core
 import { stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
-  launchdArguments,
+  jobArguments,
   withProgramArguments,
   DEFAULT_LABEL,
   DEFAULT_PORT,
@@ -37,6 +37,7 @@ import {
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
+import { editUnit } from './service-unit.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
 import { markTailnet } from './tailnet-marker.ts';
@@ -286,30 +287,45 @@ function engineShim(env: NodeJS.ProcessEnv = process.env): string | null {
   return existsSync(shim) ? shim : null;
 }
 
+/** The engine shim a service of this platform names; Task Scheduler runs Stim's own supervisor, which names no shim. */
+const unitShim = (): string | null => (serviceManager().name === 'taskscheduler' ? null : engineShim());
+
 /**
- * Rewrites the LaunchAgent `label`, when it names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`,
- * as Stim 1.42 wrote it), to name the engine store's `bin/stimd` shim with the same options. launchd reads the file only
- * when the job is bootstrapped, so the rewrite takes effect at the next bootstrap. Returns whether it rewrote the file.
+ * Rewrites the LaunchAgent or systemd unit `label`, when it names node and a Stim script (`<node> <copy>/bin/stim.mjs
+ * serve --service`, as Stim 1.42 wrote it), to name the engine store's `bin/stimd` shim with the same options. The
+ * manager reads the file only when the job starts, so the rewrite takes effect at the next start; systemd is told to
+ * read the file again now, because it would otherwise restart the job from the definition it already loaded. The
+ * running server is never restarted. Returns whether it rewrote the file.
  */
 export async function rewriteUnitToShim(label: string): Promise<boolean> {
-  const stimd = serviceManager().name === 'launchd' ? engineShim() : null;
+  const manager = serviceManager();
+  const stimd = unitShim();
   const installed = stimd ? await readInstalled(label) : null;
   if (!stimd || !installed?.managed || installed.node === null || installed.script === null || installed.port === null)
     return false;
   const path = plistPath(label);
   const text = readFileSync(path, 'utf8');
-  const args = launchdArguments({
-    ...installed,
-    node: installed.node,
-    script: installed.script,
-    port: installed.port,
-    stimd,
-  });
-  const rewritten = withProgramArguments(text, [...(installed.host ? [installed.host, 'run'] : []), ...args]);
+  const args = [
+    ...(installed.host ? [installed.host, 'run'] : []),
+    ...jobArguments({
+      ...installed,
+      node: installed.node,
+      script: installed.script,
+      port: installed.port,
+      stimd,
+    }),
+  ];
+  const rewritten =
+    manager.name === 'launchd' ? withProgramArguments(text, args) : editUnit(text, { programArguments: args });
   if (rewritten === text) return false;
   const partial = `${path}.${process.pid}.tmp`;
   writeFileSync(partial, rewritten, { mode: 0o644 });
   renameSync(partial, path);
+  const reloaded = await manager.reload?.();
+  if (reloaded && !reloaded.ok)
+    throw new ServiceError(
+      `${path} was rewritten, but ${manager.noun} manager could not read it again: ${reloaded.stderr.trim()}`,
+    );
   return true;
 }
 
@@ -344,7 +360,7 @@ export async function installJob(
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();
   const host = setup ? setup.host : await manager.host();
-  const stimd = manager.name === 'launchd' ? engineShim() : null;
+  const stimd = unitShim();
   const spec: ServiceSpec = {
     host: host?.executable ?? null,
     label: options.label,

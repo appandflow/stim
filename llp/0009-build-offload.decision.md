@@ -164,7 +164,7 @@ Stim's supervisor because Task Scheduler does not restart an exited process,
 and, only when asked, a tailnet-only serve
 route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
 `$STIM_HOME/server` or settings. With the Stim engine installed, a launchd
-unit names the engine's `bin/stimd` shim and follows the engine. `stim engine update`
+or systemd unit names the engine's `bin/stimd` shim and follows the engine. `stim engine update`
 and `stim engine rollback` move it through the engine store's drain and switch,
 and a crash-looping build is rolled back to `previous` by its own next boot. A Linux or Windows worker takes Android
 builds only; setup there approves `build` and refuses `device-host`, and off macOS
@@ -175,7 +175,7 @@ promotion), and no other connection can. An exact npm release needs no setting; 
 packages are taken only while `server.acceptClientBuilds` is `true`, its
 default being `false`.
 
-A per-user service keeps worker ownership with the approving user. A version-neutral launchd shim lets the engine switch after work drains without replacing service setup or pairings. [Engine integration](https://github.com/appandflow/stim/pull/5380).
+A per-user service keeps worker ownership with the approving user. A version-neutral launchd or systemd shim lets the engine switch after work drains without replacing service setup or pairings. [Engine integration](https://github.com/appandflow/stim/pull/5380).
 
 ## Code
 
