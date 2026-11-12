@@ -120,7 +120,7 @@ test('an already held pass makes the child exit silently, names the holder to it
     expect(measurements.measurePressure).not.toHaveBeenCalled();
     expect(out).not.toHaveBeenCalled();
     expect(err).not.toHaveBeenCalled();
-    await runGc({ delete: true, json: true });
+    await runGc({ pressure: 'normal', json: true });
     const payload = JSON.parse(String(out.mock.calls[0]![0]));
     expect(payload).toMatchObject({ code: 'STIM_CLAIM_REFUSED' });
     expect(payload.message).toContain(`pid ${process.pid}`);
@@ -140,6 +140,21 @@ test('a pass creates its disk reserve, and at zero free disk frees it to take it
   Object.assign(disk, { full: true, reserve });
   await runMaintenance('status');
   expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status', mode: 'report' });
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  expect(existsSync(maintenanceRunClaims())).toBe(false);
+});
+
+test('gc at zero free disk gives back the reserve to take its claim, then deletes', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  const orphan = join(home, 'workspaces', 'orphan--0000000000000000');
+  mkdirSync(orphan, { recursive: true });
+  Object.assign(disk, { full: true, reserve });
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  await runGc({ pressure: 'normal', json: true });
+  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ mode: 'delete', level: 'normal', failures: 0 });
+  expect(existsSync(orphan)).toBe(false);
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
   expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
@@ -179,12 +194,9 @@ test('status and gc JSON each stay a single payload under the preAction disk war
   });
   out.mockClear();
   warnCriticalDisk(['gc', '--json']);
-  await runGc({ json: true, cache: 'recordings' });
+  await runGc({ json: true, dryRun: true });
   expect(out).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
-    mode: 'dry-run',
-    maintenance: { note: expect.stringContaining('no pass has run yet') },
-  });
+  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ mode: 'dry-run', failures: null });
 });
 
 test.each([
@@ -462,17 +474,12 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   }
 });
 
-test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
+test('invalid maintenance settings are explained in status rather than silently reported as off', async () => {
   process.env.STIM_MAINTENANCE_SWEEP_HOURS = 'bad';
   try {
     expect(maintenanceStatus()).toMatchObject({
       mode: 'off',
       invalid: expect.stringContaining('maintenance.sweepHours'),
-    });
-    expect(await preview.previewMaintenance()).toMatchObject({
-      mode: 'off',
-      invalid: expect.stringContaining('maintenance.sweepHours'),
-      note: expect.stringContaining('maintenance.sweepHours'),
     });
   } finally {
     delete process.env.STIM_MAINTENANCE_SWEEP_HOURS;
@@ -488,10 +495,6 @@ test('an invalid cache cap falls back only that cap while report mode remains en
       invalid: expect.stringContaining('caches.buildCacheMaxGb'),
     });
     expect(maintenanceStatus()).toMatchObject({
-      mode: 'report',
-      invalid: expect.stringContaining('caches.buildCacheMaxGb'),
-    });
-    expect(await preview.previewMaintenance()).toMatchObject({
       mode: 'report',
       invalid: expect.stringContaining('caches.buildCacheMaxGb'),
     });

@@ -684,7 +684,7 @@ export interface EnvironmentState {
   phase?: WorkspacePhase;
   /**
    * Present when the workspace's folder no longer exists on a mounted volume, for example after `git worktree remove`
-   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc --delete`. A
+   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc`. A
    * folder on a volume that is not mounted is not reported.
    */
   pathMissing?: true;

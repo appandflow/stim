@@ -122,7 +122,7 @@
                   title: "Stopping workspace", steps: [StimCommand(["stop"], cwd: PlaygroundFixtures.workspace)],
                   key: PlaygroundFixtures.workspace),
                 ActionRun(
-                  title: "Reclaiming memory", steps: [StimCommand(["gc", "--json"], cwd: NSHomeDirectory())],
+                  title: "Reclaiming memory", steps: [StimCommand(["gc", "--dry-run", "--json"], cwd: NSHomeDirectory())],
                   key: ActionCenter.machineKey),
               ])
           }

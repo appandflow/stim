@@ -182,7 +182,7 @@ export async function prepareOwnedAvd({
         if (!(await listAvdsAsync()).includes(avdName)) {
           throw new AvdRecoveryError(
             `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
-            'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
+            'Run `npx stim gc --dry-run` to inspect orphaned owned AVDs, then `npx stim gc` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
             error,
           );
         }
@@ -254,7 +254,7 @@ export async function prepareOwnedAvd({
     });
     const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
     const orphan = kept
-      ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim gc --delete\`.`
+      ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim gc\`.`
       : '';
     throw new Error(
       `Created owned AVD ${avdName}, but could not configure its AVD settings: ${String((error as Error)?.message || error)}${orphan}`,

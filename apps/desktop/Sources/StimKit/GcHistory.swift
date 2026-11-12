@@ -22,11 +22,8 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
   public var detail: String?
 
   public struct Options: Decodable, Hashable, Sendable {
-    public var delete: Bool?
-    public var worktrees: Bool?
-    public var olderThan: Int?
-    public var cache: String?
-    public var idleMs: Int?
+    public var level: String?
+    public var pressure: Bool?
   }
 
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
@@ -41,6 +38,7 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
     "workspaceOutputs": "Build outputs", "recording": "Recording", "workspaceDirectory": "Workspace folder",
     "project": "Project entry", "buildLock": "Build lock", "buildSlot": "Build slot", "deviceLease": "Device lease",
     "easSession": "EAS session", "worktree": "Worktree", "cache": "Cache", "statusCache": "Status cache",
+    "runtime": "Simulator runtime", "toolCache": "Tool cache",
     "tempLeftover": "Temp leftover", "trash": "Trash", "watchmanRoot": "Watchman root", "watchman": "Watchman",
     "gradleDaemon": "Gradle daemon", "gradleVersion": "Gradle version", "kotlinDaemon": "Kotlin daemon",
     "devServer": "Dev server", "workspaceLogs": "Workspace logs", "ledgerEntry": "Ledger entry",
@@ -93,11 +91,7 @@ public struct GcRun: Identifiable, Hashable, Sendable {
 extension GcHistoryItem.Options {
   public var command: String {
     var words = ["stim", "gc"]
-    if delete == true { words.append("--delete") }
-    if worktrees == true { words.append("--worktrees") }
-    if let olderThan { words += ["--older-than", String(olderThan)] }
-    if let cache { words += ["--cache", cache] }
-    if let idleMs { words += ["--idle", "\(idleMs / 60_000)m"] }
+    if pressure == true, let level { words += ["--pressure", level] }
     return words.joined(separator: " ")
   }
 }

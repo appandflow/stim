@@ -848,7 +848,7 @@ async function reclaimAll(
       r = await reclaimProject(key, {
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
-        parkOwnedDevices: pressure === 'normal',
+        parkOwnedDevices: pressure !== 'critical',
         preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
         operation,
@@ -882,7 +882,7 @@ async function reclaimAll(
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
     }
   }
-  if (pressure !== 'normal' && deletedDevices.length)
+  if (pressure === 'critical' && deletedDevices.length)
     poolNotes.push(`disk pressure ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
@@ -1346,7 +1346,7 @@ async function removeOrRefuse(
       const mainRoot = pending.worktreeMainRoot;
       if (!existsSync(mainRoot)) {
         output.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
-        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc\`.`));
         output.fail();
         return;
       }
@@ -1800,7 +1800,7 @@ async function removeOrRefuse(
                       ? `deleting ${moved} in the background from ${trash.dir}`
                       : disposed === 'deleted'
                         ? `deleted ${moved}`
-                        : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+                        : `left ${moved} in ${trash.dir}; stim gc deletes them`,
                   ),
                 ),
               );

@@ -13266,34 +13266,36 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
 
   it('deletes only the selected private cache and refreshes cached reports without a CLI process', async () => {
     const fixture = cacheFixture();
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
-      const client = original(options);
-      return { ...client, gc: (request: stim.StimGcOptions = {}) => client.gc({ ...request, cache: 'rpc-fixture' }) };
+    await start({ env: fixture.env });
+    const client = await desktop();
+    const before = await client.request('desktop.reports.get', { report: 'gc' });
+    expect(before).toMatchObject({
+      result: {
+        value: {
+          sections: {
+            caches: expect.arrayContaining([expect.objectContaining({ name: 'rpc-fixture', dir: fixture.cache })]),
+          },
+        },
+      },
     });
-    try {
-      await start({ env: fixture.env });
-      const client = await desktop();
-      const before = await client.request('desktop.reports.get', { report: 'gc' });
-      expect(before).toMatchObject({
-        result: { value: { sections: { caches: [{ name: 'rpc-fixture', dir: fixture.cache }] } } },
-      });
-      const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
-      expect(
-        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
-      ).toHaveProperty('result.subscription');
-      const done = await ended(client);
-      expect(done.exitCode).toBe(0);
-      expect(JSON.parse(done.stdout)).toMatchObject({ mode: 'delete', cacheScope: 'rpc-fixture', failures: 0 });
-      expect(existsSync(fixture.artifact)).toBe(false);
-      expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
-      expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
-      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
-      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
-      expect(stimCalls()).toEqual([]);
-    } finally {
-      api.mockRestore();
-    }
+    const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
+    expect(
+      await client.request('desktop.gc.item.subscribe', {
+        cwd: workspace,
+        item: { kind: 'cache', dir: fixture.cache },
+      }),
+    ).toHaveProperty('result.subscription');
+    const done = await ended(client);
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toMatchObject({
+      results: [expect.objectContaining({ kind: 'cache', status: 'done' })],
+    });
+    expect(existsSync(fixture.artifact)).toBe(false);
+    expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
+    expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
+    expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
+    expect(stimCalls()).toEqual([]);
   });
 
   it('denies unproved local and phone control and rejects invalid selectors before deleting files', async () => {
@@ -13306,23 +13308,43 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     await plain.request('hello', { client: CLIENT });
     await peer.request('hello', { client: CLIENT });
     for (const client of [plain, peer]) {
+      expect(await client.request('desktop.gc.subscribe', { cwd: workspace, dryRun: false })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
       expect(
-        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+        await client.request('desktop.gc.item.subscribe', {
+          cwd: workspace,
+          item: { kind: 'cache', dir: fixture.cache },
+        }),
       ).toHaveProperty('error.code', 'forbidden');
     }
     const client = await desktop();
     for (const params of [
       {},
-      { cwd: '.' },
-      { cwd: workspace, cache: '' },
-      { cwd: workspace, cache: 1 },
-      { cwd: workspace, delete: 'yes' },
-      { cwd: workspace, worktrees: 1 },
-      { cwd: workspace, olderThan: 1.5 },
-      { cwd: workspace, idleMs: 60_000 },
-      { cwd: workspace, signal: {} },
+      { cwd: '.', dryRun: true },
+      { cwd: workspace },
+      { cwd: workspace, dryRun: 'yes' },
+      { cwd: workspace, dryRun: false, pressure: 'max' },
+      { cwd: workspace, dryRun: false, cache: 'rpc-fixture' },
+      { cwd: workspace, dryRun: false, delete: true },
+      { cwd: workspace, dryRun: false, olderThan: 1 },
     ])
       expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    for (const item of [
+      undefined,
+      { kind: 'cache', dir: 'relative' },
+      { kind: 'cache', dir: fixture.cache, extra: 1 },
+      { kind: 'archive', id: '../x' },
+      { kind: 'archive', id: 'a', part: 'everything' },
+      { kind: 'parked' },
+    ])
+      expect(
+        await client.request('desktop.gc.item.subscribe', {
+          cwd: workspace,
+          item,
+        }),
+      ).toHaveProperty('error.code', 'bad-request');
     expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
     expect(stimCalls()).toEqual([]);
   });
@@ -13350,10 +13372,9 @@ setInterval(() => {}, 1000);
           ...(ending === 'timeout' ? { actionLimits: { timeoutMs: 1500 } } : {}),
         });
         const client = await desktop();
-        const reply = await client.request('desktop.gc.subscribe', {
+        const reply = await client.request('desktop.gc.item.subscribe', {
           cwd: workspace,
-          cache: 'rpc-fixture',
-          delete: true,
+          item: { kind: 'cache', dir: fixture.cache },
         });
         assert(
           'result' in reply &&
@@ -13419,13 +13440,17 @@ setInterval(() => {}, 1000);
       await start({ env: fixture.env });
       const client = await desktop();
       expect(
-        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+        await client.request('desktop.gc.item.subscribe', {
+          cwd: workspace,
+          item: { kind: 'cache', dir: fixture.cache },
+        }),
       ).toHaveProperty('result.subscription');
       const done = await ended(client);
       expect(done.exitCode).toBe(1);
       expect(JSON.parse(done.stdout)).toMatchObject({
         mode: 'delete',
-        cacheScope: 'rpc-fixture',
+        item: { kind: 'cache', dir: fixture.cache },
+        failures: 1,
         results: expect.arrayContaining([
           expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
         ]),
@@ -13443,7 +13468,7 @@ setInterval(() => {}, 1000);
     const fixture = cacheFixture();
     await start({ env: fixture.env, actionLimits: { maxOutputBytes: 128 } });
     const client = await desktop();
-    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture' })).toHaveProperty(
+    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, dryRun: true })).toHaveProperty(
       'result.subscription',
     );
     expect(await ended(client)).toMatchObject({

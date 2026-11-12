@@ -473,9 +473,9 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'idle.dormantDays',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
-    default: 3,
+    default: 1,
     description:
-      'Days without activity before a workspace goes dormant: its owned simulators and emulators are deleted (the parked pool is untouched) and its logs are archived, while node_modules and Pods stay; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never',
+      "Days without activity before a workspace goes dormant and is reduced to its minimal size: its regenerable build outputs and owned simulators and emulators are deleted (the parked pool is untouched), its logs are archived, and a linked worktree's node_modules and Pods are deleted for the next Stim command to restore; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never",
   },
   {
     key: 'macos.product',
@@ -731,7 +731,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.minFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 20,
+    default: 40,
     env: 'STIM_DISK_MIN_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
@@ -749,7 +749,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.criticalFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 6,
+    default: 20,
     env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
@@ -1081,7 +1081,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     description:
-      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and stim gc end a session sooner. EAS rejects a value above the account plan's session limit",
   },
   {
     key: 'remote.build',

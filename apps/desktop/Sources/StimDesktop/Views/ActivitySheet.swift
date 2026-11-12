@@ -318,8 +318,8 @@ struct GcPreviewView: View {
         VStack(alignment: .leading, spacing: Space.lg) {
           Text(
             report.actionable
-              ? "stim gc --delete would act on the entries not marked kept."
-              : "stim gc --delete would remove nothing: every entry is kept."
+              ? "stim gc would act on the entries not marked kept."
+              : "stim gc would remove nothing: every entry is kept."
           )
           .foregroundStyle(Palette.secondary)
           ForEach(report.sections, id: \.key) { section in
@@ -344,7 +344,7 @@ struct GcPreviewView: View {
       Image(systemName: entry.kept == nil ? "trash" : "lock")
         .foregroundStyle(entry.kept == nil ? Palette.warning : Palette.tertiary)
         .frame(width: 14)
-        .help(entry.kept == nil ? "stim gc --delete deletes this" : "Kept by stim gc --delete")
+        .help(entry.kept == nil ? "stim gc deletes this" : "Kept by stim gc")
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(entry.label))
           .font(.stim(.caption, mono: true))

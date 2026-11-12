@@ -11,9 +11,6 @@ import { claimForEmptying } from '../../cache/cache-claim.ts';
 import { releaseClaim } from '../../ownership-claim.ts';
 import { canonicalPath } from './paths.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
-import { memoryCacheKind } from './memory.ts';
-import { parseArchiveSelector } from './archive-selector.ts';
-import { includesGradleVersions } from './gradle-versions.ts';
 
 export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
@@ -42,61 +39,6 @@ function machineGlobalReason(cache: CacheDescriptor, env: NodeJS.ProcessEnv): st
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
 }
 
-const EVERY_CACHE = 'all';
-const WORKSPACE_OUTPUTS = 'workspaces';
-const RECORDINGS = 'recordings';
-const PARKED_DEVICES = 'parked';
-
-export function includesArchives(name: string | null | undefined): boolean {
-  return name ? parseArchiveSelector(name) !== null : false;
-}
-
-export function includesParkedDevices(name: string | null | undefined): boolean {
-  return name?.trim().toLowerCase() === PARKED_DEVICES;
-}
-
-export function includesRecordings(name: string | null | undefined): boolean {
-  const wanted = name?.trim().toLowerCase();
-  return !wanted || wanted === EVERY_CACHE || wanted === RECORDINGS;
-}
-
-export function isWorkspacesScope(name: string | null | undefined): boolean {
-  return name?.trim().toLowerCase() === WORKSPACE_OUTPUTS;
-}
-
-export function includesWorkspaceOutputs(name: string | null | undefined): boolean {
-  const wanted = name?.trim().toLowerCase();
-  return !wanted || wanted === EVERY_CACHE || wanted === WORKSPACE_OUTPUTS;
-}
-
-/** Whether a --cache name selects something besides shared caches: recordings, parked devices or a memory kind. */
-export function selectsBeyondCaches(name: string | null | undefined): boolean {
-  return (
-    includesArchives(name) ||
-    includesRecordings(name) ||
-    includesParkedDevices(name) ||
-    includesGradleVersions(name) ||
-    memoryCacheKind(name) !== null
-  );
-}
-
-export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
-  if (!name) return caches;
-  const wanted = name.trim().toLowerCase();
-  if (wanted === EVERY_CACHE) return caches;
-  if (
-    includesArchives(wanted) ||
-    wanted === WORKSPACE_OUTPUTS ||
-    wanted === RECORDINGS ||
-    wanted === PARKED_DEVICES ||
-    includesGradleVersions(wanted) ||
-    memoryCacheKind(wanted)
-  ) {
-    return [];
-  }
-  return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
-}
-
 function emptyVerdict(c: GcCache): { willEmpty: boolean; emptySkipped: string | null } {
   if (c.prune === 'report-only') {
     return { willEmpty: false, emptySkipped: 'report-only shared cache; Stim never deletes it' };
@@ -117,14 +59,14 @@ export function planCacheEmptying(
   return all ? annotated.map((c) => Object.assign({}, c, emptyVerdict(c))) : annotated;
 }
 
-/** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
+/** What emptying each cache whole would do, for the storage report. */
 export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
   return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
 /**
- * Plain `gc --delete` empties the shared Swift compilation cache once it exceeds `caches.swiftCompilationCacheMaxGb`
- * (0 means no cap); the claim taken for emptying still refuses while a build holds the cache.
+ * Maintenance empties the shared Swift compilation cache once it exceeds `caches.swiftCompilationCacheMaxGb` (0 means
+ * no cap); the claim taken for emptying still refuses while a build holds the cache.
  */
 export function markOverCapCompilationCache(caches: GcCache[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
   const capGb = resolveMaintenanceSettings(undefined, env).swiftCompilationCacheMaxGb;
@@ -194,54 +136,6 @@ function reportFailures(cache: CacheDescriptor, failed: number | undefined, { lo
   record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
   fail();
   return true;
-}
-
-export async function trimCaches(
-  caches: GcCache[],
-  olderThan: number,
-  output: GcOutput = GC_OUTPUT,
-  signal?: AbortSignal,
-  operation?: StimContext,
-): Promise<{ trimmed: GcCache[]; failures: number }> {
-  const { log, record } = output;
-  let cacheBytes = 0;
-  let failures = 0;
-  const trimmed: GcCache[] = [];
-  let unchanged = 0;
-  for (const c of caches) {
-    signal?.throwIfAborted();
-    if (c.machineGlobal) {
-      log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
-      record('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
-      continue;
-    }
-    const r = await pruneCacheAsync(c, { olderThanDays: olderThan, signal, operation });
-    if (r.skipped) {
-      log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-      record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
-    } else if (r.removed) {
-      cacheBytes += r.bytes;
-      trimmed.push(c);
-      record('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
-      log(
-        chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
-      );
-    } else if (!r.failed) {
-      unchanged++;
-    }
-    if (reportFailures(c, r.failed, output)) failures++;
-  }
-
-  if (unchanged) log(chalk.dim(`${unchanged} cache${unchanged === 1 ? '' : 's'}: nothing older than ${olderThan}d`));
-
-  if (cacheBytes) {
-    log(
-      chalk.dim(
-        `Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`,
-      ),
-    );
-  }
-  return { trimmed, failures };
 }
 
 export async function emptyCaches(

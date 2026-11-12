@@ -544,11 +544,14 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
   h.log('(4) source checkout byte-clean, no worktrees linger');
 
-  const gc = h.cli(['gc', '--json'], { allowFail: true });
+  const gc = h.cli(['gc', '--dry-run', '--json'], { allowFail: true });
   if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
   if (gc.code === 0) {
     const { sections } = JSON.parse(gc.stdout);
-    assert(sections && typeof sections === 'object', `cleanup gc --json has no sections: ${gc.stdout.slice(0, 500)}`);
+    assert(
+      sections && typeof sections === 'object',
+      `cleanup gc --dry-run --json has no sections: ${gc.stdout.slice(0, 500)}`,
+    );
     const text = JSON.stringify({ ...sections, trash: null, staleStatusCaches: null });
     assert(
       !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),

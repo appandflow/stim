@@ -662,7 +662,7 @@ test('a settings read uses only the client environment for its default home and 
     expect(scoped.settings.find((entry) => entry.key === key)).toMatchObject({ value: isolated, origin: 'env' });
   }
   expect(scoped.settings.find((entry) => entry.key === 'disk.minFreeGb')).toMatchObject({
-    value: 20,
+    value: 40,
     origin: 'default',
   });
 });

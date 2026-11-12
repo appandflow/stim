@@ -752,13 +752,6 @@ export async function renameIosSim(udid: string, name: string, operation?: StimC
   });
 }
 
-export async function eraseIosSim(udid: string, operation?: StimContext): Promise<void> {
-  await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'erase', udid], {
-    ...SIMCTL_OPTIONS,
-    cwd: operation?.cwd,
-  });
-}
-
 // `simctl privacy reset all` took 52 s on a stock iOS 26.5 simulator minutes
 // after its boot (#4819).
 const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;

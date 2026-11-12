@@ -75,7 +75,7 @@ function planRecordings(
     }
     return kept(
       'retained',
-      'the last 15 minutes of footage per device stay until worktree remove, --cache recordings, --older-than or recording.enabled false',
+      'the last 15 minutes of footage per device stay until worktree remove, stim gc at critical or recording.enabled false',
     );
   });
 }
@@ -155,21 +155,4 @@ export async function deleteRecordings(
   }
   signal?.throwIfAborted();
   return failures;
-}
-
-export function recordingLines(recordings: readonly WorkspaceRecordings[]): string[] {
-  if (!recordings.length) return [];
-  const total = recordings.reduce((sum, entry) => sum + entry.bytes, 0);
-  const lines = [`Device recordings (${formatBytes(total)} in ${recordings.length}):`];
-  for (const entry of recordings) {
-    lines.push(`  ${formatBytes(entry.bytes).padStart(10)}  ${entry.projectRoot ?? entry.dir}`);
-    lines.push(
-      entry.withWorkspace
-        ? '              would be DELETED with its gone workspace directory'
-        : entry.willDelete
-          ? `              would DELETE ${formatBytes(entry.deleteBytes)}`
-          : `              kept: ${entry.keptReason}`,
-    );
-  }
-  return lines;
 }

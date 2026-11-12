@@ -7,15 +7,10 @@ import { testContext } from './_context.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { ensureConfig, getProject, saveConfig, upsertProject } from '../workspace/config.ts';
+import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
-import {
-  eraseParkedIosSim,
-  shutDownBootedParkedIosSim,
-  teardownOwnedIosSim,
-  teardownOwnedAvd,
-} from '../devices/teardown.ts';
+import { shutDownBootedParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { readDeferredShutdowns } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -846,94 +841,6 @@ test('teardownOwnedIosSim waits for a lagging shutdown before parking the simula
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });
   }
-});
-
-function seedParkedSim(bootedUntil?: string): void {
-  const config = ensureConfig();
-  config.parked = {
-    ios: [
-      {
-        udid: 'U1',
-        name: 'stim-parked (iPhone 17 26.5) u1',
-        deviceTypeIdentifier: 'iphone-17',
-        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-        parkedAt: '2026-09-01T00:00:00.000Z',
-        ...(bootedUntil ? { bootedUntil } : {}),
-        simslimManaged: false,
-        bundleId: 'com.example.app',
-        cacheKey: 'abc-debug-sim',
-        schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
-      },
-    ],
-  };
-  saveConfig(config);
-}
-
-test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked without its app', async () => {
-  seedParkedSim();
-  const exec = iosExecutor({
-    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
-  });
-  setExecutor(exec);
-
-  expect((await eraseParkedIosSim('U1')).status).toBe('torn-down');
-
-  expect(exec.calls).toContain('xcrun simctl erase U1');
-  const [record] = readParked('ios');
-  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
-  expect(record).not.toHaveProperty('bundleId');
-  expect(record).not.toHaveProperty('cacheKey');
-  expect(record).not.toHaveProperty('schemeApprovals');
-});
-
-test('eraseParkedIosSim leaves a booted parked simulator and its record alone', async () => {
-  seedParkedSim();
-  const exec = iosExecutor({
-    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
-  });
-  setExecutor(exec);
-
-  const result = await eraseParkedIosSim('U1');
-
-  expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
-  expect(exec.calls).not.toContain('xcrun simctl erase U1');
-  expect(readParked('ios')).toEqual([
-    expect.objectContaining({
-      bundleId: 'com.example.app',
-      schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
-    }),
-  ]);
-});
-
-test('eraseParkedIosSim shuts down a parked simulator kept booted before it erases it', async () => {
-  seedParkedSim(new Date(Date.now() + 60_000).toISOString());
-  const exec = iosExecutor({
-    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
-  });
-  setExecutor(exec);
-
-  expect((await eraseParkedIosSim('U1')).status).toBe('torn-down');
-
-  expect(exec.calls.indexOf('xcrun simctl shutdown U1')).toBeGreaterThanOrEqual(0);
-  expect(exec.calls.indexOf('xcrun simctl erase U1')).toBeGreaterThan(exec.calls.indexOf('xcrun simctl shutdown U1'));
-});
-
-test('a failed simctl erase keeps the parked simulator without its app, cache key, or scheme approvals', async () => {
-  seedParkedSim();
-  const exec = iosExecutor({
-    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
-    throwOn: 'simctl erase U1',
-  });
-  setExecutor(exec);
-
-  expect((await eraseParkedIosSim('U1')).status).toBe('failed');
-
-  const [record] = readParked('ios');
-  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
-  expect(record).not.toHaveProperty('deletionClaim');
-  expect(record).not.toHaveProperty('bundleId');
-  expect(record).not.toHaveProperty('cacheKey');
-  expect(record).not.toHaveProperty('schemeApprovals');
 });
 
 interface AndroidExecutorOptions {

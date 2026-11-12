@@ -3,7 +3,7 @@ import StimStores
 import SwiftUI
 
 /// What an archive still holds: the size of each kind with its expiry, and the actions that drop one kind or the whole
-/// archive through `stim gc --cache archived-<kind>:<id>` and `archived:<id>`.
+/// archive through the archive gc items.
 struct ArchiveStatusSection: View {
   var page: ArchivedPage
   @EnvironmentObject private var actions: ActionCenter

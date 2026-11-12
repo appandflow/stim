@@ -463,7 +463,7 @@ export async function clearArtifact(
     protectedRoot: string;
     pinned: (workspace: string) => boolean | Promise<boolean>;
     worktrees: readonly ArtifactWorktree[];
-    /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
+    /** Keep dependencies that worktree warm could not restore with the same versions. */
     requireRestorable?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
     /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
@@ -527,7 +527,7 @@ export async function clearArtifact(
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(key) : null;
     if (late) return late;
-    const record = kind === 'dependencies' && !unrestorable;
+    const record = kind === 'dependencies';
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
     if (record) finishLightened(candidate.keys, candidate.path);

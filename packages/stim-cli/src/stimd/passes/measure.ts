@@ -13,7 +13,7 @@ import {
 import { readVolumeSpace, readVolumeSpaceAsync } from './budget.ts';
 import { memoryPressure } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../../host-memory.ts';
+import { readHostMemoryPressure, type HostMemoryPressure } from '../../host-memory.ts';
 import { discoverCachesAsync, type CacheDescriptor } from '../../cache/caches.ts';
 import { planCacheEmptying } from '../../commands/gc/caches.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
@@ -37,19 +37,6 @@ export function lowestFree(disk: MaintenancePressure['disk']): number {
 
 export function measurePressure(previous: MaintenancePressure | null, now: number): MaintenancePressure {
   return pressureFromObservations(previous, now, readHostMemoryPressure(), measureDisk());
-}
-
-export async function measurePressureAsync(
-  previous: MaintenancePressure | null,
-  now: number,
-  operation: StimContext,
-): Promise<MaintenancePressure> {
-  const level = await readHostMemoryPressureAsync(undefined, undefined, operation.signal, operation);
-  const disk = await readVolumeSpaceAsync(
-    [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
-    operation.signal,
-  );
-  return pressureFromObservations(previous, now, level, disk);
 }
 
 /** Pressure from a measurement already taken, such as the daemon tick's. */
@@ -185,7 +172,10 @@ export async function measureSizes(
   }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
-    const bytes = await measuredDirectorySizeAsync(entry.dir, { timeoutMs: 120_000 });
+    const bytes = await measuredDirectorySizeAsync(entry.dir, {
+      timeoutMs: 120_000,
+      ...(operation ? { signal: operation.signal, operation } : {}),
+    });
     if (bytes === null) {
       failure(entry.dir);
       continue;

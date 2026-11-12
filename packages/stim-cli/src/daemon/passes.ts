@@ -21,7 +21,7 @@ import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
-import { runDormantPass } from './stages.ts';
+import { clearStoppedOutputs, dormantAfterMs, runDormantPass, stoppedOutputCandidates } from './stages.ts';
 
 interface HomePassPhases {
   measureMs: number;
@@ -240,8 +240,11 @@ export function createMaintenanceLane(
         });
       })()
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) failure = error;
-          log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
+          const cleanup = error instanceof Error && 'reportCleanup' in error;
+          if (cleanup) failure = error;
+          if (operation.signal.aborted && !cleanup)
+            log('debug', 'daemon_maintenance_aborted', 'the maintenance pass stopped: stimd is ending');
+          else log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
           loopDelay.disable();
@@ -299,6 +302,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
+        lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure,
@@ -318,25 +322,28 @@ export interface ForcedLadder {
 
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
- * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 6 (rung 5 only at
- * critical). `stim gc --delete` runs one level with `act`; `stim gc` previews both from one measurement, measuring what
- * each action would free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 8 (rungs 5 and 8 only at
+ * critical). `stim gc` runs one level with `act`; `stim gc --dry-run` previews it, measuring what each action would
+ * free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
  */
 export async function runForcedLadder({
   levels,
   act,
   why,
   trigger,
-  parkedOlderThanDays,
   operation,
+  protectedRoot,
+  measured: atMeasuredLevel = false,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
   why: string;
   trigger: string;
-  /** Takes only the devices parked at least this many days ago, as `gc --older-than` asks. */
-  parkedOlderThanDays?: number;
   operation?: StimContext;
+  /** The workspace of the command that runs the ladder, which no rung takes. */
+  protectedRoot?: string;
+  /** The level is the one the machine measured, not one the caller chose, so rung 9 measures again before it acts. */
+  measured?: boolean;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
   if (!config) return null;
@@ -374,7 +381,7 @@ export async function runForcedLadder({
           workspace: entry.path,
           outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
           bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
-          detail: entry.outcome === 'would-idle' ? 'stim gc --delete would do this' : entry.detail,
+          detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });
       }
@@ -387,15 +394,90 @@ export async function runForcedLadder({
           sims: measured.sims,
           simsFailed: measured.sims === null,
           remeasure: async () => pressure,
-          force: { level, why, ...(parkedOlderThanDays === undefined ? {} : { parkedOlderThanDays }) },
+          force: { level, why, measured: atMeasuredLevel },
           measure: !act,
           operation,
+          ...(protectedRoot ? { protectedRoot } : {}),
         },
         pressure,
       );
       result.push({ level, actions: [...actions, ...ladder.actions] });
     }
     return { pressure, running, levels: result };
+  } finally {
+    writer?.close();
+  }
+}
+
+/**
+ * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: its regenerable build
+ * outputs deleted, then the dormant stage (its owned devices deleted, its logs archived), then the node_modules and
+ * Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
+ * with the stage off.
+ */
+export async function runDormantReduction({
+  act,
+  trigger,
+  operation,
+  protectedRoot,
+}: {
+  act: boolean;
+  trigger: string;
+  operation?: StimContext;
+  protectedRoot?: string;
+}): Promise<DaemonLadderAction[]> {
+  const config = loadConfig();
+  const afterMs = dormantAfterMs(config);
+  if (!config || afterMs <= 0) return [];
+  const measured = await measureTick(config, Date.now(), {
+    probe: act,
+    signal: operation?.signal,
+    operation,
+  });
+  const writer = act ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES }) : null;
+  const log: IdlePassInput['log'] = (logLevel, event, msg, fields = {}) =>
+    writer?.write({ src: trigger, level: logLevel, event, msg, ...fields });
+  const reading = {
+    devices: measured.devices,
+    simsFailed: measured.sims === null,
+    operation,
+    ...(protectedRoot ? { protectedRoot } : {}),
+  };
+  try {
+    const actions: DaemonLadderAction[] = [];
+    for (const candidate of await stoppedOutputCandidates(config, reading, afterMs)) {
+      const result = act
+        ? await clearStoppedOutputs(candidate, config, afterMs, operation)
+        : {
+            outcome: 'would' as const,
+            bytes: await idleOutputBytes(candidate.path, config),
+            detail: 'stim gc would do this',
+          };
+      if (result)
+        actions.push({
+          rung: 4,
+          kind: 'delete-build-outputs',
+          target: candidate.path,
+          workspace: candidate.path,
+          ...result,
+          ...(result.outcome === 'done'
+            ? {
+                restore: 'the next stim ios or stim android, from the build cache when nothing changed',
+              }
+            : {}),
+        });
+    }
+    actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+    actions.push(
+      ...(await runDormantDependencies({
+        config,
+        act,
+        log,
+        ...reading,
+        force: true,
+      })),
+    );
+    return actions;
   } finally {
     writer?.close();
   }

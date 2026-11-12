@@ -66,7 +66,7 @@ import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
-const DEFAULT_WORKTREE_IDLE_DAYS = 7;
+export const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 const DIRTY_PATHS_SHOWN = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -377,11 +377,6 @@ export function worktreeRemovalReason(
     return days === null ? merge.detail : `${merge.detail}, idle ${days}d`;
   }
   return `idle ${candidate.idleDays ?? 0}d`;
-}
-
-/** The pull request note a kept worktree's report line carries, such as `PR #12 merged`, or null. */
-export function worktreePullRequestNote(candidate: Pick<WorktreeCandidate, 'pullRequest'>): string | null {
-  return pullRequestNote(candidate.pullRequest);
 }
 
 function lastUsedOf(keys: readonly string[]): number {
@@ -699,7 +694,7 @@ function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | 
   const unchecked = lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED;
   const stale = [fetch, unchecked ? 'its pull request was not checked' : null].filter(Boolean);
   return stale.length
-    ? `merge state not refreshed: ${stale.join(', ')}; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`
+    ? `merge state not refreshed: ${stale.join(', ')}; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc\` checks again`
     : null;
 }
 

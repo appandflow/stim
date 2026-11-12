@@ -209,7 +209,7 @@ export function systemImageInstallProblem(pkg: string, env: NodeJS.ProcessEnv): 
     return {
       code: 'STIM_NO_DEVICE',
       message: `${gb(free)} GB free on the volume of ${sdk}, needs ${gb(IMAGE_INSTALL_FREE_BYTES)} GB to download and unpack ${pkg}.`,
-      remedy: `Free space on that volume (\`stim gc\` lists what Stim can reclaim), or run \`${sdkmanagerCommand(`--install "${pkg}"`, env)}\` yourself, then try again.`,
+      remedy: `Free space on that volume (\`stim gc --dry-run\` lists what Stim can reclaim), or run \`${sdkmanagerCommand(`--install "${pkg}"`, env)}\` yourself, then try again.`,
     };
   return null;
 }

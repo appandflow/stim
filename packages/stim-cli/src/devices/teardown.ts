@@ -12,7 +12,7 @@ import {
   readCreatedDevices,
   recordCreatedDevice,
 } from './created-devices.ts';
-import { isStimOwnedAvd } from './device-ownership.ts';
+import { isStimOwnedAvd, isStimOwnedSim } from './device-ownership.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
@@ -39,7 +39,6 @@ import {
   deleteParkedIosSim,
   deleteIosSim,
   listAllIosSimsAsync,
-  eraseIosSim,
   listIosDeviceTypesAsync,
   parkedSimName,
   parseRuntimeVersion,
@@ -70,14 +69,7 @@ import {
   ownedAvdSystemImage,
   wipeAvdUserData,
 } from './android.ts';
-import {
-  eraseParkedAfter,
-  keepParkedAfter,
-  parkSim,
-  readParked,
-  removeParkedAfter,
-  type ParkedSim,
-} from './sim-pool.ts';
+import { keepParkedAfter, parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import {
   claimRemoveCommand,
@@ -222,84 +214,6 @@ export async function shutDownBootedParkedIosSim(
     );
     if (!kept) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? kept.name };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
-    operation?.signal.throwIfAborted();
-    return { status: 'failed', reason: String((error as Error)?.message || error) };
-  }
-}
-
-export async function eraseParkedIosSim(
-  udid: string,
-  { label, operation }: { label?: string; operation?: StimContext } = {},
-): Promise<TeardownOutcome> {
-  try {
-    operation?.signal.throwIfAborted();
-    const erased = await eraseParkedAfter(
-      'ios',
-      udid,
-      async (record, eraseStarted) => {
-        await closeOwnedDeviceSessions(
-          { platform: 'ios', id: udid },
-          async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
-          undefined,
-          undefined,
-          operation,
-        );
-        if (record.bootedUntil !== undefined) await shutDownParkedIosSimIfLive(udid, operation);
-        const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ signal: operation?.signal, operation }));
-        if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
-        if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
-        const state = (resolved.sim as IosSimRecord).state;
-        if (state !== 'Shutdown') throw new Error(`simulator ${udid} is ${state}, not Shutdown; it was kept`);
-        operation?.signal.throwIfAborted();
-        eraseStarted();
-        await eraseIosSim(udid, operation);
-      },
-      operation,
-    );
-    if (!erased) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
-    return { status: 'torn-down', label: label ?? erased.name };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
-    operation?.signal.throwIfAborted();
-    return { status: 'failed', reason: String((error as Error)?.message || error) };
-  }
-}
-
-export async function eraseParkedAvd(
-  avdName: string,
-  { operation }: { operation?: StimContext } = {},
-): Promise<TeardownOutcome> {
-  try {
-    operation?.signal.throwIfAborted();
-    const erased = await eraseParkedAfter(
-      'android',
-      avdName,
-      async (_record, eraseStarted) => {
-        if (
-          (
-            await resolveOwnedAvdSerialAsync(avdName, {
-              timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
-              operation,
-              signal: operation?.signal,
-            })
-          ).serial
-        )
-          throw new Error(`AVD ${avdName} is running; it was kept`);
-        const result = await teardownOwnedAvd(avdName, {
-          wipe: true,
-          owner: { pool: true },
-          onWipeStart: eraseStarted,
-          operation,
-        });
-        if (result.status !== 'torn-down') throw new Error(result.reason ?? `AVD ${avdName} is ${result.status}`);
-      },
-      operation,
-    );
-    return erased
-      ? { status: 'torn-down', label: avdName }
-      : { status: 'skipped', kind: 'not-parked', reason: 'emulator is no longer parked' };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
@@ -530,6 +444,43 @@ export async function teardownOwnedIosSim(
   }
 }
 
+/**
+ * Deletes an owned simulator whose runtime is no longer installed, which simctl lists as unavailable and which cannot
+ * boot, after re-resolving it and its ownership from a fresh listing that includes unavailable simulators.
+ */
+export async function teardownUnavailableOwnedIosSim(
+  udid: string,
+  { label, operation }: { label?: string; operation?: StimContext } = {},
+): Promise<TeardownOutcome> {
+  try {
+    const sims = await listAllIosSimsAsync({
+      includeUnavailable: true,
+      operation,
+      signal: operation?.signal,
+    });
+    const sim = sims.find((entry) => entry.udid === udid);
+    if (!sim) return { status: 'missing' };
+    if (!isStimOwnedSim(sim))
+      return {
+        status: 'skipped',
+        kind: 'not-owned',
+        reason: `sim "${sim.name}" is not Stim-owned: Stim has no record of creating it`,
+      };
+    if (sim.available)
+      return {
+        status: 'skipped',
+        kind: 'available',
+        reason: 'its runtime is installed',
+      };
+    await deleteParkedIosSim(udid, operation);
+    return { status: 'torn-down', label: label ?? sim.name };
+  } catch (e) {
+    if (e instanceof WorkspaceProcessCleanupError) throw e;
+    operation?.signal.throwIfAborted();
+    return { status: 'failed', reason: String((e as Error)?.message || e) };
+  }
+}
+
 type AvdOwner = { projectPath: string; slot?: string; expectedRecord?: object } | { pool: true };
 
 function assertAvdReferences(avdName: string, owner?: AvdOwner): void {
@@ -610,7 +561,7 @@ async function removeOrphanedAvdDirectory(
   try {
     await rm(detached, { recursive: true });
   } catch (error) {
-    throw new Error(`Could not remove AVD data at ${detached}; retry gc --delete: ${(error as Error).message}`, {
+    throw new Error(`Could not remove AVD data at ${detached}; retry stim gc: ${(error as Error).message}`, {
       cause: error,
     });
   }

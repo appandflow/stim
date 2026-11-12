@@ -76,7 +76,7 @@ interface AvdRecord {
   lastUsedAt: string | null;
 }
 
-interface SimRuntimeRecord {
+export interface SimRuntimeRecord {
   identifier: string;
   runtimeIdentifier: string | null;
   version: string | null;

@@ -115,7 +115,7 @@ function* derivedDataDirs(root: string): DirReads<{ path: string; named: boolean
 }
 
 const CARGO_TARGET = 'target';
-const EXACT_APP_FILES = ['exact.mjs', 'Cargo.toml'];
+const EXACT_APP_FILES = ['exact.mjs'];
 
 function* exactTargetDirs(root: string): DirReads<string[]> {
   const names = yield* namesIn(root);
@@ -134,7 +134,7 @@ function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
- * out as DerivedData, and an Exact app's Cargo `target/` (beside its `exact.mjs` and `Cargo.toml`). A `.dd` that is not
+ * out as DerivedData, and an Exact app's Cargo `target/` (beside its `exact.mjs`). A `.dd` that is not
  * laid out as DerivedData is not one, nor is a `target/` anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {

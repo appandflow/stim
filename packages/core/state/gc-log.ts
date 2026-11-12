@@ -1,17 +1,16 @@
 import { gcLogFile } from './paths.ts';
 import { readNdjsonGenerations, type NdjsonRecord } from './ndjson.ts';
+import type { PressureLevel } from './daemon.ts';
 
 export type GcLogTrigger = 'manual' | 'desktop' | 'maintenance' | 'budget';
 
 export type GcLogStatus = 'done' | 'kept' | 'failed';
 
 export interface GcLogOptions {
-  delete?: boolean;
-  worktrees?: boolean;
-  olderThan?: number;
-  cache?: string;
-  /** Written by `stim gc --idle`, which no longer exists; older records keep it. */
-  idleMs?: number;
+  /** The pressure level the run ran at. */
+  level?: PressureLevel;
+  /** Whether `--pressure` chose the level instead of the measured one. */
+  pressure?: boolean;
 }
 
 export interface GcLogRecord extends NdjsonRecord {

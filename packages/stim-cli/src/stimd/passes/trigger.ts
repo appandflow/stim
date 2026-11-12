@@ -8,7 +8,7 @@ export function warnCriticalDisk(argv: readonly string[] = process.argv.slice(2)
     if (
       ['guide', 'settings', 'help'].includes(argv[0] ?? '') ||
       argv.includes('--plan') ||
-      (argv[0] === 'gc' && argv.includes('--delete')) ||
+      (argv[0] === 'gc' && !argv.includes('--dry-run')) ||
       argv.some((arg) => ['--help', '-h', '--version', '-V'].includes(arg))
     )
       return;

@@ -27,6 +27,7 @@ type PhoneMethod = Exclude<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.gc.subscribe'
+  | 'desktop.gc.item.subscribe'
   | 'desktop.worktree.remove.subscribe'
   | 'desktop.worktree.warm.subscribe'
   | 'desktop.plan.get'
@@ -252,27 +253,49 @@ test('the settings write wire schema distinguishes set text from unset and rejec
     expect(acceptsRequest(request(params))).toBe(false);
 });
 
-test('the private GC wire schema accepts scoped cleanup selectors and refuses malformed effects', () => {
+test('the private GC wire schema accepts a dry run, a pressure level and one item, and refuses removed selectors', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
-  const request = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
-  expect(accepts(request({ cwd: '/app' }))).toBe(true);
-  expect(
-    accepts(request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true })),
-  ).toBe(true);
+  const gc = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
+  expect(accepts(gc({ cwd: '/app', dryRun: true }))).toBe(true);
+  expect(accepts(gc({ cwd: '/app', dryRun: false, pressure: 'critical' }))).toBe(true);
   for (const params of [
     {},
-    { cwd: '/app', cache: ' ' },
-    { cwd: '/app', cache: 7 },
-    { cwd: '/app', delete: 'yes' },
-    { cwd: '/app', worktrees: 1 },
-    { cwd: '/app', olderThan: 1.5 },
-    { cwd: '/app', olderThan: Number.MAX_SAFE_INTEGER + 1 },
-    { cwd: '/app', idleMs: 1000 },
-    { cwd: '/app', signal: {} },
+    { cwd: '/app' },
+    { cwd: '/app', dryRun: 'yes' },
+    { cwd: '/app', dryRun: false, pressure: 'max' },
+    { cwd: '/app', dryRun: false, cache: 'archived:history' },
+    { cwd: '/app', dryRun: false, delete: true },
+    { cwd: '/app', dryRun: false, worktrees: true },
+    { cwd: '/app', dryRun: false, olderThan: 7 },
+    { cwd: '/app', dryRun: false, idleMs: 1000 },
   ])
-    expect(accepts(request(params))).toBe(false);
+    expect(accepts(gc(params))).toBe(false);
+  const item = (value: unknown) => ({
+    id: 1,
+    method: 'desktop.gc.item.subscribe',
+    params: { cwd: '/app', item: value },
+  });
+  for (const value of [
+    { kind: 'cache', dir: '/caches/metro' },
+    { kind: 'archive', id: 'app-1.2' },
+    { kind: 'archive', id: 'app-1.2', part: 'recordings' },
+    { kind: 'workspace-outputs' },
+    { kind: 'watchman' },
+    { kind: 'gradle-daemons' },
+  ])
+    expect(accepts(item(value))).toBe(true);
+  for (const value of [
+    undefined,
+    { kind: 'cache' },
+    { kind: 'cache', dir: '/caches/metro', delete: true },
+    { kind: 'archive', id: '../x' },
+    { kind: 'archive', id: 'app', part: 'everything' },
+    { kind: 'watchman', dir: '/x' },
+    { kind: 'parked' },
+  ])
+    expect(accepts(item(value))).toBe(false);
 });
 
 test('the private warming wire schema accepts only cwd', () => {

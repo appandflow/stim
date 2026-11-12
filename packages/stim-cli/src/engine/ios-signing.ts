@@ -229,7 +229,7 @@ export async function resealBundle({
       code: SIGNING_CODES.codesignFailed,
       reason: `codesign --verify --strict rejected ${appPath} after re-sealing it with "${identity.name}": ${errorText(error)}`,
       remedy:
-        'The bundle signed but did not seal. Delete the cached artifact with `stim gc --delete` and build fresh, then retry.',
+        'The bundle signed but did not seal. Build it again with `stim ios --device --no-build-cache`, or for an EAS build start a new one with EAS, then retry.',
       lastLines: lastLines(errorText(error)),
     };
   }

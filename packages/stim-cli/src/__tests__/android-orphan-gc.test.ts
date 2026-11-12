@@ -14,9 +14,10 @@ import { readClaimSet } from '../ownership-claim.ts';
 import { writeAvdProcessLock } from './_factories.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectGcReport, runGc } from '../commands/gc.ts';
+import { runGc } from '../commands/gc.ts';
+import { collectDeviceRecords } from '../commands/gc/records.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
+import { ensureConfig, getProject, loadConfig, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listOrphanedAvdDirectories } from '../devices/android.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -41,10 +42,6 @@ let saved: Record<string, string | undefined>;
 let savedExitCode: typeof process.exitCode;
 let listed: string[];
 let deleteRegistration: boolean;
-const deps = {
-  findProjectRoot: () => null,
-  precollectedEasSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
-};
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-orphan-avds-')));
@@ -124,6 +121,13 @@ afterEach(() => {
   }
 });
 
+async function gcJson(): Promise<{ actions: { kind: string; outcome: string }[]; failures: number }> {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  await runGc({ pressure: 'normal', json: true });
+  return JSON.parse(String(log.mock.lastCall?.[0]));
+}
+
 function orphan(name = 'stim-orphan', root = avdRoot): string {
   const directory = join(root, `${name}.avd`);
   mkdirSync(directory, { recursive: true });
@@ -196,16 +200,18 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     writeFileSync(join(blocked, 'blocked', 'data'), 'keep until removable');
     chmodSync(join(blocked, 'blocked'), 0);
     const removable = orphan('stim-z-removable');
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-    await runGc({ delete: true }, deps);
+    const payload = await gcJson();
     expect(existsSync(removable)).toBe(false);
     const leftovers = listOrphanedAvdDirectories();
     expect(leftovers).toHaveLength(1);
     expect(leftovers[0]!.name).toMatch(/^stim-gc-/);
-    expect(log.mock.calls.flat().join('\n')).toContain('Failed to delete android device stim-a-blocked');
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'delete-orphaned-devices', outcome: 'failed' }),
+    );
+    expect(payload.failures).toBeGreaterThan(0);
     chmodSync(join(leftovers[0]!.directory, 'blocked'), 0o700);
-    await runGc({ delete: true }, deps);
+    await gcJson();
     expect(listOrphanedAvdDirectories()).toEqual([]);
     expect([...readCreatedDevices().android]).toEqual([]);
   },
@@ -216,7 +222,7 @@ test('AVD data this home did not record is listed with a command that removes th
   mkdirSync(directory);
   writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const report = await collectGcReport({}, deps);
+  const report = await collectDeviceRecords(loadConfig(), []);
   expect(report.orphanedDevices).toEqual([]);
   expect(report.unverifiedDevices.map((device) => gcDevices.unverifiedDeviceCommand(device))).toEqual([
     `rm -rf ${JSON.stringify(directory)}`,
@@ -229,19 +235,18 @@ test('an unreadable or symlinked orphan prevents stale device records from being
   symlinkSync(outside, join(avdRoot, 'stim-linked.avd'));
   upsertProject(home, { platforms: { android: { avdName: 'stim-linked', owned: true } } });
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const report = await collectGcReport({}, deps);
+  const report = await collectDeviceRecords(loadConfig(), []);
   expect(report.staleDeviceRecords).toEqual([]);
-  expect(report.deviceSweepNotices.join('\n')).toContain('Cannot verify AVD data');
+  expect(report.notices.join('\n')).toContain('Cannot verify AVD data');
 });
 
 test('GC reclaims orphan data after pruning its dead workspace reference', async () => {
   const directory = orphan();
   upsertProject(join(home, 'gone'), { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  await runGc({ delete: true }, deps);
+  const payload = await gcJson();
   expect(existsSync(directory)).toBe(false);
-  expect(log.mock.calls.flat().join('\n')).not.toContain('Failed to delete');
+  expect(payload.failures).toBe(0);
 });
 
 test('a relative alias registration in a symlinked root protects its data when the absolute path is stale', async () => {
@@ -257,7 +262,7 @@ test('a relative alias registration in a symlinked root protects its data when t
   );
   listed.push('Personal_Phone');
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const report = await collectGcReport({}, deps);
+  const report = await collectDeviceRecords(loadConfig(), []);
   expect(report.orphanedDevices).toEqual([]);
   expect((await teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
   expect(existsSync(join(directory, 'userdata.img'))).toBe(true);

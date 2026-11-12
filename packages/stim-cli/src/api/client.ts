@@ -10,6 +10,7 @@ import {
   validRunId,
   userHome,
   easMachineStateRoot,
+  isJsonObject,
 } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
@@ -35,8 +36,10 @@ import {
 } from '../commands/device-tools.ts';
 import { recordDoctorCheck } from '../guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { ARCHIVE_PARTS, deleteGcItem, GC_ITEM_KINDS, type GcItem } from '../commands/gc/item.ts';
 import { removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from '../engine/logs.ts';
 import { readProjectStats } from '../engine/stats-report.ts';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -87,6 +90,7 @@ import type {
   StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
+  StimGcItemOptions,
   StimSettingWriteOptions,
   StimRunOptions,
   StimRunResult,
@@ -121,6 +125,24 @@ export async function runOp(name: string, args: unknown[], ctx: StimOptions): Pr
 }
 
 /** This build's client: every operation runs in the calling process. */
+const GC_LEVELS: readonly unknown[] = ['normal', 'high', 'critical'];
+
+function validGcItem(item: unknown): item is GcItem {
+  if (!isJsonObject(item) || !GC_ITEM_KINDS.some((kind) => kind === item.kind)) return false;
+  const keys = Object.keys(item);
+  const only = (...allowed: string[]) => keys.every((key) => key === 'kind' || allowed.includes(key));
+  if (item.kind === 'cache')
+    return only('dir') && typeof item.dir === 'string' && item.dir.length > 0 && item.dir.length <= 4096;
+  if (item.kind === 'archive')
+    return (
+      only('id', 'part') &&
+      typeof item.id === 'string' &&
+      /^[\w.-]{1,200}$/.test(item.id) &&
+      (item.part === undefined || ARCHIVE_PARTS.some((part) => part === item.part))
+    );
+  return only();
+}
+
 export function createLocalStim(options: StimOptions): StimClient {
   const projectRoot = clientProjectRoot(options);
   const base = options.env ?? process.env;
@@ -352,18 +374,18 @@ export function createLocalStim(options: StimOptions): StimClient {
         );
         return task;
       }),
-    gc: ({ signal, olderThan, cache, worktrees, measureBuildState }: StimGcOptions = {}) => {
-      if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
+    gc: ({ signal, pressure, measureBuildState }: StimGcOptions = {}) => {
+      if (pressure !== undefined && !GC_LEVELS.includes(pressure))
         return Promise.reject(
           new StimError({
             code: 'STIM_BAD_ARG',
-            message: 'olderThan must be a whole number of days.',
-            remedy: 'Pass olderThan as a whole number of days, or leave it out.',
+            message: 'pressure must be normal, high or critical.',
+            remedy: 'Pass pressure as normal, high or critical, or leave it out.',
           }),
         );
       return report('gc', signal, async (context) => {
         const result = await readGcReport(
-          { olderThan, cache, worktrees, measureBuildState },
+          { pressure, measureBuildState },
           {
             operation: context,
             easLedgerRoot: easMachineStateRoot(context.env),
@@ -373,27 +395,17 @@ export function createLocalStim(options: StimOptions): StimClient {
         return result;
       });
     },
-    collectGarbage: ({ signal, olderThan, cache, worktrees, delete: deleting }: StimGcMutationOptions = {}) => {
-      const invalid =
-        olderThan !== undefined && !Number.isSafeInteger(olderThan)
-          ? 'olderThan must be a whole number of days.'
-          : cache !== undefined && (typeof cache !== 'string' || !cache.trim())
-            ? 'cache must name a cache.'
-            : worktrees !== undefined && typeof worktrees !== 'boolean'
-              ? 'worktrees must be a boolean.'
-              : deleting !== undefined && typeof deleting !== 'boolean'
-                ? 'delete must be a boolean.'
-                : null;
-      if (invalid)
+    collectGarbage: ({ signal, pressure }: StimGcMutationOptions = {}) => {
+      if (pressure !== undefined && !GC_LEVELS.includes(pressure))
         return Promise.reject(
           new StimError({
             code: 'STIM_BAD_ARG',
-            message: invalid,
-            remedy: 'Pass olderThan as days, cache as a cache name, and worktrees and delete as booleans.',
+            message: 'pressure must be normal, high or critical.',
+            remedy: 'Pass pressure as normal, high or critical, or leave it out.',
           }),
         );
       const operation = beginReport('collectGarbage', signal);
-      const request = { olderThan, cache, worktrees, delete: deleting, json: true };
+      const request = { pressure, json: true };
       return lifecycle(operation, (context) =>
         withGcMaintenanceClaim(request, (claim) =>
           runReport(context, (bounded) =>
@@ -410,6 +422,53 @@ export function createLocalStim(options: StimOptions): StimClient {
                 if ('code' in payload) throw new StimError(payload);
                 return { report: payload, exitCode };
               });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          ),
+        ).catch((cause: unknown) => {
+          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+          const failure = claimFailure(cause, null);
+          if (failure) throw new StimError(failure, { cause });
+          throw cause;
+        }),
+      );
+    },
+    deleteGarbageItem: ({ signal, item }: StimGcItemOptions) => {
+      if (!validGcItem(item))
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: 'item names no cleanup item.',
+            remedy:
+              'Pass a cache dir, workspace-outputs, an archive id with an optional part, watchman or gradle-daemons.',
+          }),
+        );
+      const operation = beginReport('deleteGarbageItem', signal);
+      return lifecycle(operation, (context) =>
+        withGcMaintenanceClaim({}, (claim) =>
+          runReport(context, (bounded) =>
+            withAmbientContext(bounded, () => {
+              declareSpawnsOn(bounded, claim);
+              const task = deleteGcItem(item, bounded)
+                .then((result) => {
+                  if (result.refusal) throw new StimError(result.refusal);
+                  return { results: result.results, exitCode: result.failures ? (1 as const) : (0 as const) };
+                })
+                .finally(() => stopDeclaringSpawnsOn(bounded, claim));
               trackReportResource(
                 bounded,
                 task.then(

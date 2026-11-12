@@ -23,6 +23,9 @@ describe('the pressure ladder', () => {
       [4, 'high', ['disk']],
       [5, 'high', ['disk']],
       [6, 'high', ['disk']],
+      [7, 'high', ['disk']],
+      [8, 'high', ['disk']],
+      [9, 'high', ['disk']],
     ]);
     expect(runs(pressure('normal', 'high'))).toEqual([
       [0, 'high', ['memory']],
@@ -39,12 +42,15 @@ describe('the pressure ladder', () => {
       [4, 'high', ['disk']],
       [5, 'high', ['disk']],
       [6, 'critical', ['disk', 'memory']],
+      [7, 'high', ['disk']],
+      [8, 'high', ['disk']],
+      [9, 'high', ['disk']],
     ]);
   });
 
   test('normal pressure stops the ladder, and a rung that relieves no raised cause is skipped', () => {
     expect(rungsFrom().map(({ relieves }) => rungDecision(pressure('normal', 'normal'), relieves))).toEqual(
-      Array(7).fill('stop'),
+      Array(10).fill('stop'),
     );
     expect(rungDecision(pressure('critical', 'normal'), ['memory'])).toBe('skip');
   });

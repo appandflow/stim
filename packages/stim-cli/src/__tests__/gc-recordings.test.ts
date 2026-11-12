@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maintenanceRunClaims, workspaceRecordingsDir } from '@stim-cli/core/state';
@@ -7,6 +16,7 @@ import { createStim } from '../api.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -107,75 +117,77 @@ function liveWorkspace(name: string, segments: [number, number][]): { root: stri
 
 const now = Date.now();
 
-test('a plain gc lists recordings with their sizes, and deletes only those of a gone workspace', async () => {
-  const live = liveWorkspace('live', [
-    [now - 60_000, now - 30_000],
-    [now - 30_000, now],
-  ]);
-  const gone = join(projects, 'gone');
-  const goneDir = record(gone, [[now - 60_000, now]]);
+function tree(...roots: string[]): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const stat = statSync(path);
+      if (stat.isDirectory()) walk(path);
+      else out.push(`${path} ${stat.size}`);
+    }
+  };
+  for (const root of roots) walk(root);
+  return out.toSorted();
+}
 
-  const report = await gcJson({});
-  expect(report.sections.recordings).toEqual([
-    expect.objectContaining({
-      projectRoot: gone,
-      bytes: 1000,
-      deleteBytes: 1000,
-      willDelete: true,
-      withWorkspace: true,
-      reason: null,
-    }),
-    expect.objectContaining({
-      projectRoot: live.root,
-      bytes: 2000,
-      deleteBytes: 0,
-      willDelete: false,
-      withWorkspace: false,
-      reason: 'retained',
-    }),
-  ]);
-  expect(existsSync(goneDir)).toBe(true);
+function registeredCache(): string {
+  const dir = join(tmpHome, 'fixture-cache');
+  mkdirSync(join(dir, 'aa', 'entry'), { recursive: true });
+  writeFileSync(join(dir, 'aa', 'entry', 'blob'), 'x'.repeat(2000));
+  register({ dir, name: 'Fixture cache', prune: 'entries', entriesDepth: 2 });
+  return dir;
+}
 
-  await gcJson({ delete: true });
+test('a dry run at critical changes nothing; each level deletes only its own categories', async () => {
+  const live = liveWorkspace('live', [[now - 120_000, now - 60_000]]);
+  const goneDir = record(join(projects, 'gone'), [[now - 60_000, now]]);
+  const cache = registeredCache();
+  const before = tree(tmpHome, projects);
+
+  const dry = await gcJson({ dryRun: true, pressure: 'critical' });
+  expect(dry).toMatchObject({ mode: 'dry-run', level: 'critical', failures: null, results: [] });
+  const would = (dry.actions as { kind: string; target: string; outcome: string; rung: number | null }[]).filter(
+    (action) => action.outcome === 'would',
+  );
+  expect(would).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: 'remove-orphan', rung: null }),
+      expect.objectContaining({ kind: 'delete-recordings', rung: 8 }),
+      expect.objectContaining({ kind: 'empty-cache', target: cache, rung: 3 }),
+    ]),
+  );
+  expect(tree(tmpHome, projects)).toEqual(expect.arrayContaining(before));
+
+  await gcJson({ pressure: 'normal' });
   expect(existsSync(goneDir)).toBe(false);
-  expect(existsSync(join(live.dir, `${now - 30_000}-${now}.seg`))).toBe(true);
-});
-
-test('--cache recordings selects only the recordings, and --delete removes them whole', async () => {
-  const live = liveWorkspace('live', [[now - 60_000, now]]);
-
-  const report = await gcJson({ cache: 'recordings' });
-  expect(report.cacheScope).toBe('recordings');
-  expect(report.sections.caches).toEqual([]);
-  expect(report.sections.workspaceBuildOutputs).toEqual([]);
-  expect(report.sections.recordings).toEqual([
-    expect.objectContaining({ projectRoot: live.root, bytes: 1000, deleteBytes: 1000, willDelete: true }),
-  ]);
   expect(existsSync(live.dir)).toBe(true);
+  expect(existsSync(join(cache, 'aa', 'entry', 'blob'))).toBe(true);
 
-  const deleted = await gcJson({ cache: 'recordings', delete: true });
-  expect(deleted.results).toEqual([expect.objectContaining({ kind: 'recording', status: 'done', bytes: 1000 })]);
-  expect(existsSync(workspaceRecordingsDir(live.root))).toBe(false);
+  await gcJson({ pressure: 'high' });
+  expect(existsSync(live.dir)).toBe(true);
+  expect(existsSync(join(cache, 'aa', 'entry', 'blob'))).toBe(true);
+
+  const critical = await gcJson({ pressure: 'critical' });
+  expect(critical.failures).toBe(0);
+  expect(readdirSync(live.dir)).toEqual([]);
   expect(existsSync(join(workspaceRecordingsDir(live.root), '..', 'workspace.json'))).toBe(true);
+  expect(existsSync(join(cache, 'aa', 'entry', 'blob'))).toBe(false);
 });
 
-test('--older-than deletes only the footage recorded before it', async () => {
-  const live = liveWorkspace('live', [
-    [now - 10 * DAY_MS, now - 10 * DAY_MS + 60_000],
-    [now - 60_000, now],
-  ]);
+test('the critical run keeps the recordings of a workspace pinned with maintenance.keep', async () => {
+  const pinned = liveWorkspace('pinned', [[now - 120_000, now - 60_000]]);
+  const other = liveWorkspace('other', [[now - 120_000, now - 60_000]]);
+  writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
 
-  const report = await gcJson({ olderThan: 7 });
-  expect(report.sections.recordings).toEqual([
-    expect.objectContaining({ bytes: 2000, deleteBytes: 1000, willDelete: true }),
-  ]);
+  const critical = await gcJson({ pressure: 'critical' });
 
-  await gcJson({ olderThan: 7, delete: true });
-  expect(existsSync(join(live.dir, `${now - 10 * DAY_MS}-${now - 10 * DAY_MS + 60_000}.seg`))).toBe(false);
-  expect(existsSync(join(live.dir, `${now - 60_000}-${now}.seg`))).toBe(true);
+  expect(critical.failures).toBe(0);
+  expect(readdirSync(pinned.dir)).toHaveLength(1);
+  expect(readdirSync(other.dir)).toEqual([]);
 });
 
-test('public recording GC cancellation keeps later footage and releases admission', async () => {
+test('cancelling the critical run while it deletes recordings keeps later footage and releases admission', async () => {
   const live = liveWorkspace('live', [
     [now - 10 * DAY_MS, now - 10 * DAY_MS + 60_000],
     [now - 9 * DAY_MS, now - 9 * DAY_MS + 60_000],
@@ -191,9 +203,9 @@ test('public recording GC cancellation keeps later footage and releases admissio
     }
   };
   const client = createStim({ projectRoot: live.root, home: tmpHome, env: { ...process.env } });
-  await expect(
-    client.collectGarbage({ cache: 'recordings', olderThan: 7, delete: true, signal: controller.signal }),
-  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  await expect(client.collectGarbage({ pressure: 'critical', signal: controller.signal })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
   expect(removed).toHaveLength(1);
   expect(existsSync(join(live.dir, `${now - 9 * DAY_MS}-${now - 9 * DAY_MS + 60_000}.seg`))).toBe(true);
   expect(existsSync(open)).toBe(true);
@@ -202,20 +214,19 @@ test('public recording GC cancellation keeps later footage and releases admissio
   expect(admission.unresolved).toEqual([]);
 });
 
-test('keeps the recordings of a workspace whose project root cannot be proven gone', async () => {
+test('keeps the recordings of a workspace whose project root cannot be proven gone, even at critical', async () => {
   const unmounted =
     process.platform === 'win32'
       ? `Q:\\stim-test-unmounted-${process.pid}\\app`
       : join('/Volumes', `stim-test-unmounted-${process.pid}`, 'app');
   const dir = record(unmounted, [[now - 60_000, now]]);
 
-  const report = await gcJson({});
+  const report = await gcJson({ dryRun: true });
   expect(report.sections.recordings).toEqual([]);
   expect(report.sections.skipped).toEqual([
     expect.objectContaining({ detail: expect.stringContaining('is not mounted') }),
   ]);
 
-  await gcJson({ delete: true });
-  await gcJson({ cache: 'recordings', delete: true });
+  await gcJson({ pressure: 'critical' });
   expect(existsSync(dir)).toBe(true);
 });

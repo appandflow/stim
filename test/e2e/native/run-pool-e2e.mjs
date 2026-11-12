@@ -92,14 +92,10 @@ async function main() {
   assert(/ {2}device {6}parked stim-parked /.test(removed3), `the third remove did not park:\n${removed3}`);
   assertPoolSize(1);
 
-  banner('gc --delete empties the pool');
-  const gc = cli(['gc'], { allowFail: true });
-  assert(/^Parked simulators \(1/m.test(gc.stdout), `gc did not report the pool:\n${gc.stdout}`);
-  const deleted = cli(['gc', '--delete']);
-  assert(
-    /Deleted parked ios sim /.test(deleted.stdout),
-    `gc --delete did not delete the parked sim:\n${deleted.stdout}`,
-  );
+  banner('gc --pressure high empties the pool');
+  cli(['gc', '--dry-run', '--pressure', 'high']);
+  assertPoolSize(1);
+  cli(['gc', '--pressure', 'high']);
   assertPoolSize(0);
 
   await verifyCleanup({ h, cleanup, appDir, created });
@@ -156,7 +152,7 @@ function cleanupAfterFailure() {
     sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true });
     cli(['worktree', 'remove', path, '--force'], { allowFail: true });
   }
-  cli(['gc', '--delete'], { allowFail: true });
+  cli(['gc', '--pressure', 'normal'], { allowFail: true });
 }
 
 function parseArgs(argv) {

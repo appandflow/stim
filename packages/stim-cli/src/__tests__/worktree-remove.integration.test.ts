@@ -1882,11 +1882,12 @@ test('action: removal releases this workspace lease and leaves another workspace
 
 const PARKING_PRESSURE: [number, boolean][] = [
   [100, false],
+  [30, false],
   [10, true],
 ];
 
 test.each(PARKING_PRESSURE)(
-  'action: with %i GB free and parking enabled, removal parks the owned simulator unless disk pressure is high',
+  'action: with %i GB free and parking enabled, removal parks the owned simulator unless disk pressure is critical',
   async (freeGb, deletes) => {
     vi.stubEnv('STIM_POOL_IOS_PARKED_MAX', '3');
     const disk = [{ volume: '/', freeMb: freeGb * 1024 }];
@@ -1913,7 +1914,7 @@ test.each(PARKING_PRESSURE)(
     }
 
     const output = errs.join('\n');
-    expect(output.includes('disk pressure high: deleted the owned devices instead of parking them')).toBe(deletes);
+    expect(output.includes('disk pressure critical: deleted the owned devices instead of parking them')).toBe(deletes);
     expect(/could not park|parked stim/.test(output)).toBe(!deletes);
     expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
   },

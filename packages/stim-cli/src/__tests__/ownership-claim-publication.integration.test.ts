@@ -113,20 +113,23 @@ test('gc reports a read-only build lock and still clears a later build slot', as
   mkdirSync(blocked, { recursive: true });
   mkdirSync(writable, { recursive: true });
   faults.readOnly = blocked;
-  const lines: string[] = [];
-  const log = vi.spyOn(console, 'log').mockImplementation((line) => lines.push(String(line)));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     setExecutor(makeExecutor());
-    await runGc({ delete: true }, { findProjectRoot: () => null });
+    await runGc({ pressure: 'normal', json: true });
+    const payload = JSON.parse(String(log.mock.lastCall?.[0]));
     expect(existsSync(blocked)).toBe(true);
     expect(existsSync(writable)).toBe(false);
-    expect(lines.join('\n')).toContain(`Failed to clear the build lock at ${blocked}: EROFS`);
-    expect(lines.join('\n')).toContain('Cleared build slot 0');
-    expect(lines.join('\n')).toContain('1 entry could not be deleted');
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'forget-stale-records', outcome: 'failed' }),
+    );
+    expect(payload.failures).toBe(1);
     expect(process.exitCode).toBe(1);
   } finally {
     resetExecutor();
     log.mockRestore();
+    error.mockRestore();
   }
 });
 

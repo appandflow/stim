@@ -8,6 +8,10 @@ import { decodeSecret, newSecret } from '@stim-cli/core/noise-session';
 import { stimBuildId, type Endpoint, type MachineCredential } from '@stim-cli/core/state';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { readBuildClients, revokeDevice, storeSetupSecret } from '../src/registry.ts';
+
+// The engine store installs the packed build's dependencies from the registry; a cache that survives runs keeps that
+// fast without naming the developer's own ~/.npm.
+const NPM_TEST_CACHE = fileURLToPath(new URL('../../../node_modules/.cache/stim-test-npm', import.meta.url));
 import { BuildConnection } from '../../stim-cli/src/offload/client.ts';
 import { reachMachine, realIo } from '../../stim-cli/src/offload/tailnet.ts';
 import { removeTree } from '../../stim-cli/src/engine-store/tree.ts';
@@ -43,7 +47,7 @@ async function paired(attached = false): Promise<{ endpoint: Endpoint; credentia
     attached,
     stimVersion: version,
     serverVersion: version,
-    env: { ...process.env, npm_config_offline: 'false' },
+    env: { ...process.env, npm_config_offline: 'false', npm_config_cache: NPM_TEST_CACHE },
     tailscale: null,
     tailscaleState: { state: 'not-running', backendState: 'Stopped' },
     statusAtBoot: false,

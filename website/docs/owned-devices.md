@@ -317,11 +317,11 @@ at least a quarter of physical memory and at least 8 GiB, or 2 GiB for
 For a process that is safe to restart, Stim prints the command. It never runs
 the command itself.
 
-| Process                 | Command                                   | Effect                                         |
-| ----------------------- | ----------------------------------------- | ---------------------------------------------- |
-| `fseventsd`             | `sudo killall fseventsd`                  | launchd restarts it; file watchers rescan once |
-| Watchman                | `stim gc --delete --cache watchman`       | stops it once no workspace uses it             |
-| Gradle or Kotlin daemon | `stim gc --delete --cache gradle-daemons` | stops idle daemons; the next build starts one  |
+| Process                 | Command                   | Effect                                         |
+| ----------------------- | ------------------------- | ---------------------------------------------- |
+| `fseventsd`             | `sudo killall fseventsd`  | launchd restarts it; file watchers rescan once |
+| Watchman                | `stim gc --pressure high` | stops it once no workspace uses it             |
+| Gradle or Kotlin daemon | `stim gc --pressure high` | stops idle daemons; the next build starts one  |
 
 Any other abnormal process is named with its size only; ask before quitting it.
 Boot does not wait for the `top` read: the pressure message prints at once and the
@@ -515,15 +515,15 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-| Action                            | What happens                                                                                        |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `stim stop`                       | Stops this workspace and releases leases. It keeps its owned device assignments for later.          |
-| `stim worktree remove`            | Reclaims the workspace and parks eligible owned devices for reuse.                                  |
-| `stim gc`                         | Previews cleanup and shows disk use.                                                                |
-| `stim gc --delete`                | Removes verified stale resources and can delete parked devices. It also runs disk-pressure cleanup. |
-| `stim gc --cache parked --delete` | Erases parked device data and keeps the devices in the pool.                                        |
+| Action                        | What happens                                                                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stim stop`                   | Stops this workspace and releases leases. It keeps its owned device assignments for later.                                                                                   |
+| `stim worktree remove`        | Reclaims the workspace and parks eligible owned devices for reuse, unless disk pressure is critical.                                                                         |
+| `stim gc --dry-run`           | Previews what `stim gc` would delete and shows disk use. It deletes nothing.                                                                                                 |
+| `stim gc`                     | Removes verified stale resources, the owned devices of workspaces idle for `idle.dormantDays` and unused simulator runtimes, and at high or critical deletes parked devices. |
+| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                                                                    |
 
-Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. Disk pressure can shorten its lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (three days by default). Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
+Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. `stim worktree remove` parks devices unless disk pressure is critical, and disk pressure can shorten a parked device's lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (one day by default). Simulator runtimes are not Stim-owned, but `stim gc` deletes an unused one with `xcrun simctl runtime delete <identifier>` at every level, only when simctl marks the image deletable and no simulator on the machine, user-created ones included, uses it. It keeps the only installed runtime, the newest when none is used, a runtime a project's `ios.runtime` pins, every runtime with the major version of the active Xcode's simulator SDK, and every runtime used within `maintenance.olderThanDays` or with no use recorded by simctl. If the SDK version, a registered project's path or its `.stim.json` cannot be read, it deletes no runtime and reports why. It deletes an owned simulator whose runtime is gone through teardown only when no registered workspace records it, never touches a user-created unavailable simulator, and never runs `simctl delete unavailable`. Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
 
 If teardown fails, Stim keeps the ownership record for a retry. For pool settings, reuse rules and recovery, run the version-matched guide.
 

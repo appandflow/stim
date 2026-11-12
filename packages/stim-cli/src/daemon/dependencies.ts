@@ -21,7 +21,7 @@ import { dormantAfterMs, idleStageCandidates, stillIdle, type DeviceReading, typ
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
  * A copy-on-write clone from `worktree warm` shares nearly all its blocks; a reinstalled React Native tree holds 1 to 2
- * GB of its own. 256 MB is about 4% of the 6 GB critical free-disk floor (`disk.criticalFreeGb`).
+ * GB of its own. 256 MB is about 1% of the 20 GB critical free-disk floor (`disk.criticalFreeGb`).
  */
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
@@ -117,7 +117,10 @@ export async function rankDependencies(
     .map(({ dependency }) => dependency);
 }
 
-/** Deletes one dependency tree under its workspace's claim once the workspace is still idle `idleMs`, recording the restore. */
+/**
+ * Deletes one dependency tree under its workspace's claim once the workspace is still idle `idleMs`, recording the
+ * restore. `requireRestorable` keeps a tree `stim worktree warm` could not put back with the same versions.
+ */
 export async function clearDependency(
   dependency: RankedDependency,
   idleMs: number,
@@ -125,6 +128,7 @@ export async function clearDependency(
   worktrees: readonly ArtifactWorktree[],
   reason: string,
   operation?: StimContext,
+  requireRestorable = true,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
@@ -141,7 +145,7 @@ export async function clearDependency(
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
-        requireRestorable: true,
+        requireRestorable,
         recheck: async (key) => ((await stillIdle(key, idleMs, operation)) ? null : 'it is no longer idle'),
         operation,
       },
@@ -156,30 +160,38 @@ export async function clearDependency(
 let dormantCheckedAt = -Infinity;
 
 /**
- * The dormant stage's dependency step, at most hourly: the node_modules and Pods of workspaces idle
- * `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD, most first, each recorded for `stim worktree
- * warm`. Clones below it and trees of unknown size stay.
+ * The dormant stage's dependency step, at most hourly unless `force`: the node_modules and Pods of linked worktrees
+ * idle `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD or are not measured yet, most first, each
+ * recorded so the next Stim command restores it. A tree is taken even when `stim worktree warm` could not put the
+ * same versions back, since a reinstall does; copy-on-write clones below the threshold stay.
  */
 export async function runDormantDependencies(
-  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading,
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean },
 ): Promise<DaemonLadderAction[]> {
   const { config } = input;
   const afterMs = dormantAfterMs(config);
-  if (!config || afterMs <= 0 || Date.now() - dormantCheckedAt < HOUR_MS) return [];
+  if (!config || afterMs <= 0 || (!input.force && Date.now() - dormantCheckedAt < HOUR_MS)) return [];
   dormantCheckedAt = Date.now();
   const idle = await idleStageCandidates(config, input, afterMs);
   if (!idle.length) return [];
   const { operation } = input;
-  const { take } = selectDependencies(await rankDependencies(idle, '', operation), 'keep');
+  const { take } = selectDependencies(await rankDependencies(idle, input.protectedRoot ?? '', operation), 'take');
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `idle.dormantDays is ${afterMs / (24 * HOUR_MS)}`;
   const actions: DaemonLadderAction[] = [];
   for (const dependency of take) {
     const target = dependency.candidate.path;
-    const reason = `${why}; ${formatBytes(dependency.privateBytes ?? 0)} of it is its own`;
+    const reason =
+      dependency.privateBytes === null
+        ? `${why}; its real size is unknown`
+        : `${why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
     const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
-      ? await clearDependency(dependency, afterMs, '', worktrees, reason, operation)
-      : { status: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
+      ? await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
+      : {
+          status: 'would',
+          bytes: dependency.privateBytes ?? 0,
+          detail: input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing',
+        };
     const restore = result.status === 'done' ? { restore: RESTORE } : {};
     actions.push({
       rung: 4,

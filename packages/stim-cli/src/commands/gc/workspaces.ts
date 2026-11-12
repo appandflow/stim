@@ -328,7 +328,7 @@ export async function collectOrphanedWorkspaces(
   return { orphaned, skipped: classified.skipped };
 }
 
-export const REBUILD_COST: string =
+const REBUILD_COST: string =
   'The next build of an unchanged app installs from the shared build cache; after a native change the ' +
   'compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules ' +
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
@@ -362,7 +362,7 @@ async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<stri
   return dirs;
 }
 
-export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
+const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
   'gradle-build',
   'android-cas',
@@ -436,7 +436,7 @@ export function planWorkspaceOutputs(
                 : idleDays === null
                   ? ['last-use-unknown', 'its last use is unknown']
                   : idleDays < olderThan
-                    ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
+                    ? ['recently-used', `used ${idleDays}d ago, within ${olderThan} days`]
                     : [null, null];
     return { dir, projectRoot, inTreeDirs, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
   });
@@ -499,7 +499,7 @@ interface WorkspaceOutputsOptions {
   signal?: AbortSignal;
   operation?: StimContext;
   /**
-   * Lighten workspaces for `gc --delete`: include the project's in-tree build directories, keep only a workspace
+   * Lighten workspaces for `stim gc`: include the project's in-tree build directories, keep only a workspace
    * that is building or ran a native command within LIGHTEN_AFTER_MS, and ignore its dev server and devices.
    */
   lighten?: boolean;
@@ -808,6 +808,6 @@ export async function deleteOrphanedWorkspaces(
   return failures;
 }
 
-export function sizeText(bytes: number | null): string {
+function sizeText(bytes: number | null): string {
   return bytes === null ? 'size unknown' : formatBytes(bytes);
 }

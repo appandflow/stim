@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { discoverCaches, pruneCache } from '../cache/caches.ts';
-import { emptyCaches, trimCaches } from '../commands/gc/caches.ts';
+import { emptyCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import assert from 'node:assert';
@@ -58,52 +58,44 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-test.each(['trimming', 'emptying'] as const)(
-  'cache %s yields during directory measurement and cancellation preserves the entry',
-  async (action) => {
-    const dir = join(tmpHome, 'slow-cache');
-    const entry = join(dir, 'entry');
-    mkdirSync(entry, { recursive: true });
-    writeFileSync(join(entry, 'artifact'), 'cached bytes');
-    age(entry);
-    const abort = new AbortController();
-    let measuring!: () => void;
-    const measurement = new Promise<void>((resolve) => {
-      measuring = resolve;
-    });
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFileAsync: async (file, args, options) => {
-        if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
-        measuring();
-        return new Promise<string>((_resolve, reject) => {
-          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
-        });
-      },
-    });
-    const output = {
-      log: () => {},
-      error: () => {},
-      record: () => {},
-      fail: () => {},
-    };
-    const cache = makeCacheDescriptor({ dir, prune: 'entries' });
-    const trimming =
-      action === 'trimming'
-        ? trimCaches([cache], 30, output, abort.signal)
-        : emptyCaches([{ ...cache, willEmpty: true }], output, abort.signal);
-    const outcome = trimming.catch((error: unknown) => error);
-    expect(await Promise.race([measurement.then(() => 'measuring'), trimming.then(() => 'finished')])).toBe(
-      'measuring',
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(existsSync(entry)).toBe(true);
-    abort.abort(new Error('cancel cache trimming'));
-    expect(await outcome).toMatchObject({ message: 'cancel cache trimming' });
-    expect(existsSync(join(entry, 'artifact'))).toBe(true);
-  },
-);
+test('cache emptying yields during directory measurement and cancellation preserves the entry', async () => {
+  const dir = join(tmpHome, 'slow-cache');
+  const entry = join(dir, 'entry');
+  mkdirSync(entry, { recursive: true });
+  writeFileSync(join(entry, 'artifact'), 'cached bytes');
+  age(entry);
+  const abort = new AbortController();
+  let measuring!: () => void;
+  const measurement = new Promise<void>((resolve) => {
+    measuring = resolve;
+  });
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
+      measuring();
+      return new Promise<string>((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+      });
+    },
+  });
+  const output = {
+    log: () => {},
+    error: () => {},
+    record: () => {},
+    fail: () => {},
+  };
+  const cache = makeCacheDescriptor({ dir, prune: 'entries' });
+  const trimming = emptyCaches([{ ...cache, willEmpty: true }], output, abort.signal);
+  const outcome = trimming.catch((error: unknown) => error);
+  expect(await Promise.race([measurement.then(() => 'measuring'), trimming.then(() => 'finished')])).toBe('measuring');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(existsSync(entry)).toBe(true);
+  abort.abort(new Error('cancel cache trimming'));
+  expect(await outcome).toMatchObject({ message: 'cancel cache trimming' });
+  expect(existsSync(join(entry, 'artifact'))).toBe(true);
+});
 
 test('a registration cannot make the shared Gradle build cache deletable', () => {
   const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-registered-'));
@@ -118,7 +110,11 @@ test('a registration cannot make the shared Gradle build cache deletable', () =>
   try {
     process.env.GRADLE_USER_HOME = gradleHome;
     register({ dir: alias, name: 'Registered Gradle cache', prune: 'entries' });
-    register({ dir: buildCache, name: 'Duplicate real Gradle cache', prune: 'atomic' });
+    register({
+      dir: buildCache,
+      name: 'Duplicate real Gradle cache',
+      prune: 'atomic',
+    });
     const caches = discoverCaches();
     const found = caches.find((c) => realpathSync(c.dir) === realpathSync(buildCache));
     assert(found);
@@ -186,7 +182,12 @@ test.each(['read', 'remove'] as const)(
           await gate;
         }
       };
-    const output = { log: () => {}, error: () => {}, record: () => {}, fail: () => {} };
+    const output = {
+      log: () => {},
+      error: () => {},
+      record: () => {},
+      fail: () => {},
+    };
     const pending = Promise.resolve(
       emptyCaches([{ ...makeCacheDescriptor({ dir, prune: 'atomic' }), willEmpty: true }], output, controller.signal),
     );

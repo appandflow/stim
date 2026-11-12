@@ -105,7 +105,7 @@ Created, all named with the run id (`rme<4 hex>`):
 Every stim command runs with `STIM_HOME` set to the private home, with all other `STIM_*` variables and `CI` removed
 from the environment, so no command reads or writes a real `~/.stim`. The harness refuses a `--home-dir`, `--work-dir` or
 `--out` inside `~/.stim` (checked on the real paths, so a symlink into it is refused too), and any `--env` value that is
-a path inside it. It never runs `stim gc --delete`. A run id that collides with an existing home is replaced by a new
+a path inside it. It never runs `stim gc`. A run id that collides with an existing home is replaced by a new
 one, and the private home is created without adopting an existing directory.
 
 Teardown runs on success, failure and SIGINT, SIGTERM or SIGHUP, and removes only what the run created. It does not

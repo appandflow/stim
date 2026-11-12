@@ -215,7 +215,7 @@ test('cancellation after history moves publishes it and skips retention', async 
   expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
 });
 
-test('public archive GC cancellation stops after the completed deletion and releases admission', async () => {
+test('public archive item cancellation keeps the completed deletion and releases admission', async () => {
   fixture('first', Date.now(), { logs: 5 });
   fixture('later', Date.now() - DAY, { logs: 5 });
   const controller = new AbortController();
@@ -228,7 +228,7 @@ test('public archive GC cancellation stops after the completed deletion and rele
   };
   const client = createStim({ projectRoot: root, home, env: { ...process.env } });
   await expect(
-    client.collectGarbage({ cache: 'archived', delete: true, signal: controller.signal }),
+    client.deleteGarbageItem({ item: { kind: 'archive', id: 'first' }, signal: controller.signal }),
   ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
   expect(moved).toHaveLength(1);
   expect(readArchives().map((entry) => entry.id)).toEqual(['later']);

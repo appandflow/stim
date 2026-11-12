@@ -176,7 +176,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   `node_modules`, other simulators and AVDs, and runtimes and system images. A
   figure marked ≥ has parts the machine has not sized; the phone does not size
   AVDs or system images itself, as Stim Desktop does. Then come **Safe to
-  free now** (what `stim gc --delete` would free, with the command on the machine
+  free now** (what `stim gc` would free, with the command on the machine
   that frees each row), **Projects** (repositories and their worktrees, with each
   worktree's `node_modules` (for a linked worktree, what removing it frees with the
   part shared with other folders noted; a primary checkout, all of it), devices, build outputs and logs, and whether it is

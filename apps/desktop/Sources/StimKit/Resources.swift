@@ -284,14 +284,14 @@ public struct MachineCpuTicks: Equatable, Sendable {
   }
 }
 
-/// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
+/// The parts of the `stim gc --dry-run --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Equatable, Sendable {
   /// Whether a finished `command` can change what `stim gc --json` reports: a cleanup, a run, start or stop,
   /// a worktree, port, device lease or setting change. A reload or a read-only command cannot.
   public static func changed(by command: StimCommand) -> Bool {
     guard command.program == "stim", let verb = command.arguments.first else { return false }
     switch verb {
-    case "gc": return command.arguments.contains("--delete")
+    case "gc": return !command.arguments.contains("--dry-run")
     case "stop", "start", "ios", "android", "web", "worktree", "device": return true
     case "ports": return ["release", "stop"].contains(command.arguments.dropFirst().first)
     case "settings": return ["set", "unset"].contains(command.arguments.dropFirst().first)
@@ -364,7 +364,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var detail: String?
   }
 
-  /// A workspace's `logs/`. `trimBytes` is what `stim gc --delete` would cut from logs over twice the rotation
+  /// A workspace's `logs/`. `trimBytes` is what `stim gc` would cut from logs over twice the rotation
   /// cap; `detail` says why it keeps them when `willTrim` is false.
   public struct WorkspaceLogs: Decodable, Hashable, Sendable {
     public var projectRoot: String?
@@ -380,24 +380,12 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var bytes: Int64?
     public var note: String?
     public var willEmpty: Bool?
-    /// What `stim gc --delete --cache <selector>` would do to this cache, reported by an unscoped `stim gc --json`.
-    /// Nil from a run scoped by `--cache`.
+    /// What emptying this cache alone would do, reported by `stim gc --dry-run --json`.
     public var scopedEmpty: ScopedEmpty?
 
     public struct ScopedEmpty: Decodable, Hashable, Sendable {
       public var willEmpty: Bool
       public var emptySkipped: String?
-    }
-
-    /// The `stim gc --cache` argument that selects this cache alone: its name, else its directory, or nil
-    /// when neither does. The CLI matches the argument as a case-insensitive substring of every cache's name
-    /// and directory, and reserves `all` and `workspaces`.
-    public func selector(among caches: [Cache]) -> String? {
-      [name, dir].first { candidate in
-        let wanted = candidate.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !wanted.isEmpty, wanted != "all", wanted != "workspaces" else { return false }
-        return caches.filter { $0.name.lowercased().contains(wanted) || $0.dir.lowercased().contains(wanted) }.count == 1
-      }
     }
 
     /// The cache's name, followed by its directory's last component when another cache has the same name.
@@ -480,14 +468,14 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var agentDevice: AgentDeviceUsage?
     public var swiftpmCache: SwiftpmCacheUsage?
     public var caches: [Cache]?
-    /// Watchman and Gradle/Kotlin daemon processes; empty under a `--cache` scope other than watchman or gradle-daemons.
+    /// Watchman and Gradle/Kotlin daemon processes.
     public var memory: [MemoryProcess]?
     public var watchmanRoots: [WatchmanRoot]?
     public var memoryNotices: [MemoryNotice]?
   }
 
   public var sections: Sections
-  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run without `--cache`.
+  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run.
   public var inventory: Inventory?
 
   public struct Inventory: Decodable, Equatable, Sendable {
@@ -544,23 +532,23 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var unsized: Int
   }
 
-  /// Owned devices `stim gc --delete` deletes.
+  /// Owned devices `stim gc` deletes.
   public var deletableDevices: [Device] {
     let s = sections
     return [s.parkedSimulators, s.parkedEmulators, s.orphanedDevices, s.staleDevices].flatMap { $0 ?? [] }
   }
 
-  /// Build outputs `stim gc --delete` clears because their workspace is not in use.
+  /// Build outputs `stim gc` clears because their workspace is not in use.
   public var clearableOutputs: [BuildOutputs] {
     (sections.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
   }
 
-  /// Workspace logs `stim gc --delete` trims.
+  /// Workspace logs `stim gc` trims.
   public var trimmableLogs: [WorkspaceLogs] {
     (sections.workspaceLogs ?? []).filter(\.willTrim)
   }
 
-  /// Linked worktrees `stim gc --delete` removes because their branch or pull request is merged, or their pull
+  /// Linked worktrees `stim gc` removes because their branch or pull request is merged, or their pull
   /// request was closed.
   public var mergedWorktrees: [LinkedWorktree] {
     (sections.linkedWorktrees ?? []).filter {

@@ -70,6 +70,7 @@ export function facadeClient(
     plan: op('plan'),
     gc: op('gc'),
     collectGarbage: op('collectGarbage'),
+    deleteGarbageItem: op('deleteGarbageItem'),
     warmWorktree: op('warmWorktree'),
     removeWorktree: op('removeWorktree'),
     build: op('build'),

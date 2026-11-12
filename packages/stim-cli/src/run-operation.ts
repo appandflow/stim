@@ -21,6 +21,7 @@ const API_COMMANDS: Partial<Record<ApiOperation, string>> = {
   start: 'start',
   gc: 'gc',
   collectGarbage: 'gc',
+  deleteGarbageItem: 'gc',
 };
 
 const PLATFORM_COMMANDS = ['ios', 'android', 'macos', 'web'];

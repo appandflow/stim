@@ -109,20 +109,6 @@ export async function collectTrash({
   return entries.length ? { root, entries } : null;
 }
 
-export function trashLines(report: TrashReport | null | undefined): string[] {
-  if (!report) return [];
-  const total = report.entries.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
-  const lines = [`Worktree trash (${formatBytes(total)} in ${report.entries.length}) - ${report.root}:`];
-  for (const entry of report.entries) {
-    const from = entry.worktree ? ` from ${entry.worktree}` : '';
-    lines.push(
-      `  ${(entry.bytes === null ? 'deleting' : formatBytes(entry.bytes)).padStart(10)}  ${entry.path}${from}`,
-    );
-    lines.push(entry.kept ? `              kept: ${entry.kept}` : '              --delete would DELETE it');
-  }
-  return lines;
-}
-
 /** Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim. */
 export async function deleteTrash(
   operation: StimContext | undefined,

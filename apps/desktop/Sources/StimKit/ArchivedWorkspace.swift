@@ -4,15 +4,6 @@ import Foundation
 public enum RetainedKind: String, CaseIterable, Sendable {
   case logs, recordings, agentActions
 
-  /// The `stim gc --cache` selector name for the kind, which takes `:<id>` for one archive.
-  public var selector: String {
-    switch self {
-    case .logs: return "archived-logs"
-    case .recordings: return "archived-recordings"
-    case .agentActions: return "archived-agent"
-    }
-  }
-
   public var noun: String {
     switch self {
     case .logs: return "logs"
@@ -131,11 +122,11 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   }
 
   public func clearCommand(_ kind: RetainedKind, cwd: String) -> StimCommand {
-    StimCommand(["gc", "--delete", "--cache", "\(kind.selector):\(id)"], cwd: cwd)
+    GcItem.archive(id: id, part: kind).command(cwd: cwd)
   }
 
   public func deleteCommand(cwd: String) -> StimCommand {
-    StimCommand(["gc", "--delete", "--cache", "archived:\(id)"], cwd: cwd)
+    GcItem.archive(id: id, part: nil).command(cwd: cwd)
   }
 }
 

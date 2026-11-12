@@ -106,7 +106,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** commander 15.0.0's outcome for each row, recorded at 7a95812da by declaring each op through commander's own API. */
+/**
+ * commander 15.0.0's outcome for each row, recorded at 7a95812da by declaring each op through commander's own API; the gc
+ * rows are recorded from defineOp since gc's options changed in 2.0.
+ */
 const recorded: Record<string, Outcome> = JSON.parse(
   readFileSync(new URL('fixtures/cli-parity.json', import.meta.url), 'utf8'),
 );
@@ -191,14 +194,13 @@ test.each(
     ['doctor', 'extra'],
     ['doctor', '--', '--json'],
     ['gc'],
-    ['gc', '--json', '--delete', '--cache', 'workspaces'],
-    ['gc', '--delete', '--cache', 'archived:x'],
-    ['gc', '--older-than', '30', '--worktrees', '--json'],
-    ['gc', '--older-than', 'lastweek'],
-    ['gc', '--older-than=-5'],
-    ['gc', '--cache', '  '],
-    ['gc', '--cache'],
-    ['gc', '--delet'],
+    ['gc', '--dry-run', '--pressure', 'critical', '--json'],
+    ['gc', '--pressure', 'max'],
+    ['gc', '--pressure'],
+    ['gc', '--delete'],
+    ['gc', '--cache', 'workspaces'],
+    ['gc', '--older-than', '30'],
+    ['gc', '--worktrees'],
     ['device'],
     ['device', 'help'],
     ['device', 'help', 'push'],

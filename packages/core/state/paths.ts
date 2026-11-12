@@ -66,7 +66,7 @@ export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
-/** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
+/** The dependency directories `stim gc` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
 export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
 }
@@ -223,6 +223,11 @@ export function gcLogDir(): string {
 
 export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
+}
+
+/** The full plain-text report of the last `stim gc` run in plain mode, which prints only a summary. */
+export function gcReportFile(): string {
+  return join(gcLogDir(), 'last-report.txt');
 }
 
 export function buildLedgerDir(): string {

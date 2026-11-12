@@ -17,7 +17,7 @@ import { treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
@@ -146,7 +146,7 @@ async function gcJson() {
   const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    await runGc({ json: true });
+    await runGc({ dryRun: true, pressure: 'critical', json: true });
   } finally {
     log.mockRestore();
     error.mockRestore();
@@ -165,18 +165,16 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
   return lines.join('\n');
 }
 
-type LadderPayload = {
-  ladder: { levels: { level: string; actions: { rung: number; kind: string; target: string; outcome: string }[] }[] };
+type LevelPayload = {
+  actions: { rung: number | null; kind: string; target: string; outcome: string }[];
 };
 
-function criticalDependencies(payload: LadderPayload): string[] {
-  return (payload.ladder.levels.find((level) => level.level === 'critical')?.actions ?? []).flatMap((action) =>
-    action.kind === 'delete-dependencies' ? [action.target] : [],
-  );
+function criticalDependencies(payload: LevelPayload): string[] {
+  return payload.actions.flatMap((action) => (action.kind === 'delete-dependencies' ? [action.target] : []));
 }
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete --cache all never deletes the dependencies of a git-locked worktree',
+  'gc at critical never deletes the dependencies of a git-locked worktree',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
@@ -185,7 +183,7 @@ test.skipIf(process.platform === 'win32')(
     execSync(`git worktree lock --reason rollback "${roots.rollback}"`, { cwd: roots.repo, timeout: 15_000 });
 
     const { payload } = await gcJson();
-    await quietly(() => runGc({ delete: true, cache: 'all' }));
+    await quietly(() => runGc({ pressure: 'critical' }));
 
     expect(criticalDependencies(payload)).toContain(join(roots.feature!, 'node_modules'));
     expect(criticalDependencies(payload).filter((path) => path.startsWith(`${roots.rollback}/`))).toEqual([]);
@@ -197,7 +195,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete runs the ladder at high, which keeps dependencies, and --cache all deletes only those of an idle linked worktree that warm can restore and nothing runs in',
+  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical deletes only those of an idle linked worktree that warm can restore and nothing runs in',
   async () => {
     const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const roots = idleRepo([
@@ -214,13 +212,13 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
     const child = spawn('sleep', ['60'], { cwd: roots.busy, stdio: 'ignore' });
     try {
-      const { payload }: { payload: LadderPayload } = await gcJson();
-      const critical = payload.ladder.levels.find((level) => level.level === 'critical')?.actions;
-      expect(critical?.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
-      expect(critical?.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
-      await quietly(() => runGc({ delete: true }));
+      const { payload }: { payload: LevelPayload } = await gcJson();
+      const critical = payload.actions.filter((action) => action.kind === 'delete-dependencies');
+      expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
+      expect(critical.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
+      await quietly(() => runGc({ pressure: 'normal' }));
       expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
-      await quietly(() => runGc({ delete: true, cache: 'all' }));
+      await quietly(() => runGc({ pressure: 'critical' }));
     } finally {
       child.kill('SIGKILL');
       scope.mockRestore();
@@ -231,6 +229,37 @@ test.skipIf(process.platform === 'win32')(
     for (const name of ['repo', 'busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc at normal reduces a linked worktree idle idle.dormantDays even when warm cannot restore it, and keeps the source checkout, a pinned one and one a process runs in',
+  async () => {
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'drifted', workspace: true },
+      { name: 'busy', workspace: true },
+      { name: 'pinned', workspace: true },
+    ]);
+    const at = (name: string): string => roots[name] ?? '';
+    saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
+    writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
+    writeFileSync(join(at('pinned'), '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    const child = spawn('sleep', ['60'], { cwd: at('busy'), stdio: 'ignore' });
+    try {
+      await quietly(() => runGc({ dryRun: true, pressure: 'normal' }));
+      expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      await quietly(() => runGc({ pressure: 'normal' }));
+    } finally {
+      child.kill('SIGKILL');
+    }
+    for (const name of ['feature', 'drifted']) {
+      expect(existsSync(join(at(name), 'node_modules'))).toBe(false);
+      expect(recordedDirs(at(name))).toContain(join(at(name), 'node_modules'));
+    }
+    for (const name of ['repo', 'busy', 'pinned'])
+      expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
   },
   60_000,
 );

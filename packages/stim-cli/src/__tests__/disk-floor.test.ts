@@ -92,7 +92,7 @@ describe('with no daemon holding the home, as on Windows', () => {
       refusal: { code: 'STIM_LOW_DISK' },
     });
     expect(tick).toHaveBeenCalledOnce();
-    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ dormantDays: 3 });
+    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ dormantDays: 1 });
     const rungs = readFileSync(daemonNdjsonFile(), 'utf8')
       .trim()
       .split('\n')
@@ -118,7 +118,7 @@ describe('with no daemon holding the home, as on Windows', () => {
     vi.spyOn(client, 'requestDaemonTick').mockResolvedValue(false);
     await runLadderNow({ ...process.env, STIM_DAEMON: 'on', HOME: home, USERPROFILE: home }, undefined, root);
     expect(readDormantStage(readWorkspaceState(root))).toBeNull();
-    expect(readDormantStage(readWorkspaceState(other))).toMatchObject({ dormantDays: 3 });
+    expect(readDormantStage(readWorkspaceState(other))).toMatchObject({ dormantDays: 1 });
   });
 
   test('a command that creates running state records its use before any pass runs', async () => {

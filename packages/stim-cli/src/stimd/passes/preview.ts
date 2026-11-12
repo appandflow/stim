@@ -1,17 +1,10 @@
 import { join } from 'node:path';
 import { configDir, type StimContext } from '@stim-cli/core';
-import {
-  loadConfig,
-  readMaintenanceState,
-  type MaintenancePlanPart,
-  type MaintenancePressure,
-  type MaintenanceSize,
-  type MaintenanceMode,
-} from '@stim-cli/core/state';
+import { loadConfig, type MaintenancePlanPart, type MaintenanceSize } from '@stim-cli/core/state';
 import { findProjectRoot } from '../../workspace/project.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../../commands/gc/workspaces.ts';
-import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
+import { cacheBlocked } from './measure.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
 import { candidateRootsAsync, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import { listWorktreesAsync } from '../../workspace/worktree.ts';
@@ -20,7 +13,7 @@ import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.
 import { planSweep, planWorktrees } from './sweep.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
-import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
+import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
 
@@ -170,7 +163,16 @@ export async function plannedMaintenance(
   if (sweep)
     merge(
       'sweep',
-      await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, operation }),
+      await planSweep({
+        settings,
+        sizes,
+        protectedRoot: root,
+        pinned,
+        now: Date.now(),
+        devices,
+        background,
+        operation,
+      }),
     );
   if (worktrees) {
     const planned = await planWorktrees({
@@ -190,71 +192,4 @@ export async function plannedMaintenance(
   }
   if (idle && devices) merge('idle', await idleStops());
   return result;
-}
-
-export interface MaintenancePreview extends MaintenancePlan {
-  mode: MaintenanceMode;
-  invalid?: string;
-  pressure: MaintenancePressure | null;
-  note: string | null;
-}
-
-export async function previewMaintenance({
-  devices = true,
-  refresh = true,
-  operation,
-}: { devices?: boolean; refresh?: boolean; operation?: StimContext } = {}): Promise<MaintenancePreview> {
-  let settings: MaintenanceSettings | undefined;
-  try {
-    settings = resolveMaintenanceSettings(undefined, operation?.env ?? process.env);
-    const state = readMaintenanceState();
-    if (settings.invalid && settings.mode === 'off')
-      return {
-        mode: 'off',
-        pressure: null,
-        actions: [],
-        blocked: [],
-        skips: [],
-        invalid: settings.invalid,
-        note: settings.invalid,
-      };
-    if (settings.mode === 'off')
-      return {
-        mode: 'off',
-        pressure: null,
-        actions: [],
-        blocked: [],
-        skips: [],
-        note: 'daemon.mode is off',
-      };
-    const pressure = operation
-      ? await measurePressureAsync(state?.pressure ?? null, Date.now(), operation)
-      : measurePressure(state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(state?.sizes ?? [], settings, {
-      devices,
-      sweep: true,
-      refresh,
-      operation,
-    });
-    return {
-      ...result,
-      mode: settings.mode,
-      ...(settings.invalid ? { invalid: settings.invalid } : {}),
-      pressure,
-      note: settings.invalid ?? (state === null ? 'no pass has run yet; sizes have not been measured' : null),
-    };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-      throw error;
-    operation?.signal.throwIfAborted();
-    return {
-      mode: settings?.mode ?? 'off',
-      ...(settings?.invalid ? { invalid: settings.invalid } : {}),
-      pressure: null,
-      actions: [],
-      blocked: [String(error)],
-      skips: [],
-      note: 'maintenance preview failed',
-    };
-  }
 }

@@ -522,7 +522,7 @@ async function reclaimIdleProject(
     verifyCollector = verifyCollectorOwnership,
     stopStream,
     teardownBrowser = teardownOwnedBrowser,
-    stopRequester = { by: 'stim gc --delete' },
+    stopRequester = { by: 'stim gc' },
     operation,
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {

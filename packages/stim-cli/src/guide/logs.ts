@@ -49,8 +49,8 @@ metro.ndjson, client.ndjson and device.ndjson are size-capped. At about 8 MiB a 
 becomes <name>.1, replacing the previous .1, and a new file starts. Queries read
 both generations, so the oldest records drop off first. History and --since
 reach back only as far as those records. A file written before the cap
-existed can be larger; \`gc\` reports each workspace's log size and \`gc
---delete\` trims a file over 16 MiB to its newest 8 MiB in a workspace not in use
+existed can be larger; \`gc --dry-run\` reports each workspace's log size and \`gc\`
+trims a file over 16 MiB to its newest 8 MiB in a workspace not in use
 (\`guide cleanup disk\`).
 
 EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean
@@ -330,7 +330,7 @@ Each record has src: gc, level (info, or error for a failed item), msg and
            or maintenance (budget in records written before the pressure
            ladder replaced the per-command budget)
   via      maintenance only: the command whose run started the pass
-  options  gc only: delete, worktrees, olderThan, cache, idleMs
+  options  gc only: level, and pressure when --pressure chose it
   kind     what the item was (the kind of gc --json results; maintenance
            also writes buildDirectory and dependencies)
   status   done, kept or failed

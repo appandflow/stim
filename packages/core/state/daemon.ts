@@ -5,7 +5,7 @@ export type DaemonMode = 'on' | 'report' | 'off';
 
 /** One tick's measurement of the machine. A null field is one the tick could not read. */
 export interface DaemonMeasurement {
-  disk: { volume: string; freeMb: number }[];
+  disk: { volume: string; freeMb: number; device?: number }[];
   memory: {
     level: 'normal' | 'warning' | 'critical' | null;
     availableBytes: number | null;

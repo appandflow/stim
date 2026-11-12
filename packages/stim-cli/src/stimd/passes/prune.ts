@@ -38,7 +38,7 @@ export function archiveExpiryReason(expiry: ArchiveExpiry): string {
 }
 
 /**
- * The daily prune of what outlived the thing it describes, by the rules `stim gc --delete` already applies: status
+ * The daily prune of what outlived the thing it describes, by the rules `stim gc` already applies: status
  * cache files of gone folders, process lock directories that hold no claim, expired device lease files, and archives
  * past `archive.*` retention. Whatever cannot be shown stale stays, with its reason as a skip.
  */

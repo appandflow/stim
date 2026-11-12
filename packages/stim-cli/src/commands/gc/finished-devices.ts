@@ -1,14 +1,8 @@
-import type { StimContext } from '@stim-cli/core';
-import chalk from 'chalk';
 import type { Config } from '@stim-cli/core/state';
 import type { IosSimRecord } from '../../devices/ios.ts';
-import { formatBytes } from '../../fs-util.ts';
-import { deleteIdleWorkspaceDevices } from '../../stimd/passes/act.ts';
 import { finishedWorkspaces, type OwnedDeviceUsage } from '../../stimd/passes/devices.ts';
-import { triggeringRoot } from '../../stimd/passes/preview.ts';
 import { findStaleProjectDevices } from './devices.ts';
 import { canonicalPath } from './paths.ts';
-import { GC_OUTPUT, type GcOutput } from './results.ts';
 import type { WorktreeSweep } from './worktrees.ts';
 
 export interface FinishedDevice {
@@ -55,53 +49,6 @@ export function collectFinishedDevices({
   return devices;
 }
 
-export function finishedDeviceLines(devices: readonly FinishedDevice[] = []): string[] {
-  if (!devices.length) return [];
-  const lines = [
-    `Owned devices of finished worktrees (${devices.length}) - the worktree is kept, its devices are not:`,
-  ];
-  for (const device of devices) {
-    lines.push(`  ${device.kind} ${device.name} (${device.id})${device.bytes ? ` ${formatBytes(device.bytes)}` : ''}`);
-    lines.push(`              ${device.project}: ${device.reason}`);
-  }
-  lines.push('              --delete keeps a workspace that is in use, leased, driven, locked, shared or pinned.');
-  return lines;
-}
-
-export async function deleteFinishedDevices(
-  {
-    finishedDevices: devices,
-    worktreeSweep,
-  }: {
-    finishedDevices: readonly FinishedDevice[];
-    worktreeSweep?: WorktreeSweep | null;
-  },
-  output: GcOutput = GC_OUTPUT,
-  operation?: StimContext,
-): Promise<number> {
-  const graceMs = worktreeSweep?.graceMs ?? 0;
-  let failures = 0;
-  for (const project of new Set(devices.map((device) => device.project))) {
-    operation?.signal.throwIfAborted();
-    const outcome = await deleteIdleWorkspaceDevices(canonicalPath(project), {
-      windowMs: graceMs,
-      protectedRoot: triggeringRoot(operation),
-      purpose: 'stim gc --delete',
-      operation,
-      output,
-    });
-    if (outcome.status === 'kept') {
-      output.log(chalk.yellow(`Kept the owned devices of ${project}: ${outcome.detail}`));
-      output.record('device', 'kept', project, { detail: outcome.detail });
-    } else if (outcome.status === 'failed') {
-      failures++;
-      output.log(chalk.red(`Could not delete the owned devices of ${project}: ${outcome.detail}`));
-      output.record('device', 'failed', project, { detail: outcome.detail });
-    }
-  }
-  return failures;
-}
-
 export interface OwnedDeviceDisk {
   kind: 'ios' | 'android';
   count: number;
@@ -129,13 +76,4 @@ export function ownedDeviceDisk(
         ]
       : [];
   });
-}
-
-export function ownedDeviceDiskLines(disk: readonly OwnedDeviceDisk[] = []): string[] {
-  if (!disk.length) return [];
-  const parts = disk.map(
-    ({ kind, count, bytes, unmeasured }) =>
-      `${count} ${kind === 'ios' ? 'simulators' : 'emulators'} ${formatBytes(bytes)}${unmeasured ? ` (${unmeasured} not measured)` : ''}`,
-  );
-  return [`Owned device disk: ${parts.join(', ')}`];
 }

@@ -1,5 +1,4 @@
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
-import { includesArchives } from '../commands/gc/caches.ts';
 import iosCommand from '../commands/ios.ts';
 import androidCommand from '../commands/android.ts';
 import { runCli } from '../cli/define-op.ts';
@@ -459,7 +458,7 @@ test('the facts topic documents every gc verdict reason code and inventory owner
     const src = readFileSync(new URL(file, import.meta.url), 'utf-8');
     const start = src.indexOf(`type ${type} =`);
     const union = src.slice(start, src.indexOf(';', start));
-    const codes = [...union.matchAll(/'([a-zA-Z-]+)'/g)].map((m) => m[1] as string);
+    const codes = [...union.matchAll(/['"]([a-zA-Z-]+)['"]/g)].map((m) => m[1] as string);
     expect(codes.length).toBeGreaterThan(0);
     for (const code of codes) expect(body).toMatch(new RegExp(`(^|[\\s|])${code}(?=[\\s|]|$)`, 'm'));
   }
@@ -579,14 +578,13 @@ test('every guide topic explains the npx fallback for short stim commands', () =
   expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim`/i);
 });
 
-test('the agent asks before gc deletes and before the worktree sweep', () => {
+test('the agent asks before gc deletes', () => {
   const agent = renderTopic('agent');
   assert(agent);
   const askBefore = agent.match(/Ask the user before these actions:([\s\S]*?)\n\n[A-Z]/)?.[1];
   assert(askBefore);
   const actions = [...askBefore.matchAll(/^- ([^,]+),/gm)].map((m) => m[1]);
-  expect(actions).toContain('gc --delete');
-  expect(actions).toContain('gc --delete --worktrees');
+  expect(actions).toContain('gc');
 });
 
 test('the agent workflow checks errors before and after edits, before cleanup', () => {
@@ -762,7 +760,7 @@ test('the agent guide tells agents to report Stim problems under the issue templ
 test('the agent guide protects other workspaces device lease files', () => {
   const agent = renderTopic('agent');
   expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
-  expect(agent).toMatch(/gc --delete removes expired\s+ones/);
+  expect(agent).toMatch(/gc removes expired\s+ones/);
 });
 
 test('the agent guide limits memory-pressure recovery to owned workspaces', () => {
@@ -1166,23 +1164,6 @@ test('the guide names the workspace agent-device state contract without setting 
   const status = renderSection('facts', 'status');
   assert(status);
   expect(status).toContain('agentDevice');
-});
-
-test('archive cleanup guidance names each code-supported cache selector', () => {
-  const section = renderSection('cleanup', 'archive');
-  for (const selector of [
-    'archived',
-    'archived:example',
-    'archived-logs',
-    'archived-recordings',
-    'archived-agent',
-    'archived-logs:example',
-    'archived-recordings:example',
-    'archived-agent:example',
-  ]) {
-    expect(includesArchives(selector)).toBe(true);
-    expect(section).toContain(selector.replace('example', '<id>'));
-  }
 });
 
 test('facts keep the SwiftPM and machine cache gc keys and measurement cache filenames discoverable', () => {

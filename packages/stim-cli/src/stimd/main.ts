@@ -1465,6 +1465,7 @@ async function runStimdInner(
     foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
+    threads.abort('passes');
     threads.abort('measure');
     statuses.close();
     loopDelay.disable();

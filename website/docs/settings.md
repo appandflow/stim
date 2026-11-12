@@ -205,7 +205,7 @@ an `image` line while it downloads (about 2 GB).
 - One install runs per SDK root and Stim home; a second run waits for it.
 - `stim doctor` notes a missing image, and `stim doctor --fix --platform android`
   installs it right away.
-- `stim gc` marks the images Stim installed with `stimInstalled`, next to the
+- `stim gc --dry-run --json` marks the images Stim installed with `stimInstalled`, next to the
   `sdkmanager --uninstall` command that removes them.
 
 Set `android.installImages` to `never` to refuse with the install command
@@ -280,7 +280,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
-  "disk": { "minFreeGb": 20, "hardFloorGb": 5 },
+  "disk": { "minFreeGb": 40, "hardFloorGb": 5 },
   "iosSimulatorApp": "xcode",
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
@@ -434,7 +434,7 @@ prevents local fallback. See [automatic machine pools](./remote-machines.md#auto
 `remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
 stops each EAS Simulator session Stim creates, for `--remote eas` and
 `remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
-whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+whose workspace was deleted by hand. `stim stop` and `stim gc` still end a
 session sooner, and a later run replaces an expired one. EAS rejects a value above
 the account plan's session limit. A run reuses a live session without checking how
 much of the cap is left.
@@ -760,7 +760,7 @@ without changing ownership claims or recordings. It does not restore an
 inaccessible volume or grant filesystem access; the underlying access problem
 still needs to be resolved.
 
-`gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
+`gc.worktreeGraceMinutes` is how long `stim gc` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest
 git or Stim activity, the merge of its branch, or when its pull request was
 merged or closed. Absent means 120; `0` removes
@@ -769,15 +769,17 @@ a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 
 The disk thresholds keep parallel agents from filling the disk. Each
 `stim-daemon` tick classifies the machine from free disk on every volume Stim
-writes to and from memory: **high** under `disk.minFreeGb` (20 GB), after
+writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 10 minutes of macOS memory pressure warning, or with under 10% of RAM
-available; **critical** under `disk.criticalFreeGb` (6 GB), or under
+available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
 clears: idle stage for every workspace idle 2 minutes, parked devices, the
-shared caches, the dormant stage, at critical the `node_modules` and Pods of
-idle worktrees, then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers
-and the worktree trash. Each rung measures again first, skips a workspace with
+shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
+that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
+then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
+trash, finished and long-idle worktrees, at critical recordings and archived
+logs, and last, at critical only, in the `stim-daemon` (at most hourly, while the disk is still short) and `stim gc` (see [the ladder](./build-caches.md#disk-pressure)), never in a `STIM_HOME`-scoped home or from a build command's own ladder, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
 a build, a driver, a lease, a live [web share](./share.md) or
 `maintenance.keep`, and takes the longest-idle
 workspace first; a level raised by memory alone runs only what frees memory.
@@ -791,7 +793,7 @@ it never refuses, and the ladder's memory rules are fixed.
 <BudgetSettings />
 
 ```bash
-stim settings set disk.minFreeGb 40 --scope machine
+stim settings set disk.minFreeGb 60 --scope machine
 ```
 
 The `stim-daemon` also shuts down a workspace's owned simulators and emulators,
@@ -799,12 +801,18 @@ together with its dev server, once the workspace has had no activity for
 `idle.minutes` (15 by default), whether or not a dev server runs; see
 [idle stop](./dev-server-and-logs.md#idle-stop) and
 [idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
-After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
-without activity a workspace goes dormant: its owned devices are deleted (the
-parked pool is untouched) and its logs archived. In a linked worktree, its
-`node_modules` and Pods are deleted when they hold 256 MB or more of their own
-bytes, recorded so `stim worktree warm` restores them; copy-on-write clones
-under that, and trees Stim could not size, stay. When it deleted a device, the next `stim ios` or `stim android` creates
+After `idle.dormantDays` (1 by default; fractions of a day allowed; `0` never)
+without activity a workspace goes dormant and is reduced to its minimal size, at
+every level, by `stim gc` and by the `stim-daemon`: its regenerable build outputs
+and owned devices are deleted (the parked pool is untouched) and its logs
+archived. In a linked worktree, its `node_modules` and Pods are deleted when
+they hold 256 MB or more of their own bytes, recorded so the next Stim command
+in it restores them with `stim worktree warm`, or, when warm cannot restore the
+same versions (its lockfile differs from the source checkout's, or the source
+checkout's dependencies were not installed from its own lockfile), refuses with
+`STIM_DEPS_FAILED` and asks for an install; copy-on-write clones under that, and
+trees Stim could not size, stay. The source checkout's `node_modules` is never
+deleted. When it deleted a device, the next `stim ios` or `stim android` creates
 one; with none deleted, `stim revive` resumes the workspace while its dev
 server's idle stop, or a launch of an app that runs without Metro, survives.
 
@@ -949,7 +957,7 @@ See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and de
 ## Automatic maintenance
 
 Automatic maintenance follows [`daemon.mode`](#stim-daemon), `on` by default:
-a pass removes what `stim gc --delete` would remove under the caps below and
+a pass removes what `stim gc` would remove under the caps below and
 logs every action. `report` measures, plans and logs and deletes nothing, and
 `off` runs no pass. It is `off` in CI unless `STIM_DAEMON` is set. A
 `STIM_HOME`-scoped home runs passes like any other.
@@ -972,7 +980,7 @@ sysctl fails, and other platforms use `os.freemem()`.
 The build-cache and Metro caps trim entries down to 80% of the limit. The Swift
 compilation cache can only be emptied whole, so a pass empties it once it is
 over `caches.swiftCompilationCacheMaxGb`, and never while an iOS build holds
-its claim on it or that claim is unresolved. Plain `stim gc --delete` applies
+its claim on it or that claim is unresolved. `stim gc` applies
 the same cap. Under disk pressure the
 [pressure ladder](./build-caches.md#disk-pressure) trims the caches further.
 `caches.ccacheMaxGb` is passed to ccache, which evicts by itself.
@@ -984,13 +992,11 @@ entries, parked simulators and emulators, and clean, pushed linked worktrees
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
-`maintenance.removeFinishedWorktrees` controls the worktree check. Manual
-`stim gc --delete --cache gradle-daemons` requires sustained memory pressure
-(the daemon's high or critical memory level) and no local build, including
-iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
+`maintenance.removeFinishedWorktrees` controls the worktree check; with it false no finished worktree is removed at any level. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
+build, including iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
 workspace whose device is hosted on a remote Mac, after
 `maintenance.idleStopHours` without real activity (removing a finished worktree
-tears down that workspace's own, as `gc --delete` does). Debug check logs are
+tears down that workspace's own, as `gc` does). Debug check logs are
 off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
@@ -1071,7 +1077,7 @@ set.
 
 While no `stimd` runs, a command under the hard disk floor runs the pressure
 ladder in its own process, never for the command's own workspace, acting in
-`on` and only logging in `report`. `stim gc --delete` runs the ladder in its
+`on` and only logging in `report`. `stim gc` runs the ladder at high or critical in its
 own process whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MaintenanceSize } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { collectFinishedDevices, deleteFinishedDevices } from '../commands/gc/finished-devices.ts';
+import { collectFinishedDevices } from '../commands/gc/finished-devices.ts';
+import { deleteIdleWorkspaceDevices } from '../stimd/passes/act.ts';
 import type { WorktreeSkipCode, WorktreeSweep } from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -12,7 +13,6 @@ import { maintenanceLine } from '../stimd/passes/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { takeGcResults } from '../commands/gc/results.ts';
 import { takeLease } from '../engine/device-lease.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
@@ -232,27 +232,19 @@ test.each([
   ]);
 });
 
-test('gc --delete keeps the devices of a finished worktree that is pinned by maintenance.keep', async () => {
+test('gc keeps the devices of a finished worktree that is pinned by maintenance.keep', async () => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const root = workspaceWithSim('dirty', 90);
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  takeGcResults();
 
-  const failures = await deleteFinishedDevices({
-    finishedDevices: [{ kind: 'ios', id: 'UDID-dirty', name: 'stim-dirty', project: root, reason: 'finished' }],
-    worktreeSweep: sweepOf([]),
-  });
+  const outcome = await deleteIdleWorkspaceDevices(root, { windowMs: 0, protectedRoot: '', purpose: 'stim gc' });
 
-  expect(failures).toBe(0);
-  expect(takeGcResults()).toEqual([
-    expect.objectContaining({ status: 'kept', label: root, detail: 'pinned by maintenance.keep' }),
-  ]);
+  expect(outcome).toMatchObject({ status: 'kept', detail: 'pinned by maintenance.keep' });
   expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
 });
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete keeps the devices of a finished worktree whose web share goes live before its claim is taken',
+  'gc keeps the devices of a finished worktree whose web share goes live before its claim is taken',
   async () => {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const deleted = vi.spyOn(gcDevices, 'deleteProjectDevices').mockResolvedValue(0);
@@ -272,23 +264,14 @@ test.skipIf(process.platform === 'win32')(
       shares: reads++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
     }));
     onTestFinished(() => server.close());
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    takeGcResults();
 
-    const failures = await deleteFinishedDevices({
-      finishedDevices: [{ kind: 'ios', id: 'UDID-dirty', name: 'stim-dirty', project: root, reason: 'finished' }],
-      worktreeSweep: sweepOf([]),
-    });
+    const outcome = await deleteIdleWorkspaceDevices(root, { windowMs: 0, protectedRoot: '', purpose: 'stim gc' });
 
-    expect(failures).toBe(0);
     expect(reads).toBe(2);
-    expect(takeGcResults()).toEqual([
-      expect.objectContaining({
-        status: 'kept',
-        label: root,
-        detail: 'it has a live web share (ios until 2099-01-01T00:00:00.000Z); stim share stop ends it',
-      }),
-    ]);
+    expect(outcome).toMatchObject({
+      status: 'kept',
+      detail: 'it has a live web share (ios until 2099-01-01T00:00:00.000Z); stim share stop ends it',
+    });
     expect(deleted).not.toHaveBeenCalled();
     expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
   },

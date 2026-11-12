@@ -5,11 +5,11 @@ extension GcReport {
   public struct MemoryProcess: Decodable, Hashable, Sendable {
     /// `watchman`, `gradleDaemon` or `kotlinDaemon`.
     public var kind: String
-    /// The `stim gc --cache` argument that acts on it: `watchman` or `gradle-daemons`.
+    /// The gc item that acts on it: `watchman` or `gradle-daemons`.
     public var cacheKind: String
     public var pid: Int
     public var bytes: Int64?
-    /// Whether `stim gc --delete --cache <cacheKind>` would stop it.
+    /// Whether the `cacheKind` item would stop it.
     public var reclaimable: Bool
     public var reason: String?
     public var detail: String?
@@ -30,7 +30,7 @@ extension GcReport {
 
   public struct WatchmanRoot: Decodable, Hashable, Sendable {
     public var path: String
-    /// Whether `--cache watchman` removes this stale root.
+    /// Whether the watchman item removes this stale root.
     public var removable: Bool
     public var detail: String?
 
@@ -49,7 +49,7 @@ extension GcReport {
     }
   }
 
-  /// What the Processes table offers for one of its rows: a run of `stim gc --delete --cache <cacheKind>`,
+  /// What the Processes table offers for one of its rows: a run of the `cacheKind` gc item,
   /// or the reason gc keeps the process.
   public struct MemoryReclaim: Equatable, Sendable {
     public enum Availability: Equatable, Sendable {
@@ -77,9 +77,9 @@ extension GcReport {
       return nil
     }
 
-    /// The run, from `cwd`: `stim gc --delete --json --cache <cacheKind>`. gc re-checks every process before it acts.
+    /// The run, from `cwd`: the watchman or gradle-daemons gc item. gc re-checks every process before it acts.
     public func command(cwd: String) -> StimCommand {
-      StimCommand(["gc", "--delete", "--json", "--cache", cacheKind], cwd: cwd)
+      (cacheKind == "watchman" ? GcItem.watchman : GcItem.gradleDaemons).command(cwd: cwd)
     }
 
     /// What the confirmation says the run does.
@@ -116,7 +116,7 @@ extension GcReport {
   }
 
   /// The reclaim offer for a Processes row from this report, or nil when the row is not Watchman or a Gradle or
-  /// Kotlin daemon. The Gradle and Kotlin rows share one offer, because `--cache gradle-daemons` acts on both. Pass a nil `report` while gc has not answered yet.
+  /// Kotlin daemon. The Gradle and Kotlin rows share one offer, because the gradle-daemons item acts on both. Pass a nil `report` while gc has not answered yet.
   public static func reclaim(for owner: MachineOwner, in report: GcReport?) -> MemoryReclaim? {
     guard let kind = MemoryReclaim.processKind(of: owner) else { return nil }
     let cacheKind = kind == "watchman" ? "watchman" : "gradle-daemons"

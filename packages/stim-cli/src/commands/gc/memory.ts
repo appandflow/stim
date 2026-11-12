@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { freemem, totalmem } from 'node:os';
 import chalk from 'chalk';
 import { buildWorkerRoot, loadConfig, readDaemonSnapshot } from '@stim-cli/core/state';
-import { formatLongDuration, plural } from '../../command-output.ts';
+import { plural } from '../../command-output.ts';
 import { readHostProcessTableAsync, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
@@ -40,24 +40,6 @@ export interface MemoryScope {
   watchman: boolean;
   gradle: boolean;
   watchmanMinBytes?: number;
-}
-
-/** The memory kind `--cache` names, or null for any other name. */
-export function memoryCacheKind(cache: string | null | undefined): MemoryCacheKind | null {
-  const wanted = cache?.trim().toLowerCase();
-  return wanted === WATCHMAN_KIND || wanted === GRADLE_DAEMONS_KIND ? wanted : null;
-}
-
-/** The memory kind `gc --delete` acts on: the one `--cache` names, or watchman when there is no `--cache`. */
-function reclaimedKind(cache: string | null | undefined): MemoryCacheKind | null {
-  return cache?.trim() ? memoryCacheKind(cache) : WATCHMAN_KIND;
-}
-
-/** Which helpers a gc run inspects: both without --cache, one for its own kind, none for any other --cache. */
-export function memoryScope(cache: string | null | undefined): MemoryScope | null {
-  if (!cache?.trim()) return { watchman: true, gradle: true };
-  const kind = memoryCacheKind(cache);
-  return kind ? { watchman: kind === WATCHMAN_KIND, gradle: kind === GRADLE_DAEMONS_KIND } : null;
 }
 
 type MemoryKeptCode = 'in-use' | 'busy' | 'unknown' | 'build-running' | 'stim-server';
@@ -485,12 +467,6 @@ function stimWorkspaceOf(
   return null;
 }
 
-function reclaimableBytes(report: MemoryReport, kind?: MemoryCacheKind): number {
-  return report.processes
-    .filter((entry) => entry.reclaimable && (kind === undefined || entry.cacheKind === kind))
-    .reduce((sum, entry) => sum + entry.bytes, 0);
-}
-
 type BoundWatchman = (args: string[], operation?: StimContext) => Promise<unknown>;
 
 const boundWatchman: BoundWatchman = async (args, operation) => {
@@ -904,53 +880,6 @@ function processLabel(entry: MemoryProcess): string {
   return `Gradle ${entry.version ?? '?'} daemon pid ${entry.pid} (${where})`;
 }
 
-function uptime(startedAt: string | null, now: number): string {
-  const at = startedAt ? Date.parse(startedAt) : NaN;
-  return Number.isFinite(at) ? `up ${formatLongDuration(Math.max(0, now - at))}` : 'uptime unknown';
-}
-
-export function memoryLines(
-  report: MemoryReport | null | undefined,
-  scoped: MemoryCacheKind | null,
-  now: number = Date.now(),
-): string[] {
-  if (!report || (report.processes.length === 0 && report.notices.length === 0)) return [];
-  const measure = report.processes.some((entry) => entry.measure === 'rss')
-    ? 'footprint, resident size where unreadable'
-    : 'physical footprint';
-  const lines = [
-    `Memory (${measure}) - shared helpers that grow while they run; --delete stops an unused watchman and --cache gradle-daemons stops idle Gradle and Kotlin daemons under memory pressure with no build running:`,
-  ];
-  for (const entry of report.processes) {
-    const state = entry.reclaimable
-      ? 'idle'
-      : entry.kind === 'watchman' && entry.state === 'busy'
-        ? 'in use'
-        : entry.state;
-    lines.push(`  ${processLabel(entry)} ${formatBytes(entry.bytes)}, ${uptime(entry.startedAt, now)}, ${state}`);
-    if (entry.kind === 'watchman') {
-      const stale = report.watchmanRoots.filter((root) => root.stale !== null).length;
-      lines.push(`              ${report.watchmanRoots.length} root(s), ${stale} stale`);
-      for (const root of report.watchmanRoots.filter((r) => r.stale !== null)) {
-        lines.push(`              stale root ${root.path}: ${root.detail}${root.removable ? '' : '; kept'}`);
-      }
-    }
-    if (entry.detail) lines.push(`              ${entry.reclaimable ? '' : 'kept: '}${entry.detail}`);
-  }
-  for (const notice of report.notices) lines.push(`  ${notice}`);
-  const kinds: MemoryCacheKind[] = scoped ? [scoped] : [WATCHMAN_KIND, GRADLE_DAEMONS_KIND];
-  const parts: string[] = [];
-  for (const kind of kinds) {
-    if (!report.processes.some((entry) => entry.cacheKind === kind)) continue;
-    const roots = kind === WATCHMAN_KIND ? report.watchmanRoots.filter((root) => root.removable).length : 0;
-    const note = roots ? ` (and ${roots} stale root(s) removed)` : '';
-    const command = kind === WATCHMAN_KIND && !scoped ? 'stim gc --delete' : `stim gc --delete --cache ${kind}`;
-    parts.push(`${formatBytes(reclaimableBytes(report, kind))} with ${command}${note}`);
-  }
-  if (parts.length) lines.push(`  reclaimable ${formatBytes(reclaimableBytes(report))}: ${parts.join('; ')}`);
-  return lines;
-}
-
 function sameProcess(entry: MemoryProcess, rows: ReadonlyMap<number, HostProcess> | null): boolean {
   const row = rows?.get(entry.pid);
   return Boolean(row && entry.startedAt !== null && row.startedAt === entry.startedAt);
@@ -1301,7 +1230,7 @@ export function watchmanStopBytes(underPressure: boolean): number {
 
 /**
  * Whether automatic maintenance shuts watchman down: null when its footprint is under the threshold, a reason when
- * the check keeps it, and `stop` when it is large enough and the same check `gc --delete` applies finds it unused.
+ * the check keeps it, and `stop` when it is large enough and the same check `stim gc` applies finds it unused.
  */
 export function planWatchmanStop(
   daemon: MemoryProcess | undefined,
@@ -1313,7 +1242,7 @@ export function planWatchmanStop(
     : { stop: false, reason: daemon.detail ?? 'it could not be proven unused' };
 }
 
-/** Shuts down the watchman daemon `pid` and removes its stale roots under the checks `gc --delete` applies, then waits for it to exit. Nothing runs while STIM_HOME scopes the config. */
+/** Shuts down the watchman daemon `pid` and removes its stale roots under the checks `stim gc` applies, then waits for it to exit. Nothing runs while STIM_HOME scopes the config. */
 export async function stopUnusedWatchman(
   pid: number,
   output: GcOutput = GC_OUTPUT,
@@ -1325,26 +1254,15 @@ export async function stopUnusedWatchman(
   return planned ? reclaimWatchman({ ...report, processes: [planned] }, output, operation) : 0;
 }
 
-/** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */
-export function memoryWorkPending(cache: string | null, report: MemoryReport | null | undefined): boolean {
-  const kind = reclaimedKind(cache);
-  if (!kind || !report) return false;
-  return (
-    reclaimableBytes(report, kind) > 0 ||
-    (kind === WATCHMAN_KIND && report.watchmanRoots.some((root) => root.removable))
-  );
-}
-
-/** Acts on the one memory kind `--cache` names, and on watchman alone for an unscoped run; never on `--cache all`. */
+/** Shuts down an unused watchman after removing its stale roots, or stops the idle Gradle and Kotlin daemons. */
 export async function reclaimMemory(
-  cache: string | null,
+  kind: MemoryCacheKind,
   report: MemoryReport | null | undefined,
   output: GcOutput = GC_OUTPUT,
   operation?: StimContext,
 ): Promise<number> {
   operation?.signal.throwIfAborted();
-  const kind = reclaimedKind(cache);
-  if (!kind || !report || report.processes.length === 0) return 0;
+  if (!report || report.processes.length === 0) return 0;
   if (kind === WATCHMAN_KIND) return reclaimWatchman(report, output, operation);
   const guard = (entry?: MemoryProcess) => manualDaemonsKept(operation, operation?.env ?? process.env, entry);
   const kept = await guard();
@@ -1368,7 +1286,7 @@ export function watchmanFinding(report: MemoryReport): Finding | null {
       `The shared watchman daemon (pid ${daemon.pid}) has a ${formatBytes(daemon.bytes)} ${daemon.measure} with ` +
       `${report.watchmanRoots.length} watched root(s), ${stale} of them stale; ${state}. Removing roots stops their ` +
       'recrawls, but only a restart returns the memory.',
-    fix: 'Automatic maintenance shuts it down once nothing uses it. To do it now, run `stim gc --cache watchman` to see its roots and clients, then `stim gc --delete --cache watchman`.',
+    fix: 'Automatic maintenance shuts it down once nothing uses it. To do it now, run `stim gc --pressure high --dry-run` to see whether it is idle, then `stim gc --pressure high`.',
   };
 }
 

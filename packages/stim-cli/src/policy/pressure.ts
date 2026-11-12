@@ -4,7 +4,7 @@ const DAY_MS = 86_400_000;
 
 export type Cause = 'disk' | 'memory';
 
-export type Rung = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type Rung = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 const LADDER: readonly { rung: Rung; relieves: readonly Cause[] }[] = [
   { rung: 0, relieves: ['memory'] },
@@ -14,6 +14,9 @@ const LADDER: readonly { rung: Rung; relieves: readonly Cause[] }[] = [
   { rung: 4, relieves: ['disk'] },
   { rung: 5, relieves: ['disk'] },
   { rung: 6, relieves: ['disk', 'memory'] },
+  { rung: 7, relieves: ['disk'] },
+  { rung: 8, relieves: ['disk'] },
+  { rung: 9, relieves: ['disk'] },
 ];
 
 /** The ladder's rungs from `fromRung`, in the order they run, each with the causes it relieves. */

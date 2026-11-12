@@ -53,7 +53,7 @@ function writeState(state: MaintenanceState): void {
 const RESERVE_BYTES = 1024 * 1024;
 const reserveFile = () => join(maintenanceDir(), 'disk-reserve');
 
-function releaseReserve(): boolean {
+export function releaseReserve(): boolean {
   try {
     const bytes = statSync(reserveFile()).size;
     rmSync(reserveFile());
@@ -63,7 +63,7 @@ function releaseReserve(): boolean {
   }
 }
 
-function keepReserve(): void {
+export function keepReserve(): void {
   try {
     if (statSync(reserveFile()).size === RESERVE_BYTES) return;
   } catch {}
@@ -77,7 +77,7 @@ function keepReserve(): void {
   }
 }
 
-function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
+export function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
   const take = () => {
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),
@@ -100,6 +100,16 @@ function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolde
 const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-unregister-cache': 0,
   'would-remove-orphan': 0,
+  'would-prune-project': 0,
+  'would-forget-stale-records': 0,
+  'would-trim-workspace-logs': 1,
+  'would-delete-recordings': 2,
+  'would-delete-archives': 2,
+  'would-delete-orphaned-devices': 5,
+  'would-delete-hosted-devices': 5,
+  'would-delete-eas-sessions': 5,
+  'would-delete-unavailable-sim': 5,
+  'would-delete-runtime': 6,
   'would-clear-outputs': 1,
   'would-delete-parked-device': 2,
   'would-delete-temp-leftovers': 2,
@@ -121,7 +131,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-delete-gradle-version': 8,
 };
 
-const executionRank = (action: MaintenanceAction) => EXECUTION_ORDER[action.kind] ?? 9;
+export const executionRank = (action: MaintenanceAction): number => EXECUTION_ORDER[action.kind] ?? 9;
 
 function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome: ActionOutcome): void {
   state.sizes = state.sizes.flatMap((size) => {
@@ -186,6 +196,26 @@ function describeDone(action: MaintenanceAction): string {
       return 'Shut down the unused watchman daemon';
     case 'would-delete-gradle-version':
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
+    case 'would-prune-project':
+      return `Pruned the registry entry of ${action.target}`;
+    case 'would-delete-orphaned-devices':
+      return 'Deleted the owned devices and device records of removed projects';
+    case 'would-forget-stale-records':
+      return 'Forgot the stale ledger entries, Stim homes and build claims';
+    case 'would-trim-workspace-logs':
+      return `Trimmed the logs of ${name}`;
+    case 'would-delete-recordings':
+      return 'Deleted the device recordings';
+    case 'would-delete-hosted-devices':
+      return 'Deleted the parked hosted devices';
+    case 'would-delete-eas-sessions':
+      return `Deleted the orphaned EAS sessions of ${name}`;
+    case 'would-delete-archives':
+      return `Deleted the archived ${action.target}`;
+    case 'would-delete-runtime':
+      return `Deleted the unused simulator runtime ${action.target}`;
+    case 'would-delete-unavailable-sim':
+      return `Deleted the owned simulator ${action.target}, whose runtime is gone`;
     case 'would-stop-workspace':
       return action.check === 'idle'
         ? `Stopped ${name} and shut down its owned devices`
