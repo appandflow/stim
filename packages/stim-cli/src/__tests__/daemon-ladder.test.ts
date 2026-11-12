@@ -772,6 +772,11 @@ describe('the ladder a build runs for its headroom', () => {
     freeOnBuildDevice(35, 5);
     await run(50);
     expect(deleted).toEqual(['PARKED-0', 'PARKED-1', 'PARKED-2']);
+
+    deleted.length = 0;
+    freeOnBuildDevice(10, 0);
+    await run(24);
+    expect(deleted).toEqual(['PARKED-0']);
   });
 
   test('does nothing while another process holds the ladder claim', async () => {

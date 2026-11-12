@@ -307,7 +307,10 @@ async function runCommandLadder(
       {
         config,
         act: mode === 'on',
-        log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
+        log: (level, event, msg, fields = {}) => {
+          if (headroom && event === 'pressure_action') headroom.acted = true;
+          writer.write({ src: trigger, level, event, msg, ...fields });
+        },
         devices: measured.devices,
         sims: measured.sims,
         simsFailed: measured.sims === null,
@@ -331,6 +334,12 @@ interface HeadroomRun {
   operation: StimContext;
   /** Aborts when the build is cancelled or the run's deadline passes. */
   stop: AbortSignal;
+  /** An action has been logged since the build device was last measured. */
+  acted: boolean;
+  /** The build device's free space at the last measurement. */
+  lastFreeMb: number | null;
+  /** An action left the build device's free space no higher: the rungs cannot help it, so the run ends. */
+  helpless: boolean;
 }
 
 const NORMAL_PRESSURE: DaemonPressure = {
@@ -343,10 +352,11 @@ const NORMAL_PRESSURE: DaemonPressure = {
 
 /**
  * The level of a headroom run: high while the build's device has less free than the target, else normal. It ignores
- * every other volume and memory, and is normal once `stop` aborts, which ends the run between two rungs or two actions.
+ * every other volume and memory, and is normal once `stop` aborts or once an action left the build device's free space
+ * no higher, which ends the run between two rungs or two actions.
  */
 async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<DaemonPressure> {
-  if (headroom.stop.aborted) return NORMAL_PRESSURE;
+  if (headroom.stop.aborted || headroom.helpless) return NORMAL_PRESSURE;
   let disk;
   try {
     disk = await measureDisk(config, headroom.stop);
@@ -355,7 +365,11 @@ async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<
     throw error;
   }
   const volume = disk.find((entry) => entry.device === headroom.device);
-  if (!volume || volume.freeMb >= headroom.freeMb) return NORMAL_PRESSURE;
+  if (!volume) return NORMAL_PRESSURE;
+  if (headroom.acted && headroom.lastFreeMb !== null && volume.freeMb <= headroom.lastFreeMb) headroom.helpless = true;
+  headroom.acted = false;
+  headroom.lastFreeMb = volume.freeMb;
+  if (volume.freeMb >= headroom.freeMb || headroom.helpless) return NORMAL_PRESSURE;
   return {
     ...NORMAL_PRESSURE,
     level: 'high',
@@ -588,7 +602,15 @@ export async function runLadderToFree({
   if (!claim) return;
   const stop = AbortSignal.any([signal, AbortSignal.timeout(HEADROOM_DEADLINE_MS)]);
   try {
-    await runCommandLadder('command', operation.env, protectedRoot, { device, freeMb, operation, stop });
+    await runCommandLadder('command', operation.env, protectedRoot, {
+      device,
+      freeMb,
+      operation,
+      stop,
+      acted: false,
+      lastFreeMb: null,
+      helpless: false,
+    });
   } catch {
     signal.throwIfAborted();
   } finally {

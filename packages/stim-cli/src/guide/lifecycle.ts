@@ -2623,8 +2623,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   disk.minFreeGb. Other volumes and memory do not count. It asks the daemon
   for nothing and takes a machine-wide claim, so a build that finds it held,
   or finds a stimd of another build refusing this process, skips it. A
-  headroom run can overlap the daemon's own pass; the worst case is one failed
-  duplicate action, which the action log shows. It runs at most 60 seconds: the
+  headroom run can overlap the daemon's own pass; the worst case is freeing more
+  than needed, as both may delete different parked devices or trim the same
+  cache. The run ends after any action that leaves the build volume's free
+  space no higher, such as one on another volume. It runs at most 60 seconds: the
   deadline and cancelling the build are checked before every rung and every
   action, so a step in flight finishes and none is left half done. If the space
   is still short, one warning on stderr (also in --json mode) gives the bytes
