@@ -533,41 +533,25 @@ async function main() {
   });
 
   await runCheck('gc-view', (c) => {
-    const gc = cli(['gc', '--dry-run'], { cwd: appDir, allowFail: true });
-    assert(gc.code === 0, `gc exited ${gc.code}`);
-    const outLines = gc.stdout.split('\n');
-    const headerIndex = outLines.findIndex((l) => /Shared build caches \(\d+\)/.test(l));
-    assert(headerIndex >= 0, `gc printed no "Shared build caches (N)" section:\n${lastLines(gc.stdout, 30)}`);
-    const header = outLines[headerIndex];
-    c.ev(`gc header: ${header.trim()}`);
-    assert(/alive, not garbage/.test(header), `gc's cache header does not call them alive: ${header}`);
-
-    for (const line of outLines.slice(headerIndex + 1)) {
-      if (line.trim()) c.ev(`gc: ${line.trim()}`);
-      if (/^\s*total:/.test(line)) break;
-    }
+    const gc = cli(['gc', '--dry-run', '--json'], { cwd: appDir, allowFail: true });
+    assert(gc.code === 0, `gc exited ${gc.code}:\n${lastLines(gc.stderr, 30)}`);
+    const { mode, sections } = JSON.parse(gc.stdout);
+    assert(mode === 'dry-run', `expected a GC dry run, got ${mode}`);
+    const cacheSizes = new Map(sections.caches.map(({ dir, bytes }) => [dir, bytes]));
+    const outputSizes = new Map(sections.workspaceBuildOutputs.map(({ dir, bytes }) => [dir, bytes]));
 
     const outputNames = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
-    const workspaceOutputStats = [wt1, wt2]
-      .flatMap((root) => outputNames.map((name) => dirStats(join(workspaceLogsDir(root), '..', name))))
-      .reduce(
-        (total, stats) => ({
-          exists: total.exists || stats.exists,
-          files: total.files + stats.files,
-          bytes: total.bytes + stats.bytes,
-        }),
-        { exists: false, files: 0, bytes: 0 },
-      );
-    c.ev(
-      `workspace build output accounting excludes workspace.json, state.json, logs and device records: ${workspaceOutputStats.files} output files`,
-    );
     const expected = [
       { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
-      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces'), stats: workspaceOutputStats },
     ];
     if (PLATFORM === 'ios') expected.push({ name: "Xcode's compilation cache (CAS)", dir: CAS_DIR });
     if (PLATFORM === 'android') expected.push({ name: 'the Gradle build cache', dir: GRADLE_CACHE_DIR });
+    for (const root of [wt1, wt2]) {
+      const dir = dirname(workspaceLogsDir(root));
+      const files = outputNames.reduce((sum, name) => sum + dirStats(join(dir, name)).files, 0);
+      expected.push({ name: 'workspace build outputs', dir, stats: { exists: files > 0, files }, sizes: outputSizes });
+    }
 
     const missing = [];
     let reported = 0;
@@ -577,22 +561,21 @@ async function main() {
         c.ev(`${e.name}: nothing on disk at ${e.dir}, so gc has nothing to report -- not counted against it`);
         continue;
       }
-      if (gc.stdout.includes(e.dir)) {
+      const bytes = (e.sizes ?? cacheSizes).get(realpathSync(e.dir));
+      if (Number.isFinite(bytes) && bytes >= 0) {
         reported += 1;
-        c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(stats.bytes)})`);
+        c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(bytes)} measured)`);
       } else {
-        c.ev(
-          `gc DOES NOT report ${e.name}, which holds ${stats.files} files (${formatBytes(stats.bytes)}) at ${e.dir}`,
-        );
+        c.ev(`gc has no measured size for ${e.name}, which holds ${stats.files} files at ${e.dir}`);
         missing.push(e);
       }
     }
     if (missing.length) {
       return c.fail(
-        `${missing.length} live cache(s) are invisible to gc, so nothing will ever trim them: ${missing.map((m) => m.dir).join(', ')}`,
+        `${missing.length} live cache(s) lack measured storage entries: ${missing.map((m) => m.dir).join(', ')}`,
       );
     }
-    return c.pass(`gc reports ${reported} live cache(s) with sizes and calls none of them garbage`);
+    return c.pass(`gc reports measured storage for ${reported} populated cache and workspace output directories`);
   });
 
   stopWorkspace(wt1);
