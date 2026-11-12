@@ -269,11 +269,17 @@ export function createMaintenanceLane(
  * idle stage is the daemon's activity pass. Measures and lists devices only when the level is above normal, and
  * nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
-async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
+async function runCommandLadder(
+  trigger: string,
+  env: NodeJS.ProcessEnv,
+  protectedRoot?: string,
+  highFreeMb = 0,
+): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
   if (!config || mode === 'off') return;
-  const { thresholds } = diskThresholds(config, env);
+  const base = diskThresholds(config, env).thresholds;
+  const thresholds = { ...base, highMb: Math.max(base.highMb, highFreeMb) };
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
   const classify = async () => {
     const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
@@ -496,5 +502,23 @@ export async function runLadderNow(
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);
+  } catch {}
+}
+
+/**
+ * Runs the pressure ladder, in this process after a daemon tick, treating free disk under `freeMb` as the high level
+ * so the ladder reclaims until `freeMb` is free or its rungs are spent. Never throws except on abort.
+ */
+export async function runLadderToFree(
+  env: NodeJS.ProcessEnv,
+  freeMb: number,
+  signal?: AbortSignal,
+  protectedRoot?: string,
+): Promise<void> {
+  await requestDaemonTick(env, signal);
+  signal?.throwIfAborted();
+  if (stimdRefused()) return;
+  try {
+    await runCommandLadder('command', env, protectedRoot, freeMb);
   } catch {}
 }

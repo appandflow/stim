@@ -55,6 +55,8 @@ export interface BuildLedgerRecord extends NdjsonRecord {
   /** Epoch milliseconds when the run started. */
   startedAt: number;
   project: string;
+  /** The project's stats key, equal across its worktrees. Absent in older records. */
+  projectKey?: string;
   workspace: string;
   branch: string | null;
   platform: BuildLedgerPlatform;
@@ -64,6 +66,11 @@ export interface BuildLedgerRecord extends NdjsonRecord {
   placement: BuildLedgerPlacement;
   cache: BuildLedgerCache;
   durationMs: number;
+  /**
+   * Bytes the run's local compile added to its workspace build output and to the shared caches it writes; absent when
+   * the run did not compile here, failed, or could not measure within its time limit.
+   */
+  bytesWritten?: number;
   /** Milliseconds in each local phase of the run. */
   phases: Record<string, number>;
   /** Milliseconds in each phase on the build machine (`sync`, `deps`, `prebuild`, `pods`, `build`, `fetch`). */

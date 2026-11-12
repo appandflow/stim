@@ -350,8 +350,10 @@ src: builds, event: build, level (info, warn for cancelled, error for failed),
 msg and
   ts, startedAt   epoch milliseconds when the run finished and started
   id              the run
-  project, workspace, branch
-                  project root, workspace id and the branch checked out
+  project, projectKey, workspace, branch
+                  project root, the project's key (equal across its
+                  worktrees; absent in older records), workspace id and the
+                  branch checked out
   platform        ios, android or macos
   scheme, variant, configuration
                   the iOS scheme when one was selected, the Android variant,
@@ -366,6 +368,14 @@ msg and
                   wall time and milliseconds in each local phase (prepare,
                   cache-lookup, wait, prebuild, pods, compile, device,
                   install, launch)
+  bytesWritten    bytes a succeeded local compile added to the workspace's
+                  build output (in-tree build directories, derived-data and
+                  gradle-build under the workspace's state) and to the shared
+                  artifact store, compilation cache, ccache, Gradle and Pods
+                  directories, from one du before and after the compile. Absent
+                  for a cache hit, an offloaded or failed build, or a walk
+                  that ran past 20 seconds. Builds running at the same time
+                  count in the shared directories.
   offloadPhases   milliseconds on the build machine: sync, deps, prebuild,
                   pods, build, fetch
   outcome         succeeded, failed or cancelled
@@ -380,7 +390,8 @@ msg and
                   and the load per core then. Absent when the run booted
                   nothing.
   stimVersion     the stim that ran the build
-Records written before these fields existed lack loadPerCore and boot.
+Records written before these fields existed lack loadPerCore, boot, projectKey and
+bytesWritten.
 A run that stopped before it had an app to build (a refused flag, a missing
 project) writes no record. Writing the record never changes the run's result.
 

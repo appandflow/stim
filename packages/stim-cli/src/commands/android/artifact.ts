@@ -1007,6 +1007,7 @@ export async function acquireAndroidArtifact(
     },
     {
       root,
+      context,
       logFile: buildLog,
       deps: {
         acquireBuildLock: acquireLock,

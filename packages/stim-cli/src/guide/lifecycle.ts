@@ -2602,6 +2602,23 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      daemon's, and a command with no daemon runs it only for owned devices
      whose workspace has no running dev server (IDLE SHUTDOWN below).
 
+  BUILD HEADROOM: before a local native compile (ios, android, macos; a cache
+  hit or an offloaded build writes little here and is not checked), Stim
+  estimates the bytes the compile writes: the largest bytesWritten of the
+  project's newest 10 succeeded, measured, non-hit builds of that platform in
+  the last 30 days (\`guide logs\`, BUILD LEDGER), matched by project key so a
+  new worktree inherits its project's history. Without history it uses a
+  default for the project type and platform, in GB: Expo 6 ios and 6 android;
+  bare React Native and Re.Pack 8 and 6; standalone native 4 and 3 (macOS 2);
+  Exact 20 ios. They are estimates, not measurements. When free disk on the
+  workspace's or $STIM_HOME's volume is under that estimate plus the critical
+  floor (disk.criticalFreeGb, or disk.hardFloorGb when higher), the ladder runs
+  with the high level starting at that much free space, and the build then
+  starts whatever the result. If the space is still short, one warning on
+  stderr (also in --json mode) gives the bytes expected and available. The
+  check adds no refusal and no error code, and a failure inside it never fails
+  the build; disk.hardFloorGb still refuses as rung 7 says.
+
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
   reduced to its minimal size, at every level, by \`stim gc\` and by the
