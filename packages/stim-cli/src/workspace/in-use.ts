@@ -196,7 +196,7 @@ export async function withIdleWorkspace<T>(
         ran: false,
         reasons: [
           isClaimRefusal(error)
-            ? `its native-run.lock cannot be taken: ${error.reason}; the claim is at ${error.claimPath}. If nothing is using it, remove it with: ${error.removeCommand}`
+            ? `its native-run.lock cannot be taken: ${error.reason}; the claim is at ${error.claimPath}. If nothing is using it, run: ${error.removeCommand}`
             : `its native-run.lock cannot be taken: ${error.reason}`,
         ],
       };

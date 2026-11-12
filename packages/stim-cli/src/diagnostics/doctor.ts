@@ -2,7 +2,8 @@ import { brokenPodLinks } from './doctor-pods-flavor.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { processContext } from '../cli-operation.ts';
 import { diffInputs, isUncertain } from '../fingerprint/key.ts';
-import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import { reportSignal, reportTimeRemainingMs, trackReportResource } from '../report-runtime.ts';
+import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'fs';
@@ -1552,6 +1553,8 @@ async function appPathInRepository(projectRoot: string): Promise<string> {
   return path.startsWith('..') ? '' : path;
 }
 
+const PARITY_MIN_REPORT_MS = 30_000;
+
 export async function detectFingerprintParity(
   projectRoot: string,
   {
@@ -1571,6 +1574,16 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
+  const remaining = reportTimeRemainingMs(operation);
+  if (remaining !== undefined && (remaining < PARITY_MIN_REPORT_MS || sizeScanDeferred()))
+    return finding(
+      'note',
+      'Fingerprint parity was not checked',
+      remaining < PARITY_MIN_REPORT_MS
+        ? 'The report had too little time left to compare the checkout with a clean worktree.'
+        : 'The host load is too high to compare the checkout with a clean worktree inside a report.',
+      'Run stim doctor again when the machine is idle.',
+    );
   const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
   const context = operation ?? processContext(projectRoot);
   let base: string;

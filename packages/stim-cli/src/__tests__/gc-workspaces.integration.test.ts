@@ -68,7 +68,6 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
-  claimRemoveCommand,
   exclusiveClaimDir,
   tryAcquireClaim,
   releaseClaim,
@@ -369,11 +368,20 @@ describe('workspace directories without workspace.json', () => {
     });
     const blocked = listWorkspaceDirs().find((entry) => entry.dir === dir)?.residue?.blocked;
     expect(blocked).toContain(claim);
-    expect(blocked).toContain(claimRemoveCommand(claim));
+    expect(blocked).toContain(claim.replace(/\.claim$/, '.child'));
     await gcJson({ pressure: 'normal' });
     expect(existsSync(dir)).toBe(true);
 
     rmSync(claim, { force: true });
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('a directory holding only a native-run claim whose owner is gone and that has no child is deleted', async () => {
+    const dir = husk(join(projects, 'dead-lock'), {}, null);
+    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+    });
     await gcJson({ pressure: 'normal' });
     expect(existsSync(dir)).toBe(false);
   });
@@ -699,7 +707,7 @@ describe('workspaceInUse', () => {
     const [reason] = workspaceInUse(root);
     expect(reason).toContain(claim);
     expect(reason).toContain('pid 4242 (claimed 2026-11-12T05:23:46.715Z) is no longer running');
-    expect(reason).toContain(claimRemoveCommand(claim));
+    expect(reason).toContain(`rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`);
   });
 
   test('a live build lock or slot naming the root marks it in use; one naming another root does not', () => {

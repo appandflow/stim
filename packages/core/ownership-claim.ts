@@ -170,12 +170,16 @@ export function claimRemoveCommand(path: string): string {
 
 /** An unresolved claim as one line: why, who held it, and the command that removes it once nothing uses it. */
 export function describeClaimProblem(problem: ClaimProblem): string {
+  const status = problem.owner ? inspectProcessIdentity(problem.owner) : null;
   const holder = problem.owner
     ? `; its owner pid ${problem.owner.pid}${problem.startedAt ? ` (claimed ${problem.startedAt})` : ''} ${
-        inspectProcessIdentity(problem.owner) === 'gone' ? 'is no longer running' : 'could not be checked'
+        status === 'gone' ? 'is no longer running' : status === 'same' ? 'is running' : 'could not be identified'
       }`
     : '';
-  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, remove it with: ${claimRemoveCommand(problem.path)}`;
+  const files = problem.path.endsWith(CLAIM_SUFFIX)
+    ? `rm -f ${quotedPath(problem.path)} ${quotedPath(childPath(problem.path))}`
+    : claimRemoveCommand(problem.path);
+  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, run: ${files}`;
 }
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {

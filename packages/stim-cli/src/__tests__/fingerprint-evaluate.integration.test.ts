@@ -289,6 +289,7 @@ test('an unacknowledged late report retains ownership rather than returning an o
     runFileAsync: async (_file, _args, options) => {
       const request: { ownership: { directory: string } } = JSON.parse(String(options.input));
       temps.push(request.ownership.directory);
+      writeFileSync(join(request.ownership.directory, 'group-0.json'), JSON.stringify({ record: null }));
       options.onSpawn?.(makeChildProcess());
       now += 120_001;
       return JSON.stringify({ uncertain: 'fixture' });

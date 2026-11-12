@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmSync, rmdirSync, statSync } from 'fs';
+import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmdirSync, statSync } from 'fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
@@ -7,7 +7,7 @@ import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/st
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { agentDeviceDaemon } from '../../devices/activity.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
-import { describeClaimProblem, readClaimSet } from '../../ownership-claim.ts';
+import { clearFreeClaimSet, describeClaimProblem, readClaimSet } from '../../ownership-claim.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
@@ -725,14 +725,7 @@ function removeEmptyResidue(dir: string): boolean {
   const residue = inspectWorkspaceResidue(dir);
   if (residue.blocked !== null || !residue.empty) return false;
   const lock = join(dir, NATIVE_RUN_LOCK_DIR);
-  for (const orphan of readClaimSet(lock).orphans) rmSync(orphan, { force: true });
-  for (const path of [join(lock, 'exclusive'), join(lock, 'shared'), lock]) {
-    try {
-      rmdirSync(path);
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) return false;
-    }
-  }
+  if (existsSync(lock) && clearFreeClaimSet({ root: lock, label: 'native-run' }).status !== 'cleared') return false;
   try {
     rmdirSync(dir);
     return true;

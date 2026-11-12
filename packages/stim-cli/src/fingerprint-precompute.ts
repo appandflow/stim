@@ -12,6 +12,7 @@ import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts
 import type { ClaimHandle } from './ownership-claim.ts';
 import { trackReportResource } from './report-runtime.ts';
 import { withFingerprintOwnership } from './engine/fingerprint-ownership.ts';
+import { detachedGroupsGone } from './fingerprint/detached-groups.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
 import type { AndroidLayout } from './workspace/settings.ts';
 import type { Fingerprint } from './fingerprint/evaluate.ts';
@@ -144,10 +145,8 @@ async function runFingerprintChild(
           value.settled === true,
         );
       } catch {}
-      if (
-        spawned &&
-        (!acknowledged || (typeof failure === 'object' && failure !== null && 'reportCleanup' in failure))
-      ) {
+      const unverifiedChild = typeof failure === 'object' && failure !== null && 'reportCleanup' in failure;
+      if (spawned && (unverifiedChild || !(acknowledged || detachedGroupsGone(directory)))) {
         retain = true;
         throw Object.assign(
           new WorkspaceProcessCleanupError(
