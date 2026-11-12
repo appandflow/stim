@@ -65,7 +65,8 @@ vi.mock('../stimd/metro/server-command.ts', () => ({
   },
 }));
 vi.mock('../engine/tunnel.ts', () => ({
-  startTunnel: async () => ({ failed: true, cleanupFailed: true, reason: 'tunnel child remains alive' }),
+  startTunnel: async () => ({ failed: true, reason: 'unused' }),
+  startTunnelSequence: async () => ({ failed: true, cleanupFailed: true, reason: 'tunnel child remains alive' }),
 }));
 
 import {
@@ -198,7 +199,8 @@ test('startup failure after spawning retains the pending claim', async () => {
 });
 
 test('failed tunnel startup keeps the unverified claim', async () => {
-  expect(await ensureTunnel({ root, port: 8184, provider: 'cloudflared' })).toMatchObject({
+  vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue('/usr/bin/cloudflared');
+  expect(await ensureTunnel({ root, port: 8184, mode: 'cloudflared' }, log)).toMatchObject({
     op: 'error',
     code: 'STIM_CLAIM_UNAVAILABLE',
   });
