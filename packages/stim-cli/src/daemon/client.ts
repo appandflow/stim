@@ -33,7 +33,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
-import { realLaunchctlBlocked, STIMD_LAUNCHD_ROOT } from './launchd-jobs.ts';
+import { STIMD_LAUNCHD_ROOT } from './launchd-jobs.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLock } from '../workspace/workspace-state.ts';
 import { clearManagedMetroTunnel, readMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
@@ -746,7 +746,6 @@ export function launchdLabelPrefix(): string {
 function startLaunchdJob(command: readonly string[], env: Record<string, string>): boolean {
   const uid = process.getuid?.();
   if (uid === undefined) return false;
-  if (realLaunchctlBlocked()) return false;
   const label = `${launchdLabelPrefix()}${randomBytes(3).toString('hex')}`;
   const plist = join(stimdRunDir(), `${label}.plist`);
   const strings = (values: readonly string[]) => values.map((value) => `<string>${xml(value)}</string>`).join('');

@@ -721,7 +721,7 @@ async function assembleDoctorReport(
       entries: serviceToolchainEntries(installed, homedir()),
     }));
   }
-  const staleJobs = host === 'darwin' ? await findStaleHomeJobs() : [];
+  const staleJobs = host === 'darwin' ? await findStaleHomeJobs(Date.now() + 3000) : [];
   if (staleJobs.length)
     findings.push({
       level: 'note',

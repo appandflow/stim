@@ -224,8 +224,11 @@ On macOS, each stimd started by launchd registers a job named
 `dev.stim.stimd.<hash>.<id>` in your login domain. Doctor reports stopped jobs
 whose `STIM_HOME` folder no longer exists, which a deleted scratch or test home
 leaves behind. `--fix` removes them, and so does the next stimd that launchd
-starts. It never removes a running job, a job whose home exists, or a job whose
-home it cannot judge, such as one on an unmounted volume.
+starts. It never removes a running job or a job whose home exists, and it keeps
+a job whose home is under `/Volumes`, unreadable, or behind a broken symlink.
+A home on a share mounted elsewhere, such as SMB or NFS at `~/mnt/x`, reads as
+gone while it is unmounted, so its stopped job is removed; that loses nothing,
+because each stimd start registers a new job.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only

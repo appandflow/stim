@@ -1606,8 +1606,11 @@ THE ONE CASE GC WILL NOT REAP
   On macOS each stimd that launchd starts leaves a job named
   dev.stim.stimd.<hash>.<id> in the login domain. \`stim doctor\` notes
   stopped ones whose STIM_HOME folder is gone, and \`stim doctor --fix\`
-  removes them, as does the next launchd-started stimd. A running job, a job
-  whose home exists and a home on an unmounted volume are kept.`,
+  removes them, as does the next launchd-started stimd. A running job and a
+  job whose home exists are kept, and so is one whose home is under /Volumes,
+  unreadable or behind a broken symlink. A home on a share mounted elsewhere
+  (SMB or NFS at ~/mnt/x) reads as gone while unmounted and its stopped job is
+  removed; each stimd start registers a new job, so nothing is lost.`,
     },
     disk: {
       summary:

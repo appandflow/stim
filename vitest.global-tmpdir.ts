@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestProject } from 'vitest/node';
 import { killRunProcesses } from './vitest.kill-run-processes.ts';
-import { LAUNCHD_TEST_GUARD_ENV } from './packages/stim-cli/src/daemon/launchd-guard-env.ts';
 import { launchdJobsUnder, removeLaunchdLeftovers } from './vitest.launchd-leftovers.ts';
 
 // Directories Stim's own tests, and the tools they run, create in TMPDIR.
@@ -65,7 +64,7 @@ export default function setup(project: TestProject): () => void {
     if (jobs.length > 0) {
       const message =
         `The test run left ${jobs.length} stimd launchd ${jobs.length === 1 ? 'job' : 'jobs'} registered (${removeLaunchdLeftovers(jobs)}); the run removed them. ` +
-        `A test that starts stimd must not reach the real launchd: vitest.setup.ts sets ${LAUNCHD_TEST_GUARD_ENV}, so a test with its own environment must pass it on, or put a stub launchctl on PATH.`;
+        `A test that starts stimd must not reach the real launchd: vitest.setup.ts puts a refusing launchctl first on PATH, so a test with its own PATH must keep it, or put a stub launchctl before it.`;
       let failed: number | undefined;
       try {
         failed = project.vitest.state.getCountOfFailedTests();

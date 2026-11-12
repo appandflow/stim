@@ -70,25 +70,40 @@ test('findStaleHomeJobs removes nothing', async () => {
   expect(removed).toEqual([]);
 });
 
-test('a home that cannot be judged is kept', () => {
+test('a home that cannot be judged is kept', async () => {
   mkdirSync(join(dir, 'real'));
   symlinkSync('/Volumes/Unmounted', join(dir, 'link'));
-  expect(homeIsGone(join(dir, 'real', 'home'))).toBe(true);
-  expect(homeIsGone(join(dir, 'real'))).toBe(false);
-  expect(homeIsGone(join(dir, 'link', 'home'))).toBe(false);
-  expect(homeIsGone('/Volumes/Unmounted/home')).toBe(false);
-  expect(homeIsGone('relative/home')).toBe(false);
+  expect(await homeIsGone(join(dir, 'real', 'home'))).toBe(true);
+  expect(await homeIsGone(join(dir, 'real'))).toBe(false);
+  expect(await homeIsGone(join(dir, 'link', 'home'))).toBe(false);
+  expect(await homeIsGone('/Volumes/Unmounted/home')).toBe(false);
+  expect(await homeIsGone('relative/home')).toBe(false);
 });
 
-test('the test guard keeps a sweep away from the real launchctl', async () => {
-  const calls: string[][] = [];
-  setExecutor({
-    findExecutable: () => '/bin/launchctl',
-    runFileQuiet: (_file: string, args: string[]) => {
-      calls.push(args);
-      return '';
-    },
-  });
-  await expect(removeStaleHomeJobs()).resolves.toEqual([]);
-  expect(calls).toEqual([]);
+test('parseLaunchdJob ignores the nested coalition states and the inherited environment of a real job', () => {
+  const real = [
+    'gui/501/dev.stim.stimd.0bdcfa009f61.c2b7e0 = {',
+    '\tactive count = 0',
+    '\tpath = /private/tmp/x/home/run/dev.stim.stimd.0bdcfa009f61.c2b7e0.plist',
+    '\tresource coalition = {',
+    '\t\tID = 115644',
+    '\t\ttype = resource',
+    '\t\tstate = active',
+    '\t}',
+    '',
+    '\ttype = LaunchAgent',
+    '\tstate = not running',
+    '',
+    '\tinherited environment = {',
+    '\t\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.x/Listeners',
+    '\t}',
+    '',
+    '\tenvironment = {',
+    '\t\tOSLogRateLimit => 64',
+    '\t\tSTIM_HOME => /private/tmp/x/home',
+    '\t}',
+    '}',
+    '',
+  ].join('\n');
+  expect(parseLaunchdJob(real)).toEqual({ running: false, home: '/private/tmp/x/home' });
 });

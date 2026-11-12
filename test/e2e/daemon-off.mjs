@@ -1,18 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LAUNCHD_TEST_GUARD_ENV } from '../../packages/stim-cli/src/daemon/launchd-guard-env.ts';
 import { killRunProcesses } from '../../vitest.kill-run-processes.ts';
-import { launchdJobsUnder, removeLaunchdLeftovers } from '../../vitest.launchd-leftovers.ts';
+import { installRefusingLaunchctl, launchdJobsUnder, removeLaunchdLeftovers } from '../../vitest.launchd-leftovers.ts';
 
 process.env.STIM_DAEMON = 'off';
-process.env[LAUNCHD_TEST_GUARD_ENV] = '1';
 process.env.STIM_ENGINE_ROOT = join(tmpdir(), 'stim-e2e-engine-absent');
 
 if (process.platform !== 'win32') {
   // macOS gets /tmp because its default TMPDIR is long enough that Unix sockets under it exceed sun_path.
   const root = mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'stim-e2e-run-'));
   process.env.TMPDIR = root;
+  installRefusingLaunchctl(root);
   process.on('exit', () => {
     const { survivors: stimds, checked } = killRunProcesses(root);
     const jobs = launchdJobsUnder(root);
