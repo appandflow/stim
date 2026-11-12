@@ -898,6 +898,40 @@ require('node:http')
     expect(stateOf().metroTunnel).toBeUndefined();
   }, 30_000);
 
+  test('stim start --remote runs the tunnel in stimd, Metro serves its origin, and stim stop ends both', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'cloudflared' } } });
+    const cliRun = (args: string[]) =>
+      new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn(process.execPath, [cli, ...args], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        child.stdout.on('data', (chunk) => (out += chunk));
+        child.stderr.on('data', (chunk) => (out += chunk));
+        child.once('exit', (code) => resolve({ code, out }));
+      });
+    try {
+      const started = await cliRun(['start', '--remote', '--json', '--wait', '40']);
+      expect(started.code, started.out).toBe(0);
+      const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel;
+      expect(recorded).toMatchObject({ kind: 'managed', provider: 'cloudflared', port });
+      const claim = readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live[0];
+      expect(claim?.child?.pid).toBe(recorded.pid);
+      expect(alive(recorded.pid)).toBe(true);
+
+      const stopped = await cliRun(['stop']);
+      expect(stopped.code, stopped.out).toBe(0);
+      expect(alive(recorded.pid)).toBe(false);
+      expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
+    } finally {
+      const daemon = record()?.pid;
+      if (daemon) {
+        process.kill(daemon, 'SIGTERM');
+        await vi.waitFor(() => expect(alive(daemon)).toBe(false), { timeout: 15_000 });
+      }
+    }
+  }, 90_000);
+
   test('a named provider that fails is refused with its reason and no other provider runs', async () => {
     const root = bareProject();
     write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
