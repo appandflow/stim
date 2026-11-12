@@ -1,4 +1,5 @@
 import { reactNativeProjectDoctor, reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
+import { writeEndedOwnerRecord } from './_parity-fixture.ts';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -1386,6 +1387,55 @@ test('parity retains its registered worktree when fingerprint cleanup is unverif
     resetExecutor();
     if (retained) git('worktree', 'remove', '--force', '--force', retained);
     if (retained) rmSync(dirname(retained), { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('an aborted parity check unregisters its worktree and removes its directory', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-aborted-'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+    const controller = new AbortController();
+    let temporaryWorktree: string | undefined;
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (file === 'git' && args.includes('add')) temporaryWorktree = args.at(-2);
+        if (args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs'))) {
+          controller.abort(new Error('aborted'));
+          throw controller.signal.reason;
+        }
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    const custom = join(base, 'custom-tmp');
+    mkdirSync(custom);
+    const leftover = join(custom, 'stim-parity-ended1');
+    mkdirSync(join(leftover, 'head'), { recursive: true });
+    await writeEndedOwnerRecord(leftover, repo);
+    const context = processContext(repo);
+    const operation = { ...context, env: { ...context.env, STIM_TMPDIR: custom }, signal: controller.signal };
+    await expect(detectFingerprintParity(repo, { operation })).rejects.toThrow('aborted');
+    assert(temporaryWorktree);
+    expect(dirname(dirname(temporaryWorktree))).toBe(realpathSync.native(custom));
+    expect(existsSync(leftover)).toBe(false);
+    expect(existsSync(dirname(temporaryWorktree))).toBe(false);
+    expect(
+      git('worktree', 'list', '--porcelain')
+        .split('\n')
+        .filter((line) => line.startsWith('worktree ')),
+    ).toHaveLength(1);
+  } finally {
+    resetExecutor();
     rmSync(base, { recursive: true, force: true });
   }
 });
