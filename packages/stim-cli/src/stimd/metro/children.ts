@@ -514,7 +514,9 @@ function spawnHost(
     ...(storeRoot ? ['--store-root', storeRoot] : []),
     ...(resetCache ? ['--reset-cache'] : []),
   ];
-  const child = spawn('node', args, {
+  // Windows shims (pnpm, Volta) run `node` from PATH as a child, so Metro would listen outside the recorded pid, the
+  // only one resolveProjectMetro accepts there; Stim runs the host with its own node (see startExpoServer).
+  const child = spawn(process.platform === 'win32' ? process.execPath : 'node', args, {
     cwd: root,
     stdio: ['ignore', ...output.fds],
     detached: GROUPS,
