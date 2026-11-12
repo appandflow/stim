@@ -231,7 +231,16 @@ export function readDevServerStopRequest(state: WorkspaceState | null | undefine
  */
 export type DevServerStopRecord =
   | IdleStopRecord
-  | { reason: 'requested'; at: string; by: string; byPid: number; byWorkspace?: string }
+  | {
+      reason: 'requested';
+      at: string;
+      by: string;
+      byPid: number;
+      byWorkspace?: string;
+      /** Set when the dev server had already exited by itself: how it ended. */
+      code?: number;
+      signal?: string;
+    }
   | { reason: 'signal'; at: string; signal: string }
   | { reason: 'server-exited'; at: string; mode: string; code: number | null; signal: string | null };
 
@@ -251,6 +260,8 @@ export function readDevServerStop(state: WorkspaceState | null | undefined): Dev
       by: record.by,
       byPid: record.byPid,
       ...(typeof record.byWorkspace === 'string' ? { byWorkspace: record.byWorkspace } : {}),
+      ...(typeof record.code === 'number' ? { code: record.code } : {}),
+      ...(typeof record.signal === 'string' ? { signal: record.signal } : {}),
     };
   }
   if (record.reason === 'signal' && typeof record.signal === 'string') {

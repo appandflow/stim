@@ -397,9 +397,10 @@ end the job with \`stim stop\`.
 
   The dev server's own output goes to the global workspace
   logs/metro.stdout.log and logs/metro.stderr.log, and its helper parses it into
-  the NDJSON TIMELINE (metro.ndjson), until the output ends. Output still
-  buffered inside the dev server when it calls process.exit() is lost;
-  everything it wrote before exiting is recorded. A failed \`start\` quotes the
+  the NDJSON TIMELINE (metro.ndjson), until the output ends. On macOS,
+  output still buffered inside the dev server when it calls process.exit()
+  after a burst larger than the pipe buffer (64 KB) is lost; everything it
+  wrote before exiting is recorded. A failed \`start\` quotes the
   metro.stderr.log tail and this attempt's error records from the timeline.
 
 STARTING YOUR OWN BUNDLER STILL WORKS

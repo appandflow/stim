@@ -82,8 +82,10 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
   try {
     const closed = new Promise<void>((done) => child.once('close', () => done()));
     let tunnelSeen = false;
+    let childExited = false;
+    child.once('exit', () => (childExited = true));
     const publishTunnel = (url: string, retries: number) => {
-      if (tunnelSeen || !server) return;
+      if (tunnelSeen || childExited || !server) return;
       const token = server.processToken;
       let written = false;
       try {

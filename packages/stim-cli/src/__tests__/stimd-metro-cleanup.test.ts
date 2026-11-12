@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { requestDevServerStop } from '../stimd/metro/stop-cause.ts';
 
@@ -149,7 +149,11 @@ test.skipIf(process.platform === 'win32')(
     const progress = { settled: false };
     void failing.finally(() => (progress.settled = true));
     for (let step = 0; step < 300 && !progress.settled; step++) await vi.advanceTimersByTimeAsync(100);
-    expect(await failing).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(await failing).toMatchObject({
+      op: 'error',
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: expect.stringMatching(/pgrep -g 424242.*kill -TERM -424242/),
+    });
     expect(claims().live).toMatchObject([{ childDeclared: true, child: { pid: SERVER } }]);
     expect(readFileSync(workspaceStateFile(root), 'utf8')).toBe(record);
     await metroTick('on', log);
@@ -254,6 +258,20 @@ test.skipIf(process.platform === 'win32')(
     });
     expect(fixtures.kills).toEqual([]);
     await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a helper that ends without an exit file leaves the end of its own log in metro.ndjson',
+  async () => {
+    expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
+    writeFileSync(join(workspaceLogsDir(root), 'metro-run.log'), 'noise\nFATAL helper crash 5580\n');
+    fixtures.helper = 'gone';
+    fixtures.groupAlive = false;
+    await metroTick('on', log);
+    const lines = readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8');
+    expect(lines).toMatch(/ended without recording[^\n]*FATAL helper crash 5580/);
+    expect(claims().live).toEqual([]);
   },
 );
 

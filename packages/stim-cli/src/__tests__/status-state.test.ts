@@ -26,7 +26,7 @@ import {
   physicalDeviceStates,
 } from '../physical-devices.ts';
 import { makeEnvironmentState } from './_factories.ts';
-import { metroLastStop } from '../stimd/metro/stop-cause.ts';
+import { describeDevServerStop, devServerStopRecord, metroLastStop } from '../stimd/metro/stop-cause.ts';
 
 const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'stim-app', state: 'Shutdown' };
@@ -305,6 +305,17 @@ test('a stale supervisor takes the exit its helper recorded only when the pid an
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('a stop request keeps the exit code of a dev server that had already exited', () => {
+  const request = { processToken: 't', by: 'stim stop', pid: 7, at: '2026-09-26T20:00:00.000Z' };
+  const at = '2026-09-26T20:00:01.000Z';
+  const exited = devServerStopRecord({ kind: 'server-exit', mode: 'bare', code: 5, signal: null }, request, at);
+  expect(exited).toMatchObject({ reason: 'requested', by: 'stim stop', code: 5 });
+  expect(describeDevServerStop(exited)).toContain('exit code 5');
+  const plain = devServerStopRecord({ kind: 'signal', signal: 'SIGTERM' }, request, at);
+  expect(plain).not.toHaveProperty('code');
+  expect(describeDevServerStop(plain)).not.toContain('exited by itself');
 });
 
 test('statusActivity rounds lastActivityAt down to the minute, so records within one minute give the same payload', () => {

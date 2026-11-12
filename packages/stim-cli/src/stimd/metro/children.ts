@@ -446,7 +446,28 @@ async function settleHelperEnded(child: MetroChild): Promise<void> {
     code: null,
     signal: null,
   });
-  forget(child, `${why}; its exit code is unknown`, 'error', stop, child.roots);
+  const output = helperLogTail(child.root);
+  forget(
+    child,
+    `${why}; its exit code is unknown${output ? `. The end of metro-run.log:\n${output}` : ''}`,
+    'error',
+    stop,
+    child.roots,
+  );
+}
+
+/** The last 50 lines, at most 4 KB, of the helper's own output, which the next helper start truncates. */
+function helperLogTail(root: string): string {
+  try {
+    return readFileSync(join(workspaceLogsDir(root), 'metro-run.log'), 'utf8')
+      .slice(-4096)
+      .trim()
+      .split('\n')
+      .slice(-50)
+      .join('\n');
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -481,21 +502,39 @@ function unverifiedChild(
   else markClaimChildPending(claim);
   return Object.assign(new Error(`${reason} Claim remains at ${claim.path}.`), {
     code: 'STIM_CLAIM_UNAVAILABLE',
-    remedy: `Verify ${pid ? `pid ${pid} and its descendants have` : 'the dev-server process tree has'} stopped, then run ${claimRemoveCommand(claim.path)}.`,
+    remedy: known
+      ? `List the process group with \`pgrep -g ${pid}\` and stop it with \`kill -TERM -${pid}\`; the claim reads live while any member runs. Then run ${claimRemoveCommand(claim.path)}.`
+      : `Verify ${pid ? `pid ${pid} and its descendants have` : 'the dev-server process tree has'} stopped, then run ${claimRemoveCommand(claim.path)}.`,
     reportCleanup: true,
     ...(known ? { reportChild: known } : {}),
   });
 }
 
-/** Windows has no process groups: stops the dev server's tree by its own pid, once its identity reads `same`. */
+/**
+ * Windows has no process groups: stops the dev server's tree by its own pid with `taskkill /T /F`, once its identity
+ * reads `same`. The stop is confirmed by the leader's exit, not by taskkill's status, so a taskkill that fails because
+ * the leader just exited still confirms.
+ */
 async function stopTree(child: MetroChild): Promise<void> {
-  const status = inspectProcessIdentity(child);
-  if (status === 'unknown') throw new Error(`Could not verify dev-server pid ${child.pid}.`);
-  if (status !== 'same') return;
-  if (!(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' })))
-    throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
-  if (!(await gone(() => inspectProcessIdentity(child) === 'same', STOP_MS)))
-    throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+  const unconfirmed = (detail: string) =>
+    new Error(`Could not confirm shutdown of dev-server pid ${child.pid}: ${detail}.`);
+  const identity = inspectProcessIdentity(child);
+  if (identity === 'unknown') throw unconfirmed('its identity reads unknown');
+  if (identity !== 'same') return;
+  const taskkill = join(process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+  const failed = await getExecutor()
+    .runFileAsync(taskkill, ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000, killSignal: 'SIGKILL' })
+    .then(
+      () => null,
+      (error: { status?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown }) => error,
+    );
+  const alive = () => ['same', 'unknown'].includes(inspectProcessIdentity(child));
+  if (!(await gone(alive, STOP_MS)))
+    throw unconfirmed(
+      failed
+        ? `taskkill /T /F exited ${String(failed.status ?? failed.message)}: ${`${String(failed.stdout ?? '')} ${String(failed.stderr ?? '')}`.replace(/\s+/g, ' ').trim()}`
+        : `its identity still reads ${inspectProcessIdentity(child)} ${STOP_MS / 1000} s after taskkill`,
+    );
 }
 
 /** Stops what runs of the dev server's process group, checking the leader's identity before each signal. */
@@ -546,13 +585,7 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   let selfExited = false;
   try {
     if (!GROUPS) {
-      if (
-        inspectProcessIdentity(child) !== 'same' ||
-        !(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' }))
-      )
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
-      if (!(await gone(() => running(child), STOP_MS)))
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+      await stopTree(child);
     } else {
       if (child.helper) {
         const leader = inspectProcessIdentity(child);

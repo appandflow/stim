@@ -65,7 +65,9 @@ it shares the Windows hold.
 session) with stdio `ignore`, `metro-run.log`, `metro-run.log`, `ipc`, and stimd
 `unref`s it. The helper's own stdout and stderr, which hold only its crash
 output, go to `metro-run.log`, which stimd truncates at each helper start, so
-the file holds one helper run. A group signal to the dev server therefore never reaches the
+the file holds one helper run. When stimd finds a helper gone with no exit file,
+it copies the last 50 lines (at most 4 KB) of that file into the error record in
+`metro.ndjson`, which keeps the history the next helper start truncates. A group signal to the dev server therefore never reaches the
 helper.
 
 **Claim and liveness.** stimd holds `metro.claim` as before. Its details also
@@ -109,7 +111,8 @@ description, each with the same port check.
   lines into `metro.ndjson` records with `outputRecord(mode)`, Re.Pack's parser
   included. It also writes the Expo tunnel URL, once, into workspace state while
   the recorded supervisor token is its dev server's, and tries again every
-  250 ms, at most 40 times, when stimd has not yet recorded the dev server. That
+  250 ms, at most 40 times, when stimd has not yet recorded the dev server, until
+  the dev server exits. That
   is its only state write.
 - Rotation: every writer appends each record in one `write` on an `O_APPEND`
   descriptor, so lines never interleave. Only the helper rotates `metro.ndjson`
@@ -143,7 +146,8 @@ description, each with the same port check.
   start right after a crash records the crash rather than a stop. A stop that finds
   the dev server's leader already exited, with its helper still draining, waits for
   the helper to end (at most 5 s) and settles the exit the helper recorded, not a
-  stop; otherwise an
+  stop, and when a stop request is recorded too, the `requested` record keeps
+  the code or signal; otherwise an
   adopted helper's exit waits for the tick, which took 42 to 45 s in the
   real-tool check. `status` (`metroLastStop`) reads a matching file before it
   calls a supervisor vanished, so it shows the code during that wait. stimd
@@ -172,9 +176,15 @@ description, each with the same port check.
   finds the helper gone with no exit file, stops the group by the claim child,
   and logs at error that the helper ended without recording the exit. The next
   ensure starts a new dev server. Output after the crash is lost. On Windows,
-  which has no process groups, stimd stops the recorded dev server by its own pid
-  after an identity check, and when that identity cannot be read it keeps the
-  claim and refuses with `STIM_CLAIM_UNAVAILABLE`.
+  which has no process groups, one function stops the dev server's tree for every
+  stop path: it reads the leader's identity (`unknown` refuses with
+  `STIM_CLAIM_UNAVAILABLE` and keeps the claim; `gone` or `different` means it
+  already ended), runs `taskkill.exe` from `%SystemRoot%\System32` on that pid
+  with no await in between, and confirms by the leader's exit, not taskkill's
+  status. A still running leader after 5 s is the refusal, and its message names the failed
+  check, taskkill's status included. Where the leader exited and a group member
+  still lives (POSIX), the claim reads live while the group does and the remedy
+  names the group: `pgrep -g <pid>`, `kill -TERM -<pid>`, then the claim removal.
 - Machine reboot: the claim's owner and child are gone and no exit file exists,
   so the stop reads as "gone and recorded no cause".
 

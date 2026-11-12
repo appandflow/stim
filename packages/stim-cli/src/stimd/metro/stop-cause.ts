@@ -63,6 +63,8 @@ export function devServerStopRecord(
       by: request.by,
       byPid: request.pid,
       ...(request.workspace ? { byWorkspace: request.workspace } : {}),
+      ...(trigger.kind === 'server-exit' && trigger.code !== null ? { code: trigger.code } : {}),
+      ...(trigger.kind === 'server-exit' && trigger.signal ? { signal: trigger.signal } : {}),
     };
   }
   return trigger.kind === 'signal'
@@ -75,7 +77,12 @@ export function describeDevServerStop(record: DevServerStopRecord): string {
     return `idle for ${record.idleMinutes} minutes (idle.minutes); run stim revive to resume it`;
   }
   if (record.reason === 'requested') {
-    return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;
+    const exited = record.signal
+      ? `signal ${record.signal}`
+      : record.code !== undefined
+        ? `exit code ${record.code}`
+        : null;
+    return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})${exited ? `, after the dev server had exited by itself (${exited})` : ''}`;
   }
   if (record.reason === 'signal') {
     return `received ${record.signal} with no Stim stop request recorded, so it likely came from outside Stim`;
