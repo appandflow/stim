@@ -718,10 +718,12 @@ returns and a restarted stimd takes it over. In `auto` stimd tries ngrok and the
 `stim worktree remove` end the tunnel through stimd, and `stim status --json` keeps reporting its provider and URL.
 A tunnel an older Stim started is reused or stopped by its recorded process identity.
 
-If a daemon from Stim 1.40 to 1.42 still holds this Stim home when you start
-Metro or a managed tunnel, the command reports the daemon's PID and the command
-to stop it. You can also stop its workspaces with the older Stim and wait for
-the daemon to exit before retrying.
+After an upgrade, a daemon from Stim 1.40 to 1.42 can still hold this Stim home,
+because it runs until every workspace has been idle for `idle.dormantDays`. stimd
+stops it by its process identity when it starts, and your dev servers and devices
+keep running. If the holder cannot be verified as that daemon, or does not stop,
+`stim start` and the other commands that need Metro or a managed tunnel report its
+PID and the command that stops it.
 
 ## Metro for hosted iOS
 

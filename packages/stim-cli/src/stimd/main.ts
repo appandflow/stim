@@ -91,6 +91,7 @@ import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
+import { takeOverLegacyDaemon } from '../daemon/legacy-daemon.ts';
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -187,9 +188,9 @@ async function takeClaim(
   }
 }
 
-/** Why stimd cannot start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon claim exclusively. */
+/** Why stimd cannot start while a stim-daemon from before Stim 2.0 holds the daemon claim exclusively. */
 export function daemonClaimRefusal(): string {
-  const refusal = legacyDaemonRefusal();
+  const refusal = legacyDaemonRefusal(true);
   return refusal
     ? `${refusal.message} ${refusal.remedy}`
     : "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it.";
@@ -743,6 +744,10 @@ async function runStimdInner(
     return true;
   }
   startup.signal.throwIfAborted();
+  // compat C30 until 2.1.0
+  const stopped = await takeOverLegacyDaemon();
+  if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
+  // compat end
   let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
   startup.signal.throwIfAborted();

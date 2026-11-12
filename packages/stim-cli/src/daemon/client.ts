@@ -28,6 +28,7 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
+import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
@@ -225,17 +226,25 @@ function waitingChildren(): number[] {
   }
 }
 
-// @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
-export function legacyDaemonRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
-  const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
-  if (pid === undefined) return null;
-  const stop = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+/**
+ * The refusal of a command that needs this home's stimd while a stim-daemon from before Stim 2.0 holds the daemon
+ * claim. Before stimd has tried, only a holder it will not stop refuses; with `attempted`, any holder does.
+ */
+// compat C30 until 2.1.0
+// @ref LLP 0015#a-stim-daemon-from-before-20-is-taken-over -- stimd stops a verified pre-2.0 daemon, and refuses anything else
+export function legacyDaemonRefusal(
+  attempted = false,
+): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+  const holder = legacyDaemonHolder();
+  if (!holder || (holder.stimDaemon && !attempted)) return null;
+  const { pid } = holder.owner;
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
-    message: `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start.`,
-    remedy: `Stop its workspaces with the older Stim and wait for it to exit, or stop it with \`${stop}\`. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later (\`npm i -D stim@next\` or \`npx stim@next\` until 2.0.0 is released).`,
+    message: `Process ${pid} from an older stim holds this home's daemon claim and Stim could not stop it, so stimd cannot start.`,
+    remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later (\`npm i -D stim@next\` or \`npx stim@next\` until 2.0.0 is released).`,
   };
 }
+// compat end
 
 /**
  * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
@@ -411,7 +420,7 @@ async function admitOperation(
   await ensureStimd(env, process.platform, true, held, 'stim start', true, { ...context, workspace: root }, true);
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
-  const refused = otherBuildRefusal() ?? legacyDaemonRefusal();
+  const refused = otherBuildRefusal() ?? legacyDaemonRefusal(true);
   return { answer: refused ? { op: 'error', ...refused } : null };
 }
 
@@ -913,10 +922,12 @@ export async function ensureStimd(
       );
       return true;
     }
+    // compat C30 until 2.1.0
     if (command === 'stim start') {
       const legacy = legacyDaemonRefusal();
       if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
+    // compat end
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
@@ -959,6 +970,12 @@ export async function ensureStimd(
       }
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
+    // compat C30 until 2.1.0
+    if (!taken && command === 'stim start') {
+      const legacy = legacyDaemonRefusal(true);
+      if (legacy) throw Object.assign(new Error(legacy.message), legacy);
+    }
+    // compat end
     if (attachedAttempt && !taken)
       throw Object.assign(new Error('The attached Stim daemon could not take this home.'), {
         code: 'STIM_DAEMON_UNAVAILABLE',

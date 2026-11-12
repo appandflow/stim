@@ -12,7 +12,7 @@ Stim 2.0 is a breaking release. Four mechanisms that carried older builds across
 the one-engine migration are gone, and each unsupported case ends in a refusal
 that names its remedy:
 
-- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42.
+- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C30 replaces it below.
 - C23, the net thread's probe of port 7787 for a pre-1.43 stim-server.
 - C25, stimd stopping dev server supervisors and device log collectors of
   another engine build at an engine switch.
@@ -34,19 +34,48 @@ the 60-day wait and the field gate are waived and that compatibility code is
 cleaned up in 2.0. The coordinator, not the maintainer, chose to remove the
 release floors and to give the action a missing-`bin/stim.mjs` check.
 
-## An older stim-daemon's claim is refused, not taken over
+## A stim-daemon from before 2.0 is taken over
 
-stimd holds the daemon claim shared. When a live holder has it exclusively, only
-a stim-daemon from Stim 1.40 to 1.42 does, stimd waits briefly, then exits and
-logs `stimd_claim_held` with that holder's pid and the stop command (`kill <pid>`,
-`taskkill /PID <pid> /F` on Windows) and the update remedy (stim 2.0.0 or
-later); `stim serve` prints the same text. stimd never signals the holder. Reason: the old daemon
-exits on its own once its workspaces stop, so refusing costs a wait, while
-signalling a process Stim did not start is a decision for the person who runs it.
+stimd holds the daemon claim shared. When a live process holds it exclusively,
+only a stim-daemon from Stim 1.40 to 1.42 does. That daemon does not exit when
+its workspaces stop: it stays until every workspace in the home is dormant,
+`idle.dormantDays` after the last activity (3 days by default in 1.40), and
+any 1.40 command starts it. Refusing it therefore cost up to three days after an
+upgrade (#5620).
 
-Known limit: stimd exits with status 0, so a service unit that restarts it
-(30 seconds under `KeepAlive` or `Restart=always`) relaunches it every 30 seconds
-until the old daemon ends.
+stimd takes over from it before it takes the shared claim (compat C30, ends
+2.1.0). It acts only when the claim's record is what a stim-daemon writes (a
+`socket` and a `mode` in its details) and, in the same synchronous step that
+sends the signal, `inspectProcessIdentity` of the claim's owner reads `same`. It
+sends SIGTERM, because the old daemon has no stop request: its socket answers
+`hello`, `snapshot`, `tick` and the slot and boot queue operations only. Its
+SIGTERM handler closes the socket, releases the claim and exits after the tick
+in progress. stimd waits up to 10 seconds for that identity to read `gone` or
+`different`, then takes the claim and logs `stimd_takeover` with the pid.
+
+The old daemon owns no child. It runs `ps`, `lsof` and `git` for a tick and
+starts nothing that outlives it, so dev servers (each with its own supervisor),
+log collectors and owned devices keep running; stimd adopts the dev servers as
+it adopts any other (`adoptMetroChildren`). A takeover stops nothing else.
+
+stimd refuses and signals nothing when the holder's record is not a
+stim-daemon's, when the identity reads `unknown` or `different`, or when the
+process is still running after the wait. It logs `stimd_claim_held`, and the CLI
+shows the same refusal for `stim start` and for the commands that need Metro or
+a managed tunnel: the pid, the stop command (`kill <pid>`, `taskkill /PID <pid>
+/F` on Windows) and the update remedy (stim 2.0.0 or later). `stim serve` prints
+the same text.
+
+Known limits: the old daemon releases its claim when it receives the signal, not
+when it exits, so a daemon still finishing a tick after the 10-second wait can
+overlap a later stimd's first tick. On Windows `process.kill` ends the process
+at once and its claim is recovered through its dead identity.
+
+Decision: the coordinator chose this takeover in the #5620 lane brief, on
+2026-11-12, not the maintainer. It reverses the part of the earlier decision
+here that said stimd never signals a pid read from a claim and that the old
+daemon exits on its own after its workspaces stop; that part rested on a wrong
+reading of the 1.40 code. The maintainer has not stated it.
 
 ## Dev servers of another build keep running after an engine switch
 
@@ -74,5 +103,6 @@ fails with `stim@<version> has no bin/stim.mjs`; set `version` to 2.0.0 or later
 ## Links
 
 - Issue: #5552.
-- Code: `packages/stim-cli/src/stimd/main.ts` (`daemonClaimRefusal`),
+- Code: `packages/stim-cli/src/daemon/legacy-daemon.ts` (the takeover),
+  `packages/stim-cli/src/stimd/main.ts` (`daemonClaimRefusal`),
   `packages/server/src/cli.ts`, `.github/actions/stim-ci/src/action.ts`.

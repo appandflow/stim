@@ -146,14 +146,15 @@ describe.skipIf(process.platform === 'win32')('background passes availability', 
   );
 });
 
-/** A stand-in for a stim-daemon from Stim 1.40 to 1.42: holds the daemon claim exclusively and notes SIGTERM before it exits. */
+/** A stand-in for a stim-daemon from Stim 1.40 to 1.42: holds the daemon claim exclusively, with the record that daemon writes only when asked, and notes SIGTERM before it exits. */
 const LEGACY_DAEMON = `
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { daemonClaimRoot, daemonDir } from '@stim-cli/core/state';
 import { tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 const record = process.argv[1];
 mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' });
+const details = process.argv[2] === 'stim-daemon' ? { socket: 'daemon.sock', mode: 'on' } : undefined;
+tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon', details });
 process.on('SIGTERM', () => {
   appendFileSync(record, 'sigterm\\n');
   process.exit(0);
@@ -1748,7 +1749,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
   }, 20_000);
 
-  test('a stim-daemon from an older Stim that holds the daemon claim exclusively is refused with its pid and the remedy, and not signalled', async () => {
+  test('an exclusive holder of the daemon claim that is not a stim-daemon is refused with its pid and the remedy, and not signalled', async () => {
     const record = join(home, 'legacy.log');
     const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record], {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
@@ -1769,7 +1770,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
 
     const expected = {
       code: 'STIM_DAEMON_UNAVAILABLE',
-      message: expect.stringContaining(`stim-daemon pid ${legacy.pid}`),
+      message: expect.stringContaining(`Process ${legacy.pid} from an older stim`),
       remedy: expect.stringContaining(`kill ${legacy.pid}`),
     };
     await expect(ensureMetroThroughStimd({ root: home, port: 8082 }, 500)).resolves.toMatchObject({
@@ -1796,8 +1797,41 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       .split('\n')
       .map((line) => JSON.parse(line))
       .find((logged) => logged.event === 'stimd_claim_held');
-    expect(refusal?.msg).toContain(`stim-daemon pid ${legacy.pid} from an older stim`);
+    expect(refusal?.msg).toContain(`Process ${legacy.pid} from an older stim`);
     expect(refusal?.msg).toContain(`kill ${legacy.pid}`);
+  }, 60_000);
+
+  test('a stim-daemon from an older Stim is signalled once its identity reads the same, and stimd takes its place', async () => {
+    const record = join(home, 'legacy.log');
+    const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record, 'stim-daemon'], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env },
+      stdio: 'ignore',
+    });
+    const exited = new Promise<number | null>((done) => legacy.once('exit', (code) => done(code)));
+    daemons.push({ child: legacy, exited });
+    await vi.waitFor(() => expect(readFileSync(record, 'utf8')).toContain('listening'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    assert(legacy.pid);
+    const successor = startDaemonProcess();
+
+    expect(await exited).toBe(0);
+    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_started"'), {
+      timeout: 20_000,
+      interval: 50,
+    });
+    expect(readFileSync(record, 'utf8').trim().split('\n')).toEqual(['listening', 'sigterm']);
+    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.mode)).toEqual(['shared']);
+    const takeover = daemonLog()
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((logged) => logged.event === 'stimd_takeover');
+    expect(takeover?.msg).toContain(`pid ${legacy.pid}`);
+    successor.child.kill('SIGTERM');
+    await successor.exited;
   }, 60_000);
 
   test('a daemon signalled right after its tick exits at once instead of sleeping through its wait', async () => {
