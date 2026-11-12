@@ -403,6 +403,14 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
   forget(child, endedMessage(child.mode, child.pid, stop), stop ? devServerStopLevel(stop) : 'warn', stop, child.roots);
 }
 
+/** Whether the dev server's helper recorded its exit or is gone; it writes the exit just before it ends. */
+function helperEnded(child: MetroChild): boolean {
+  if (!child.helper) return false;
+  if (exitOf(child.root, child)) return true;
+  const status = inspectProcessIdentity(child.helper);
+  return status === 'gone' || status === 'different';
+}
+
 /**
  * Settles the workspace's dev server first when its helper has ended, so a start or stop that comes before the next
  * tick records the exit the helper wrote instead of a stop. Returns whether it did.
@@ -411,8 +419,7 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
 async function settleIfHelperEnded(root: string): Promise<boolean> {
   const child = children.get(root);
   if (!child?.helper || child.stopping || child.gone) return false;
-  const status = inspectProcessIdentity(child.helper);
-  if (status !== 'gone' && status !== 'different') return false;
+  if (!helperEnded(child)) return false;
   await settleHelperEnded(child);
   return true;
 }
@@ -521,6 +528,7 @@ async function stopHelper(child: MetroChild, helper: { pid: number; processToken
 
 async function stopChild(child: MetroChild, why: string): Promise<void> {
   if (child.stopping && cleanupFailure) throw cleanupFailure;
+  if (!child.stopping && helperEnded(child)) return settleHelperEnded(child);
   child.stopping = true;
   await child.roots?.beforeClose();
   try {
@@ -1350,9 +1358,9 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
       }
       const decidedAt = Date.now();
       if (child.helper) {
-        const status = inspectProcessIdentity(child.helper);
-        if (status === 'unknown') continue;
-        if (status !== 'same') {
+        if (!helperEnded(child)) {
+          if (inspectProcessIdentity(child.helper) === 'unknown') continue;
+        } else {
           await serialize(child.root, async () => {
             if (children.get(child.root) === child && !child.stopping) await settleHelperEnded(child);
             return {};

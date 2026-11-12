@@ -117,9 +117,9 @@ description, each with the same port check.
   trims the log only while no dev server runs. No one rotates the raw files;
   the helper empties them per dev server, as stimd did.
 - Exit: at the leader's `exit` the helper keeps the code or signal and reads on
-  until both pipes close. While the group lives, that is the dev server still
-  running, and a stop ends it. Once the group is gone, the helper waits at most
-  1 s more for the pipes, then stops reading. A descendant outside the group that
+  until the group is gone and both pipes close. While the group lives, that is
+  the dev server still running, and a stop ends it. Once the group is gone, the
+  helper waits at most 1 s more for the pipes, then stops reading. A descendant outside the group that
   still holds a pipe then gets EPIPE on its next write. The helper writes
   `metro-run.exit.json` (`{pid, processToken, code, signal, exitedAt, helperPid}`,
   atomically) and exits.
@@ -129,7 +129,8 @@ description, each with the same port check.
   registered projects' workspace directories. A file matching the recorded
   `supervisor` gets the one `supervisor_stopped` line and stop record. Any other
   file gets a `dev_server_exit_unclaimed` warn line with the code. Either way
-  stimd deletes it. An ensure or a stop settles an ended helper first, so a
+  stimd deletes it. A matching exit file counts as an ended helper even before
+  the helper process is gone. An ensure or a stop settles an ended helper first, so a
   start right after a crash records the crash rather than a stop; otherwise an
   adopted helper's exit waits for the tick, which took 42 to 45 s in the
   real-tool check. `status` (`metroLastStop`) reads a matching file before it

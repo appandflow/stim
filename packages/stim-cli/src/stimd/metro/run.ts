@@ -18,25 +18,21 @@ const STOP_MS = 5000;
 const DRAIN_MS = 1000;
 const STREAMS = ['stdout', 'stderr'] as const;
 
-const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms).unref());
+const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 const send = (message: MetroRunMessage) =>
   new Promise<void>((done) => (process.send ? process.send(message, () => done()) : done()));
 
 /**
- * Waits until the dev server's stdout and stderr close. Once its process group is gone (at once on Windows, which has
- * none) it waits at most `DRAIN_MS` more, then stops reading, so a descendant outside the group that still holds a pipe
- * cannot keep the helper alive; that descendant gets EPIPE on its next write.
+ * Waits until the dev server's process group is gone (at once on Windows, which has none) and its stdout and stderr
+ * close. Once the group is gone it waits at most `DRAIN_MS` more for the pipes, then stops reading, so a descendant
+ * outside the group that still holds a pipe cannot keep the helper alive; that descendant gets EPIPE on its next write.
  */
 async function drain(child: ChildProcess, closed: Promise<void>, stuck: () => boolean): Promise<void> {
   const pipes = { closed: false };
   void closed.then(() => (pipes.closed = true));
-  while (!pipes.closed && !stuck()) {
-    if (!GROUPS || child.pid === undefined || !processGroupAlive(child.pid)) {
-      await Promise.race([closed, sleep(DRAIN_MS)]);
-      break;
-    }
-    await Promise.race([closed, sleep(100)]);
-  }
+  const groupAlive = () => GROUPS && child.pid !== undefined && processGroupAlive(child.pid);
+  while (!stuck() && groupAlive()) await sleep(100);
+  if (!pipes.closed) await Promise.race([closed, sleep(DRAIN_MS)]);
   if (pipes.closed) return;
   for (const stream of STREAMS) child[stream]?.destroy();
   await Promise.race([closed, sleep(DRAIN_MS)]);
@@ -197,5 +193,4 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
   }
 }
 
-if (process.argv[1]?.endsWith('/metro-run.mjs') || process.argv[1]?.endsWith('/metro/run.ts'))
-  await runMetroHelper(process.argv.slice(2));
+if (/[\\/](metro-run\.mjs|metro[\\/]run\.ts)$/.test(process.argv[1] ?? '')) await runMetroHelper(process.argv.slice(2));
