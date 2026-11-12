@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { metroExitFile, readNdjsonGenerations } from '@stim-cli/core/state';
+import { isJsonObject, metroExitFile, readNdjsonGenerations } from '@stim-cli/core/state';
 import { inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { upsertProject } from '../workspace/config.ts';
@@ -79,12 +80,17 @@ async function startThenCrashStimd(port: number): Promise<{ pid: number }> {
   return answer;
 }
 
+function identityOf(value: unknown): { pid: number; processToken: string } {
+  assert(isJsonObject(value) && typeof value.pid === 'number' && typeof value.processToken === 'string');
+  return { pid: value.pid, processToken: value.processToken };
+}
+
 const claims = () => readClaimSet(join(workspaceDir(root), 'metro.claim'));
 
 /** Stops the workspace's dev server the way `stim stop` asks stimd to, and checks that nothing of it is left. */
 async function stopLikeStimStop(): Promise<void> {
-  const supervisor = readWorkspaceState(root)?.supervisor as { pid: number; processToken: string };
-  const helper = claims().live[0]?.details.helper as { pid: number; processToken: string };
+  const supervisor = identityOf(readWorkspaceState(root)?.supervisor);
+  const helper = identityOf(claims().live[0]?.details.helper);
   expect(inspectProcessIdentity(helper)).toBe('same');
   requestDevServerStop(root, supervisor.processToken, { by: 'stim stop' });
   expect(await stopManagedMetro({ root, ...supervisor }, () => {})).toMatchObject({ state: 'stopped' });
@@ -227,10 +233,7 @@ describe.skipIf(process.platform === 'win32')('the dev-server helper', () => {
   test('a stopped dev server leaves no helper behind', async () => {
     const { pid } = await startThenCrashStimd(8293);
     openMetroChildren();
-    const helper = readClaimSet(join(workspaceDir(root), 'metro.claim')).live[0]?.details.helper as {
-      pid: number;
-      processToken: string;
-    };
+    const helper = identityOf(claims().live[0]?.details.helper);
     expect(inspectProcessIdentity(helper)).toBe('same');
     adoptMetroChildren(() => {});
     process.kill(pid, 'SIGTERM');
