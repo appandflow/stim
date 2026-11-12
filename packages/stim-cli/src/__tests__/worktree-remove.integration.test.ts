@@ -1882,7 +1882,7 @@ test('action: removal releases this workspace lease and leaves another workspace
 
 const PARKING_PRESSURE: [number, boolean][] = [
   [100, false],
-  [10, true],
+  [30, true],
 ];
 
 test.each(PARKING_PRESSURE)(

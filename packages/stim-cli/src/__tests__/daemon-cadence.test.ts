@@ -159,7 +159,7 @@ describe.skipIf(process.platform === 'win32')(
       mkdirSync(workspaceLogsDir(root), { recursive: true });
       writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
       recordWorkspaceUse(root, new Date(Date.now() - MINUTE_MS));
-      freeMb = 10 * 1024;
+      freeMb = 30 * 1024;
 
       let exited = false;
       const daemon = (async () => {
