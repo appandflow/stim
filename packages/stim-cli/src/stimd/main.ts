@@ -125,9 +125,6 @@ import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from '.
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
 import { ownStoreEngine, requireCurrentEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
-// compat C25 until removal-minor
-import { stopForeignSupervisors } from './foreign-supervisors.ts';
-// compat end
 import {
   ATTACHED_ARG,
   attachedExitWaitMs,
@@ -643,8 +640,6 @@ interface RunStimdOptions {
   desktopKey?: string;
   /** Gets the net thread's first answer to `serve`. */
   onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
-  /** Started by a stimd of the previous build after an engine switch: stops that build's supervisors when idle. */
-  afterSwitch?: boolean;
   /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
   service?: boolean;
   /**
@@ -695,7 +690,6 @@ async function runStimdInner(
     serve,
     desktopKey,
     onNet,
-    afterSwitch = false,
     service = serve !== undefined,
     attached,
   }: RunStimdOptions,
@@ -782,10 +776,13 @@ async function runStimdInner(
       releaseClaim(own);
       markAbnormal = null;
       if (current)
-        launchStimd(process.env, startMode, process.platform, join(store.root, current.dir, 'dist', 'cli.mjs'), [
-          '--after-switch',
-          ...serveArgs(serve ?? null, service),
-        ]);
+        launchStimd(
+          process.env,
+          startMode,
+          process.platform,
+          join(store.root, current.dir, 'dist', 'cli.mjs'),
+          serveArgs(serve ?? null, service),
+        );
       writer.close();
       return false;
     }
@@ -993,7 +990,6 @@ async function runStimdInner(
       `this stimd's installation now holds ${now.version} (${now.build}); restarting on it once the commands it serves end`,
     );
   };
-  let foreignLeft = afterSwitch;
   let heldSwitch = false;
   const hasActiveCommands = () => ops.size > 0;
   const pinned = (): boolean =>
@@ -1080,7 +1076,7 @@ async function runStimdInner(
     shutdown(why);
     await shutdownDone;
     if (keepOwn) return;
-    launchStimd(process.env, startMode, process.platform, entry, ['--after-switch', ...serveArgs(carried, service)]);
+    launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service));
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
       if (record?.build === next.build && record.pid !== process.pid) return;
@@ -1729,9 +1725,6 @@ async function runStimdInner(
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
       engineDirs = workspaceEngineDirs(config);
-      // compat C25 until removal-minor
-      if (foreignLeft && follower) foreignLeft = (await stopForeignSupervisors(follower.engine.build)) > 0;
-      // compat end
       await checkEngine();
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
@@ -1880,7 +1873,6 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
         daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
-      afterSwitch: argv.includes('--after-switch'),
       service: serve !== undefined && !argv.includes('--carried'),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });

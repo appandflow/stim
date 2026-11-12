@@ -90,11 +90,6 @@
       "end": "removal minor",
       "mechanism": "the net thread stays off while an older stim-server holds its port"
     },
-    "C25": {
-      "loc": 25,
-      "end": "removal minor",
-      "mechanism": "supervisors and collectors of another engine stop at the next idle point"
-    },
     "C26": {
       "loc": 25,
       "end": "permanent",
