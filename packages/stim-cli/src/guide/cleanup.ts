@@ -624,9 +624,10 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   rung 8, before the history and tool caches; \`stim gc --pressure critical\`
   always takes it). Nothing that runs from or works in it, builds, drives,
   leases, hosts or is pinned with maintenance.keep is touched, nor a checkout
-  whose node_modules a linked worktree listed by git links to (any symlink in
-  its top two directory levels, up to 2000 entries, resolving into the tree;
-  unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
+  whose node_modules a linked worktree listed by git links to (a symlink at the
+  same relative path or in its top two directory levels, up to 2000 entries,
+  resolving into the tree; past the bound or at an unreadable directory the
+  tree is kept; unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
   rule (critical takes it), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked

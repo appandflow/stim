@@ -46,6 +46,7 @@ import {
 } from '../stimd/passes/unowned.ts';
 import {
   clearDependency,
+  clearSourceCheckouts,
   rankDependencies,
   rankSourceDependencies,
   selectDependencies,
@@ -714,10 +715,24 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
   const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
   if (shortDevices?.size === 0) return;
   const worktrees = await artifactWorktreesFor(context.operation);
+  const due: typeof take = [];
   for (const dependency of take) {
     if (!onShortVolume([dependency.candidate.path], shortDevices)) continue;
-    if (!(await context.stillShort())) return;
-    const why = `${context.why}; the source checkout's dependencies go last`;
+    if (!(await context.stillShort())) break;
+    due.push(dependency);
+  }
+  const why = `${context.why}; the source checkout's dependencies go last`;
+  const results = context.act
+    ? await clearSourceCheckouts(
+        due,
+        PRESSURE_IDLE_MS,
+        protectedRoot,
+        worktrees,
+        context.operation,
+        'the pressure idle threshold',
+      )
+    : new Map();
+  for (const dependency of due) {
     const plan: MaintenanceAction = {
       kind: 'would-delete-dependencies',
       target: dependency.candidate.path,
@@ -726,7 +741,7 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
       workspace: dependency.workspace,
     };
     const result = context.act
-      ? await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why, context.operation)
+      ? (results.get(dependency) ?? { status: 'kept' as const, bytes: 0, detail: 'it was not processed' })
       : {
           status: 'would' as const,
           bytes: context.measure

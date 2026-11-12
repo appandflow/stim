@@ -1,6 +1,6 @@
-import { lstatSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
@@ -455,17 +455,28 @@ export async function collectArtifactsAsync(
   return { candidates, skips };
 }
 
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 const LINK_SCAN_ENTRIES = 2000;
 const LINK_SCAN_DEPTH = 2;
 
 /**
- * Why a listed linked worktree keeps a source checkout's dependency tree: a symlink in it resolves into the tree. The scan
- * reads the worktree's directories down to `LINK_SCAN_DEPTH` levels (so `apps/<app>/node_modules` is seen) and checks
- * every entry in them, a `node_modules` entry itself included, without descending into `node_modules` or `.git`, and
- * stops after `LINK_SCAN_ENTRIES` entries per worktree. A worktree git does not list is not scanned.
+ * Why a listed linked worktree keeps a source checkout's dependency tree: a symlink in it resolves into the tree, or the
+ * worktree could not be fully checked. The same relative path is checked first. The scan then reads the worktree's
+ * directories down to `LINK_SCAN_DEPTH` levels (so `apps/<app>/node_modules` is seen) and checks every entry in them,
+ * a `node_modules` entry itself included, without descending into `node_modules` or `.git`. Past `LINK_SCAN_ENTRIES`
+ * entries or at a directory it cannot read, the check is incomplete and the tree is kept. A worktree git does not
+ * list is not scanned.
  */
 function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly ArtifactWorktree[]): string | null {
   const real = canonicalPath(candidate.path);
+  const rel = relative(candidate.worktree, candidate.path);
   const into = (path: string): boolean => {
     try {
       const target = canonicalPath(path);
@@ -476,16 +487,23 @@ function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly A
   };
   for (const other of worktrees) {
     if (!other.linked) continue;
+    const direct = join(other.path, rel);
+    if (isSymlink(direct) && into(direct)) return `the worktree ${other.path} links ${rel} to it`;
     let seen = 0;
+    let incomplete = false;
     const scan = (dir: string, depth: number): string | null => {
       let entries;
       try {
         entries = readdirSync(dir, { withFileTypes: true });
       } catch {
+        incomplete = true;
         return null;
       }
       for (const entry of entries) {
-        if (++seen > LINK_SCAN_ENTRIES) return null;
+        if (++seen > LINK_SCAN_ENTRIES) {
+          incomplete = true;
+          return null;
+        }
         const path = join(dir, entry.name);
         if (entry.isSymbolicLink()) {
           if (into(path)) return path;
@@ -497,12 +515,14 @@ function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly A
         ) {
           const found = scan(path, depth + 1);
           if (found) return found;
+          if (incomplete) return null;
         }
       }
       return null;
     };
     const found = scan(other.path, 0);
     if (found) return `the worktree ${other.path} links ${relative(other.path, found)} to it`;
+    if (incomplete) return `the worktree ${other.path} could not be fully checked for links into it`;
   }
   return null;
 }
@@ -547,8 +567,6 @@ export async function clearArtifact(
     worktrees: readonly ArtifactWorktree[];
     /** Keep dependencies that worktree warm could not restore with the same versions. */
     requireRestorable?: boolean;
-    /** The dependencies of a source checkout, which no worktree warm restores; their deletion is recorded in its workspace. */
-    source?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
     /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
     recheck?: (keys: readonly string[], worktree: string) => Promise<string | null>;
@@ -557,18 +575,9 @@ export async function clearArtifact(
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const { operation } = options;
   const signal = operation?.signal ?? new AbortController().signal;
-  const worktree = options.worktrees
-    .filter((entry) => action.target.startsWith(`${entry.path}${sep}`))
-    .reduce<ArtifactWorktree | null>(
-      (best, entry) => (best && best.path.length >= entry.path.length ? best : entry),
-      null,
-    );
-  if (kind === 'dependencies' && worktree && worktree.linked === Boolean(options.source))
-    return {
-      status: 'kept',
-      bytes: 0,
-      detail: options.source ? 'it is in a linked worktree' : 'it is in the source checkout',
-    };
+  const worktree = containing(options.worktrees, action.target);
+  if (kind === 'dependencies' && worktree && !worktree.linked)
+    return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
   if (!worktree || !isKnownDir(kind, action.target))
     return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);
@@ -581,7 +590,6 @@ export async function clearArtifact(
     keys: worktree.keys,
     locked: worktree.locked,
     agents,
-    ...(options.source ? { source: true } : {}),
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
@@ -592,73 +600,44 @@ export async function clearArtifact(
     await artifactReads(candidate, kind, signal, operation),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
-  const unsafe = options.source
-    ? ((await regenerableDirProblem(worktree.path, candidate.path, signal)) ??
-      linkedWorktreeUsing(candidate, options.worktrees))
-    : null;
-  if (unsafe) return { status: 'kept', bytes: 0, detail: unsafe };
   const unrestorable =
     kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache, operation) : null;
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
-  const heldKeys: string[] = options.source ? workspaceKeys(candidate.keys) : key ? [key] : [];
-  const removeUnderClaims = async () => {
+  const remove = async () => {
     const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
     if (lock) return lockReason(lock);
     const reason = keptReason(
-      { ...candidate, source: false },
+      candidate,
       kind,
       {
         ...options,
         pinned: await pinsOf(candidate.keys, options.pinned),
         now: Date.now(),
         running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
-        inUse: await inUseOf(candidate, kind, signal, operation, heldKeys),
-        locked: heldKeys,
+        inUse: await inUseOf(candidate, kind, signal, operation, key),
+        ...(key ? { locked: key } : {}),
       },
       await artifactReads(candidate, kind, signal, operation),
     );
     if (reason) return reason;
-    const late = options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
+    const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
-    const stillUnsafe = options.source
-      ? ((await regenerableDirProblem(worktree.path, candidate.path, signal)) ??
-        linkedWorktreeUsing(candidate, options.worktrees))
-      : null;
-    if (stillUnsafe) return stillUnsafe;
-    const record = kind === 'dependencies' && !options.source;
+    const record = kind === 'dependencies';
     if (record) recordLightened(candidate.keys, candidate.path);
-    const parent = dirname(candidate.path);
-    const parentTimes = options.source ? statSync(parent, { throwIfNoEntry: false }) : undefined;
     rmSync(candidate.path, { recursive: true, force: true });
-    if (parentTimes) utimesSync(parent, parentTimes.atime, parentTimes.mtime);
     if (record) finishLightened(candidate.keys, candidate.path);
-    if (kind === 'dependencies' && options.source) recordSourceDependencies(candidate.keys, candidate.path);
     return null;
   };
-  const remove = async (): Promise<string | null> => {
-    if (!options.source) return removeUnderClaims();
-    const warm = takeWarmClaim(candidate.worktree);
-    if ('kept' in warm) return warm.kept;
-    try {
-      return await removeUnderClaims();
-    } finally {
-      warm.release();
-    }
-  };
-  const holdAll = async (keys: readonly string[]): Promise<string | null> => {
-    const [head, ...rest] = keys;
-    if (head === undefined) return remove();
-    const run = await withIdleWorkspace(head, () => holdAll(rest), {
-      purpose: 'maintenance',
-      supervisor: kind === 'dependencies',
-      ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
-      operation,
-    });
-    return run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
-  };
-  const kept = await holdAll(heldKeys);
+  const kept = key
+    ? await withIdleWorkspace(key, remove, {
+        purpose: 'maintenance',
+        supervisor: kind === 'dependencies',
+        ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
+        operation,
+      }).then((run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`))
+    : await remove();
   if (kept) return { status: 'kept', bytes: 0, detail: kept };
   const freed = Math.max(0, lowestFree(measureDisk()) - before);
   return {
@@ -666,4 +645,143 @@ export async function clearArtifact(
     bytes: Number.isFinite(freed) ? Math.round(freed * 1024 * 1024) : 0,
     detail: candidate.path,
   };
+}
+
+function containing(worktrees: readonly ArtifactWorktree[], target: string): ArtifactWorktree | null {
+  return worktrees
+    .filter((entry) => target.startsWith(`${entry.path}${sep}`))
+    .reduce<ArtifactWorktree | null>(
+      (best, entry) => (best && best.path.length >= entry.path.length ? best : entry),
+      null,
+    );
+}
+
+export type TreeOutcome = { status: 'done' | 'kept' | 'failed'; bytes: number; detail: string };
+
+/**
+ * Deletes the dependency trees `targets` of one source checkout as a unit. Each tree is checked on its own (it is a real
+ * git-ignored directory on its own volume, no listed worktree links into it, and the usual in-use, pin and process
+ * guards); the survivors are checked once more, together, under the claims, which are the native-run claim of every
+ * workspace in the checkout and of its root, and the warm claim taken exclusively without waiting; then every
+ * survivor is deleted inside the same hold and the record is written last, naming each tree a delete began on.
+ */
+export async function clearSourceTrees(
+  targets: readonly string[],
+  options: {
+    protectedRoot: string;
+    pinned: (workspace: string) => boolean | Promise<boolean>;
+    worktrees: readonly ArtifactWorktree[];
+    /** Why the checkout is no longer idle, asked once under the claims; null when it still is. */
+    recheck: (keys: readonly string[], worktree: string) => Promise<string | null>;
+    operation?: StimContext;
+  },
+): Promise<Map<string, TreeOutcome>> {
+  const results = new Map<string, TreeOutcome>();
+  const keepAll = (paths: readonly string[], detail: string) => {
+    for (const path of paths) results.set(path, { status: 'kept', bytes: 0, detail });
+  };
+  const [first] = targets;
+  if (first === undefined) return results;
+  const { operation } = options;
+  const signal = operation?.signal ?? new AbortController().signal;
+  const worktree = containing(options.worktrees, first);
+  if (!worktree || worktree.linked || targets.some((target) => !isKnownDir('dependencies', target))) {
+    keepAll(targets, 'it is no longer a regenerable directory of a known source checkout');
+    return results;
+  }
+  const root = canonicalPath(worktree.path);
+  if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`)) {
+    keepAll(targets, 'the command that started this pass runs inside its worktree');
+    return results;
+  }
+  const base: ArtifactCandidate = {
+    worktree: worktree.path,
+    path: first,
+    keys: worktree.keys,
+    locked: worktree.locked,
+    agents: (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [],
+    source: true,
+  };
+  const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
+    const candidate = { ...base, path, ...(held ? { source: false } : {}) };
+    const pinned = await pinsOf(candidate.keys, options.pinned);
+    return (
+      keptReason(
+        candidate,
+        'dependencies',
+        {
+          windowMs: 0,
+          pinned,
+          now: Date.now(),
+          running: await readRunningProcessesAsync(),
+          inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
+          ...(held ? { locked: held } : {}),
+        },
+        await artifactReads(candidate, 'dependencies', signal, operation),
+      ) ??
+      (await regenerableDirProblem(worktree.path, path, signal)) ??
+      linkedWorktreeUsing(candidate, options.worktrees)
+    );
+  };
+  let selected: string[] = [];
+  for (const path of targets) {
+    const problem = await checkTree(path);
+    if (problem) keepAll([path], problem);
+    else selected.push(path);
+  }
+  if (!selected.length) return results;
+  const before = lowestFree(measureDisk());
+  const heldKeys = [...new Set([...workspaceKeys(worktree.keys), worktree.path])];
+  const underClaims = async (): Promise<void> => {
+    const lock = worktree.locked ? 'locked' : await worktreeLockAsync(worktree.path);
+    if (lock) return keepAll(selected, lockReason(lock));
+    const late = await options.recheck(worktree.keys, worktree.path);
+    if (late) return keepAll(selected, late);
+    const stillSelected: string[] = [];
+    for (const path of selected) {
+      const problem = await checkTree(path, heldKeys);
+      if (problem) keepAll([path], problem);
+      else stillSelected.push(path);
+    }
+    selected = stillSelected;
+    const begun: string[] = [];
+    for (const path of selected) {
+      begun.push(path);
+      try {
+        rmSync(path, { recursive: true, force: true });
+        results.set(path, { status: 'done', bytes: 0, detail: path });
+      } catch (error) {
+        results.set(path, {
+          status: 'failed',
+          bytes: 0,
+          detail: `${path} may be partly deleted: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    }
+    if (begun.length) recordSourceDependencies(worktree.keys, begun);
+  };
+  const hold = async (keys: readonly string[]): Promise<void> => {
+    const [head, ...rest] = keys;
+    if (head === undefined) {
+      const warm = takeWarmClaim(worktree.path);
+      if ('kept' in warm) return keepAll(selected, warm.kept);
+      try {
+        return await underClaims();
+      } finally {
+        warm.release();
+      }
+    }
+    const run = await withIdleWorkspace(head, () => hold(rest), {
+      purpose: 'maintenance',
+      supervisor: true,
+      operation,
+    });
+    if (!run.ran) keepAll(selected, `in use: ${run.reasons.join('; ')}`);
+  };
+  await hold(heldKeys);
+  const freed = Math.max(0, lowestFree(measureDisk()) - before);
+  const bytes = Number.isFinite(freed) ? Math.round(freed * 1024 * 1024) : 0;
+  const firstDone = [...results].find(([, outcome]) => outcome.status === 'done');
+  if (firstDone) results.set(firstDone[0], { ...firstDone[1], bytes });
+  return results;
 }

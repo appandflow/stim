@@ -8,8 +8,16 @@ import {
 } from '@stim-cli/core/state';
 import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { WARM_CLAIM_LABEL, warmClaimPath } from '../engine/warm-claim.ts';
-import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { MAINTENANCE_PURPOSE, WARM_CLAIM_LABEL, warmClaimPath } from '../engine/warm-claim.ts';
+import {
+  claimRemoveCommand,
+  isClaimRefusal,
+  isClaimUnavailable,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { updateWorkspaceState } from './workspace-state.ts';
 
 const withWorkspace = (keys: readonly string[]): string[] =>
@@ -19,11 +27,18 @@ const withWorkspace = (keys: readonly string[]): string[] =>
  * Records in each Stim workspace among `keys` that maintenance deleted `dir` from this source checkout. A source
  * checkout with no Stim workspace gets no record, and no workspace is created for it.
  */
-export function recordSourceDependencies(keys: readonly string[], dir: string, now: Date = new Date()): void {
+export function recordSourceDependencies(
+  keys: readonly string[],
+  dirs: string | readonly string[],
+  now: Date = new Date(),
+): void {
   for (const key of withWorkspace(keys))
     updateWorkspaceState(key, (state) => {
       const kept = currentSourceDependencies(state)?.dirs ?? [];
-      return { ...state, [SOURCE_DEPENDENCIES_KEY]: { at: now.toISOString(), dirs: [...new Set([...kept, dir])] } };
+      return {
+        ...state,
+        [SOURCE_DEPENDENCIES_KEY]: { at: now.toISOString(), dirs: [...new Set([...kept, ...[dirs].flat()])] },
+      };
     });
 }
 
@@ -51,7 +66,9 @@ export function warmCopyingFrom(root: string): string | null {
   for (const path of new Set([root, canonicalPath(root)])) {
     const survey = readClaimSet(warmClaimPath(path));
     if (survey.live.length) return 'a worktree warm is copying from it';
-    if (survey.unresolved.length) return 'its warm claim cannot be read';
+    const unresolved = survey.unresolved[0];
+    if (unresolved)
+      return `its warm claim at ${unresolved.path} cannot be read: ${unresolved.reason}; if no warm runs, remove the claim with ${claimRemoveCommand(path)}`;
   }
   return null;
 }
@@ -72,7 +89,7 @@ export function takeWarmClaim(root: string): { release: () => void } | { kept: s
         root: warmClaimPath(path),
         mode: 'exclusive',
         label: WARM_CLAIM_LABEL,
-        details: { phase: 'refresh' },
+        details: { phase: 'refresh', purpose: MAINTENANCE_PURPOSE },
       });
       if (!attempt.acquired) {
         releaseClaim(attempt.pending ?? null);
@@ -81,9 +98,11 @@ export function takeWarmClaim(root: string): { release: () => void } | { kept: s
       }
       held.push(attempt.acquired);
     }
-  } catch {
+  } catch (error) {
     release();
-    return { kept: 'its warm claim cannot be taken' };
+    if (isClaimRefusal(error)) return { kept: `${error.code}: ${error.message}` };
+    if (isClaimUnavailable(error)) return { kept: `${error.code}: ${error.message} ${error.remedy}` };
+    throw error;
   }
   return { release };
 }

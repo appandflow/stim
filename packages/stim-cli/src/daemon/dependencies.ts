@@ -8,6 +8,7 @@ import {
   artifactWorktreesAsync,
   artifactWorktreesFor,
   clearArtifact,
+  clearSourceTrees,
   collectArtifactsAsync,
   type ArtifactCandidate,
   type ArtifactWorktree,
@@ -263,8 +264,7 @@ export async function clearDependency(
   worktrees: readonly ArtifactWorktree[],
   reason: string,
   operation?: StimContext,
-  requireRestorable: boolean = !dependency.source,
-  setting?: string,
+  requireRestorable: boolean = true,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
@@ -282,8 +282,7 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
-        source: dependency.source,
-        recheck: (keys, worktree) => stillUnused(dependency.source, keys, worktree, idleMs, operation, setting),
+        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         operation,
       },
     );
@@ -291,6 +290,65 @@ export async function clearDependency(
     if (isClaimUnavailable(error)) throw error;
     operation?.signal.throwIfAborted();
     return { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+type TreeResult = { status: 'done' | 'kept' | 'failed'; bytes: number; detail: string };
+
+/** Deletes each source checkout's selected trees as one unit, in `trees` order; the outcome of every tree. */
+export async function clearSourceCheckouts(
+  trees: readonly RankedDependency[],
+  idleMs: number,
+  protectedRoot: string,
+  worktrees: readonly ArtifactWorktree[],
+  operation: StimContext | undefined,
+  setting: string,
+): Promise<Map<RankedDependency, TreeResult>> {
+  const groups = new Map<string, RankedDependency[]>();
+  for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
+  const results = new Map<RankedDependency, TreeResult>();
+  for (const group of groups.values()) {
+    const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, operation, setting);
+    group.forEach((tree, index) => {
+      const outcome = outcomes[index];
+      if (outcome) results.set(tree, outcome);
+    });
+  }
+  return results;
+}
+
+/**
+ * Deletes the trees of one source checkout as a unit, after one recheck under its claims that the checkout is still
+ * unused for `idleMs`; the outcomes follow `dependencies`' order.
+ */
+export async function clearSourceDependencies(
+  dependencies: readonly RankedDependency[],
+  idleMs: number,
+  protectedRoot: string,
+  worktrees: readonly ArtifactWorktree[],
+  operation?: StimContext,
+  setting?: string,
+): Promise<TreeResult[]> {
+  try {
+    const results = await clearSourceTrees(
+      dependencies.map(({ candidate }) => candidate.path),
+      {
+        protectedRoot,
+        pinned: maintenancePinnedReader(operation),
+        worktrees,
+        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
+        operation,
+      },
+    );
+    return dependencies.map(
+      ({ candidate }) =>
+        results.get(candidate.path) ?? { status: 'kept' as const, bytes: 0, detail: 'it was not processed' },
+    );
+  } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    operation?.signal.throwIfAborted();
+    const detail = error instanceof Error ? error.message : String(error);
+    return dependencies.map(() => ({ status: 'failed' as const, bytes: 0, detail }));
   }
 }
 
@@ -388,6 +446,10 @@ async function takeIdleDependencies(
   }
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
+  const sourceResults =
+    source && input.act
+      ? await clearSourceCheckouts(take, afterMs, input.protectedRoot ?? '', worktrees, operation, why)
+      : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
     const target = dependency.candidate.path;
     const reason =
@@ -395,16 +457,9 @@ async function takeIdleDependencies(
         ? `${why}; its real size is unknown`
         : `${why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
     const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
-      ? await clearDependency(
-          dependency,
-          afterMs,
-          input.protectedRoot ?? '',
-          worktrees,
-          reason,
-          operation,
-          false,
-          source ? 'idle.sourceDormantDays' : undefined,
-        )
+      ? source
+        ? (sourceResults.get(dependency) ?? { status: 'kept', bytes: 0, detail: 'it was not processed' })
+        : await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
       : {
           status: 'would',
           bytes: dependency.privateBytes ?? 0,

@@ -2668,9 +2668,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   whose command line names a path in it; reading files in an editor with no
   process there is not activity. A tree whose size is not measured yet is not
   taken at the 7-day rule, and is at critical, as for a linked worktree. A
-  linked worktree listed by git, with a symlink in its top two directory levels
-  (up to 2000 entries, not entering node_modules or .git) that resolves into the
-  tree, keeps it; a worktree git does not list is not scanned; its build outputs follow the one-day rule like any
+  linked worktree listed by git with a symlink at the same relative path, or in
+  its top two directory levels (up to 2000 entries, not entering node_modules or
+  .git), that resolves into the tree keeps it; past 2000 entries or at a
+  directory it cannot read, the worktree could not be fully checked and the tree
+  is kept; a worktree git does not list is not scanned. A checkout's trees go as
+  one unit: one recheck under the claims (the native-run claim of every workspace
+  in it and of its root, and its warm claim taken exclusively without waiting),
+  then every selected tree deleted, then the record; its build outputs follow the one-day rule like any
   workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
   in a linked worktree then adds to its carry line that the source has no
   installed node_modules or ios/Pods to copy and since when, with the

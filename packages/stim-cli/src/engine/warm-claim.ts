@@ -24,6 +24,7 @@ import {
 type WarmPhase = 'refresh' | 'copy';
 
 export const WARM_CLAIM_LABEL = 'worktree warm';
+export const MAINTENANCE_PURPOSE = 'maintenance';
 const WARM_CLAIM_POLL_MS = 250;
 const WARM_CLAIM_PROGRESS_MS = 30_000;
 const WARM_CLAIM_CEILING_MS = 90 * 60 * 1000;
@@ -35,6 +36,8 @@ const INSTALLER_CEILING_MS = 5 * 60 * 1000;
 interface WarmClaimHolder {
   pid: number;
   phase: WarmPhase;
+  /** Maintenance holds it while it deletes a source checkout's dependencies; no warm runs. */
+  maintenance?: true;
 }
 
 export interface WarmClaimWait {
@@ -98,8 +101,13 @@ function warmCommand(phase: WarmPhase): string {
   return phase === 'refresh' ? 'stim worktree warm --refresh' : 'stim worktree warm';
 }
 
+function holderName(holder: WarmClaimHolder): string {
+  return holder.maintenance ? "maintenance removing this checkout's dependencies" : warmCommand(holder.phase);
+}
+
 function asHolder(holder: ClaimHolder): WarmClaimHolder {
   return {
+    ...(holder.details.purpose === MAINTENANCE_PURPOSE ? { maintenance: true as const } : {}),
     pid: holder.owner.pid,
     phase: holder.details.phase === 'copy' ? 'copy' : holder.mode === 'exclusive' ? 'refresh' : 'copy',
   };
@@ -108,7 +116,7 @@ function asHolder(holder: ClaimHolder): WarmClaimHolder {
 function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
   return phaseLine(
     'lock',
-    `waiting ${formatElapsed(elapsedMs)} for ${warmCommand(holder.phase)} (pid ${holder.pid}) -- stim guide lifecycle options`,
+    `waiting ${formatElapsed(elapsedMs)} for ${holderName(holder)} (pid ${holder.pid}) -- stim guide lifecycle options`,
   );
 }
 
@@ -117,7 +125,7 @@ export function warmClaimAcquiredLine(wait: WarmClaimWait, detail = ''): string 
   if (!wait.holder || wait.waitedMs < 1000) return phaseLine('lock', acquired);
   return phaseLine(
     'lock',
-    `${acquired} (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
+    `${acquired} (waited ${formatElapsed(wait.waitedMs)} for ${holderName(wait.holder)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
   );
 }
 
@@ -227,7 +235,7 @@ function installerClaim(
 }
 
 function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: string): Error {
-  const who = holder ? `${warmCommand(holder.phase)} (pid ${holder.pid})` : 'another stim worktree warm';
+  const who = holder ? `${holderName(holder)} (pid ${holder.pid})` : 'another stim worktree warm';
   const error = new Error(
     `Waited ${formatElapsed(elapsedMs)} for ${who} to release the warm lock on this repository. ` +
       `The lock is ${root}; remove it if nothing is really warming:\n  ${claimRemoveCommand(root)}`,

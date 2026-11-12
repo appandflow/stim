@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  chmodSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -543,6 +544,40 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a source checkout keeps its dependencies when a linked worktree is too large to scan for links or has an unreadable directory',
+  async () => {
+    const roots = idleRepo([{ name: 'linker', workspace: true }]);
+    const source = roots.repo ?? '';
+    const linker = roots.linker ?? '';
+    const modules = join(source, 'node_modules');
+    writeFileSync(join(linker, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    for (let i = 0; i < 2100; i++) writeFileSync(join(linker, `filler-${i}.txt`), '');
+    mkdirSync(join(linker, 'apps', 'x'), { recursive: true });
+    symlinkSync(modules, join(linker, 'apps', 'x', 'node_modules'));
+    ageTree(linker, new Date(Date.now() - 60 * 60_000));
+    const large: { payload: LevelPayload } = await gcJson();
+    expect(rung8(large.payload, modules)).toMatchObject({ outcome: 'kept' });
+    expect(rung8(large.payload, modules)?.detail).toMatch(/links apps\/x\/node_modules|could not be fully checked/);
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
+
+    rmSync(join(linker, 'apps'), { recursive: true });
+    for (let i = 0; i < 2100; i++) rmSync(join(linker, `filler-${i}.txt`));
+    mkdirSync(join(linker, 'sealed'));
+    chmodSync(join(linker, 'sealed'), 0o000);
+    try {
+      const sealed: { payload: LevelPayload } = await gcJson();
+      expect(rung8(sealed.payload, modules)?.detail).toMatch(/could not be fully checked/);
+      await quietly(() => runGc({ pressure: 'critical' }));
+      expect(existsSync(sourceModules(source))).toBe(true);
+    } finally {
+      chmodSync(join(linker, 'sealed'), 0o755);
+    }
+  },
+  120_000,
+);
+
 test.skipIf(process.platform === 'win32')(
   'a source checkout tree not measured yet is not taken at 7 days idle, and is at critical',
   async () => {
@@ -551,6 +586,7 @@ test.skipIf(process.platform === 'win32')(
     const modules = join(source, 'node_modules');
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
+    rmSync(diskUsageCacheFile(join(source, 'ios', 'Pods')), { force: true });
     ageTree(source, daysAgo(8));
     const normal = await quietly(() => runGc({ pressure: 'normal' }));
     expect(normal).toBeDefined();
