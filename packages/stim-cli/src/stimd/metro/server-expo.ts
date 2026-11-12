@@ -152,7 +152,7 @@ export function cleanLine(line: unknown): string {
 
 export function recordFromLine(
   line: unknown,
-  { stream = 'stdout', source = 'expo' }: { stream?: string; source?: 'expo' | 'command' } = {},
+  { stream = 'stdout', source = 'expo' }: { stream?: string; source?: 'expo' | 'command' | 'repack' } = {},
 ): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;

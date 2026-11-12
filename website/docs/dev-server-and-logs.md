@@ -23,8 +23,12 @@ when it is not running, so `stim start` is optional. Running it first lets
 Metro warm up while you do other work.
 
 Bare React Native runs Metro in Stim's Metro host process. Expo runs the
-project's Expo CLI. Both run on the Node the project pins. A healthy server that another process started for the
-same project can be reused, but Stim cannot capture its full output.
+project's Expo CLI. Re.Pack runs through the project's Rock CLI, or the React
+Native CLI when `react-native.config.js` (or `.cjs`, `.mjs`) registers Re.Pack's
+commands. All of
+them run on the Node the project pins. A healthy server that another process
+started for the same project can be reused, but Stim cannot capture its full
+output.
 
 If Expo cannot be resolved in a linked worktree, run `stim worktree warm`
 there before retrying. The refusal includes this command alongside dependency
@@ -34,6 +38,59 @@ For Expo and custom Metro commands, Stim looks for a Node pin from the app
 directory up to the repository or worktree root. The nearest `.nvmrc`,
 `.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
 When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+
+## How Stim picks the dev server
+
+Stim never asks which dev server to run and never runs a `package.json`
+script. It reads the project's config files as text and takes the first match:
+
+1. `metro.command` is set, so Stim runs that command.
+2. A `rock.config.*` file imports `@rock-js/plugin-repack`, so Stim runs
+   Re.Pack through Rock.
+3. There is no `rock.config.*` and `react-native.config.js` (or `.cjs`, `.mjs`)
+   requires
+   `@callstack/repack/commands`, so Stim runs Re.Pack through the React Native
+   CLI.
+4. The app uses Expo, so Stim runs the Expo CLI.
+5. Otherwise Stim runs Metro in its own host.
+
+Only a value or side-effect `import`, a `require` or a dynamic `import()` of
+the package counts. A comment, a string, `import type` or an
+`import('...').Name` type does not. An app that installs `expo`
+only for Expo modules but bundles with Re.Pack gets Re.Pack. Every other app,
+including a Rock app on Metro, gets the same dev server as before Stim
+supported Re.Pack. `stim start` names the file that decided, for example
+`starting on port 8082 (repack-child from rock.config.mjs)`.
+
+Stim starts Re.Pack with `--json --log-requests`, so each bundle request and
+compile becomes a record in `stim logs --source metro`, and `stim ios` and
+`stim android` use the bundle requests to confirm the launch. In development
+Re.Pack still serves a bundle that compiled with errors. When the compile
+that produced the delivered bundle logged an error, the launch reports
+`launched: "unverified"` instead of `true`, and the errors are in
+`stim logs --source metro`. Stim needs Re.Pack 5 or later; set
+`metro.command` for Re.Pack 4. `stim start --reset-cache` passes Re.Pack's
+`--reset-cache`. Stim turns off Re.Pack's own `adb reverse`, because it would
+reach every connected device, and manages the reverse for its port itself.
+
+Stim starts Re.Pack on `localhost`, and Re.Pack writes that host into the
+bundle's asset and chunk URLs. Simulators, emulators and Android phones reach
+it. Runs that cannot reach it refuse before they build: `stim ios --device`
+with `STIM_LAN_METRO_UNREACHABLE`, and a `--remote`, tunnel or hosted run with
+`STIM_REMOTE_METRO_UNREACHABLE`. For those, set `metro.command` to the
+project's own start command with the host the device can reach, for example
+`["npx", "rock", "start", "--port", "{port}", "--host", "0.0.0.0"]`. If the
+config imports Re.Pack but its CLI (`rock`, or `react-native` for a
+`react-native.config.*`) or `@callstack/repack` 5 is not installed,
+`stim start` refuses with `STIM_REPACK_BIN` and names the version it found,
+instead of falling back to Expo.
+
+Try it with an agent:
+
+```text
+Run stim start in this app and tell me which dev server Stim picked and which
+file decided it. Then run stim android and check that the launch is verified.
+```
 
 ## Start Metro with your own command
 
@@ -105,7 +162,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 
 After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, shut down owned devices and clear regenerable build output. The next Debug run starts Metro again.
 
-Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands and Expo SDKs before 54 do not report enough activity for idle stop.
+Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
 Set `idle.minutes` to `0` to disable idle stop. Under [disk pressure](./build-caches.md#disk-pressure), cleanup can act after two idle minutes.
 

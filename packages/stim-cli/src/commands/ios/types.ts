@@ -50,6 +50,7 @@ export interface VerifyLaunchResultLike {
   skipped?: boolean;
   requested?: boolean;
   unattributed?: boolean;
+  compileErrors?: LaunchErrorRecord[];
   fatal?: boolean;
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];

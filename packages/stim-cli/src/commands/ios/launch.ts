@@ -20,6 +20,7 @@ import {
   unattributedLaunchLines,
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
+  repackCompileRemedy,
 } from '../../engine/launch-verify.ts';
 import type { IosDeps } from './dependencies.ts';
 import { writeAgentDeviceBootHook } from '../../engine/agent-device.ts';
@@ -69,7 +70,6 @@ interface VerifyIosRunArgs {
   logsDir: string;
   launchedAt: number;
   metroPort: number | null;
-  isExpo: boolean;
   bundleId: string;
   udid: string;
   scheme?: string;
@@ -254,7 +254,6 @@ export async function verifyIosMetroRun({
   logsDir,
   launchedAt,
   metroPort,
-  isExpo,
   bundleId,
   udid,
   scheme,
@@ -303,7 +302,7 @@ export async function verifyIosMetroRun({
           since: launchedAt,
           metroPort,
           platform: 'ios',
-          mode: workspaceDevServerMode(root, isExpo),
+          mode: workspaceDevServerMode(root),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
@@ -442,7 +441,6 @@ export async function verifyIosMetroRun({
     udid,
     scheme,
     lanAddress,
-    isExpo,
     remoteDevice,
     physical,
     lanOrigin,
@@ -465,7 +463,6 @@ function reportUnverified({
   udid,
   scheme,
   lanAddress,
-  isExpo,
   remoteDevice,
   physical,
   lanOrigin,
@@ -484,7 +481,6 @@ function reportUnverified({
   | 'udid'
   | 'scheme'
   | 'lanAddress'
-  | 'isExpo'
   | 'remoteDevice'
   | 'physical'
   | 'lanOrigin'
@@ -502,6 +498,13 @@ function reportUnverified({
     phase('verify', chalk.yellow(headline));
     for (const line of lines) note(chalk.yellow(phaseLine('', line)));
     return { state: LAUNCH_UNVERIFIED, unattributed: true };
+  }
+
+  if (verification.compileErrors?.length) {
+    phase('verify', chalk.yellow('UNVERIFIED: Re.Pack delivered a bundle whose compile logged errors'));
+    for (const line of launchErrorPreview(verification.compileErrors, root)) note(chalk.yellow(phaseLine('', line)));
+    note(chalk.yellow(phaseLine('remedy', repackCompileRemedy('ios'))));
+    return { state: LAUNCH_UNVERIFIED, warning: 'Re.Pack compile errors; inspect the error above' };
   }
 
   if (verification.record) {
@@ -523,7 +526,7 @@ function reportUnverified({
     devClientUrl: scheme
       ? (launched?.url ?? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined))
       : null,
-    mode: workspaceDevServerMode(root, isExpo),
+    mode: workspaceDevServerMode(root),
     remote: remoteDevice,
     physical,
     devClient: Boolean(scheme),
@@ -587,7 +590,6 @@ interface FinishIosRunArgs {
   release: boolean;
   configuration: string | null;
   buildScheme?: string;
-  isExpo: boolean;
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string;
@@ -894,7 +896,6 @@ export async function finishIosRun({
   release,
   configuration,
   buildScheme,
-  isExpo,
   metroCheck,
   metroPort,
   logsDir,
@@ -1333,7 +1334,6 @@ export async function finishIosRun({
     logsDir,
     launchedAt,
     metroPort,
-    isExpo,
     bundleId: bundleId!,
     udid,
     scheme,
