@@ -12,6 +12,19 @@ performance budgets.
 Keep each exception tied to the real interaction it verifies. These tests may
 use fake clocks for policy inside the fixture, such as a child process clock.
 
+Outside CI, `test:integration` runs under a machine-wide slot
+(`vitest.integration-slot.ts`): at most 2 runs per user on one machine
+(`STIM_TEST_SLOTS=<n>` changes the count). A run that finds every slot taken
+prints which processes it waits for and queues in arrival order; it repeats that
+line every 30 s and never times out, because each holder is a live run. A slot is
+an ownership claim (`@stim-cli/core/ownership-claim`) whose liveness is the holder's
+process identity, so a killed run frees its slot at once. A claim store that
+cannot be read, written or judged never blocks a run: it starts without the cap
+and says why on stderr. The claims live in `/tmp/stim-test-slots-<uid>`
+(the OS temp directory on Windows), not under `TMPDIR`, `HOME` or `STIM_HOME`,
+which agents and tests redirect and which would give each run its own count.
+A run started with `STIM_TEST_RUN` set takes no slot, so a caller that manages its own slot does not queue twice. `pnpm test` and runs started directly with `vitest` take no slot.
+
 `pnpm run test:bench` runs the agent-benchmark harness tests separately, with the
 same setup and fake-clock rules. CI runs them when the harness or its inputs
 change, and always on manual and full-suite runs.
