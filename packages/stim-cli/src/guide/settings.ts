@@ -47,7 +47,7 @@ Resolution order, first match wins:
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile, idle.minutes and
-                     archive.enabled; idle.dormantDays is machine-only
+                     archive.enabled; idle.dormantDays and idle.sourceDormantDays are machine-only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -400,7 +400,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         Minutes after which EAS stops each EAS Simulator session
                         Stim creates (--remote eas or the easFallback), so a
                         session nobody ended stops billing. A positive integer;
-                        default 30. Machine scope only. stop and gc --delete
+                        default 30. Machine scope only. stop and gc
                         still end a session sooner; a run after the cap expires
                         replaces the stopped session. Stim passes it to eas sim
                         as --max-duration-minutes. EAS rejects a value above the
@@ -497,9 +497,25 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         off for the workspace. Machine or project layers.
                         See \`guide lifecycle budget\`.
   idle.dormantDays      days without activity before a workspace goes
-                        dormant: its owned devices are deleted and its logs
-                        archived (default 3; fractions allowed; 0 never).
+                        dormant and is reduced to its minimal size: its
+                        regenerable build outputs and owned devices are
+                        deleted (the parked pool stays), its logs archived,
+                        and for a linked worktree its node_modules and
+                        ios/Pods deleted for the next Stim command to restore
+                        (default 1; fractions allowed; 0 never). Every level
+                        of \`stim gc\` and the stim-daemon apply it.
                         Machine layer. See \`guide lifecycle budget\`.
+  idle.sourceDormantDays
+                        days without activity before a source (main)
+                        checkout's node_modules and ios/Pods are deleted, at
+                        any level, after those of linked worktrees (default
+                        7; fractions allowed; 0 never). Activity is a Stim
+                        command, a source file write, a git write or a commit
+                        in the checkout or any workspace in it, a process
+                        working in it, an agent session, and a \`stim worktree
+                        warm\` copying from it when the warmed app has a Stim
+                        workspace in the source. Machine layer. See \`guide
+                        cleanup disk\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,
@@ -636,8 +652,8 @@ what each cap does.
 DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
 In ~/.stim/config.json, or the environment, which overrides the file:
 
-  disk.minFreeGb          STIM_DISK_MIN_FREE_GB          default 20
-  disk.criticalFreeGb     STIM_DISK_CRITICAL_FREE_GB     default 6
+  disk.minFreeGb          STIM_DISK_MIN_FREE_GB          default 40
+  disk.criticalFreeGb     STIM_DISK_CRITICAL_FREE_GB     default 20
   disk.hardFloorGb        STIM_DISK_HARD_FLOOR_GB        default 5
 
 Under disk.minFreeGb on a volume Stim writes to the pressure level is high,
@@ -769,7 +785,11 @@ new work on a persistent stimd.
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 Automatic maintenance runs in daemon.mode: it removes what gc would under the
 caps below, measures sizes at most hourly and waits while the one-minute load
-is above 4 per core.
+is above 4 per core, except that the Cargo target cap still measures and
+trims hourly at low priority, and the size scan deferred for 3 hours runs anyway (the other checks stay
+deferred);
+stim status and its JSON (maintenance.deferred) say what is deferred and since
+when.
 maintenance.keep is a project setting: pin a workspace so neither the daemon
 nor a pass ever stages it, clears its build outputs or removes its worktree.
 maintenance.idleStopHours is only for hosted devices: it takes machine or
@@ -865,8 +885,7 @@ THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
 reason: the disk they sit on is the whole machine's. A parked simulator keeps
-its apps and data, so it can hold gigabytes until \`stim gc --cache parked
---delete\` erases it.
+its apps and data, so it can hold gigabytes until \`stim gc\` at high (oldest first, until the level clears) or critical (all) deletes it.
 
   {
     "pool": { "iosParkedMax": 3 }
@@ -875,7 +894,7 @@ its apps and data, so it can hold gigabytes until \`stim gc --cache parked
 in ~/.stim/config.json, or STIM_POOL_IOS_PARKED_MAX in the environment, which
 overrides the file. Absent means 3. \`0\` turns parking and adoption off:
 \`worktree remove\` deletes the simulator, \`ios\` never adopts, and a pool
-that already exists stays where it is until \`gc --delete\`. A value that is
+that already exists stays where it is until \`gc\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
 
@@ -1577,7 +1596,7 @@ its pinned stim-server key is the existing build-machine finding with state key-
 that left the tailnet is not-on-tailnet; doctor adds nothing for them.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
-\`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
+\`gc.worktreeGraceMinutes\` is how long \`gc\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest
 activity: a write to its git index, HEAD or HEAD reflog, its Stim workspace
 state or logs, the merge of its branch into the default branch, or when its
@@ -1866,10 +1885,10 @@ and every 'gc' report shows it from then on, tagged (registered):
 entriesDepth is how far below dir one entry sits (default 1, a flat store).
 Pass 2 for a root with a layer of grouping above the entries -- a Metro
 FileStore shards across 256 directories, a build cache is keyed
-<platform>/<key> -- or 'gc --delete --older-than N' removes a whole shard or
+<platform>/<key> -- or the age sweep removes a whole shard or
 platform instead of one entry. Pass prune: 'atomic' for a cache whose index
-references its own data (an LLVM CAS): it is then left alone by --older-than
-and emptied whole only by 'gc --delete --cache all'.
+references its own data (an LLVM CAS): it is then left alone by age trimming
+and emptied whole only by 'gc --pressure critical'.
 Registration is idempotent and keyed on the directory.
 dir must be absolute (a leading ~ is expanded) and dedicated to the cache.
 register throws for a path that is or contains the home directory, the system

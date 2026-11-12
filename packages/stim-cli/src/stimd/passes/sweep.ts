@@ -37,6 +37,8 @@ import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import { planPrune } from './prune.ts';
+import { planRecords } from './records.ts';
+import { planRuntimes } from './runtimes.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { endedPullRequest } from '../../workspace/pull-request.ts';
@@ -48,6 +50,7 @@ export async function planSweep({
   pinned,
   now,
   devices = true,
+  background = false,
   operation,
 }: {
   settings: MaintenanceSettings;
@@ -56,6 +59,7 @@ export async function planSweep({
   pinned: (workspace: string) => boolean;
   now: number;
   devices?: boolean;
+  background?: boolean;
   operation?: StimContext;
 }): Promise<MaintenancePlan> {
   const actions: MaintenanceAction[] = [];
@@ -162,6 +166,19 @@ export async function planSweep({
   actions.push(...prune.actions.map((action) => ({ ...action, check: 'sweep' as const })));
   skips.push(...prune.skips);
   blocked.push(...prune.blocked);
+  const records = await planRecords({ devices, background, operation });
+  actions.push(...records.actions.map((action) => ({ ...action, check: 'sweep' as const })));
+  skips.push(...records.skips);
+  blocked.push(...records.blocked);
+  const runtimes = devices ? await planRuntimes(operation) : { actions: [], skips: [], blocked: [] };
+  actions.push(
+    ...runtimes.actions.map((action) => ({
+      ...action,
+      check: 'sweep' as const,
+    })),
+  );
+  skips.push(...runtimes.skips);
+  blocked.push(...runtimes.blocked);
   const sweep = await planRung6(settings, { operation });
   actions.push(...sweep.actions.map((action) => ({ ...action, check: 'sweep' as const })));
   skips.push(...sweep.skips);
@@ -180,7 +197,7 @@ async function planGradleDaemonStop(
     const plan = plans.get(pid);
     if (!plan || !plan.reclaimable)
       return {
-        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon gc --delete --cache gradle-daemons stops'}`,
+        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon stim gc stops'}`,
       };
   }
   return { pids: [...blockers] };
@@ -198,9 +215,10 @@ export async function planRung6(
   {
     disk = true,
     memory = false,
+    everyGradleVersion = false,
     now = Date.now(),
     operation,
-  }: { disk?: boolean; memory?: boolean; now?: number; operation?: StimContext } = {},
+  }: { disk?: boolean; memory?: boolean; everyGradleVersion?: boolean; now?: number; operation?: StimContext } = {},
 ): Promise<MaintenancePlan> {
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -242,9 +260,10 @@ export async function planRung6(
   }
   if (!disk) return { actions, blocked: [], skips };
   if (!scoped && settings.gradleVersionIdleDays > 0) {
+    const idleDays = everyGradleVersion ? 0 : settings.gradleVersionIdleDays;
     const gradle = await collectGradleVersions({
       operation,
-      olderThanDays: settings.gradleVersionIdleDays,
+      olderThanDays: idleDays,
       now,
       measure: false,
       pastRunningGradle: true,
@@ -267,7 +286,10 @@ export async function planRung6(
           target: entry.version,
           dir: gradle.home,
           bytes: 0,
-          reason: `no registered project pins it and it is unmodified for ${settings.gradleVersionIdleDays} days`,
+          olderThanDays: idleDays,
+          reason: everyGradleVersion
+            ? 'no registered project pins it, and the disk is at critical'
+            : `no registered project pins it and it is unmodified for ${idleDays} days`,
         });
       else
         skips.push({

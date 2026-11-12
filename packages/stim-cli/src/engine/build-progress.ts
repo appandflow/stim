@@ -7,6 +7,7 @@ import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/works
 import { readStats, type RunHistory, type RunOutcomeKind, type RunSample } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
+import { takeBuildBytes } from './build-bytes.ts';
 import { writeBuildLedger } from './build-ledger.ts';
 import {
   BUILD_HISTORY_KEY,
@@ -536,12 +537,15 @@ export function recordFinishedBuild(
 ): void {
   const { ledger: extras, ...record } = recorded;
   const ran: Partial<Parameters<typeof writeBuildLedger>[1]> = {};
+  const platform = record.platform === 'ios' || record.platform === 'android' ? record.platform : 'macos';
+  const bytes = takeBuildBytes(root, platform);
   try {
     updateFinishedBuild(root, record, ran, { update, now, artifactOnly });
   } finally {
     ledger(root, {
       now: now(),
       outcome: finishedResult(record),
+      ...(bytes === undefined || record.status !== 'ok' ? {} : { bytesWritten: bytes }),
       record,
       extras: isJsonObject(extras) ? extras : {},
       phases: {},

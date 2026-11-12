@@ -93,7 +93,7 @@ function configuredValue(setting: SettingDefinition): unknown {
     case 'choice':
       return setting.type.choices[1] ?? setting.type.choices[0];
     case 'strings':
-      return ['entry'];
+      return setting.type.kind === 'strings' && setting.type.absolutePaths ? ['/entry'] : ['entry'];
     case 'object':
       return { entry: true };
     case 'path':

@@ -533,7 +533,7 @@ async function main() {
   });
 
   await runCheck('gc-view', (c) => {
-    const gc = cli(['gc'], { cwd: appDir, allowFail: true });
+    const gc = cli(['gc', '--dry-run'], { cwd: appDir, allowFail: true });
     assert(gc.code === 0, `gc exited ${gc.code}`);
     const outLines = gc.stdout.split('\n');
     const headerIndex = outLines.findIndex((l) => /Shared build caches \(\d+\)/.test(l));

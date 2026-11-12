@@ -355,9 +355,9 @@ or releasing. Failed stops retain the allocation. `release` removes the
 reservation without signalling the server. Omit the label to select all named
 ports. Neither command touches Metro; `stim stop` leaves named ports alone.
 
-`worktree remove`, `gc --delete` and automatic maintenance release named ports
+`worktree remove`, `gc` and automatic maintenance release named ports
 without signalling their listeners. `gc` reports allocations for missing
-workspaces, and `gc --delete` releases them. Unmounted or unresolved workspace
+workspaces, and `gc` releases them. Unmounted or unresolved workspace
 paths remain registered.
 
 See [server examples and limitations](./dev-server-and-logs.md#named-server-ports).
@@ -422,7 +422,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   the same way. It takes a version (`26.5`) or a runtime's full name
   (`iOS 26.5`), exactly. When the workspace's simulator already runs another
   installed version, `stim ios` refuses instead of booting it: remove the
-  simulator with `stim worktree remove` or `stim gc --delete`, or pass
+  simulator with `stim worktree remove`, or pass
   `--slot <name>` to create one beside it.
 - `--install-runtime` opts in to installing the explicitly requested missing
   runtime with Xcode before continuing. Use `--remote local` or one named
@@ -628,7 +628,7 @@ An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
 simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
 directory, so Stim keeps no artifact cache for it. `target/` is build output:
-the idle stage and `gc --delete` clear it from an idle workspace, never while
+the idle stage and `gc` clear it from an idle workspace, never while
 another process, such as a shell or an `exact.mjs` command, runs from or works in
 the app, nor on Windows, and the next build then compiles from scratch.
 `stim worktree warm` leaves `target/` out of a new worktree, because Exact fails
@@ -1000,7 +1000,7 @@ same Chrome again.
 
 `stim stop` closes the browser and keeps its profile; `stim stop --slot web`
 closes only the browser. `worktree remove` and
-`gc --delete` also delete the profile. See [Web in an owned Chrome](./web.md).
+`gc` also delete the profile. See [Web in an owned Chrome](./web.md).
 
 ## `reload`
 
@@ -1308,8 +1308,10 @@ result.
   result and key, the time in each phase, the failure code, message and remedy,
   the simulator or emulator it targeted, this Mac's load per core when the run
   started, when the run's owned simulator or emulator boot started and the load
-  per core then (`loadPerCore` and `boot`, absent from older records), and the
-  Stim version. It outlives the
+  per core then (`loadPerCore` and `boot`, absent from older records), the
+  project key and the bytes a succeeded local compile took from free space on its
+  volume (`projectKey` and `bytesWritten`, which Stim uses to
+  estimate the disk a later build of the project needs), and the Stim version. It outlives the
   workspace, works from any directory, stands alone (`--source all` leaves it
   out), and takes the same options as `--source gc`; `--errors` shows only failed
   builds. `stim gc` never removes it.
@@ -1349,7 +1351,7 @@ be verified is not signalled.
 shutdown command: it waits for a simulator to report `Shutdown` and for an
 emulator's process to exit. A device that does not get there is reported as
 `failed`, not shut down, with a remedy naming the manual command to run and
-`stim gc --delete` as the fallback; `--json` carries the same outcome in
+`stim gc` as the fallback; `--json` carries the same outcome in
 `device.<platform>.status` plus a `remedy` field. `stop` still never deletes
 the device.
 
@@ -1586,7 +1588,12 @@ atomically. A committed write keeps the file's other keys and indentation.
 ```json
 {
   "project": "/path/to/app",
-  "files": { "machine": "...", "workspace": "...", "repo": "...", "committed": "..." },
+  "files": {
+    "machine": "...",
+    "workspace": "...",
+    "repo": "...",
+    "committed": "..."
+  },
   "settings": [
     {
       "key": "ios.runtime",
@@ -1703,7 +1710,7 @@ A workspace whose folder was deleted outside Stim, for example with
 `git worktree remove` or `rm -rf`, stays registered, so status marks it
 `[folder missing]` and `--json` sets `pathMissing: true` with a phase that is
 never `warming` or `ready`. Status only reports it; `stim worktree remove <path>`
-or `stim gc --delete` removes the entry. A folder on a volume that is not mounted is not reported, since the
+or `stim gc` removes the entry. A folder on a volume that is not mounted is not reported, since the
 volume may come back.
 
 Each environment also carries `stage`, the conclusion Stim Desktop and the
@@ -2069,8 +2076,16 @@ one) carries `missReason`: why the cache had no app for it.
   "kind": "changed",
   "summary": "native dependency added: expo-clipboard",
   "changes": [
-    { "source": "node_modules/expo-clipboard/ios", "change": "added", "category": "native-dependency" },
-    { "source": "expoAutolinkingConfig:ios", "change": "changed", "category": "autolinking" }
+    {
+      "source": "node_modules/expo-clipboard/ios",
+      "change": "added",
+      "category": "native-dependency"
+    },
+    {
+      "source": "expoAutolinkingConfig:ios",
+      "change": "changed",
+      "category": "autolinking"
+    }
   ],
   "changeCount": 2,
   "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
@@ -2118,6 +2133,7 @@ reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
 `simctl io|spawn`, except the screenshots stim-server itself takes of the device), and on Android a `uiautomator`, `androidx.test` or Argent
 helper process.
+An agent-device session whose last command is dated no longer keeps its device once it is idle: under disk pressure and when the daemon reclaims a device for a waiting run, it holds for 10 minutes after that command instead of the 2 minutes of other workspaces, and a session whose last command cannot be dated keeps it.
 `lastActivityAt` is the newest of the device's app log records, changes to the
 workspace's `client.ndjson` and `device.ndjson` logs, the platform's Metro
 bundle requests, the workspace's last Stim run, and, while agent-device
@@ -2238,7 +2254,7 @@ The top-level JSON `agentDevice` reports agent-device disk usage: `version: 1`,
 include last use, agent-device and Xcode versions, and lease/lock/unreadable
 in-use flags. Plain output adds an `agent-device` block when state exists.
 `$STIM_HOME/agent-device-usage.json` caches the result for 10 minutes when roots
-match. Only `stats` and unscoped `gc` measure it; server and phone stats read
+match. Only `stats` and `gc --dry-run` measure it; server and phone stats read
 the cache. Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
 
 The top-level `swiftpmCache` reports the user-level SwiftPM cache with
@@ -2249,9 +2265,9 @@ before a cached measurement exists. The directory is
 `present: false`, `bytes: 0`; failed measurements have `bytes: null`,
 `complete: false`. Plain output adds a **SwiftPM cache** block after agent-device
 only when present. This cache is shared by every SwiftPM build on the machine;
-Stim reports it and never deletes it. `$STIM_HOME/swiftpm-cache-usage.json`
+Stim reports it, and only gc's last rung removes it, at critical. `$STIM_HOME/swiftpm-cache-usage.json`
 caches `du -sk` measurements for 10 minutes, keyed on the resolved directory,
-with a 20-second timeout. Only `stats` and unscoped `gc` measure it; server and
+with a 20-second timeout. Only `stats` and `gc --dry-run` measure it; server and
 phone stats read the cache. `status`, `start`, `ios`, `android` and the
 pressure ladder never measure it.
 
@@ -2315,27 +2331,186 @@ repository directory is refused because it is not a worktree. `--force` permits 
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
 
+Removal restores a modified `ios/Podfile.lock` itself only when
+`Pods/Manifest.lock`, the copy `pod install` makes, holds the same text, or when
+gc deleted `Pods` while they matched and the lock has not changed since. A
+deliberate `pod update` followed by an install leaves the same evidence, so
+commit it before removing. Any other change to the lock, and every change to
+`project.pbxproj`, is treated as your edit and refused like any uncommitted
+change. A tracked file marked `assume-unchanged`, or `skip-worktree` with the
+file on disk, hides edits from `git status`, so removal refuses and names it
+with the `git update-index` command that shows it, until you pass `--force`.
+Files a sparse checkout leaves out are not on disk and do not count.
+
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--json]
+stim gc [--dry-run] [--pressure <normal|high|critical>] [--json]
 ```
 
-Reports stale workspace entries, orphaned workspace directories (including a
-directory with no `workspace.json` that holds only logs or lock files left by a
-removed workspace), clean linked
-worktrees whose branch is merged or whose pull request was merged or closed,
-orphaned owned devices and remote sessions,
-stale locks, shared cache sizes, the memory of the watchman daemon and the
-Gradle and Kotlin compile daemons, what the `stim-daemon`'s pressure ladder
-would do now at high and at critical with sizes, and each workspace's stage. It
-does not change anything without `--delete`. Without `--delete` it also runs no `git fetch` and no `gh`: it
-judges merges from the refs already on disk and the pull request cache that
-`stim status --watch` and the maintenance worktree check write, and shows a
-verdict that fresher state could change as not refreshed. `--delete` fetches
-and asks GitHub first. See
+`stim gc` runs one automatic maintenance pass now, at the pressure level the
+machine measures, and deletes. `stim gc --dry-run` reports what that run would
+delete and deletes nothing. `stim gc --pressure <level>` runs at that level
+instead of the measured one; add `--dry-run` to preview it. `gc` cannot pick a
+single cache, archive, worktree or age. Preview with `--dry-run`, then run
+`stim gc` when you want the space back. The summary and `--json` also list
+discovered checkouts, ones no stim command ran in, with what each would lose
+([worktrees](./worktrees.md#checkouts-stim-never-ran-in)).
+
+What each level deletes. A level includes the ones below it.
+
+- **normal** (every level runs this): the automatic maintenance plan. Workspace
+  build outputs and shared caches over their caps, the age sweep
+  (`maintenance.olderThanDays`), orphaned workspace directories (including a
+  directory with no `workspace.json` that holds only logs or lock files left by
+  a removed workspace), registry entries and owned devices of removed projects,
+  stale records (the device ledger, the EAS ledger, gone Stim homes, dead build
+  locks and slots, empty process locks, stale status caches, expired device
+  leases), archives past retention, workspace logs over 8 MiB, parked hosted
+  devices, orphaned EAS sessions of the current project when it has an Expo
+  config file, unused iOS
+  simulator runtimes, and finished (merged, or pull request merged or closed)
+  linked worktrees once `gc.worktreeGraceMinutes` have passed. It also reduces
+  every workspace with no activity for `idle.dormantDays` (1 by default) to its
+  minimal size: its regenerable build outputs, its owned simulators and
+  emulators (the parked pool stays), its logs archived and, for a linked
+  worktree, its `node_modules` and `ios/Pods`.
+- **high**: also the [pressure ladder](./build-caches.md#disk-pressure) at high,
+  to its end. Idle dev servers and their build outputs (the idle stage), parked
+  devices until the level clears, Build and Metro caches trimmed to half their
+  caps, the dormant stage for workspaces idle 10 minutes, the `node_modules` and
+  `Pods` of linked worktrees idle 1 hour that `stim worktree warm` can
+  restore, idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified
+  for `maintenance.gradleVersionIdleDays`, TMPDIR leftovers, the worktree trash,
+  and clean finished worktrees once `gc.worktreeGraceMinutes` have passed, while
+  `maintenance.removeFinishedWorktrees` is true. It never cleans other tools'
+  caches at high.
+- **critical**: also every parked device, every shared cache Stim registered
+  emptied whole (the compilation cache, ccache, the build cache except entries
+  in use, Metro, the macOS artifact cache, and the React Native and Android
+  caches), the fingerprint index and memo, the dormant stage and `node_modules`
+  and `Pods` for workspaces idle 2 minutes, every unpinned Gradle version, clean
+  finished worktrees without the grace period and clean pushed worktrees no Stim
+  command used for 7 days (the first only while `maintenance.removeFinishedWorktrees`
+  is true, the second only while `maintenance.removeIdleWorktrees` is true),
+  every device recording not being written (except those of workspaces pinned
+  with `maintenance.keep` or in use), archived logs, recordings and agent
+  actions, and, for `stim gc` with `--pressure critical` or a measured critical
+  that still leaves the disk under the critical level after the earlier rungs,
+  other tools' caches. Worktree archives and archive records stay.
+
+`gc` never touches anything building, driven, leased, hosted or pinned by
+`maintenance.keep`, source, tracked or unignored files, uncommitted or unpushed
+work, or a simulator or emulator you created. Of what Stim does not own, it
+cleans only what the table lists, through the tool's own command. It only
+reports Android NDKs, Android system images no AVD uses and `~/.cache/exact`,
+with the command that removes each. Other DerivedData is never deleted; the
+SwiftPM cache goes only with rung 9, at critical. Caches whose loss slows the
+next build (an Exact app's `target/`, `node_modules` and Pods, DerivedData
+outputs, shared compile caches) go only for an idle workspace or at critical.
+The ladder runs whatever `daemon.mode` says and covers every registered
+workspace, including the one you run `gc` from: at high its dev server stops and
+its devices shut down after 2 idle minutes, its owned devices are deleted after
+10, and a linked worktree's `node_modules` and Pods after an hour. A workspace whose `idle.minutes` is `0` stays out
+of the idle and dormant stages. `stim revive` resumes an idle workspace; the
+next `stim ios` or `stim android` creates the devices of a dormant one. Sizes in
+a dry run are apparent sizes, while a run reports how much free disk actually
+rose, so files APFS shares with a clone, such as `node_modules` a warm copied,
+can free 0K.
+
+A workspace reduced to its minimal size restores what it lost on the next Stim
+command in it: `stim worktree warm` puts back `node_modules` and `ios/Pods`. When
+warm cannot restore the same versions (the worktree's lockfile differs from the
+source checkout's, or the source checkout's dependencies were not installed from
+its own lockfile), the command refuses with `STIM_DEPS_FAILED` and asks for an
+install. A source (main) checkout's `node_modules` and `ios/Pods` are deleted only
+after every linked worktree's: once it has had no activity for
+`idle.sourceDormantDays` (7 by default; `0` never; activity is a Stim command, a source file write, a
+git write or a commit in the checkout or any workspace in it, registered or not,
+and a `worktree warm` copying from it, which also keeps it while it runs, when the warmed app has a Stim workspace in the source) at any level, or at critical when the disk is still
+under the critical level, which `stim gc --pressure critical` always does. Then
+`stim worktree warm` and `stim status` say the source has no installed
+dependencies to copy, and since when, until you install them there. `gc` deletes
+only git-ignored regenerable directories: a real directory inside the checkout
+whose files git ignores, with no tracked or unignored file, not reached through a
+link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
+
+Everything `gc` deletes, by category (N normal, H high, C critical):
+
+| Category                                                                                                                                                                                                                                        | Pass or rung               | Level                 | Kept when                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workspace build outputs and shared caches over their caps                                                                                                                                                                                       | maintenance caps           | N                     | in use, pinned (`maintenance.keep`), running build                                                                                                                                                                                                                                                                                                                                               |
+| What the age sweep removes after `maintenance.olderThanDays` (parked devices, outputs, idle worktrees opt-in)                                                                                                                                   | maintenance sweep          | N                     | recently used, pinned                                                                                                                                                                                                                                                                                                                                                                            |
+| Unused iOS simulator runtimes (`xcrun simctl runtime delete <id>`)                                                                                                                                                                              | maintenance sweep          | N                     | any simulator uses it, simctl does not mark it deletable, only runtime, newest when none is used, a project's `ios.runtime` pins it, same major version as the active Xcode's simulator SDK, `lastUsedAt` within `maintenance.olderThanDays` or absent; unreadable SDK version, unreachable project path or unparsable `.stim.json` (reported under Needs a person); scoped home; listing failed |
+| Owned simulators whose runtime is gone                                                                                                                                                                                                          | maintenance sweep          | N                     | not in this home's ledger (never a user simulator; Stim never runs `simctl delete unavailable`)                                                                                                                                                                                                                                                                                                  |
+| Registry entries, workspace dirs, owned devices and records of removed projects; stale ledger entries, gone homes, stale build claims, expired leases, status caches                                                                            | maintenance prune          | N                     | path absence cannot be proven, holder alive                                                                                                                                                                                                                                                                                                                                                      |
+| Workspace logs over their cap; recordings and archives past retention; parked hosted devices; orphaned EAS sessions of the cwd project                                                                                                          | maintenance prune          | N                     | live session, live recording                                                                                                                                                                                                                                                                                                                                                                     |
+| Finished linked worktrees (branch merged, PR merged or closed, or no commits of their own), after `gc.worktreeGraceMinutes`                                                                                                                     | maintenance worktree check | N                     | uncommitted (archived first) or unpushed work, in use, leased, locked, pinned, cannot prove finished                                                                                                                                                                                                                                                                                             |
+| Workspace idle `idle.dormantDays`: build outputs (`android/build`, `android/.gradle`, `.build`, `.cxx`, `.dd` DerivedData, Exact `target/`), owned devices, logs archived                                                                       | dormant reduction          | N                     | running dev server or build, booted device, leased, driven, locked, hosted, pinned, `idle.minutes` 0                                                                                                                                                                                                                                                                                             |
+| The same: `node_modules` and `ios/Pods` of a linked worktree                                                                                                                                                                                    | dormant reduction          | N                     | source checkout, under 256 MB of its own (copy-on-write clone), in use, a running process inside, pinned                                                                                                                                                                                                                                                                                         |
+| Idle dev servers and their outputs (idle 2 min)                                                                                                                                                                                                 | idle stage, rung 1         | H                     | as above                                                                                                                                                                                                                                                                                                                                                                                         |
+| Parked devices                                                                                                                                                                                                                                  | rung 2                     | H until clear, C all  | -                                                                                                                                                                                                                                                                                                                                                                                                |
+| Shared caches trimmed to half their caps; at C emptied, with the fingerprint index and memo                                                                                                                                                     | rung 3                     | H / C                 | entries a running build protects, report-only caches                                                                                                                                                                                                                                                                                                                                             |
+| Dormant stage at 10 min (H) or 2 min (C)                                                                                                                                                                                                        | rung 4                     | H                     | as the dormant reduction                                                                                                                                                                                                                                                                                                                                                                         |
+| `node_modules` and Pods of linked worktrees idle 1 hour (H) or 2 min (C)                                                                                                                                                                        | rung 5                     | H                     | `worktree warm` cannot restore the same versions, copy-on-write clone, in use, pinned                                                                                                                                                                                                                                                                                                            |
+| Idle Gradle and Kotlin daemons, unused watchman, unpinned Gradle versions (C: all unpinned), TMPDIR leftovers, worktree trash                                                                                                                   | rung 6                     | H                     | build running, a project pins it, modified within 24 h                                                                                                                                                                                                                                                                                                                                           |
+| Clean finished worktrees after the grace period (H) or without it (C); clean pushed worktrees idle 7 days (C, `maintenance.removeIdleWorktrees`)                                                                                                | rung 7                     | H / C                 | `maintenance.removeFinishedWorktrees` false, dirty, unpushed, in use, leased, locked, pinned                                                                                                                                                                                                                                                                                                     |
+| At C first the `node_modules` and Pods of source (main) checkouts idle 2 min, after every worktree's, on a volume still under the critical level; then every device recording not being written and archived logs, recordings and agent actions | rung 8                     | C                     | live segment; recordings of workspaces pinned with `maintenance.keep` or in use; worktree archives and archive records stay                                                                                                                                                                                                                                                                      |
+| npm (`npm cache clean --force`), Yarn (`yarn cache clean`), pnpm (`pnpm store prune`), CocoaPods (`pod cache clean --all`), Gradle `modules-2`, `transforms-N`, `build-cache-N`, the SwiftPM cache                                              | rung 9                     | C, per the rule below | tool not installed, a process of that tool runs, processes cannot be listed, its volume is not under the critical level (unless `--pressure critical`). Gradle and SwiftPM have no command, so Stim removes those directories only while no such build and no Stim build runs                                                                                                                    |
+| Android NDKs (`sdkmanager --uninstall "ndk;<version>"`), Android system images no AVD uses, `~/.cache/exact`                                                                                                                                    | rung 9                     | report only           | never deleted; the command is printed                                                                                                                                                                                                                                                                                                                                                            |
+
+Each rung-9 cache is listed with its size before and after. Rung 9 never runs at
+high, in a `STIM_HOME`-scoped home, or in the in-process ladder a build command
+runs at `disk.hardFloorGb`; only the stim-daemon and `stim gc` run it. The daemon
+runs it at most hourly, while the disk is still short. `stim gc` with no
+`--pressure` that measures critical measures free disk again after the earlier
+rungs and runs rung 9 only if the disk is still under the critical level. An
+explicit `stim gc --pressure critical` is the free-everything run and always runs
+it. Stim finds the npm cache (`npm_config_cache` or `NPM_CONFIG_CACHE`, else
+`~/.npm`), the Yarn cache (`YARN_CACHE_FOLDER` or the platform default) and the
+pnpm store (`PNPM_HOME/store` or the platform default) by path, so no package
+manager runs on a dry run; only an acting run executes the clean commands, with
+`COREPACK_ENABLE_NETWORK=0`. Gradle and SwiftPM directories are removed only
+while no Stim build lock or build slot is live or unresolved and no matching tool
+process runs, by renaming the directory aside to a `.stim-delete-*` sibling on
+the same volume and deleting it. A later run finds and finishes a leftover in
+Gradle's `caches/` or the SwiftPM cache's parent and measures it; a removal that
+fails after the rename is reported as failed with the bytes still left aside. A
+cache directory that is itself a symbolic link is kept, with a remedy to remove
+its target yourself. The Gradle build cache is report-only as a registered cache at
+every level.
+
+A dry run runs no `git fetch` and no `gh`: it judges merges from the refs already
+on disk and the pull request cache that `stim status --watch` and the
+maintenance worktree check write, and shows a verdict that fresher state could
+change as not refreshed. An acting run fetches and asks GitHub first. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
 for how gc decides that a branch is merged.
+
+Plain output is short: one level line, one summary line (freed, or would free),
+the totals per category with the 3 largest items each, a "Needs a person:" block
+listing every failure, every reason the run could not decide and every cache Stim
+only reports with its command, a "Where the disk goes:" block (the largest things
+Stim measured and can reclaim, and other tools' caches it kept, with their size),
+and "Full detail, kept entries with their reasons included:
+`$STIM_HOME/gc/last-report.txt`". That file has one line per action (outcome,
+size, maintenance or rung, kind, target, reasons) and each run overwrites it. A
+dry run ends with `Apply with: stim gc`. An acting run also appends every
+deletion to the machine cleanup log `$STIM_HOME/gc/gc.ndjson`, which
+`stim logs --source gc` reads.
+
+An acting `gc` takes the same exclusive maintenance claim as the stim-daemon's
+maintenance pass. While one holds it the other refuses at once with
+`STIM_CLAIM_REFUSED` naming the holder (pid, start, trigger); retry after it
+ends. A dry run takes no claim. On a full disk `gc` gives back the 1 MB
+`$STIM_HOME/maintenance/disk-reserve` before taking its claim, so it can start
+at 0 bytes free, and writes it again when the run ends.
+
+Single items cannot be deleted from the CLI. Stim Desktop deletes one cache, the
+build outputs of idle workspaces, one archive or one part of it, watchman or the
+Gradle daemons through stim-server's `desktop.gc.item.subscribe` on its
+Unix-socket connection; the library API has
+[`deleteGarbageItem`](./programmatic-api.md#doctor-and-gc-reports).
 
 An orphaned device is one this Stim home created that no workspace references.
 `gc` shows the size of an orphaned or stale owned device: for a simulator, the
@@ -2354,39 +2529,13 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
-`--delete` without `--cache` also runs the
-[pressure ladder](./build-caches.md#disk-pressure) to its end at high,
-whatever the machine measures: the idle stage for every workspace idle 2
-minutes or more (its dev server stops, its owned devices shut down and its
-build outputs are deleted), parked devices, the shared caches trimmed to half
-their caps, the dormant stage for workspaces idle 10 minutes or more (their
-owned devices are deleted), then idle Gradle and Kotlin daemons, unpinned
-Gradle versions, TMPDIR leftovers and the worktree trash. `--delete --cache all`
-runs it at critical instead, which also empties the Metro and compilation
-caches, makes every idle workspace dormant and deletes the `node_modules` and
-`ios/Pods` of idle linked worktrees. The ladder runs whatever `daemon.mode`
-says and covers every registered workspace, including the one you run `gc`
-from: its dev server stops and its devices shut down after 2 idle minutes, and
-its owned devices are deleted after 10, while its `node_modules` and Pods stay
-unless `--cache all`. It never touches a workspace that is building, driven,
-leased, shared with [`stim share`](./share.md), hosted or pinned by
-`maintenance.keep`, leaves a workspace whose
-`idle.minutes` is `0` out of the idle and dormant stages, and logs each action
-to `$STIM_HOME/daemon/daemon.ndjson`. The dry run lists what it would do at each
-level, with sizes, and each registered workspace's stage: running with its last
-activity, idle or dormant with the time in it, or stopped. Those sizes are
-apparent sizes, while a run reports how much free disk actually rose, so files
-APFS shares with a clone, such as `node_modules` a warm copied, can free 0K. `stim revive`
-resumes an idle workspace; the next `stim ios` or `stim android` creates the
-devices of a dormant one.
-
 `stim status` caches each folder's size, each worktree's pull request and each
 worktree's merge verdict under `$STIM_HOME/disk-usage`,
 `$STIM_HOME/pull-requests` and `$STIM_HOME/git-merge`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
 devices' data folders. `gc` lists the entries of a folder or
 worktree that is gone from a mounted volume under "Stale status cache entries",
-and `--delete` removes them. An entry that records no readable path, or whose
+and `gc` removes them. An entry that records no readable path, or whose
 volume is not mounted, is kept and counted under "Skipped".
 
 `gc` also lists recognized leftovers directly in the user's `TMPDIR` under
@@ -2394,7 +2543,7 @@ volume is not mounted, is kept and counted under "Skipped".
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
 `stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`),
 SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
-Jest's cache (`jest_<uid in base 36>`). `--delete` removes a Stim temp directory, recording or SwiftPM
+Jest's cache (`jest_<uid in base 36>`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
 temp directory only when nothing in it changed for 24 hours. It keeps a directory that contains or sits
 inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
@@ -2404,53 +2553,52 @@ process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with th
 ambient `TMPDIR`, because SwiftPM keeps the locks for its shared caches there, so
 their temp directories land here too. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
-them. The `stim-daemon`'s pressure ladder runs the same deletion daily and at
+them. The pressure ladder runs the same deletion daily and at
 once under disk pressure.
 
 `gc` lists each entry of `$STIM_HOME/trash` under "Worktree trash" with its
 size and the worktree it came from: the ignored directories `worktree remove`
-moved out of a worktree before git removed it. `--delete` deletes an entry
-only when it is a `remove-*` directory with a valid `trash.json` written by
+moved out of a worktree before git removed it. `gc` at high or critical deletes
+an entry only when it is a `remove-*` directory with a valid `trash.json` written by
 `worktree remove`, its ownership claim is free and the worktree it came from is
 gone. It keeps one a removal or its background `rm` still holds, one whose
 worktree still exists (a removal killed before git ran; run `stim worktree
 remove` on it to finish), and any other directory under `trash`. A trash entry
 that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
-removed from a copy of a live worktree, so `--delete` deletes it once its claim
+removed from a copy of a live worktree, so `gc` deletes it once its claim
 is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
-`--delete --cache workspaces`, and `--cache all`, clear the build outputs of
-every workspace that is not building and ran no `stim ios`, `stim android` or
-`stim macos` in the last 15 minutes, even with its dev server running or its
-simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
+`gc` clears the build outputs of a workspace over
+`maintenance.workspaceOutputsMaxGb` or unused for `maintenance.olderThanDays`
+that is not building and ran no `stim ios`, `stim android` or `stim macos` in the
+last 15 minutes, even with its dev server running or its simulator booted:
+`derived-data/`, `gradle-build/`, `android-cas/`,
 `cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories, and the project's
 git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
 `android/.cxx`, `android/<module>/.cxx`, `.dd` (a directory laid out as
-Xcode DerivedData) and an Exact app's Cargo `target/`. They print the bytes freed per workspace. Plain `--delete` clears them
-only through the pressure ladder, for a workspace with nothing running idle 2
-minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
+Xcode DerivedData) and an Exact app's Cargo `target/`. At high or critical it
+also clears them through the pressure ladder, for a workspace with nothing
+running idle 2 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,
 devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
 `gc` reports the size of each workspace's logs. The Metro, client and device
 logs rotate at about 8 MiB, but a file written by a Stim version before that cap
-can be hundreds of MB. `--delete` trims each of those files that is over 16 MiB
-to its newest 8 MiB, whatever `--older-than` says, in every workspace that is not in use and has no device log collector recorded.
+can be hundreds of MB. `gc` trims each of those files that is over 16 MiB
+to its newest 8 MiB in every workspace that is not in use and has no device log collector recorded.
 Build transcripts and other files under `logs/` are never trimmed.
 
 The Memory section lists long-lived helpers that grow while they run: the
 shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
-the memory that can be reclaimed. A plain `--delete` stops watchman, and
-`--cache watchman` does the same on its own, whatever its size. A plain
-`--delete` and `--cache all` also run the pressure ladder with memory treated as under
-pressure, so `--cache all` stops an unused watchman of 1 GiB or more through
-rung 6. Gradle and Kotlin daemons need `--cache gradle-daemons`:
+the memory that can be reclaimed. `gc` at high or critical runs the pressure
+ladder with memory treated as under pressure, which stops an unused watchman of
+1 GiB or more and the idle Gradle and Kotlin daemons:
 
-- `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
+- `stim gc` at high or critical removes the stale
   roots (a directory that is gone, or a linked worktree git pruned) that no
   subscription or trigger uses. They then shut watchman down only when no other
   client is connected, every root's subscriptions and triggers were readable
@@ -2462,18 +2610,17 @@ rung 6. Gradle and Kotlin daemons need `--cache gradle-daemons`:
   same check: the daily sweep and the memory-pressure ladder shut watchman down
   when it is over 2 GiB (over 1 GiB under memory pressure) and no Stim dev
   server started in the last minute.
-- `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
+- `stim gc` at high or critical stops each Gradle daemon that its
   own `gradle --status` reports idle, then each Kotlin compile daemon with no
   client connection once no Gradle daemon is busy. Nothing stops while a Stim
   Android build runs. While stim-server runs, it manages the daemons of builds
   offloaded to this machine, and gc leaves them alone.
-  The `stim-daemon`'s pressure ladder stops the same daemons whenever the
-  level is high or critical, memory included: critical macOS memory pressure,
-  10 minutes of warning, or, off macOS, under 10% of RAM available.
-- `stim gc --delete --cache gradle-versions` deletes the version caches
+- `stim gc` at high deletes the version caches
   (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
   under `GRADLE_USER_HOME` for each Gradle version no registered project pins
-  in the wrapper of its Android Gradle root or root. Nothing is deleted while
+  in the wrapper of its Android Gradle root or root, once unmodified for
+  `maintenance.gradleVersionIdleDays` days (7; 0 keeps them); at critical it
+  deletes every unpinned version. Nothing is deleted while
   a process that may be Gradle using this home runs: a Gradle main class, a
   Gradle wrapper or distribution jar, or a java process naming a path under
   the home (one is skipped only when it names no such path and every
@@ -2482,55 +2629,50 @@ rung 6. Gradle and Kotlin daemons need `--cache gradle-daemons`:
   read, while a Gradle directory cannot be listed, or while `caches`,
   `wrapper` or `wrapper/dists` is a symlink or resolves outside the home. A
   version is also kept when one of its paths is not a plain directory inside
-  the home, when an entry under it cannot be listed or stat'd, when it holds more than
-  500,000 entries, or, with `--older-than <days>`, when anything under it
-  changed within that many days. Right before removal gc checks processes and
+  the home, when an entry under it cannot be listed or stat'd, or when it holds more than
+  500,000 entries. Right before removal gc checks processes and
   pins again, renames each directory to a `.stim-delete-*` sibling and deletes
-  it; a later `gc --delete --cache gradle-versions` finishes a removal that
+  it; a later `gc` finishes a removal that
   failed, even while versions are blocked (not while the home is outside a
-  scoped `STIM_HOME` or its layout is unsafe). Plain `gc --delete` and
-  automatic maintenance delete them only through pressure ladder rung 6,
-  below. `modules-2`,
-  `build-cache-1`, `jdks` and other shared Gradle caches are never deleted,
-  and `--cache all` never includes these versions. With `STIM_HOME` set, gc
+  scoped `STIM_HOME` or its layout is unsafe). `jdks` and the other shared
+  Gradle caches are never deleted; `modules-2`, `transforms-N` and
+  `build-cache-N` go only in rung 9.
+  With `STIM_HOME` set, gc
   deletes nothing in a Gradle home outside that directory. Pressure ladder
-  rung 6, daily, at once under disk pressure and in plain `gc --delete`, first stops the idle Gradle and Kotlin
-  daemons `stim gc --delete --cache gradle-daemons` would stop, only when
+  rung 6, daily, at once under disk pressure and in `gc` at high or critical,
+  first stops the idle Gradle and Kotlin
+  daemons, only when
   every Gradle process that keeps a version is such a daemon, and waits up to
   3 seconds for them to exit, then does the
-  same for versions unmodified for `maintenance.gradleVersionIdleDays` days
-  (7; 0 turns both off); a daemon that did not exit still keeps the versions.
-  The manual command never stops daemons.
+  same for the versions (0 turns both off); a daemon that did not exit still keeps the versions.
 
 Anything gc cannot prove idle is kept, with the reason. With `STIM_HOME` set,
 gc skips these machine-global processes. `stim doctor` notes a watchman
 footprint over 2 GiB.
 
-Unscoped `gc` also reports agent-device state, including runner builds per
+`gc --dry-run` also reports agent-device state, including runner builds per
 platform and entry, last use and versions, sessions, logs, other state,
 workspace directories and stim-server hosted state. JSON `sections.agentDevice`
-contains the same payload as `stats.agentDevice`; it is `null` with any
-`--cache` scope, including `all`. This state never appears under `caches` and
+contains the same payload as `stats.agentDevice`; This state never appears under `caches` and
 never changes `actionable`. Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
 A lease flag means a live owner or runner matched by start time. A lock flag
 means a live or unknown lock owner. Unreadable lock owners and unreadable or
 unknown leases conservatively mark entries in use; dead lock owners and leases do not. Clear unused state with
 agent-device's own tooling or by removing the directories yourself.
 
-Unscoped `gc` reports the shared user-level SwiftPM cache after agent-device.
+`gc --dry-run` reports the shared user-level SwiftPM cache after agent-device.
 JSON `sections.swiftpmCache` carries the same payload as `stats.swiftpmCache`.
-Any `--cache` scope, including `all`, reports `null` without measuring it.
-It never appears in `caches` or changes `actionable`; `--delete` and
-`--older-than` leave it untouched. Stim never deletes this cache.
+It never appears in `caches` or changes `actionable`. Only gc's last rung, 9,
+removes it, at critical.
 
-Unscoped `gc` also reports other tools' machine-wide caches with each size and
+`gc --dry-run` also reports other tools' machine-wide caches with each size and
 the owning tool's remedy, as JSON `sections.machineCaches`:
 
 - Gradle version caches and wrapper dists for versions no registered project
   pins in the Gradle wrapper of its Android Gradle root (`android.gradleRoot`,
   default `android`, relative to the app and inside the repository; a custom
   root must hold `settings.gradle` and the module build script) or of its
-  root, with `stim gc --delete --cache gradle-versions` as the remedy, and the
+  root, with `stim gc --pressure high` as the remedy, and the
   `modules-2` dependency cache. A registered project that is missing, whose
   settings cannot be resolved, or whose wrapper cannot be read or names no
   Gradle version is named, since it may still pin a listed version; every
@@ -2545,85 +2687,57 @@ the owning tool's remedy, as JSON `sections.machineCaches`:
   remedy `rm -rf <dir>`. A directory without a readable absolute
   `WorkspacePath`, or whose path is on a volume that is not mounted, is not
   listed.
-- iOS simulator runtimes with their simulator count. Only a deletable runtime
-  no simulator uses gets `xcrun simctl runtime delete <id>`.
-- Xcode device support entries, which Xcode copies again when the device
+- iOS simulator runtimes with their simulator count. `gc` runs `xcrun simctl
+runtime delete <id>` for a deletable runtime no simulator uses, at every
+  level; the only installed runtime stays, as does every runtime a project's
+  `ios.runtime` pins, with the major version of the active Xcode's simulator SDK,
+  or used within the larger of `maintenance.olderThanDays` and 7 days (or with no use recorded by
+  simctl). When the SDK version, a registered project's path or its `.stim.json`
+  cannot be read, no runtime is deleted and the run says why under Needs a person. entries, which Xcode copies again when the device
   next connects.
 - agent-device runner builds grouped by agent-device and Xcode version,
   compared with the installed ones. agent-device has no prune command, so
   the remedy is to remove an entry that is not in use.
 
-The sizes, runtimes and tool versions are cached for 10 minutes. Any `--cache`
-scope reports `null` without measuring. This section never appears in
-`caches` or changes `actionable`; `--delete` and `--older-than` leave it
-untouched. Stim never deletes these caches.
+The sizes, runtimes and tool versions are cached for 10 minutes. This section
+never appears in `caches` or changes `actionable`. Stim deletes none of these
+except the unused runtimes and the rung 9 caches above.
 
 While it works, `gc` prints each slow step on stderr as it starts, such as
 `daemons     watchman pid 49040: checking 12 roots`, so a long run shows what it
 is waiting on. The report stays on stdout, and `--json` prints only its payload
 there.
 
-- `--older-than <days>` also selects devices of workspaces no Stim command has
-  used for that many days and unused cache entries. With `--cache workspaces`
-  it clears only the build outputs of workspaces unused that long. It limits
-  the parked simulators and emulators `--delete` clears to those parked at
-  least that many days. A cache directory it cannot list
-  (EACCES, EPERM or ELOOP, for example) counts as a failed trim, not an empty
-  one: gc prints how many entries could not be read or removed, records the
-  cache as failed and exits 1. A directory that is missing or is not a
-  directory is not a failure.
-- `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
-  or directory carries `<name>` whole, or every cache and the workspace build
-  outputs with `all`, which also runs the pressure ladder at critical.
-  `workspaces` clears only the workspace build outputs,
-  and skips the workspace directories that plain `--delete` removes whole
-  (those of dead projects and orphaned directories). A plain `gc --json` dry run
-  carries `scopedEmpty` on each cache, which says whether `--delete --cache`
-  without `--older-than` would empty it or leave it alone, and why.
-  When several caches share a name, as the Metro transform cache of each
-  project does, gc names each one `<name>: <directory>` using its directory's
-  last component, so the report and `--cache` tell them apart.
-  `parked` erases the parked simulators and emulators and keeps them parked;
-  `all` leaves them alone. `watchman` and `gradle-daemons` act on those
-  helpers alone (see above), and `--older-than` with them is refused. Other
-  devices and project entries are not inspected, so a scoped run empties
-  caches and reaps nothing, apart from the ladder that `all` runs.
-- `--worktrees` also selects every clean, idle linked worktree that has a Stim
-  workspace, not only the merged ones plain `gc` selects. With `--delete` gc
-  runs `stim worktree remove` without `--force` on each of them. Idle means
-  unused for `--older-than` days, or 7 days without that option. A worktree
-  with no commits of its own beyond the default branch and no recorded Stim
-  use is idle when its git and Stim activity is that old. It cannot be
-  combined with `--cache`. See
-  [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
+- `--dry-run` reports what the run would delete and deletes nothing.
+- `--pressure <normal|high|critical>` runs at that level instead of the
+  measured one. Any other value refuses with `STIM_BAD_ARG`.
 - `--json` prints the report as one object on stdout and every other line on
-  stderr. Agents use it to show you what `gc --delete` would remove before they
+  stderr. Agents use it to show you what `gc` would remove before they
   ask to run it.
 
-On a hosting Mac, unscoped `stim gc` also lists parked hosted iOS and Android
-devices; `stim gc --delete` deletes each through its session home's stop worker
+On a hosting Mac, `stim gc --dry-run` also lists parked hosted iOS and Android
+devices; `stim gc` deletes each through its session home's stop worker
 under a session claim. Held claims and unverified ownership keep the device,
 and an unreadable journal keeps all hosted devices. Android deletion also
 requires the AVD to be visible from this shell's Android environment; otherwise
 run gc with the server's `ANDROID_AVD_HOME`/`HOME`. Records no longer listed in
 their session ledger are already removed, skipped and excluded from `actionable`.
-`--older-than` filters by
-parked time; cache scopes omit hosted sessions. JSON adds
+JSON adds
 `sections.parkedHostedDevices` entries with `session`, `client` (id), `platform`,
 `id` (UDID or AVD name), `name`, `parkedAt`, and
 `listed` (session-home ledger ownership, null when unreadable). Deletion results
 use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
 reconciles the emptied ledger.
 
-Unscoped `stim gc` also lists stale entries of the machine EAS session ledger
+`stim gc --dry-run` also lists stale entries of the machine EAS session ledger
 (`~/.stim/machine/eas/sessions.json`): entries whose id is not a UUID and whose
 absolute workspace root is missing on a mounted volume, such as ids written by a
 test fixture. A valid id, an existing root, or a root on an unmounted volume
-keeps the entry. `stim gc --delete` re-checks each entry and removes it under
+keeps the entry. `stim gc` re-checks each entry and removes it under
 the ledger lock without contacting EAS. JSON adds `sections.staleEasLedgerEntries`
 entries with `id` and `workspaceRoot`.
 
-Unscoped `stim gc` also lists the other Stim homes on the machine, such as the
+`stim gc --dry-run` also lists the other Stim homes on the machine, such as the
 scratch `STIM_HOME`s agents and tests create. Every home other than `~/.stim` that
 creates a workspace or a device lists itself once in
 `~/.stim/machine/homes/homes.json`, which ignores `STIM_HOME`, with its path, its
@@ -2633,31 +2747,38 @@ For each listed home that still exists, gc reports its private size, workspace c
 last-seen time, devices and the exact teardown commands:
 `STIM_HOME=<home> stim worktree remove` from the root of each linked worktree, or from the
 project folder in a source checkout, then
-`STIM_HOME=<home> stim gc --delete`, then removing the directory. A home whose
+`STIM_HOME=<home> stim gc`, then removing the directory. A home whose
 directory is gone from a mounted volume is listed as gone, and any of its devices
 still on the machine appear as orphaned from that home with the command that deletes
 them. The section is report-only: those devices belong to the other home, and gc
-never tears down another home. `stim gc --delete` removes only the list entry of a
+never tears down another home. `stim gc` removes only the list entry of a
 gone home that has no device left. A scoped `STIM_HOME` lists nothing. JSON adds
 `sections.otherHomes` entries with `path`, `state`, `createdAt`, `lastSeenAt`,
 `bytes`, `privateBytes`, `workspaces`, `devices`, `teardown` and `forgettable`.
 
-`--json` prints one line. Each key under `sections` is one section of the text
-report, in the same order, and is always present. `stim gc --worktrees --json`
-prints, for example:
+`--json` prints one line. On a dry run, each key under `sections` is one section of
+the storage report, in the same order, and is always present.
+`stim gc --dry-run --json` prints, for example:
 
 ```json
 {
   "mode": "dry-run",
-  "cacheScope": null,
-  "olderThan": null,
-  "worktreeSweep": { "olderThan": 7, "defaulted": true },
+  "level": "normal",
+  "pressure": { "level": "normal" },
   "actionable": true,
   "failures": null,
+  "actions": [],
+  "blocked": [],
   "results": [],
   "sections": {
     "deadProjects": [{ "path": "/path/to/removed-app" }],
-    "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
+    "orphanedWorkspaces": [
+      {
+        "dir": "~/.stim/workspaces/old--1a2b",
+        "projectRoot": "/path/to/old",
+        "bytes": 52428800
+      }
+    ],
     "linkedWorktrees": [
       {
         "path": "/path/to/feature",
@@ -2713,8 +2834,16 @@ prints, for example:
         "buildState": {
           "bytes": 2147483648,
           "dirs": [
-            { "path": "node_modules", "bytes": 1610612736, "privateBytes": 10485760 },
-            { "path": "ios/Pods", "bytes": 536870912, "privateBytes": 536870912 }
+            {
+              "path": "node_modules",
+              "bytes": 1610612736,
+              "privateBytes": 10485760
+            },
+            {
+              "path": "ios/Pods",
+              "bytes": 536870912,
+              "privateBytes": 536870912
+            }
           ]
         }
       }
@@ -2759,7 +2888,11 @@ prints, for example:
         "dir": "/Users/example/.agent-device",
         "present": true,
         "bytes": 8192,
-        "sessions": { "dir": "/Users/example/.agent-device/sessions", "bytes": 4096, "count": 1 },
+        "sessions": {
+          "dir": "/Users/example/.agent-device/sessions",
+          "bytes": 4096,
+          "count": 1
+        },
         "logs": { "dir": "/Users/example/.agent-device/logs", "bytes": 4096 },
         "other": { "bytes": 0, "largest": [] }
       },
@@ -2785,20 +2918,21 @@ prints, for example:
 }
 ```
 
-The example omits the empty sections, `machineCaches`, `maintenance` and
-`ladder`. A dry run without `--cache` carries `ladder`:
-`{ pressure, levels, workspaces }`. `pressure` is the level the machine
-measures now. `levels` lists, for `high` and `critical`, the `command` that runs
-that level and its `actions`, each
-`{ rung, kind, target, workspace?, outcome, bytes, detail }` with the bytes it
-would free where gc could measure them.
-`workspaces` gives each registered workspace's `{ path, stage, since, kept? }`,
-where `stage` is `running`, `idle`, `dormant` or `stopped`. `agentDevice`,
-`swiftpmCache` and `machineCaches` are `null` only with a `--cache` scope, including `all`. `memory` lists each helper process as
+The example omits the empty sections, `machineCaches` and `inventory`, and
+shortens `pressure`. `level` is the level the run used: `pressure.level`, the
+level the machine measures, unless `--pressure` chose one. `actions` lists every
+action the run would take or took, each
+`{ rung, kind, target, workspace?, outcome, bytes, reason, detail, restore? }`.
+`rung` is `null` for the maintenance plan and the ladder rung otherwise;
+`outcome` is `"would"`, `"done"`, `"kept"` or `"failed"`; `bytes` is what it
+would free or freed where gc could measure it. `blocked` lists what the run
+could not decide or reach, each for a person to look at. `failures` is `null` on
+a dry run and otherwise counts the actions that failed.
+`memory` lists each helper process as
 `{ kind, cacheKind, pid, startedAt, bytes, measure, version, gradleHome, offloadClient, state, reclaimable, reason, detail }`,
-where `reclaimable` marks the ones `gc --delete --cache <cacheKind>` would
+where `reclaimable` marks the ones `gc` would
 stop, and `watchmanRoots` lists each root with its `stale` reason and whether
-it is `removable`. `reason` is `null` for an entry `--delete`
+it is `removable`. `reason` is `null` for an entry a run
 acts on and otherwise a stable code; `detail` is the text the report prints.
 A linked worktree's `eligibleAt` is the time a `recent-activity` worktree
 becomes removable, and otherwise `null`. `pullRequest` is the pull request of
@@ -2826,12 +2960,12 @@ or a `.git` file whose gitdir is gone; a worktree of another repository placed
 there is not listed. gc never removes them,
 because it cannot check them for uncommitted work; `remedy` is the command to
 run after you have looked through one.
-`bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
-`--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
-the run acted on, `results` lists each outcome, and `failures` counts the entries it could not delete. A
-nonzero count exits with status 1. Run `stim gc --json` again to see what is
-left. A `--cache` name that no cache carries, or `--cache` together with
-`--worktrees`, exits with status 1 and prints
+`bytes` is `null` when the size is unknown. Without `--dry-run`, `mode` is
+`"delete"`, `results` lists each outcome, `failures` counts the actions that
+failed, and `sections` and `inventory` are absent. A
+nonzero count exits with status 1. Run `stim gc --dry-run --json` again to see
+what is left. An unknown option, or a `--pressure` value other than `normal`,
+`high` or `critical`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
 
 Ctrl+C stops pending GC actions and drains verified owned children before exiting 130. Completed actions remain applied. Unverifiable cleanup retains its ownership
@@ -2843,8 +2977,7 @@ is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads
 `{ "kind": "device", "status": "done", "label": "stim-app (iPhone 17 26.5)", "id": "9C1F...", "bytes": null, "detail": null }`.
 `results` is empty on a dry run.
-A dry run without `--cache` also carries `inventory`, which is
-`null` otherwise. It lists every simulator and AVD on the machine with its
+A dry run also carries `inventory`. It lists every simulator and AVD on the machine with its
 runtime or system image, last use and `owner`: `workspace` (with `project` and
 `slot`), `parked`, `orphaned`, `otherStimHome` for a `stim-*` device this Stim
 home did not create, or `user`. It also lists the iOS simulator runtimes and
@@ -2856,24 +2989,23 @@ under `android.installImages`. `inventory.notices` says why a listing is missing
 AVD or system image folder Stim cannot read. When macOS privacy protection
 blocks the read, for example for AVDs on an external disk, the notice names the
 Privacy & Security setting that allows the app running Stim.
-The inventory is report only: Stim never runs those commands and never
-acts on a device through it.
+The inventory is report only, except that `gc` runs `xcrun simctl runtime delete`
+for a runtime no simulator uses. Stim never runs `sdkmanager --uninstall` and
+never acts on a device through the inventory.
 `stim guide facts gc` lists every section, field and reason code.
 
 Try it with an agent:
 
 ```text
-Run `stim gc` and show me what the pressure ladder would free at high and at
-critical, and each workspace's stage. Do not run `stim gc --delete` until I
+Run `stim gc --dry-run --pressure high` and then `stim gc --dry-run --pressure
+critical` and show me what each would free. Do not run `stim gc` until I
 confirm.
 ```
 
 ```text
-Run `stim gc` and show me how much memory watchman and the Gradle and Kotlin
-daemons use and what is reclaimable. If watchman has no clients, run
-`stim gc --delete --cache watchman` (a plain `stim gc --delete` also stops it);
-then run
-`stim gc --delete --cache gradle-daemons` to stop the idle daemons.
+Run `stim gc --dry-run` and show me how much memory watchman and the Gradle and
+Kotlin daemons use and what is reclaimable. If I ask you to free it, run
+`stim gc --pressure high`.
 ```
 
 ## `plugin`
@@ -2924,21 +3056,12 @@ and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
 free disk stays under it. Run `stim guide errors
 STIM_LOW_DISK` for the remedies.
 
-### Archive cache selectors
+### Archives and gc
 
-Archives are excluded from normal gc, `--cache all`, and unscoped `--older-than`.
-`--cache archived` lists archives with id, kinds, bytes and expiry. Add
-`--delete` to remove them. `--cache archived:<id>` selects one archive; an
-unknown id refuses with `STIM_BAD_ARG` and lists known ids. `archived-logs`,
-`archived-recordings`, and `archived-agent` select only that kind and preserve
-the record. Add `:<id>` (for example `archived-logs:<id>`) to clear one kind of
-one archive; an unknown id refuses the same way. `--older-than` filters by
-removal age for whole and per-kind selection; an explicit id ignores it. Archive selection reports abandoned
-staging and keeps live or unresolved claims, naming the claim removal command.
-
-<StimTabs code="stim gc --cache archived" />
-
-<StimTabs code="stim gc --delete --cache archived-logs --older-than 14" />
+`stim gc` deletes archives past their retention limits at every level. At
+`--pressure critical` it also deletes the logs, recordings and agent actions of
+every archive and keeps each archive record. The CLI cannot delete one archive
+or one kind of one archive; Stim Desktop can, through stim-server.
 
 `status --json` adds `archived` and `archivedUsage`, and `stats` prints an
 archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces).

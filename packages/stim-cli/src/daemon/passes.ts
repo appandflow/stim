@@ -1,8 +1,9 @@
-import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
+import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
+  ladderRunClaims,
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -21,7 +22,13 @@ import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
-import { runDormantPass } from './stages.ts';
+import {
+  clearStoppedOutputs,
+  dormantAfterMs,
+  runDormantPass,
+  sourceDormantAfterMs,
+  stoppedOutputCandidates,
+} from './stages.ts';
 
 interface HomePassPhases {
   measureMs: number;
@@ -240,8 +247,11 @@ export function createMaintenanceLane(
         });
       })()
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) failure = error;
-          log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
+          const cleanup = error instanceof Error && 'reportCleanup' in error;
+          if (cleanup) failure = error;
+          if (operation.signal.aborted && !cleanup)
+            log('debug', 'daemon_maintenance_aborted', 'the maintenance pass stopped: stimd is ending');
+          else log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
           loopDelay.disable();
@@ -266,13 +276,19 @@ export function createMaintenanceLane(
  * idle stage is the daemon's activity pass. Measures and lists devices only when the level is above normal, and
  * nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
-async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
+async function runCommandLadder(
+  trigger: string,
+  env: NodeJS.ProcessEnv,
+  protectedRoot?: string,
+  headroom?: HeadroomRun,
+): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
   if (!config || mode === 'off') return;
   const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
-  const classify = async () => {
+  const classify = async (): Promise<DaemonPressure> => {
+    if (headroom) return headroomPressure(config, headroom);
     const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
     const pressure = classifyPressure({
       disk,
@@ -286,26 +302,90 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
   };
   const pressure = await classify();
   if (pressure.level === 'normal') return;
-  const measured = await measureTick(config, Date.now());
+  const measured = await measureTick(
+    config,
+    Date.now(),
+    headroom ? { probe: false, signal: headroom.stop, operation: headroom.operation } : {},
+  );
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
     await runLadder(
       {
         config,
         act: mode === 'on',
-        log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
+        log: (level, event, msg, fields = {}) => {
+          if (headroom && event === 'pressure_action') headroom.acted = true;
+          writer.write({ src: trigger, level, event, msg, ...fields });
+        },
         devices: measured.devices,
         sims: measured.sims,
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
+        // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
+        lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
+        ...(headroom ? { operation: headroom.operation } : {}),
       },
       pressure,
     );
   } finally {
     writer.close();
   }
+}
+
+/** What a ladder run for a build's headroom judges by: the build's device, the target there, and when to stop. */
+interface HeadroomRun {
+  device: number;
+  freeMb: number;
+  operation: StimContext;
+  /** Aborts when the build is cancelled or the run's deadline passes. */
+  stop: AbortSignal;
+  /** An action has been logged since the build device was last measured. */
+  acted: boolean;
+  /** The build device's free space at the last measurement. */
+  lastFreeMb: number | null;
+  /** An action left the build device's free space no higher: the rungs cannot help it, so the run ends. */
+  helpless: boolean;
+}
+
+const NORMAL_PRESSURE: DaemonPressure = {
+  level: 'normal',
+  disk: 'normal',
+  memory: 'normal',
+  reasons: [],
+  memoryWarningSince: null,
+};
+
+/**
+ * The level of a headroom run: high while the build's device has less free than the target, else normal. It ignores
+ * every other volume and memory, and is normal once `stop` aborts or once an action left the build device's free space
+ * no higher, which ends the run between two rungs or two actions.
+ */
+async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<DaemonPressure> {
+  if (headroom.stop.aborted || headroom.helpless) return NORMAL_PRESSURE;
+  let disk;
+  try {
+    disk = await measureDisk(config, headroom.stop);
+  } catch (error) {
+    if (headroom.stop.aborted) return NORMAL_PRESSURE;
+    throw error;
+  }
+  // @ref LLP 0006#only-the-builds-own-device-counts -- other volumes do not help this build
+  const volume = disk.find((entry) => entry.device === headroom.device);
+  if (!volume) return NORMAL_PRESSURE;
+  if (headroom.acted && headroom.lastFreeMb !== null && volume.freeMb <= headroom.lastFreeMb) headroom.helpless = true;
+  headroom.acted = false;
+  headroom.lastFreeMb = volume.freeMb;
+  if (volume.freeMb >= headroom.freeMb || headroom.helpless) return NORMAL_PRESSURE;
+  return {
+    ...NORMAL_PRESSURE,
+    level: 'high',
+    disk: 'high',
+    reasons: [
+      `${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}, under the ${(headroom.freeMb / 1024).toFixed(1)} GB the next build needs`,
+    ],
+  };
 }
 
 export interface ForcedLadder {
@@ -318,25 +398,28 @@ export interface ForcedLadder {
 
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
- * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 6 (rung 5 only at
- * critical). `stim gc --delete` runs one level with `act`; `stim gc` previews both from one measurement, measuring what
- * each action would free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 8 (rungs 5 and 8 only at
+ * critical). `stim gc` runs one level with `act`; `stim gc --dry-run` previews it, measuring what each action would
+ * free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
  */
 export async function runForcedLadder({
   levels,
   act,
   why,
   trigger,
-  parkedOlderThanDays,
   operation,
+  protectedRoot,
+  measured: atMeasuredLevel = false,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
   why: string;
   trigger: string;
-  /** Takes only the devices parked at least this many days ago, as `gc --older-than` asks. */
-  parkedOlderThanDays?: number;
   operation?: StimContext;
+  /** The workspace of the command that runs the ladder, which no rung takes. */
+  protectedRoot?: string;
+  /** The level is the one the machine measured, not one the caller chose, so rung 9 measures again before it acts. */
+  measured?: boolean;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
   if (!config) return null;
@@ -374,7 +457,7 @@ export async function runForcedLadder({
           workspace: entry.path,
           outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
           bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
-          detail: entry.outcome === 'would-idle' ? 'stim gc --delete would do this' : entry.detail,
+          detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });
       }
@@ -387,15 +470,90 @@ export async function runForcedLadder({
           sims: measured.sims,
           simsFailed: measured.sims === null,
           remeasure: async () => pressure,
-          force: { level, why, ...(parkedOlderThanDays === undefined ? {} : { parkedOlderThanDays }) },
+          force: { level, why, measured: atMeasuredLevel },
           measure: !act,
           operation,
+          ...(protectedRoot ? { protectedRoot } : {}),
         },
         pressure,
       );
       result.push({ level, actions: [...actions, ...ladder.actions] });
     }
     return { pressure, running, levels: result };
+  } finally {
+    writer?.close();
+  }
+}
+
+/**
+ * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: its regenerable build
+ * outputs deleted, then the dormant stage (its owned devices deleted, its logs archived), then the node_modules and
+ * Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
+ * with the stage off.
+ */
+export async function runDormantReduction({
+  act,
+  trigger,
+  operation,
+  protectedRoot,
+}: {
+  act: boolean;
+  trigger: string;
+  operation?: StimContext;
+  protectedRoot?: string;
+}): Promise<DaemonLadderAction[]> {
+  const config = loadConfig();
+  const afterMs = dormantAfterMs(config);
+  if (!config || (afterMs <= 0 && sourceDormantAfterMs(config) <= 0)) return [];
+  const measured = await measureTick(config, Date.now(), {
+    probe: act,
+    signal: operation?.signal,
+    operation,
+  });
+  const writer = act ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES }) : null;
+  const log: IdlePassInput['log'] = (logLevel, event, msg, fields = {}) =>
+    writer?.write({ src: trigger, level: logLevel, event, msg, ...fields });
+  const reading = {
+    devices: measured.devices,
+    simsFailed: measured.sims === null,
+    operation,
+    ...(protectedRoot ? { protectedRoot } : {}),
+  };
+  try {
+    const actions: DaemonLadderAction[] = [];
+    for (const candidate of afterMs > 0 ? await stoppedOutputCandidates(config, reading, afterMs) : []) {
+      const result = act
+        ? await clearStoppedOutputs(candidate, config, afterMs, operation)
+        : {
+            outcome: 'would' as const,
+            bytes: await idleOutputBytes(candidate.path, config),
+            detail: 'stim gc would do this',
+          };
+      if (result)
+        actions.push({
+          rung: 4,
+          kind: 'delete-build-outputs',
+          target: candidate.path,
+          workspace: candidate.path,
+          ...result,
+          ...(result.outcome === 'done'
+            ? {
+                restore: 'the next stim ios or stim android, from the build cache when nothing changed',
+              }
+            : {}),
+        });
+    }
+    if (afterMs > 0) actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+    actions.push(
+      ...(await runDormantDependencies({
+        config,
+        act,
+        log,
+        ...reading,
+        force: true,
+      })),
+    );
+    return actions;
   } finally {
     writer?.close();
   }
@@ -415,4 +573,55 @@ export async function runLadderNow(
   try {
     await runCommandLadder('command', env, protectedRoot);
   } catch {}
+}
+
+const HEADROOM_DEADLINE_MS = 60_000;
+
+/**
+ * Runs the pressure ladder for a build once, in this process, until the volume with device id `device` has `freeMb`
+ * free or the rungs are spent, at the high level (rungs 2 to 8, never rung 9) whatever that target is relative to
+ * `disk.minFreeGb`; other volumes and memory do not count. It asks the daemon for nothing and returns at once when a
+ * stimd of another build refused this process or another process holds the `ladderRunClaims` claim. It stops after
+ * 60 seconds: the deadline and `signal` are checked at every re-measurement, which each rung makes before every
+ * action, so a step in flight finishes and no step is left half done. Throws only when `signal` aborts.
+ */
+export async function runLadderToFree({
+  operation,
+  signal,
+  device,
+  freeMb,
+  protectedRoot,
+}: {
+  operation: StimContext;
+  signal: AbortSignal;
+  device: number;
+  freeMb: number;
+  protectedRoot: string;
+}): Promise<void> {
+  if (stimdRefused()) return;
+  let claim: ClaimHandle | null = null;
+  try {
+    const attempt = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired ?? null;
+  } catch {
+    return;
+  }
+  if (!claim) return;
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(HEADROOM_DEADLINE_MS)]);
+  try {
+    await runCommandLadder('command', operation.env, protectedRoot, {
+      device,
+      freeMb,
+      operation,
+      stop,
+      acted: false,
+      lastFreeMb: null,
+      helpless: false,
+    });
+  } catch {
+    signal.throwIfAborted();
+  } finally {
+    releaseClaim(claim);
+  }
 }

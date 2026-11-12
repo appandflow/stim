@@ -53,7 +53,7 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
     },
     cli(argv) {
       if (argv[0] === 'status') return { code: 0, stdout: output.status, stderr: '' };
-      assert.deepEqual(argv, ['gc', '--json']);
+      assert.deepEqual(argv, ['gc', '--dry-run', '--json']);
       return { code: 0, stdout: JSON.stringify({ sections: output.gc }), stderr: '' };
     },
   };

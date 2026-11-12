@@ -2,17 +2,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createdDevicesFile, readStimHomes, stimHomesRoot } from '@stim-cli/core/state';
-import { collectGcReport, runGc } from '../commands/gc.ts';
+import { runGc } from '../commands/gc.ts';
+import { collectDeviceRecords } from '../commands/gc/records.ts';
 import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { recordStimHome } from '../engine/stim-home-registry.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { saveConfig } from '../workspace/config.ts';
-
-vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
-vi.mock('../commands/gc/memory.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../commands/gc/memory.ts')>()),
-  collectGcMemory: async () => null,
-}));
+import { loadConfig, saveConfig } from '../workspace/config.ts';
 
 const SCRATCH_SIM = {
   udid: 'SCRATCH-UDID',
@@ -21,6 +16,11 @@ const SCRATCH_SIM = {
   deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
   isAvailable: true,
 };
+
+async function collectRecords() {
+  const records = await collectDeviceRecords(loadConfig(), []);
+  return { ...records, otherHomes: records.otherHomes?.homes ?? [] };
+}
 
 describe('gc reports the other Stim homes of the machine list', () => {
   let dir: string;
@@ -64,7 +64,7 @@ describe('gc reports the other Stim homes of the machine list', () => {
   });
 
   test('lists a scratch home with its owned simulator, and a scoped home lists none', async () => {
-    const report = await collectGcReport();
+    const report = await collectRecords();
     expect(report.otherHomes).toEqual([
       expect.objectContaining({
         path: scratch,
@@ -77,29 +77,30 @@ describe('gc reports the other Stim homes of the machine list', () => {
     process.env.STIM_HOME = join(dir, 'own-scoped-home');
     mkdirSync(process.env.STIM_HOME);
     saveConfig({ version: 2, projects: {}, repos: {} });
-    expect((await collectGcReport()).otherHomes).toEqual([]);
+    expect((await collectRecords()).otherHomes).toEqual([]);
   });
 
-  test('keeps a gone home while its simulator is still there, and --delete drops it once nothing is left', async () => {
+  test('keeps a gone home while its simulator is still there, and gc drops it once nothing is left', async () => {
     rmSync(scratch, { recursive: true });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const orphaned = await collectGcReport();
+      const orphaned = await collectRecords();
       expect(orphaned.otherHomes).toEqual([
         expect.objectContaining({ path: scratch, state: 'gone', forgettable: false }),
       ]);
-      await runGc({ delete: true });
+      await runGc({ pressure: 'normal' });
       expect([...readStimHomes(stimHomesRoot()).homes.keys()]).toEqual([scratch]);
 
       listing = [];
-      expect((await collectGcReport()).otherHomes).toEqual([
+      expect((await collectRecords()).otherHomes).toEqual([
         expect.objectContaining({ path: scratch, state: 'gone', forgettable: true }),
       ]);
-      await runGc({ delete: true });
+      await runGc({ pressure: 'normal' });
       expect([...readStimHomes(stimHomesRoot()).homes.keys()]).toEqual([]);
-      expect(log.mock.calls.flat().join('\n')).toContain(`Forgot the Stim home ${scratch}`);
     } finally {
       log.mockRestore();
+      error.mockRestore();
     }
   });
 
@@ -109,7 +110,7 @@ describe('gc reports the other Stim homes of the machine list', () => {
     delete process.env.STIM_HOME;
     listing = [];
     rmSync(scratch, { recursive: true });
-    expect((await collectGcReport()).otherHomes).toEqual([
+    expect((await collectRecords()).otherHomes).toEqual([
       expect.objectContaining({ state: 'gone', forgettable: true, devices: [] }),
     ]);
   });

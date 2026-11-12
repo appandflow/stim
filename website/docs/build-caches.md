@@ -475,24 +475,25 @@ and native output. See [worktree isolation](./worktrees.md) for its full scope.
 ## Inspect and clean caches
 
 <StimTabs
-code={`stim gc
-stim gc --delete --older-than 30
-stim gc --delete --cache all`}
+code={`stim gc --dry-run
+stim gc
+stim gc --pressure critical`}
 />
 
-The first command only reports sizes, what the
-[pressure ladder](#disk-pressure) would free now at high and at critical, and
-each workspace's stage. Age-based cleanup removes unused entries.
-`gc --delete` without `--cache` also runs the pressure ladder to its end at
-high, whatever the machine measures. `--cache all` empties managed caches and
-makes future builds cold, and with `--delete` runs the ladder at critical
-instead; it prunes no stale entries, so `gc --delete` on its own remains the
-way to do that.
-`--cache "compilation cache"` empties one cache instead of every one.
+`stim gc --dry-run` reports what `stim gc` would delete now, with sizes, and
+deletes nothing. `stim gc` runs one maintenance pass at the level the machine
+measures. `--pressure <normal|high|critical>` runs at that level instead,
+whatever the machine measures. Every level runs the automatic maintenance plan,
+which trims caches over their caps and removes unused entries. `high` adds the
+[pressure ladder](#disk-pressure) to its end. `critical` also empties every
+shared cache Stim registered, which makes future builds cold, and runs
+[rung 9](#disk-pressure), which cleans other tools' caches. It is the explicit
+free-everything run: use plain `stim gc` for routine cleanup. The CLI has no
+flag that picks one cache; Stim Desktop can empty a single cache.
 
 The one exception to leaving caches alone is the Swift compilation cache. When
-it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), a plain
-`stim gc --delete` empties it whole, as automatic maintenance does. It cannot be
+it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), `stim gc`
+empties it whole, as automatic maintenance does. It cannot be
 trimmed by age without corrupting its index. The cache is kept, with the build
 named, while an iOS build holds its claim on it.
 
@@ -517,8 +518,8 @@ does an app built by the same run. A cache provider keeps its own copy of an
 entry; add `--no-build-cache` to skip it.
 
 Each iOS build holds a shared claim on the compilation cache while xcodebuild
-runs, in a `compilation-cache.claims` directory beside it. `gc --delete
---cache`, automatic maintenance, the pressure ladder and the corruption check empty the cache only
+runs, in a `compilation-cache.claims` directory beside it. `gc`,
+automatic maintenance, the pressure ladder and the corruption check empty the cache only
 after taking that claim exclusively, so none of them can empty it under a
 running xcodebuild. Xcode builds you run outside Stim take no claim.
 
@@ -531,17 +532,26 @@ Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
 outputs", with the size, last use and verdict of each workspace.
 
 <StimTabs
-code={`stim gc --delete
-stim gc --delete --cache workspaces
-stim gc --delete --cache workspaces --older-than 7`}
+code={`stim gc --dry-run
+stim gc`}
 />
 
-`gc --delete --cache workspaces` clears the outputs of every workspace that is
-not building and did not run `stim ios`, `stim android` or `stim macos` in the
-last 15 minutes, and prints the bytes it freed for each. Plain `gc --delete`
-clears them only through the [pressure ladder](#disk-pressure): for a workspace
-with nothing running idle 2 minutes or more, and in the idle stage of a running
-one. A workspace whose worktree is locked with `git worktree lock` keeps its
+Automatic maintenance also bounds a Cargo `target/` that is in use: an Exact app's, or one directly in a checkout that carries Cargo's `CACHEDIR.TAG` and that git ignores whole, in a registered workspace or a discovered checkout (at most 6 discovered ones are measured per scan, the least recently measured first, so each is reached within a few scans). Only directories with Cargo's profile shape (they hold `.fingerprint/`) are profiles; other directories in `target/` and a nested `target/` inside it are never removed, although they count toward its size. A target triple directory that holds anything besides Cargo's `CACHEDIR.TAG` and `.rustc_info.json` and its profiles keeps those files and loses only its stale profiles. Without Exact's ledger, a build that changes nothing leaves no trace in a profile's directory times, so a profile used daily without recompiling can look stale. Above
+`maintenance.cargoTargetMaxGb` (25 GiB by default, 0 for no cap) it removes the profiles and target triples that no build wrote in the last day, judged by directory times
+and Exact's own `.exact-sweep.json` ledger. If it is still over the cap it removes the `incremental/` directory of
+each remaining profile, largest first, until it is under. A profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a Cargo build holds, and any path a running
+process executes from or holds open, stay; other processes do not protect the rest of the `target/`. Exact's own
+sweep removes units unused for a week; the cap works on profiles and incremental caches (and, at critical pressure, idle units) and does not write its ledger.
+Disk pressure tightens this per volume: at high, every recognised `target/` on a volume under `disk.minFreeGb`, in use or not, loses all its stale profiles and all `incremental/` data whatever the cap; at critical it also loses the build units Exact's usage ledger shows no build used for a day (a target without that ledger keeps its units). A unit is one build of one crate (`.fingerprint/<crate>-<hash>`, `build/<crate>-<hash>` and the `deps/` files with that hash); Cargo keeps old ones when a crate's version or features change. Cargo does not touch a fresh dependency's fingerprint, so only Exact's ledger, which stamps a unit when a build read its fingerprint, tells use; a unit with no stamp and one unit per crate name, the most recently used, stay. A ledger older than 3 days shows no use, so its target keeps its units. Units move aside in chunks of 25 with the three Cargo lock files checked before and after each chunk, and the sweep of a profile stops when one is held; a build that starts inside a chunk can still fail on a missing file and the next build recovers. Units are swept at critical only. `stim gc --pressure high` or `critical` applies the level to every `target/`. The cap measures and trims once an hour even while host load defers the size scan, with its `du`, `lsof` and `ps` niced and one `target/` at a time; the size scan itself runs anyway once it has been deferred for 3 hours (the other checks stay deferred), and `stim status` shows what is deferred and since when.
+Removed directories go through `target/.stim-trimmed` and come back if a build takes their lock during the move; one that cannot be put back is kept as `.stim-not-restored-*` for you to merge or delete. A `target/` too large to measure in time has only its stale profiles trimmed and is reported as needing attention.
+
+`stim gc` clears the outputs of a workspace over `maintenance.workspaceOutputsMaxGb`
+or unused for `maintenance.olderThanDays`, as long as it is not building and did
+not run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
+prints the bytes it freed. It clears them at every level for a workspace idle for
+`idle.dormantDays` (1 day). At high or critical it also clears them through the
+[pressure ladder](#disk-pressure): for a workspace with nothing running idle 2
+minutes or more, and in the idle stage of a running one. A workspace whose worktree is locked with `git worktree lock` keeps its
 outputs at any disk pressure level, and so does a workspace whose worktree git
 cannot list. A running dev server, a booted or hosted simulator or emulator, or
 a tunnel does not keep the outputs. They stay while a `stim ios` or
@@ -550,18 +560,13 @@ build runs or cannot be verified. Clearing them also clears the
 project's own `android/app/build`, `android/build`, `android/.gradle`, `.build`,
 the CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd`
 directory laid out as Xcode DerivedData (a `Build/` directory beside
-`ModuleCache.noindex` or `Logs/`), and an Exact app's Cargo `target/` (kept while
+`ModuleCache.noindex` or `Logs/`), and an Exact app's Cargo `target/` beside its `exact.mjs` (kept while
 another process, such as a shell or an `exact.mjs` command, runs from or works in
 the app, and on Windows) when git ignores every file in the
 directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that
 only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
-and the Metro cache are never touched. With `--cache workspaces`,
-`--older-than <days>` clears only workspaces no Stim command has used for that
-many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them.
-`--cache parked` is the one reserved name that `all` leaves out: it erases
-parked simulators and emulators (see [owned devices](./owned-devices.md)). The
+and the Metro cache are never touched here. The
 workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
 running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
 set and other macOS files.
@@ -575,24 +580,30 @@ restages the app.
 
 ### Worktree dependencies
 
-At critical, the [pressure ladder](#disk-pressure) deletes the `node_modules`
-and `ios/Pods` of idle linked worktrees that have a Stim workspace, never the
-source checkout's. The `stim-daemon` does this at critical disk pressure, and
-`gc --delete --cache all` runs the ladder at critical whatever the machine
-measures. A worktree locked with `git worktree lock` always keeps them, so a
-rollback checkout stays runnable. Otherwise a worktree keeps them while its dev
-server runs or a native run or build holds it, for 2 minutes after its last
-git or Stim activity or a write at its top level, while git tracks a file in
-them, and while a stim service, the `stim` on your PATH or a running
-process (by command line or working directory) uses the worktree.
-It also keeps them when `stim worktree warm` could not restore the same
-versions: the source checkout lacks the directory, or the worktree's lockfile
-differs from the source checkout's. Stim records what it deleted, and the next
+A linked worktree that has a Stim workspace loses its `node_modules` and
+`ios/Pods`, never the source checkout's, in two ways. `stim gc` and the
+`stim-daemon` delete them at every level once the workspace has had no activity
+for `idle.dormantDays` (1 day), and the [pressure ladder](#disk-pressure)
+deletes them at high (idle 1 hour) and critical (idle 2 minutes) disk
+pressure, only when `stim worktree warm` can restore them. A worktree locked with
+`git worktree lock` always keeps them, so a rollback checkout stays runnable.
+Otherwise a worktree keeps them while its dev server runs or a native run or
+build holds it, while it was recently used (a git or Stim activity or a write at
+its top level), while git tracks a file in them, while a stim service, the `stim`
+on your PATH or a running process (by command line or working directory) uses
+the worktree, while it is pinned by `maintenance.keep`, and when the tree holds
+under 256 MB of its own (a copy-on-write clone frees almost nothing). Only a
+real, git-ignored directory inside the checkout, reached through no link, is
+deleted. Stim also keeps them when `stim worktree warm` could not restore the
+same versions: the source checkout lacks the directory, the worktree's lockfile
+differs from the source checkout's, or the source checkout's dependencies were
+not installed from its own lockfile. Stim records what it deleted, and the next
 `stim start`, `stim ios` or `stim android` in that worktree runs
-`stim worktree warm` first to restore it. If that warm fails or leaves a
-directory missing, the command refuses with `STIM_DEPS_FAILED`. Other commands,
-such as a test run, find the directory missing until then. `.pnpm-store`
-stays, because it is all clones and deleting it frees nothing.
+`stim worktree warm` first to restore it. If that warm cannot restore the same
+versions, fails or leaves a directory missing, the command refuses with
+`STIM_DEPS_FAILED` and asks for an install. Other commands, such as a test run,
+find the directory missing until then. `.pnpm-store` stays, because it is all
+clones and deleting it frees nothing.
 
 ### Device recordings
 
@@ -605,17 +616,16 @@ Stim home, deleting the oldest footage first. Idle time and time after
 `stim stop` do not age footage out, so a stopped workspace stays replayable.
 
 <StimTabs
-code={`stim gc
-stim gc --delete --cache recordings
-stim gc --delete --older-than 7`}
+code={`stim gc --dry-run
+stim gc
+stim gc --pressure critical`}
 />
 
-`gc` lists each workspace's recordings and their size. Plain `gc --delete`
+`gc --dry-run` lists each workspace's recordings and their size. `stim gc`
 deletes only the recordings of dead or orphaned workspaces, with their
 workspace directory, and keeps them when it cannot prove the project is gone.
-`--cache recordings` deletes every workspace's recordings and nothing else, and
-`--cache all` includes them. `--older-than <days>` deletes footage recorded
-before then. `stim worktree remove` deletes the workspace's recordings with its
+`--pressure critical` also deletes every recording that is not being written, except those of workspaces pinned with `maintenance.keep` or in use.
+`stim worktree remove` deletes the workspace's recordings with its
 directory. To stop recording altogether, see
 [Device recordings](./settings.md#device-recordings).
 
@@ -625,7 +635,7 @@ shared caches on a different volume. The same values can live in the machine con
 
 ## Automatic maintenance
 
-Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
+Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc --dry-run` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
 
 Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. [Maintenance settings](./settings.md#automatic-maintenance)
 
@@ -634,25 +644,51 @@ Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` 
 ### Disk pressure
 
 Pressure is the `stim-daemon`'s, not a maintenance check. Each tick classifies
-the machine **normal**, **high** (free disk under `disk.minFreeGb`, 20 GB,
+the machine **normal**, **high** (free disk under `disk.minFreeGb`, 40 GB,
 on any volume Stim writes to; macOS memory pressure warning for 10 minutes; or
-under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 6 GB,
+under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 20 GB,
 or under `disk.hardFloorGb` when that is higher; or critical memory pressure),
 and above normal runs one ladder top-down until the level clears:
 
-| Rung | High                                                                                                               | Critical                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| 1    | The idle stage for every workspace idle 2 minutes; build outputs of workspaces with nothing running                | Same                                                                                                                    |
-| 2    | Parked simulators and emulators, oldest first, until the level clears                                              | All parked devices                                                                                                      |
-| 3    | Build and Metro caches trimmed, least recently used first, to half their caps                                      | Metro and Swift compilation caches emptied; build cache trimmed to the entries a workspace, parked device or build uses |
-| 4    | The dormant stage for workspaces idle 10 minutes                                                                   | The dormant stage for every idle workspace                                                                              |
-| 5    | Nothing                                                                                                            | `node_modules` and `ios/Pods` of idle linked worktrees holding 256 MB of their own, restored by `stim worktree warm`    |
-| 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash | Same                                                                                                                    |
+| Rung | High                                                                                                               | Critical                                                                                                                                                                                                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Booted parked simulators                                                                                           | Same                                                                                                                                                                                                                                                                                       |
+| 1    | The idle stage for every workspace idle 2 minutes; build outputs of workspaces with nothing running                | Same                                                                                                                                                                                                                                                                                       |
+| 2    | Parked simulators and emulators, oldest first, until the level clears                                              | All parked devices                                                                                                                                                                                                                                                                         |
+| 3    | Build and Metro caches trimmed, least recently used first, to half their caps                                      | Every registered shared cache emptied (compilation cache, ccache, build cache, Metro, macOS artifacts, React Native and Android caches), the fingerprint index and memo                                                                                                                    |
+| 4    | The dormant stage for workspaces idle 10 minutes                                                                   | The dormant stage for workspaces idle 2 minutes                                                                                                                                                                                                                                            |
+| 5    | `node_modules` and `ios/Pods` of linked worktrees idle 1 hour that `stim worktree warm` can restore                | Same, for worktrees idle 2 minutes                                                                                                                                                                                                                                                         |
+| 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash | Same, with every unpinned Gradle version                                                                                                                                                                                                                                                   |
+| 7    | Clean finished worktrees after `gc.worktreeGraceMinutes`, if `maintenance.removeFinishedWorktrees`                 | Without the grace period; also clean pushed worktrees no Stim command used for 7 days, if `maintenance.removeIdleWorktrees`                                                                                                                                                                |
+| 8    | Nothing                                                                                                            | First the `node_modules` and Pods of source (main) checkouts idle 2 minutes, after every linked worktree's, on a volume still under the critical level; then every device recording not being written (except pinned or in-use workspaces) and archived logs, recordings and agent actions |
+| 9    | Nothing                                                                                                            | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
-Cleanup protects active builds, leases, live shares and pinned workspaces. At critical disk pressure it can remove dependencies from idle linked worktrees. Run `stim worktree warm` to restore missing copies from the source checkout. The source checkout's dependencies stay in place.
+Rung 9 is the last. It cleans caches Stim does not own, each through the tool's
+own command and only when that tool is installed and no process of that tool
+runs, and lists each with its size before and after: `npm cache clean --force`,
+`yarn cache clean`, `pnpm store prune`, `pod cache clean --all`, and Gradle's
+version-independent caches (`caches/modules-2`, `caches/transforms-N` and
+`caches/build-cache-N` under `GRADLE_USER_HOME`, removed by Stim because Gradle
+has no command), and SwiftPM's cache, those two only while no Stim build lock or
+build slot is live or unresolved and no matching tool process runs, by renaming
+the directory aside to a `.stim-delete-*` sibling on the same volume and deleting
+it; a later run finishes any leftover. A cache directory that is itself a
+symbolic link is kept, with a remedy to remove its target yourself. rung 6
+stops idle daemons first. Stim finds the npm cache (`npm_config_cache` or
+`NPM_CONFIG_CACHE`, else `~/.npm`), the Yarn cache and the pnpm store by path, so
+no package manager runs on a dry run; only an acting run executes the clean
+commands, with `COREPACK_ENABLE_NETWORK=0`. Rung 9 never runs at high, in a
+`STIM_HOME`-scoped home, or in the in-process ladder a build runs at
+`disk.hardFloorGb`. It only reports Android NDKs (`sdkmanager --uninstall
+"ndk;<version>"`), Android system images no AVD uses and `~/.cache/exact`, with
+the command, and never deletes them. Only the `stim-daemon` and `stim gc` run rung 9. The daemon runs it at most hourly, while the disk is still short. `stim gc` with no `--pressure` that measures critical measures free disk again after the earlier rungs and runs rung 9 only if the disk is still under the critical level. An explicit `stim gc --pressure critical` is the free-everything run and always runs it.
 
-Run `stim gc` to preview high and critical cleanup. `stim gc --delete` runs the high ladder, and `stim gc --delete --cache all` runs the critical ladder, regardless of the current pressure. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
+Cleanup protects active builds, leases, live shares and pinned workspaces. It can remove dependencies from idle linked worktrees: after `idle.dormantDays` (1 day) at every level, and by rung 5 under disk pressure. Run `stim worktree warm` to restore missing copies from the source checkout; the next Stim command in the worktree does it for you, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions. A source (main) checkout is what new worktrees warm from, so every stage takes linked worktrees first. Its dependencies go only after theirs: at every level once it has had no activity for `idle.sourceDormantDays` (7 days by default; `0` never; activity is a Stim command, source file write, git write or commit in the checkout or any workspace in it, and a `worktree warm` copying from it, when the warmed app has a Stim workspace in the source), and at critical in rung 8 while the disk is still under the critical level. `stim worktree warm` and `stim status` then say the source has no installed dependencies to copy, and since when. Install them there so new worktrees warm from it; a worktree warmed meanwhile needs its own install before it builds, and a linked worktree whose own dependencies were deleted refuses with `STIM_DEPS_FAILED` until they are installed there, since warm has nothing to restore them from.
 
-If a run reports `STIM_LOW_DISK`, free disk space and retry. See the installed reference for the full cleanup rules and recovery options.
+Run `stim gc --dry-run` to preview cleanup at the measured level, or add `--pressure high` or `--pressure critical` to preview that level. `stim gc` runs the measured level, and `stim gc --pressure high` or `--pressure critical` runs the ladder at that level, regardless of the current pressure. Plain output ends with the path of the full report, `$STIM_HOME/gc/last-report.txt`, and each deleted item is appended to `$STIM_HOME/gc/gc.ndjson`. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
+
+Before a native compile on this Mac, Stim estimates the bytes it will write: the median size among the project's ten newest recorded builds of that platform in the last 30 days, or a default for the project type (Expo 6 GB on iOS and Android, bare React Native and Re.Pack 8 and 6 GB, standalone native 4 and 3 GB, an Exact app 20 GB on iOS, SwiftPM on macOS 2 GB). A project type Stim does not recognise uses the standalone native default. The defaults are estimates. A cache hit or an offloaded build writes little here and is not checked. The target is that estimate plus `disk.criticalFreeGb`. When free disk on the project's volume is under the target, Stim runs the ladder once in the build's own process and builds regardless. That run uses the high level only (rungs 2 to 8, never rung 9) and stops as soon as the volume has the target free, whether the target is under or over `disk.minFreeGb`; other volumes and memory do not count. It asks the daemon for nothing, skips when another build holds its claim, can overlap the daemon's own pass (the worst case is freeing more than needed), ends after any action that leaves the project's volume with no more free space, such as one on another volume,, and gives up after 60 seconds or when the build is cancelled, checking before every rung and action. It does something the daemon would not mainly when the target is over `disk.minFreeGb`, or before the daemon's next pass. If the space is still short, it prints one warning on stderr with the bytes expected and available; it never refuses a build for this. `stim logs --source builds` records each build's `bytesWritten`, the drop in free space on the volume over the compile step.
+
+If a run reports `STIM_LOW_DISK`, run `stim gc` or free disk space yourself, then retry. See the installed reference for the full cleanup rules and recovery options.
 
 <StimTabs code="stim guide cleanup" />

@@ -198,12 +198,12 @@ describe('machineReport', () => {
     expect(report.devices[0]!.subtitle).toBe('iOS 27.0 \u00B7 used 2d ago');
   });
 
-  it('lists what stim gc --delete frees, largest first, leaving caches and kept outputs out', () => {
+  it('lists what stim gc frees, largest first, leaving caches and kept outputs out', () => {
     expect(report.free.map((row) => [row.title, row.command])).toEqual([
-      ['Build outputs of feature', 'stim gc --delete --cache workspaces'],
-      ['stim-parked', 'stim gc --delete'],
+      ['Build outputs of feature', 'stim gc --pressure high'],
+      ['stim-parked', 'stim gc'],
       ['Worktree feature', 'stim worktree remove'],
-      ['Logs of feature', 'stim gc --delete'],
+      ['Logs of feature', 'stim gc'],
     ]);
   });
 

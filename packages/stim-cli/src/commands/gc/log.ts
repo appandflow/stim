@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { executedActionName } from '../../maintenance-kind.ts';
 import {
   gcLogFile,
   runId,
@@ -109,11 +110,27 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'stop-watchman': 'watchman',
   'delete-gradle-version': 'gradleVersion',
   'clear-build-dirs': 'buildDirectory',
+  'trim-cargo': 'buildDirectory',
   'delete-dependencies': 'dependencies',
+  'prune-project': 'project',
+  'delete-orphaned-devices': 'device',
+  'forget-stale-records': 'ledgerEntry',
+  'trim-workspace-logs': 'workspaceLogs',
+  'delete-recordings': 'recording',
+  'delete-hosted-devices': 'parkedHostedDevice',
+  'delete-eas-sessions': 'easSession',
+  'delete-archives': 'archive',
+  'delete-build-outputs': 'workspaceOutputs',
+  'idle-stage': 'devServer',
+  'dormant-stage': 'device',
+  'delete-trash': 'trash',
+  'delete-runtime': 'runtime',
+  'delete-unavailable-sim': 'device',
+  'clean-tool-cache': 'toolCache',
 };
 
 export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcome): GcLogItem {
-  const name = action.kind.replace(/^would-/, '');
+  const name = executedActionName(action);
   const done = outcome.status === 'done';
   return {
     kind: MAINTENANCE_KINDS[name] ?? name,
@@ -122,19 +139,5 @@ export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcom
     id: action.dir ?? action.workspace ?? null,
     bytes: done && outcome.bytes ? outcome.bytes : null,
     detail: done ? (outcome.detail ? `${action.reason} (${outcome.detail})` : action.reason) : outcome.detail,
-  };
-}
-
-export function gcOptionsOf(opts: {
-  delete?: boolean;
-  worktrees?: boolean;
-  olderThan?: number;
-  cache?: string;
-}): GcLogOptions {
-  return {
-    ...(opts.delete ? { delete: true } : {}),
-    ...(opts.worktrees ? { worktrees: true } : {}),
-    ...(opts.olderThan === undefined ? {} : { olderThan: opts.olderThan }),
-    ...(opts.cache === undefined ? {} : { cache: opts.cache }),
   };
 }

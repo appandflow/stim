@@ -93,6 +93,7 @@ it('classifies each environment-named setting by the process that makes its deci
     'maintenance.removeFinishedWorktrees',
     'maintenance.removeIdleWorktrees',
     'maintenance.workspaceOutputsMaxGb',
+    'maintenance.cargoTargetMaxGb',
     'caches.buildCacheMaxGb',
     'caches.metroCacheMaxGb',
     'caches.swiftCompilationCacheMaxGb',

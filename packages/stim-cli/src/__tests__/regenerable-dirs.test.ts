@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  cargoTargetDirsAsync,
   discoveredBuildDirs,
   existingBuildDirsAsync,
   isBuildDirPath,
@@ -82,6 +83,15 @@ test('the Cargo target/ of an Exact app is build output; a target/ in any other 
   rmSync(join(root, 'target'), { recursive: true });
   symlinkSync(dir('elsewhere', 'target'), join(root, 'target'));
   expect(discoveredBuildDirs(root)).toEqual([]);
+});
+
+test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
+  writeFileSync(join(root, 'exact.mjs'), '');
+  dir('target');
+  expect(await cargoTargetDirsAsync(root)).toEqual([join(root, 'target')]);
+  writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  expect(await cargoTargetDirsAsync(root)).toEqual([join(root, 'target')]);
+  expect(discoveredBuildDirs(root)).toEqual([join(root, 'target')]);
 });
 
 test('a .dd without the DerivedData layout, or a link to one, is not build output', () => {

@@ -52,18 +52,12 @@ export interface TempLeftoverReport {
 }
 
 const REMEDIES: Record<TempLeftoverKind, string> = {
-  stim: 'stim gc --delete removes them once they are idle for 24 hours',
+  stim: 'stim gc --pressure high removes them once they are idle for 24 hours',
   xctrace:
-    'stim gc --delete removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
-  swiftpm: 'stim gc --delete removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
+    'stim gc --pressure high removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
+  swiftpm:
+    'stim gc --pressure high removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
   jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
-};
-
-const LABELS: Record<TempLeftoverKind, string> = {
-  stim: 'Stim temp directories',
-  xctrace: 'xctrace recordings (instruments*.ktrace)',
-  swiftpm: 'SwiftPM temp directories (TemporaryDirectory.*)',
-  jest: 'Jest cache',
 };
 
 function kindOf(name: string, stat: Stats, jestName: string | null): TempLeftoverKind | null {
@@ -294,21 +288,6 @@ function summarize(report: TempLeftoverReport): TempLeftoverGroup[] {
       },
     ];
   });
-}
-
-export function tempLeftoverLines(report: TempLeftoverReport | null | undefined): string[] {
-  if (!report?.entries.length) return [];
-  const groups = summarize(report);
-  const total = groups.reduce((sum, group) => sum + group.bytes, 0);
-  const lines = [`TMPDIR leftovers (${formatBytes(total)} in ${report.entries.length}) - ${report.root}:`];
-  for (const group of groups) {
-    lines.push(`  ${formatBytes(group.bytes).padStart(10)}  ${LABELS[group.kind]}: ${group.count}`);
-    if (group.deleteCount)
-      lines.push(`              --delete would DELETE ${group.deleteCount} (${formatBytes(group.deleteBytes)})`);
-    for (const { reason, count } of group.kept) lines.push(`              kept ${count}: ${reason}`);
-    lines.push(`              remedy: ${group.remedy}`);
-  }
-  return lines;
 }
 
 export function tempLeftoverSection(

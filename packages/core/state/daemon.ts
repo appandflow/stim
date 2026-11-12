@@ -5,7 +5,7 @@ export type DaemonMode = 'on' | 'report' | 'off';
 
 /** One tick's measurement of the machine. A null field is one the tick could not read. */
 export interface DaemonMeasurement {
-  disk: { volume: string; freeMb: number }[];
+  disk: { volume: string; freeMb: number; device?: number }[];
   memory: {
     level: 'normal' | 'warning' | 'critical' | null;
     availableBytes: number | null;
@@ -64,6 +64,8 @@ export interface DaemonLadderAction {
   detail: string;
   /** The command that brings back what the action removed, when one does. */
   restore?: string;
+  /** The idle setting that took a dormant-stage action when it is not `idle.dormantDays`. */
+  setting?: string;
 }
 
 /** A ladder, stage or reclaim action a daemon took, or would have in report mode, with the tick that took it. */

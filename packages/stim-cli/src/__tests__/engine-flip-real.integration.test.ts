@@ -1,7 +1,9 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import {
   appendFileSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,8 +14,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
+import { collectStore } from '../engine-store/gc.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
 import { machineCopy } from './fixtures/machine-copy.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
@@ -94,4 +98,32 @@ test.skipIf(process.platform === 'win32')(
     }
   },
   120_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'GC keeps a build an orphan of a dead stimd still runs from, and removes it once the orphan exits',
+  async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-orphan-build-')));
+    const build = 'aaaaaaaaaaaa';
+    const script = join(root, build, 'dist', 'orphan.cjs');
+    mkdirSync(join(root, build, 'dist'), { recursive: true });
+    writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+    writeFileSync(join(root, build, '.stim-manifest.json'), JSON.stringify({ format: 1, build, version: '1' }));
+    const gone = goneClaimOwner();
+    plantClaim(buildClaimRoot(root, build), 'shared', gone, { claimId: 'dead-stimd', details: { drained: false } });
+    const orphan = spawn(process.execPath, [script], { stdio: 'ignore' });
+    const exited = once(orphan, 'exit');
+    try {
+      expect(readClaimSet(buildClaimRoot(root, build))).toMatchObject({ unresolved: [] });
+      expect(collectStore(root)).toEqual([]);
+      expect(existsSync(join(root, build))).toBe(true);
+      orphan.kill('SIGKILL');
+      await exited;
+      expect(collectStore(root)).toEqual([build]);
+    } finally {
+      orphan.kill('SIGKILL');
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  30_000,
 );

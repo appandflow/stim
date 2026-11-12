@@ -18,6 +18,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
+import { broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
@@ -254,8 +255,8 @@ async function inspectPressure(
       {
         level: pressure.disk === 'normal' ? 'note' : 'cost',
         title: `The pressure level is ${pressure.level}`,
-        detail: `${pressure.reasons.join('; ')}. The stim-daemon runs its pressure ladder each tick until the level is back to normal: idle workspaces, parked devices, shared caches, dormant devices, then idle Gradle daemons and leftovers${pressure.disk === 'critical' ? ', and node_modules and Pods of idle worktrees' : ''}. start, ios and android refuse with STIM_LOW_DISK only under disk.hardFloorGb.`,
-        fix: 'Run `stim status` to see what it did, `stim gc` to see what else Stim can reclaim, and free space outside Stim.',
+        detail: `${pressure.reasons.join('; ')}. The stim-daemon runs its pressure ladder each tick until the level is back to normal: idle workspaces, parked devices, shared caches, dormant devices, node_modules and Pods of idle linked worktrees (idle 1 hour at high, 2 minutes at critical), then idle Gradle daemons and leftovers${pressure.disk === 'critical' ? ", and other tools' caches" : ''}. start, ios and android refuse with STIM_LOW_DISK only under disk.hardFloorGb.`,
+        fix: 'Run `stim status` to see what it did, `stim gc --dry-run` to see what else Stim can reclaim, and free space outside Stim.',
       },
     ],
   };
@@ -719,6 +720,22 @@ async function assembleDoctorReport(
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
+  const missingRoots = missingDiscoverRoots(loadConfig(), env);
+  if (missingRoots.length)
+    findings.push({
+      level: 'note',
+      title: 'maintenance.discoverRoots names paths that are not folders',
+      detail: `${missingRoots.join(', ')} ${missingRoots.length === 1 ? 'is' : 'are'} missing or not a folder, so nothing is discovered there.`,
+      fix: 'Correct the list with `stim settings set maintenance.discoverRoots <json array> --scope machine`.',
+    });
+  const broadRoots = broadDiscoverRoots(loadConfig(), env);
+  if (broadRoots.length)
+    findings.push({
+      level: 'note',
+      title: 'maintenance.discoverRoots names folders that are too broad',
+      detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
+      fix: 'Name folders below the home folder, such as ~/Developer.',
+    });
   return {
     project: root,
     platform: opts.platform ?? null,

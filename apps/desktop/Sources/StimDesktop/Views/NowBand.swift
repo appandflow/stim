@@ -266,7 +266,7 @@ struct NowBand: View {
           .disabled(!offer.isAvailable || actions.active(for: ActionCenter.machineKey) != nil)
           .help(
             offer.unavailableReason.map { abbreviatingHome($0) }
-              ?? "stim gc --delete --cache \(offer.cacheKind): stops only what gc proves unused")
+              ?? "stim gc, \(offer.cacheKind) item: stops only what gc proves unused")
         }
       }
       .labelStyle(.iconOnly)

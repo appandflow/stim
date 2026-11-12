@@ -8,6 +8,7 @@ import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type {
   DeviceIdleShutdownRecord,
   DormantStageRecord,
+  SourceDependenciesRecord,
   IdleStageRecord,
   IdleStopRecord,
   MetroLastStop,
@@ -684,7 +685,7 @@ export interface EnvironmentState {
   phase?: WorkspacePhase;
   /**
    * Present when the workspace's folder no longer exists on a mounted volume, for example after `git worktree remove`
-   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc --delete`. A
+   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc`. A
    * folder on a volume that is not mounted is not reported.
    */
   pathMissing?: true;
@@ -700,6 +701,8 @@ export interface EnvironmentState {
   idleStage?: IdleStageRecord;
   /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
   dormantStage?: DormantStageRecord;
+  /** Present while a source checkout's node_modules or Pods that maintenance deleted are still missing: worktree warm has nothing to copy. */
+  sourceDependenciesCleared?: SourceDependenciesRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**

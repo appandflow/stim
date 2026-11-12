@@ -16,7 +16,6 @@ import type { Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { MetroResolution } from '../metro.ts';
 import type { BuildLockInfo } from '../engine/build-lock.ts';
-import type { BuildSlotInfo } from '../engine/build-slots.ts';
 
 // Above every kernel's pid_max (macOS 99999, Linux 2^22): a stray signal fails ESRCH instead of reaching a process.
 export const IMPOSSIBLE_PID = 999999901;
@@ -72,22 +71,6 @@ export function makeBuildLock(overrides: Partial<BuildLockInfo> = {}): BuildLock
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
-    alive: true,
-    unresolved: false,
-    ...overrides,
-  };
-}
-
-export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlotInfo {
-  return {
-    path: '/h/build-slots/slot-0',
-    name: 'slot-0',
-    index: 0,
-    pid: IMPOSSIBLE_PID,
-    projectRoot: '/w/project',
-    startedAt: '2026-01-01T00:00:00.000Z',
-    logFile: '/w/.stim/logs/build.log',
-    client: null,
     alive: true,
     unresolved: false,
     ...overrides,
@@ -216,8 +199,11 @@ export function liveClaimOwner(): ClaimOwner {
 
 // unique-pid encodes a token as `upid1.` plus base64url JSON of the identity it decodes. Rebuilding one
 // is the only way to get a record for a process that is provably gone, or one whose pid was recycled.
-function reshape(change: (identity: Record<string, unknown>) => Record<string, unknown>): ClaimOwner {
-  const parsed = decode(liveClaimOwner().processToken);
+function reshape(
+  change: (identity: Record<string, unknown>) => Record<string, unknown>,
+  base: ClaimOwner = liveClaimOwner(),
+): ClaimOwner {
+  const parsed = decode(base.processToken);
   if (!parsed.ok) throw new Error(parsed.error.message);
   const identity = change({ ...parsed.value });
   return {
@@ -228,6 +214,14 @@ function reshape(change: (identity: Record<string, unknown>) => Record<string, u
 
 export function goneClaimOwner(pid: number = IMPOSSIBLE_PID): ClaimOwner {
   return reshape((identity) => ({ ...identity, pid }));
+}
+
+export function claimOwnerStartedAfter(reference: ClaimOwner, pid: number): ClaimOwner {
+  return reshape((identity) => {
+    const start = String(identity.startTime).split(':');
+    start[0] = String(BigInt(start[0] ?? '0') + 1n);
+    return { ...identity, pid, startTime: start.join(':') };
+  }, reference);
 }
 
 export function recycledClaimOwner(): ClaimOwner {

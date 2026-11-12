@@ -496,6 +496,7 @@ export type PhoneMethods = Omit<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.gc.subscribe'
+  | 'desktop.gc.item.subscribe'
   | 'desktop.worktree.remove.subscribe'
   | 'desktop.worktree.warm.subscribe'
   | 'desktop.plan.get'

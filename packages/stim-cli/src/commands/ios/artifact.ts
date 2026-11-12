@@ -1101,7 +1101,7 @@ export async function acquireIosArtifact(
       releaseFailed: (subject, e) => note(chalk.dim(`Could not release ${subject}: ${(e as Error)?.message || e}`)),
       temporaryReleaseFailed: () => {},
     },
-    { root, logFile, deps: d },
+    { root, logFile, deps: d, context },
   );
   if (!acquired.ok) {
     await recipe.fingerprintCheck?.()?.cancel();

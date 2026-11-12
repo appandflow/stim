@@ -1,4 +1,5 @@
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, parse, resolve } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
@@ -19,7 +20,7 @@ export const SETTING_SCOPES: readonly SettingScope[] = ['machine', 'workspace', 
 export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
   | { kind: 'path'; absolute?: boolean; relative?: boolean; patternHelp?: string }
-  | { kind: 'strings' }
+  | { kind: 'strings'; absolutePaths?: boolean }
   | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
@@ -470,12 +471,21 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. 0 turns the idle and dormant stages off',
   },
   {
+    // @ref LLP 0001#one-idle-day-reduces-a-workspace -- the maintainer chose one day
     key: 'idle.dormantDays',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
-    default: 3,
+    default: 1,
     description:
-      'Days without activity before a workspace goes dormant: its owned simulators and emulators are deleted (the parked pool is untouched) and its logs are archived, while node_modules and Pods stay; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never',
+      "Days without activity before a workspace goes dormant and is reduced to its minimal size: its regenerable build outputs and owned simulators and emulators are deleted (the parked pool is untouched), its logs are archived, and a linked worktree's node_modules and Pods are deleted for the next Stim command to restore; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never",
+  },
+  {
+    key: 'idle.sourceDormantDays',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 7,
+    description:
+      "Days without activity before a source (main) checkout's node_modules and Pods are deleted, at any pressure level. No activity means no Stim command, source file write, git write or commit in the checkout or in any workspace in it, and no process or agent session working in it; a stim worktree warm copying from it counts as activity when the warmed app has a Stim workspace in the source. Linked worktrees follow idle.dormantDays and go first. Fractions of a day are allowed; 0 never",
   },
   {
     key: 'macos.product',
@@ -731,7 +741,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.minFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 20,
+    default: 40,
     env: 'STIM_DISK_MIN_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
@@ -749,7 +759,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'disk.criticalFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    default: 6,
+    default: 20,
     env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
@@ -807,7 +817,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'maintenance.olderThanDays',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
-    default: 7,
+    default: 3,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
     description:
       'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
@@ -848,6 +858,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
+    key: 'maintenance.discoverRoots',
+    type: { kind: 'strings', absolutePaths: true },
+    scopes: MACHINE,
+    default: [],
+    description:
+      'Absolute folders (a leading ~ is the home folder) whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
+  },
+  {
     key: 'maintenance.keep',
     type: BOOLEAN,
     scopes: PROJECT,
@@ -862,6 +880,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 20,
     env: 'STIM_MAINTENANCE_WORKSPACE_OUTPUTS_MAX_GB',
     description: 'Workspace build-output cap in GiB; 0 means no cap',
+  },
+  {
+    key: 'maintenance.cargoTargetMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 25,
+    env: 'STIM_MAINTENANCE_CARGO_TARGET_MAX_GB',
+    description:
+      "Cap in GiB for one Cargo target/ (an Exact app's or a workspace root's, in a registered workspace or a discovered checkout), in use or not: above it, automatic maintenance removes the profiles and target triples no build wrote or read in the last day, then incremental data, and stops there; high and critical disk pressure remove more whatever the cap, and critical also removes build units Exact's usage ledger shows no build used for a day; 0 means no cap and no pressure trim either",
   },
   {
     key: 'caches.buildCacheMaxGb',
@@ -1081,7 +1108,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     description:
-      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and stim gc end a session sooner. EAS rejects a value above the account plan's session limit",
   },
   {
     key: 'remote.build',
@@ -1256,6 +1283,18 @@ export function settingValueError(definition: SettingDefinition | string, value:
     ) {
       return numberBounds(type);
     }
+  }
+  if (type.kind === 'strings' && type.absolutePaths) {
+    const entries = Array.isArray(value) ? value : [];
+    const relative = entries.find((entry) => !isAbsolute(entry) && !/^~(?:[\\/]|$)/.test(entry));
+    if (relative !== undefined)
+      return `an array of absolute paths (a leading ~ is the home folder), not ${JSON.stringify(relative)}`;
+    const broad = entries.find((entry) => {
+      const path = entry === '~' || entry.startsWith('~/') ? resolve(homedir(), entry.slice(2)) : resolve(entry);
+      return path === resolve(homedir()) || path === parse(path).root;
+    });
+    if (broad !== undefined)
+      return `an array of folders below the home folder, not ${JSON.stringify(broad)}: the home folder and the filesystem root are too broad to discover in`;
   }
   if (type.kind === 'path') {
     const path = value as string;

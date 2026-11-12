@@ -80,7 +80,7 @@ entries before stopping the previous owned app and rebuilding using that workspa
 incremental outputs. Every process running an app bundle from the workspace's
 `macos/` directory counts as the owned app, including copies opened through
 LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
-`stim worktree remove` and `stim gc --delete` stop all of them: SIGTERM, up to
+`stim worktree remove` and `stim gc` stop all of them: SIGTERM, up to
 5 seconds, then SIGKILL. Stop reports success only after each copy has exited;
 when one cannot be verified or does not exit, it reports the failure and removal
 keeps the workspace. When a record names the app as its own supervisor and the app has exited while its process group remains, Stim cannot prove the group still belongs to it and sends no signal. Inspect it with `ps -A -o pid,pgid,command` and stop only verified owned members before retrying. For a hosted session the same rule covers every app bundle the

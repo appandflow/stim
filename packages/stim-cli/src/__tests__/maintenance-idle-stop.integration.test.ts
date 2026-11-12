@@ -19,7 +19,7 @@ import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import * as measurements from '../stimd/passes/measure.ts';
-import { previewMaintenance } from '../stimd/passes/preview.ts';
+import { plannedMaintenance } from '../stimd/passes/preview.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
@@ -306,11 +306,21 @@ test.each(['darwin', 'win32'] as const)(
 
     const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
     const unseen = await plan(device(claimed), platform);
-    expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
+    expect(unseen.skips).toEqual([
+      expect.objectContaining({
+        reason: expect.stringMatching(/agent-device claim whose last command cannot be dated/),
+      }),
+    ]);
 
     const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
     const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }), platform);
     expect(agent.actions.map((action) => action.target)).toEqual([root]);
+
+    const masked = await plan(
+      device({ ...claimed, recent: { 'agent-action': old }, unknown: ['agent-device-undated'] }),
+      platform,
+    );
+    expect(masked.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/cannot be dated/) })]);
 
     const unprobed = await plan(
       device({ ...claimed, recent: { 'agent-action': old }, unknown: ['driver-process'] }),
@@ -512,7 +522,7 @@ test('a stray file in the agent-device sessions directory does not keep the work
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });
 
-test('an automatic maintenance pass plans the idle stop of a hosted workspace only, and the gc dry run, whose --delete stops none, lists no idle stop', async () => {
+test('an automatic maintenance pass plans the idle stop of a hosted workspace only, and the plan gc runs, which stops none, lists no idle stop', async () => {
   bootedWorkspace('local', 7 * HOUR_MS);
   const hosted = hostedWorkspace('hosted', 7 * HOUR_MS);
   vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
@@ -523,7 +533,7 @@ test('an automatic maintenance pass plans the idle stop of a hosted workspace on
 
   const planned = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
   expect(planned.map((action) => action.target)).toEqual([hosted]);
-  const preview = await previewMaintenance();
+  const preview = await plannedMaintenance([], resolveMaintenanceSettings(), { caps: true, sweep: true });
   expect(preview.actions.filter((action) => action.check === 'idle')).toEqual([]);
 });
 

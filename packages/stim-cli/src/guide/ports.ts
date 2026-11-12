@@ -69,10 +69,10 @@ ports release [label] releases without signalling a process.
 Omitting the label selects every named port, never Metro. stim stop leaves
 named ports alone.
 
-worktree remove, gc --delete and automatic maintenance release named
+worktree remove, gc and automatic maintenance release named
 allocations without signalling their listeners; run ports stop first to stop
 a server this workspace started. gc reports allocations whose workspace no
-longer exists; gc --delete releases them. Unmounted or unresolved workspace
+longer exists; gc releases them. Unmounted or unresolved workspace
 paths are retained. Use the same current Stim version for cleanup: versions
 without ports do not know about named allocations.
 
@@ -118,7 +118,7 @@ exit 1 after the port is recorded.
 - EAS Simulator sessions (--remote eas): not reversed; Stim has no route into
   the session.
 stim stop removes the device-side reverses and keeps the recorded ports, so the
-next launch applies them again. worktree remove, gc --delete and automatic
+next launch applies them again. worktree remove, gc and automatic
 maintenance forget them with the workspace.
 
 Tools that advertise an address to the app, such as Appduct's daemon, need that

@@ -1,15 +1,56 @@
 {
   "gc": {
     "mode": "dry-run",
-    "idle": null,
-    "cacheScope": null,
-    "olderThan": null,
-    "worktreeSweep": {
-      "olderThan": 7,
-      "defaulted": true
+    "level": "normal",
+    "pressure": {
+      "level": "normal",
+      "disk": "normal",
+      "memory": "normal",
+      "reasons": [],
+      "memoryWarningSince": null
     },
     "actionable": true,
     "failures": null,
+    "actions": [
+      {
+        "rung": null,
+        "kind": "delete-build-outputs",
+        "target": "/Users/dev/.stim/workspaces/demo--00000000deadbeef",
+        "outcome": "would",
+        "bytes": 3300000000,
+        "reason": "orphaned workspace",
+        "detail": "build outputs of a workspace whose project is gone"
+      },
+      {
+        "rung": null,
+        "kind": "delete-runtime",
+        "target": "iOS 18.2",
+        "outcome": "would",
+        "bytes": 7200000000,
+        "reason": "unused simulator runtime",
+        "detail": "xcrun simctl runtime delete 00000000-0000-4000-8000-000000000001"
+      },
+      {
+        "rung": null,
+        "kind": "trim-cache",
+        "target": "build cache",
+        "outcome": "would",
+        "bytes": 1800000000,
+        "reason": "over its cap",
+        "detail": "trimmed to caches.buildCacheMaxGb"
+      },
+      {
+        "rung": null,
+        "kind": "keep",
+        "target": "/Users/dev/Developer/demo",
+        "outcome": "kept",
+        "bytes": 0,
+        "reason": "",
+        "detail": "in use"
+      }
+    ],
+    "blocked": [],
+    "results": [],
     "sections": {
       "deadProjects": [
         {
@@ -1018,7 +1059,6 @@
         }
       ]
     },
-    "results": [],
     "inventory": {
       "devices": [
         {

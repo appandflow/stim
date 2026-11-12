@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -11,7 +11,7 @@ import { recordEasSessionClaim, readEasSessionLedger } from '../engine/eas-sessi
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
-import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { collectProjectEasSessions } from '../commands/gc/records.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -68,9 +68,45 @@ function dependencies(root?: string) {
   };
 }
 
-test('a slow EAS inventory page leaves the event loop responsive while preserving pagination', async () => {
+function createExpoProject(root: string): void {
+  mkdirSync(root);
+  writeFileSync(join(root, 'app.json'), '{"expo":{}}');
+}
+
+test('the EAS inventory skips a project without an Expo config file', async () => {
   const root = join(home, 'app');
   mkdirSync(root);
+  const appJson = join(root, 'app.json');
+  const runEasFile = vi.fn<() => string>(() => {
+    if (!existsSync(join(root, 'app.config.mjs'))) writeFileSync(appJson, '{"expo":{}}');
+    return JSON.stringify({ sessions: [], pageInfo: { hasNextPage: false, endCursor: null } });
+  });
+  const deps = { ...dependencies(root), runEasFile };
+
+  await collectEasSessionSweep(null, deps);
+  expect(existsSync(appJson)).toBe(false);
+
+  writeFileSync(join(root, 'app.config.mjs'), 'export default { name: "Fixture", slug: "fixture" };');
+  await collectEasSessionSweep(null, deps);
+  expect(runEasFile).toHaveBeenCalledTimes(1);
+});
+
+test('the EAS inventory is incomplete if the Expo config is removed between pages', async () => {
+  const root = join(home, 'app');
+  createExpoProject(root);
+  const runEasFile = vi.fn<() => string>(() => {
+    rmSync(join(root, 'app.json'));
+    return JSON.stringify({ sessions: [], pageInfo: { hasNextPage: true, endCursor: 'next' } });
+  });
+  const report = await collectEasSessionSweep(null, { ...dependencies(root), runEasFile });
+  expect(runEasFile).toHaveBeenCalledTimes(1);
+  expect(report.deletionSafe).toBe(false);
+  expect(report.notices.join(' ')).toContain('no longer has an Expo config');
+});
+
+test('a slow EAS inventory page leaves the event loop responsive while preserving pagination', async () => {
+  const root = join(home, 'app');
+  createExpoProject(root);
   const executor = getExecutor();
   const pages = [
     JSON.stringify({ sessions: [], pageInfo: { hasNextPage: true, endCursor: 'next' } }),
@@ -105,7 +141,7 @@ test('a slow EAS inventory page leaves the event loop responsive while preservin
 
 test('concurrent EAS report contexts use their workspace and keep proxy credentials out of the child', async () => {
   const roots = ['a', 'b'].map((tag) => join(home, tag));
-  roots.forEach((root) => mkdirSync(root));
+  roots.forEach(createExpoProject);
   const executor = getExecutor();
   const observations: { cwd: string; tag: string; proxy: boolean }[] = [];
   const args = [
@@ -145,7 +181,7 @@ test('concurrent EAS report contexts use their workspace and keep proxy credenti
 
 test('a stalled second EAS page kills its child and refuses deletion of a partial inventory', async () => {
   const root = join(home, 'app');
-  mkdirSync(root);
+  createExpoProject(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
   await recordEasSessionClaim(
@@ -337,7 +373,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
   'unverifiable EAS %s cleanup retains its actual operation claims',
   async (phase) => {
     const root = join(home, 'app');
-    mkdirSync(root);
+    createExpoProject(root);
     ensureWorkspaceStorage(root);
     const ledger = join(home, 'eas-ledger');
     await recordEasSessionClaim(
@@ -369,7 +405,8 @@ test.each(['inventory', 'get', 'stop'] as const)(
       );
     setExecutor({
       ...executor,
-      runFileAsync: (_file, args, options) => {
+      runFileAsync: (file, args, options) => {
+        if (!args[0]?.startsWith('simulator:')) return original(file, args, options);
         if (phase === 'stop' && args[0] === 'simulator:get')
           return Promise.resolve(JSON.stringify({ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS' }));
         return original(
@@ -404,7 +441,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
     try {
       const pending = withAmbientContext(operation, () =>
         phase === 'inventory'
-          ? runGc({ delete: true, json: true }, { ...dependencies(root), operation })
+          ? collectProjectEasSessions({ ...dependencies(root), operation })
           : deleteEasSessions(
               {
                 projectScope: root,
@@ -418,18 +455,10 @@ test.each(['inventory', 'get', 'stop'] as const)(
             ),
       );
       const failure = await pending.then(
-        () => (phase === 'inventory' ? JSON.parse(String(log.mock.calls.at(-1)?.[0])) : null),
+        () => null,
         (cause) => cause,
       );
       expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      const maintenanceRefusal =
-        phase === 'inventory'
-          ? await withGcMaintenanceClaim({ delete: true }, async () => {}).then(
-              () => null,
-              (cause) => cause,
-            )
-          : null;
-      expect(maintenanceRefusal?.code ?? null).toBe(phase === 'inventory' ? 'STIM_CLAIM_REFUSED' : null);
       if (!owned) throw new Error('The controlled EAS command did not start');
       expect(inspectProcessIdentity(owned)).toBe('same');
       for (const handle of handles)

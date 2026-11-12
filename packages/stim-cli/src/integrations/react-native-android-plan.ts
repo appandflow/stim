@@ -100,7 +100,7 @@ function imageReplacement(
       code: 'STIM_BAD_ARG',
       message: `This project's emulator ${record.avdName} uses system image ${current}, but ${flagImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
       remedy:
-        'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+        'Run `stim worktree remove` to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
     },
   };
 }

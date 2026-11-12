@@ -73,8 +73,8 @@ describe('diskThresholds', () => {
       9 * 1024,
     );
     expect(diskThresholds({ projects: {}, repos: {} }, {}).thresholds).toEqual({
-      highMb: 20 * 1024,
-      criticalMb: 6 * 1024,
+      highMb: 40 * 1024,
+      criticalMb: 20 * 1024,
       hardFloorMb: 5 * 1024,
     });
     expect(diskThresholds({ projects: {}, repos: {} }, { STIM_DISK_HARD_FLOOR_GB: 'lots' }).error).toMatch(

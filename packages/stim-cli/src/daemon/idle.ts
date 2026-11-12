@@ -9,6 +9,7 @@ import {
   hostedNativeRecords,
   IDLE_STAGE_KEY,
   readDeviceIdleShutdowns,
+  workspaceMetadataFile,
   readIdleStop,
   type DaemonWorkspaceDecision,
   type IdleStageRecord,
@@ -170,12 +171,17 @@ async function decide(
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
-    driversBlock: true,
+    pressured: Boolean(input.pressure),
     operation: input.operation,
   });
   return {
     candidate: found,
-    decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input) }),
+    decision: decideIdleStop(evidence, {
+      idleMs: found.idleMs,
+      now,
+      setting: thresholdName(input),
+      pressured: Boolean(input.pressure),
+    }),
   };
 }
 
@@ -219,6 +225,7 @@ export function writeWorkspaceEvent(
   msg: string,
   fields = {},
 ): void {
+  if (!getProject(root) && !existsSync(workspaceMetadataFile(root))) return;
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   writer.write({ src: 'metro', level, event, msg, ...fields });
   writer.close();

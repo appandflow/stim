@@ -21,8 +21,6 @@ import {
 import { listAvdsAsync, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
-  eraseParkedAvd,
-  eraseParkedIosSim,
   teardownOwnedIosSim,
   teardownOwnedAvd,
   teardownParkedIosSim,
@@ -389,7 +387,7 @@ export function findDeadProjectOwnedDevices({
 export function describeDeadProjectDevices(devices: DeadProjectOwnedDevice[]): string[] {
   return devices.map(
     (device) =>
-      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete tries to delete it with the entry`,
+      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; stim gc tries to delete it with the entry`,
   );
 }
 
@@ -571,49 +569,6 @@ export async function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedA
   return reports;
 }
 
-export async function eraseParkedDevices(
-  sims: readonly ParkedSimReport[],
-  avds: readonly ParkedAvdReport[],
-  output: GcOutput = GC_OUTPUT,
-  operation?: StimContext,
-): Promise<number> {
-  let failures = 0;
-  const devices = [
-    ...sims.map((sim) => ({ platform: 'ios', id: sim.udid, name: sim.name, listed: sim.listed, bytes: sim.bytes })),
-    ...avds.map((avd) => ({ platform: 'android', id: avd.name, name: avd.name, listed: avd.listed, bytes: avd.bytes })),
-  ];
-  for (const device of devices) {
-    operation?.signal.throwIfAborted();
-    const what = `parked ${device.platform === 'ios' ? 'ios sim' : 'android emulator'} ${device.name}`;
-    if (device.listed !== true) {
-      const unverified = device.listed === null;
-      const detail = unverified
-        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --cache parked --delete.'
-        : 'it is not on this machine; stim gc --delete drops its pool record.';
-      if (unverified) failures++;
-      output.log((unverified ? chalk.red : chalk.dim)(`Did not erase ${what}: ${detail}`));
-      output.record('parkedDevice', unverified ? 'failed' : 'kept', device.name, { id: device.id, detail });
-      continue;
-    }
-    const result =
-      device.platform === 'ios'
-        ? await eraseParkedIosSim(device.id, { label: device.name, operation })
-        : await eraseParkedAvd(device.id, { operation });
-    operation?.signal.throwIfAborted();
-    if (result.status === 'torn-down') {
-      output.log(chalk.green(`Erased ${what}; it stays parked`));
-      output.record('parkedDevice', 'done', device.name, { id: device.id, bytes: device.bytes });
-    } else if (result.status === 'failed') {
-      failures++;
-      output.log(chalk.red(`Failed to erase ${what}: ${result.reason}`));
-      output.record('parkedDevice', 'failed', device.name, { id: device.id, detail: result.reason });
-    } else {
-      output.log(chalk.dim(`Skipped ${device.name}; it is no longer parked.`));
-    }
-  }
-  return failures;
-}
-
 export async function deleteParkedAvds(
   avds: readonly ParkedAvdReport[],
   output: GcOutput = GC_OUTPUT,
@@ -627,7 +582,7 @@ export async function deleteParkedAvds(
       output.log(chalk.red(`Could not verify parked android emulator ${avd.name}; its pool record was kept.`));
       output.record('parkedDevice', 'failed', avd.name, {
         id: avd.name,
-        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc --delete.',
+        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc.',
       });
       continue;
     }
@@ -661,7 +616,7 @@ export async function deleteParkedSims(
       output.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
       output.record('parkedDevice', 'failed', sim.name, {
         id: sim.udid,
-        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc --delete.',
+        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc.',
       });
       continue;
     }

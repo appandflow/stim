@@ -1,14 +1,24 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { diskUsageCacheFile, IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  IDLE_STOP_KEY,
+  ladderRunClaims,
+  readDormantStage,
+  readIdleStage,
+  readJsonObject,
+  workspaceLightenedFile,
+} from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import { runLadderToFree } from '../daemon/passes.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim } from '../devices/sim-pool.ts';
@@ -29,6 +39,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -238,7 +249,7 @@ describe('the dormant stage', () => {
       expect(loadConfig()?.parked).toEqual({ ios: [parked] });
       expect(existsSync(join(root, 'node_modules'))).toBe(true);
       expect(readDormantStage(readWorkspaceState(root))).toMatchObject({
-        dormantDays: 3,
+        dormantDays: 1,
         deletedDevices: ['stim-old (iPhone 17 26.0)'],
       });
       expect(log).toHaveBeenCalledWith('info', 'workspace_dormant', expect.stringContaining(root), expect.anything());
@@ -597,7 +608,7 @@ describe('the pressure ladder', () => {
 });
 
 describe('the ladder stim gc forces', () => {
-  test('runs every rung at the forced level whatever the measured level, and gc --older-than limits rung 2 to devices parked that long', async () => {
+  test('runs every rung at the forced level whatever the measured level', async () => {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     for (const [udid, days] of [
       ['OLD-PARKED', 10],
@@ -620,7 +631,7 @@ describe('the ladder stim gc forces', () => {
         },
       });
     }
-    const parkedTargets = async (parkedOlderThanDays?: number) =>
+    const parkedTargets = async () =>
       (
         await runLadder(
           {
@@ -630,7 +641,7 @@ describe('the ladder stim gc forces', () => {
             devices: [],
             simsFailed: false,
             remeasure: async () => pressure('normal'),
-            force: { level: 'high', why: 'stim gc --delete', ...(parkedOlderThanDays ? { parkedOlderThanDays } : {}) },
+            force: { level: 'high', why: 'stim gc' },
             fromRung: 2,
           },
           pressure('normal'),
@@ -638,7 +649,150 @@ describe('the ladder stim gc forces', () => {
       ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
 
     expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
-    expect(await parkedTargets(5)).toEqual(['OLD-PARKED']);
+  });
+
+  const forced = (
+    level: 'high' | 'critical',
+    fromRung: number,
+    operation = testContext(),
+    { measured = false, lastRung }: { measured?: boolean; lastRung?: number } = {},
+  ) => {
+    const config = loadConfig();
+    if (!config) throw new Error('the test home has no config');
+    return runLadder(
+      {
+        config,
+        act: false,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('normal'),
+        force: { level, why: 'stim gc', measured },
+        fromRung,
+        ...(lastRung === undefined ? {} : { lastRung }),
+        operation,
+      },
+      pressure('normal'),
+    );
+  };
+
+  test('rung 9 plans the other tools cache cleaners only at critical, and never from a scoped home', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '',
+      runFileQuietAsync: async (file) =>
+        file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
+      findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
+    });
+    mkdirSync(join(projects, '.npm'), { recursive: true });
+    const unscoped = testContext({
+      env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
+    });
+    const planned = async (
+      level: 'high' | 'critical',
+      operation = unscoped,
+      options: { measured?: boolean; lastRung?: number } = {},
+    ) => (await forced(level, 9, operation, options)).actions.filter((action) => action.kind === 'clean-tool-cache');
+
+    expect(await planned('high')).toEqual([]);
+    expect(await planned('critical', testContext())).toEqual([]);
+    expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
+    expect(await planned('critical', unscoped, { lastRung: 8 })).toEqual([]);
+
+    const cacheDevice = statSync(join(projects, '.npm')).dev;
+    const disk = vi.spyOn(daemonMeasure, 'measureDisk');
+    disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024, device: cacheDevice }]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([]);
+    disk.mockResolvedValue([{ volume: '/', freeMb: 1024, device: cacheDevice }]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([
+      expect.objectContaining({ rung: 9, outcome: 'would' }),
+    ]);
+    disk.mockResolvedValue([
+      { volume: '/', freeMb: 1024, device: cacheDevice + 1 },
+      { volume: '/', freeMb: 500 * 1024, device: cacheDevice },
+    ]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([
+      expect.objectContaining({
+        rung: 9,
+        outcome: 'kept',
+        detail: expect.stringContaining('not under the critical level'),
+      }),
+    ]);
+  });
+});
+
+describe('the ladder a build runs for its headroom', () => {
+  const DEVICE = 4242;
+
+  function parked(count: number) {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    vi.spyOn(gcDevices, 'deleteParkedSims').mockImplementation(async (taken) => {
+      deleted.push(...taken.map((sim) => sim.udid));
+      return taken.length;
+    });
+    const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+    const config = loadConfig();
+    if (!config) throw new Error('the test home has no config');
+    saveConfig({
+      ...config,
+      parked: {
+        ios: Array.from({ length: count }, (_, index) => ({
+          ...sim,
+          udid: `PARKED-${index}`,
+          name: `stim-parked-${index}`,
+          parkedAt: new Date(Date.now() - (10 - index) * DAY_MS).toISOString(),
+        })),
+      },
+    });
+  }
+
+  function freeOnBuildDevice(startGb: number, perDeletionGb: number) {
+    const disk = vi.spyOn(daemonMeasure, 'measureDisk');
+    disk.mockImplementation(async () => [
+      { volume: '/', freeMb: (startGb + deleted.length * perDeletionGb) * 1024, device: DEVICE },
+      { volume: '/other', freeMb: 1024, device: DEVICE + 1 },
+    ]);
+    return disk;
+  }
+
+  const run = (targetGb: number) =>
+    runLadderToFree({
+      operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+      signal: new AbortController().signal,
+      device: DEVICE,
+      freeMb: targetGb * 1024,
+      protectedRoot: join(projects, 'build'),
+    });
+
+  test('frees only what the target needs on the build device, below and above disk.minFreeGb, and ignores other volumes', async () => {
+    parked(4);
+    freeOnBuildDevice(22, 1);
+    await run(24);
+    expect(deleted).toEqual(['PARKED-0', 'PARKED-1']);
+
+    deleted.length = 0;
+    freeOnBuildDevice(35, 5);
+    await run(50);
+    expect(deleted).toEqual(['PARKED-0', 'PARKED-1', 'PARKED-2']);
+
+    deleted.length = 0;
+    freeOnBuildDevice(10, 0);
+    await run(24);
+    expect(deleted).toEqual(['PARKED-0']);
+  });
+
+  test('does nothing while another process holds the ladder claim', async () => {
+    parked(2);
+    const disk = freeOnBuildDevice(10, 1);
+    const held = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' }).acquired;
+    if (!held) throw new Error('claim not acquired');
+    try {
+      await run(24);
+    } finally {
+      releaseClaim(held);
+    }
+    expect(deleted).toEqual([]);
+    expect(disk).not.toHaveBeenCalled();
   });
 });
 
@@ -734,15 +888,22 @@ describe('rung 5', () => {
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
     () => {
-      test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
-        const { idle } = linkedWorktrees(['idle']);
+      test('at high it deletes node_modules and Pods of a linked worktree idle 1 hour, and at critical of one idle 2 minutes', async () => {
+        const { idle, recent } = linkedWorktrees(['idle', 'recent']);
         register(idle);
-        await ladder('high');
-        expect(existsSync(join(idle, 'node_modules'))).toBe(true);
-        const { actions } = await ladder('critical');
+        register(recent);
+        recordWorkspaceUse(idle, new Date(Date.now() - 2 * HOUR_MS));
+        recordWorkspaceUse(recent, new Date(Date.now() - 30 * MINUTE_MS));
+        const high = await ladder('high');
         expect(existsSync(join(idle, 'node_modules'))).toBe(false);
         expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
-        expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+        expect(existsSync(join(recent, 'node_modules'))).toBe(true);
+        expect(high.actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual([
+          'done',
+          'done',
+        ]);
+        await ladder('critical');
+        expect(existsSync(join(recent, 'node_modules'))).toBe(false);
       });
 
       test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
@@ -815,7 +976,7 @@ describe('rung 5', () => {
 describe.skipIf(process.platform === 'win32')(
   'the dormant stage for dependencies (skipped on win32, where Stim cannot list the running processes)',
   () => {
-    test('after idle.dormantDays it deletes a tree holding its own bytes and keeps a tree of unknown size and a workspace idle less long', async () => {
+    test('after idle.dormantDays it deletes trees holding their own bytes or of unknown size, even ones worktree warm cannot restore, and keeps a workspace idle less long', async () => {
       vi.setSystemTime(Date.now() + 2 * DAY_MS);
       resetExecutor();
       const real = getExecutor();
@@ -854,8 +1015,9 @@ describe.skipIf(process.platform === 'win32')(
       };
       const old = worktree('old');
       const recent = worktree('recent');
+      writeFileSync(join(old, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
       recordWorkspaceUse(old, new Date(Date.now() - 4 * DAY_MS));
-      recordWorkspaceUse(recent, new Date(Date.now() - DAY_MS));
+      recordWorkspaceUse(recent, new Date(Date.now() - DAY_MS / 2));
       const cache = (path: string, privateBytes: number) =>
         writeCacheFile(diskUsageCacheFile(path), {
           path,
@@ -883,9 +1045,14 @@ describe.skipIf(process.platform === 'win32')(
           outcome: 'done',
           restore: 'stim worktree warm',
         }),
+        expect.objectContaining({ kind: 'delete-dependencies', target: join(old, 'ios', 'Pods'), outcome: 'done' }),
       ]);
       expect(existsSync(join(old, 'node_modules'))).toBe(false);
-      expect(existsSync(join(old, 'ios', 'Pods'))).toBe(true);
+      expect(existsSync(join(old, 'ios', 'Pods'))).toBe(false);
+      expect(readJsonObject(workspaceLightenedFile(old))?.dirs).toEqual([
+        join(old, 'node_modules'),
+        join(old, 'ios', 'Pods'),
+      ]);
       expect(existsSync(join(recent, 'node_modules'))).toBe(true);
     }, 20_000);
   },

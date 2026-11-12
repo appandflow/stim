@@ -273,16 +273,14 @@ import Testing
   @Test func archiveDeletionTargetsOnlyTheSelectedArchive() throws {
     let archive = try #require(payload().archived?.first)
     let command = archive.deleteCommand(cwd: "/home")
-    #expect(command.arguments == ["gc", "--delete", "--cache", "archived:archive-older"])
+    #expect(GcItem(arguments: command.arguments) == .archive(id: "archive-older", part: nil))
     #expect(command.cwd == "/home")
   }
 
-  @Test func clearingOneKindNamesTheCliSelectorForThatKindAndArchive() throws {
+  @Test func clearingOneKindNamesThePartOfThatArchive() throws {
     let archive = try #require(payload().archived?.first)
-    let selectors = RetainedKind.allCases.map { archive.clearCommand($0, cwd: "/home").arguments.last }
-    #expect(
-      selectors == ["archived-logs:archive-older", "archived-recordings:archive-older", "archived-agent:archive-older"])
-    #expect(archive.clearCommand(.logs, cwd: "/home").arguments.dropLast() == ["gc", "--delete", "--cache"])
+    let items = RetainedKind.allCases.map { GcItem(arguments: archive.clearCommand($0, cwd: "/home").arguments) }
+    #expect(items == RetainedKind.allCases.map { .archive(id: "archive-older", part: $0) })
   }
 
   @Test func onlyNonEmptyKindsCanBeClearedAndTheRecordNever() throws {

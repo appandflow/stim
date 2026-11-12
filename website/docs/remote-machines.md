@@ -130,7 +130,7 @@ For Appduct, set `advertisedIp` in `~/.appduct/config.json` to `127.0.0.1`, run 
 
 A host can park a healthy simulator or emulator after `stim stop` and reuse it for the same client. Adoption clears app data. The host's `pool.iosParkedMax` and `pool.androidParkedMax` set limits across clients, separate from the local device pool. Set a limit to `0` to disable parking.
 
-Verified sessions can survive a server restart. If the server cannot confirm the device's state, run `stim stop` again when the host answers. On the host, `stim gc` lists parked hosted devices and `stim gc --delete` can remove them.
+Verified sessions can survive a server restart. If the server cannot confirm the device's state, run `stim stop` again when the host answers. On the host, `stim gc --dry-run` lists parked hosted devices and `stim gc` removes them.
 
 ### Hosted sessions stop when they are idle
 

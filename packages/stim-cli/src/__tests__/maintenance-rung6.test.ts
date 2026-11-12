@@ -95,7 +95,7 @@ function write(path: string) {
   writeFileSync(path, 'x');
 }
 
-test('the next command, report-only gc included, warns on stderr while the daemon found the disk critical, and gc --delete does not', () => {
+test('the next command, report-only gc included, warns on stderr while the daemon found the disk critical, and an acting gc does not', () => {
   mkdirSync(join(home, 'daemon'), { recursive: true });
   writeFileSync(
     join(home, 'daemon', 'snapshot.json'),
@@ -121,9 +121,9 @@ test('the next command, report-only gc included, warns on stderr while the daemo
   const errors: string[] = [];
   vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
 
-  warnCriticalDisk(['gc', '--delete']);
+  warnCriticalDisk(['gc']);
   expect(errors).toEqual([]);
-  warnCriticalDisk(['gc', '--json']);
+  warnCriticalDisk(['gc', '--dry-run', '--json']);
   expect(errors).toEqual([expect.stringContaining('disk pressure is critical (4.0 GB free on /')]);
   errors.length = 0;
   warnCriticalDisk(['ios']);

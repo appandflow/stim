@@ -66,7 +66,7 @@ export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
-/** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
+/** The dependency directories `stim gc` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
 export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
 }
@@ -133,6 +133,11 @@ export function diskUsageCacheDir(): string {
 /** The ownership claim root that admits one disk-usage walk at a time on this machine. */
 export function diskUsageWalkClaims(): string {
   return join(configDir(), 'disk-usage-walk.claims');
+}
+
+/** The ownership claim root that admits one headroom ladder run at a time on this machine. */
+export function ladderRunClaims(): string {
+  return join(configDir(), 'ladder-run.claims');
 }
 
 /** The remote machines this machine asked for build access, each with its pinned stim-server key once approved. */
@@ -223,6 +228,11 @@ export function gcLogDir(): string {
 
 export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
+}
+
+/** The full plain-text report of the last `stim gc` run in plain mode, which prints only a summary. */
+export function gcReportFile(): string {
+  return join(gcLogDir(), 'last-report.txt');
 }
 
 export function buildLedgerDir(): string {

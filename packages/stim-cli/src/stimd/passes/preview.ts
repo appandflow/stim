@@ -2,25 +2,26 @@ import { join } from 'node:path';
 import { configDir, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
-  readMaintenanceState,
+  type MaintenanceAction,
   type MaintenancePlanPart,
-  type MaintenancePressure,
   type MaintenanceSize,
-  type MaintenanceMode,
+  type PressureLevel,
 } from '@stim-cli/core/state';
+import { checkoutRoleOf } from '../../workspace/checkout-role.ts';
 import { findProjectRoot } from '../../workspace/project.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../../commands/gc/workspaces.ts';
-import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
+import { cacheBlocked } from './measure.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
 import { candidateRootsAsync, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import { listWorktreesAsync } from '../../workspace/worktree.ts';
+import { planCargoTargets } from './cargo-target.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
-import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
+import { maintenancePinned, maintenancePinnedAsync, maintenancePinnedReader, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
-import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
+import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
 
@@ -37,12 +38,35 @@ export interface PlannedMaintenance extends MaintenancePlan {
   byCheck: Partial<Record<MaintenancePlanPart, Pick<MaintenancePlan, 'blocked' | 'skips'>>>;
 }
 
+/** The Cargo target trims of the recorded sizes alone, planned at low priority without the rest of the caps preamble. */
+async function planCargoOnly(
+  recordedSizes: readonly MaintenanceSize[],
+  settings: MaintenanceSettings,
+  level: PressureLevel | undefined,
+  operation: StimContext | undefined,
+): Promise<MaintenancePlan> {
+  const pins = new Map<string, boolean>();
+  for (const size of recordedSizes)
+    if (size.name === 'Cargo target' && size.workspace && !pins.has(size.workspace))
+      pins.set(size.workspace, await maintenancePinnedReader(operation)(size.workspace));
+  return planCargoTargets({
+    sizes: recordedSizes,
+    settings,
+    pinned: (workspace) => pins.get(workspace) ?? true,
+    now: Date.now(),
+    signal: operation?.signal,
+    lowPriority: true,
+    ...(level ? { level } : {}),
+  });
+}
+
 export async function plannedMaintenance(
   recordedSizes: readonly MaintenanceSize[],
   settings: MaintenanceSettings,
   {
     devices = true,
     caps = true,
+    cargoOnly = false,
     sweep = false,
     worktrees = false,
     idle = false,
@@ -50,16 +74,21 @@ export async function plannedMaintenance(
     background = false,
     operation,
     deviceActivity,
+    cargoLevel,
   }: {
     devices?: boolean;
     /** Plans the cap trims of the recorded sizes. */
     caps?: boolean;
+    /** Plans only the Cargo target trims of them. */
+    cargoOnly?: boolean;
     sweep?: boolean;
     worktrees?: boolean;
     idle?: boolean;
     refresh?: boolean;
     background?: boolean;
     operation?: StimContext;
+    /** An explicit level for the Cargo target trims, applied to every target; without one each target takes its volume's disk level. */
+    cargoLevel?: PressureLevel;
     /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
     deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
   } = {},
@@ -110,6 +139,10 @@ export async function plannedMaintenance(
     if (idle && devices) merge('idle', await idleStops());
     return result;
   }
+  if (cargoOnly && !sweep && !worktrees && !idle) {
+    merge('caps', await planCargoOnly(recordedSizes, settings, cargoLevel, operation));
+    return result;
+  }
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now: Date.now(),
@@ -156,21 +189,56 @@ export async function plannedMaintenance(
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
-  if (caps)
-    merge(
-      'caps',
-      plan({
-        sizes: currentSizes,
-        settings,
-        protectedRoot: root,
-        pinned,
-        recentlyUsed: (workspace) => recentUse(workspace, settings),
-      }),
-    );
+  const sourceRoots = new Set<string>();
+  if (caps || sweep)
+    for (const workspace of new Set([
+      ...currentSizes.flatMap((size) =>
+        size.category === 'workspace-outputs' && size.workspace ? [size.workspace] : [],
+      ),
+      ...outputs.workspaces.flatMap((entry) => (entry.projectRoot ? [canonicalPath(entry.projectRoot)] : [])),
+    ]))
+      if ((await checkoutRoleOf(workspace, operation)) === 'source') sourceRoots.add(workspace);
+  const sourceLast = (actions: MaintenanceAction[]): MaintenanceAction[] =>
+    actions.toSorted((a, b) => sourceRank(a, sourceRoots) - sourceRank(b, sourceRoots));
+  if (caps) {
+    const capped =
+      cargoOnly && !sweep && !worktrees
+        ? { actions: [], blocked: [], skips: [] }
+        : plan({
+            sizes: currentSizes,
+            settings,
+            protectedRoot: root,
+            pinned,
+            sourceRoots,
+            recentlyUsed: (workspace) => recentUse(workspace, settings),
+          });
+    const cargo = await planCargoTargets({
+      sizes: currentSizes,
+      settings,
+      pinned,
+      now: Date.now(),
+      signal: operation?.signal,
+      ...(cargoLevel ? { level: cargoLevel } : {}),
+    });
+    merge('caps', {
+      actions: [...capped.actions, ...cargo.actions],
+      blocked: [...capped.blocked, ...cargo.blocked],
+      skips: [...capped.skips, ...cargo.skips],
+    });
+  }
   if (sweep)
     merge(
       'sweep',
-      await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, operation }),
+      await planSweep({
+        settings,
+        sizes,
+        protectedRoot: root,
+        pinned,
+        now: Date.now(),
+        devices,
+        background,
+        operation,
+      }),
     );
   if (worktrees) {
     const planned = await planWorktrees({
@@ -189,72 +257,11 @@ export async function plannedMaintenance(
     if (planned.nextRemoval) result.nextRemoval = planned.nextRemoval;
   }
   if (idle && devices) merge('idle', await idleStops());
+  result.actions = sourceLast(result.actions);
   return result;
 }
 
-export interface MaintenancePreview extends MaintenancePlan {
-  mode: MaintenanceMode;
-  invalid?: string;
-  pressure: MaintenancePressure | null;
-  note: string | null;
-}
-
-export async function previewMaintenance({
-  devices = true,
-  refresh = true,
-  operation,
-}: { devices?: boolean; refresh?: boolean; operation?: StimContext } = {}): Promise<MaintenancePreview> {
-  let settings: MaintenanceSettings | undefined;
-  try {
-    settings = resolveMaintenanceSettings(undefined, operation?.env ?? process.env);
-    const state = readMaintenanceState();
-    if (settings.invalid && settings.mode === 'off')
-      return {
-        mode: 'off',
-        pressure: null,
-        actions: [],
-        blocked: [],
-        skips: [],
-        invalid: settings.invalid,
-        note: settings.invalid,
-      };
-    if (settings.mode === 'off')
-      return {
-        mode: 'off',
-        pressure: null,
-        actions: [],
-        blocked: [],
-        skips: [],
-        note: 'daemon.mode is off',
-      };
-    const pressure = operation
-      ? await measurePressureAsync(state?.pressure ?? null, Date.now(), operation)
-      : measurePressure(state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(state?.sizes ?? [], settings, {
-      devices,
-      sweep: true,
-      refresh,
-      operation,
-    });
-    return {
-      ...result,
-      mode: settings.mode,
-      ...(settings.invalid ? { invalid: settings.invalid } : {}),
-      pressure,
-      note: settings.invalid ?? (state === null ? 'no pass has run yet; sizes have not been measured' : null),
-    };
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-      throw error;
-    operation?.signal.throwIfAborted();
-    return {
-      mode: settings?.mode ?? 'off',
-      ...(settings?.invalid ? { invalid: settings.invalid } : {}),
-      pressure: null,
-      actions: [],
-      blocked: [String(error)],
-      skips: [],
-      note: 'maintenance preview failed',
-    };
-  }
+/** 1 for an action that clears the build outputs of a source checkout, which goes after those of linked worktrees. */
+function sourceRank(action: MaintenanceAction, sourceRoots: ReadonlySet<string>): number {
+  return action.kind === 'would-clear-outputs' && action.workspace && sourceRoots.has(action.workspace) ? 1 : 0;
 }

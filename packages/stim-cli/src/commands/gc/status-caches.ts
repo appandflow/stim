@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import chalk from 'chalk';
 import { listStatusCacheEntries, listStatusCacheEntriesAsync, type StatusCacheEntry } from '@stim-cli/core/state';
-import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
+import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import type { GcSkip } from './types.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { rootPresence } from './workspaces.ts';
@@ -86,20 +86,6 @@ export async function collectStaleStatusCachesAsync(
   signal?: AbortSignal,
 ): Promise<ReturnType<typeof judgeStatusCaches>> {
   return judgeStatusCaches(await listStatusCacheEntriesAsync(signal), mountedVolumes);
-}
-
-export function statusCacheLines(stale: readonly StaleStatusCache[]): string[] {
-  if (!stale.length) return [];
-  const total = stale.reduce((sum, entry) => sum + entry.bytes, 0);
-  const lines = [
-    `Stale status cache entries (${stale.length}, ${formatBytes(total)}) - the folder or worktree they measure is gone:`,
-  ];
-  for (const kind of KINDS) {
-    const count = stale.filter((entry) => entry.kind === kind).length;
-    if (count) lines.push(`  ${kind}: ${count}`);
-  }
-  lines.push('              --delete removes them; `stim status` measures a folder again if it comes back.');
-  return lines;
 }
 
 export async function deleteStaleStatusCaches(

@@ -125,6 +125,12 @@ export async function readRunningProcessesAsync(
   return runningFrom(ps, lsof === null ? null : parseLsof(lsof));
 }
 
+/** The process table once for a pass, which every checkout then reads instead of running `ps` and `lsof` again. */
+export function processReader(signal?: AbortSignal): () => Promise<RunningProcesses | null> {
+  let table: Promise<RunningProcesses | null> | undefined;
+  return () => (table ??= readRunningProcessesAsync(signal).then((running) => othersRunningAsync(running, signal)));
+}
+
 function stimOnPath(): string | null {
   const found = getExecutor().findExecutable('stim');
   if (!found) return null;
@@ -133,6 +139,22 @@ function stimOnPath(): string | null {
   } catch {
     return null;
   }
+}
+
+const PATH_CHARACTER = /[\w.\-/]/;
+
+/** Whether a command line names `root` itself or a path under it, matching whole path segments only. */
+function namesPath(line: string, root: string): boolean {
+  for (let at = line.indexOf(root); at !== -1; at = line.indexOf(root, at + 1)) {
+    const before = line[at - 1];
+    const after = line[at + root.length];
+    if (
+      (before === undefined || !PATH_CHARACTER.test(before)) &&
+      (after === undefined || after === sep || !PATH_CHARACTER.test(after))
+    )
+      return true;
+  }
+  return false;
 }
 
 /**
@@ -147,7 +169,7 @@ export function runningFromReason(folder: string, running: RunningProcesses | nu
   const stim = stimOnPath();
   if (stim && inside(stim)) return `the stim on PATH runs from it (${stim})`;
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';
-  const command = running.commands.find(({ line }) => line.includes(`${root}${sep}`));
+  const command = running.commands.find(({ line }) => namesPath(line, root));
   if (command) return `process ${command.pid} runs from it`;
   const cwd = running.cwds.find(({ path }) => inside(canonicalPath(path)));
   if (cwd) return `process ${cwd.pid} works in it`;

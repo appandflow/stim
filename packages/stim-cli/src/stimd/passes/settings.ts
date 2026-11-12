@@ -11,6 +11,7 @@ export interface MaintenanceSettings {
   logRetentionDays: number;
   logChecks: boolean;
   workspaceOutputsMaxGb: number;
+  cargoTargetMaxGb: number;
   buildCacheMaxGb: number;
   metroCacheMaxGb: number;
   swiftCompilationCacheMaxGb: number;

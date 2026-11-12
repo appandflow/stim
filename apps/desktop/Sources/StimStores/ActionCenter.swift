@@ -39,7 +39,7 @@ public final class ActionRun: ObservableObject, Identifiable {
   /// The whole stdout of a single `--json` command; empty for any other run.
   public var stdout: Data { output.stdout }
 
-  /// What a finished `gc --delete --json` run did, or nil for any other command.
+  /// What a finished `gc --json` run did, or nil for any other command.
   public var gcOutcome: Result<GcOutcome, Error>? {
     guard steps.count == 1, exitStatus != nil, GcOutcome.describes(command.arguments) else { return nil }
     return Result { try GcOutcome(json: stdout) }

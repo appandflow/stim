@@ -2,7 +2,8 @@ import { brokenPodLinks } from './doctor-pods-flavor.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { processContext } from '../cli-operation.ts';
 import { diffInputs, isUncertain } from '../fingerprint/key.ts';
-import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import { reportSignal, reportTimeRemainingMs, trackReportResource } from '../report-runtime.ts';
+import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'fs';
@@ -1562,6 +1563,16 @@ async function appPathInRepository(projectRoot: string): Promise<string> {
   return path.startsWith('..') ? '' : path;
 }
 
+const FINGERPRINT_MIN_REPORT_MS = 30_000;
+
+export function fingerprintReportGate(operation: StimContext | undefined): string | null {
+  const remaining = reportTimeRemainingMs(operation);
+  if (remaining === undefined) return null;
+  if (remaining < FINGERPRINT_MIN_REPORT_MS) return 'The report had too little time left to start a fingerprint child.';
+  if (sizeScanDeferred()) return 'The host load is too high to start a fingerprint child inside a report.';
+  return null;
+}
+
 export async function detectFingerprintParity(
   projectRoot: string,
   {
@@ -1581,6 +1592,14 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
+  const skipped = fingerprintReportGate(operation);
+  if (skipped)
+    return finding(
+      'note',
+      'Fingerprint parity was not checked',
+      skipped,
+      'Run stim doctor in a terminal to get the check.',
+    );
   const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
   const context = operation ?? processContext(projectRoot);
   let base: string;

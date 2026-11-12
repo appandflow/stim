@@ -21,46 +21,42 @@ public struct ServerGcResult: Sendable {
   guard command.program == "stim", command.arguments.first == "gc" else {
     throw ServerError(code: "bad-request", message: "Unsupported Desktop cleanup command.")
   }
-  let maxInteger = 9_007_199_254_740_991
   var json = false
   var params: [String: JSONValue] = ["cwd": .string(command.cwd)]
-  var seen: Set<String> = []
-  var index = 1
-  while index < command.arguments.count {
-    let option = command.arguments[index]
-    guard seen.insert(option).inserted else {
-      throw ServerError(code: "bad-request", message: "Repeated Desktop cleanup option.")
-    }
-    switch option {
-    case "--json": json = true
-    case "--delete": params["delete"] = .bool(true)
-    case "--worktrees": params["worktrees"] = .bool(true)
-    case "--cache", "--older-than":
-      index += 1
-      guard index < command.arguments.count, !command.arguments[index].hasPrefix("--") else {
-        throw ServerError(code: "bad-request", message: "Desktop cleanup option requires a value.")
+  let method: String
+  if let item = GcItem(arguments: command.arguments) {
+    json = true
+    method = "desktop.gc.item.subscribe"
+    params["item"] = item.params
+  } else {
+    method = "desktop.gc.subscribe"
+    var dryRun = false
+    var seen: Set<String> = []
+    var index = 1
+    while index < command.arguments.count {
+      let option = command.arguments[index]
+      guard seen.insert(option).inserted else {
+        throw ServerError(code: "bad-request", message: "Repeated Desktop cleanup option.")
       }
-      let value = command.arguments[index]
       switch option {
-      case "--cache":
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, value.utf16.count <= 1024 else {
-          throw ServerError(code: "bad-request", message: "Choose a cache for cleanup.")
+      case "--json": json = true
+      case "--dry-run": dryRun = true
+      case "--pressure":
+        index += 1
+        guard index < command.arguments.count, ["normal", "high", "critical"].contains(command.arguments[index]) else {
+          throw ServerError(code: "bad-request", message: "Pressure must be normal, high or critical.")
         }
-        params["cache"] = .string(value)
-      default:
-        guard let days = Int(value), (-maxInteger...maxInteger).contains(days) else {
-          throw ServerError(code: "bad-request", message: "Cleanup age must be a whole number of days.")
-        }
-        params["olderThan"] = .number(Double(days))
+        params["pressure"] = .string(command.arguments[index])
+      default: throw ServerError(code: "bad-request", message: "Unsupported Desktop cleanup option.")
       }
-    default: throw ServerError(code: "bad-request", message: "Unsupported Desktop cleanup option.")
+      index += 1
     }
-    index += 1
+    params["dryRun"] = .bool(dryRun)
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   var terminal: ServerEvent?
   let unsubscribe = try client.subscribeAction(
-    "desktop.gc.subscribe", params: params,
+    method, params: params,
     onCancellationEvent: { event in
       if event.name == "desktop-gc-ended" { terminal = event }
     },
@@ -75,9 +71,17 @@ public struct ServerGcResult: Sendable {
     let data = Data(stdout.utf8)
     if exit == 0 {
       guard let payload = try? JSONDecoder().decode(JSONValue.self, from: data), case .object(let fields) = payload,
-        let mode = fields["mode"]?.string, ["dry-run", "delete"].contains(mode),
-        case .object? = fields["sections"]
+        let mode = fields["mode"]?.string, ["dry-run", "delete"].contains(mode)
       else { throw ServerError(code: "bad-response", message: "Invalid cleanup report from stim-server.") }
+      if fields["mode"]?.string == "dry-run" {
+        guard case .object? = fields["sections"] else {
+          throw ServerError(code: "bad-response", message: "Invalid cleanup report from stim-server.")
+        }
+      } else {
+        guard case .array? = fields["results"] else {
+          throw ServerError(code: "bad-response", message: "Invalid cleanup report from stim-server.")
+        }
+      }
     }
     if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
     if !message.isEmpty, !json || exit != 0 { onLine(OutputLine(exit == 0 ? .stdout : .stderr, message)) }
@@ -114,5 +118,58 @@ public struct ServerGcResult: Sendable {
     try await unsubscribe()
     if error is CancellationError, let terminal, terminal.fields["exitCode"]?.number == 1 { return try result(terminal) }
     throw error
+  }
+}
+
+/// One cleanup a single Storage or Processes row runs through `desktop.gc.item.subscribe`. Desktop carries it as
+/// the internal `gc --json --item <kind> ...` argument list; no CLI runs that form.
+public enum GcItem: Hashable, Sendable {
+  case cache(dir: String)
+  case workspaceOutputs
+  case archive(id: String, part: RetainedKind?)
+  case watchman
+  case gradleDaemons
+
+  public var arguments: [String] {
+    let tail: [String]
+    switch self {
+    case .cache(let dir): tail = ["cache", dir]
+    case .workspaceOutputs: tail = ["workspace-outputs"]
+    case .archive(let id, let part): tail = ["archive", id] + (part.map { [$0.rawValue] } ?? [])
+    case .watchman: tail = ["watchman"]
+    case .gradleDaemons: tail = ["gradle-daemons"]
+    }
+    return ["gc", "--json", "--item"] + tail
+  }
+
+  public func command(cwd: String) -> StimCommand { StimCommand(arguments, cwd: cwd) }
+
+  public init?(arguments: [String]) {
+    guard arguments.count >= 4, Array(arguments.prefix(3)) == ["gc", "--json", "--item"] else { return nil }
+    let rest = Array(arguments.dropFirst(4))
+    switch (arguments[3], rest.count) {
+    case ("cache", 1) where !rest[0].isEmpty: self = .cache(dir: rest[0])
+    case ("workspace-outputs", 0): self = .workspaceOutputs
+    case ("archive", 1) where !rest[0].isEmpty: self = .archive(id: rest[0], part: nil)
+    case ("archive", 2) where !rest[0].isEmpty:
+      guard let part = RetainedKind(rawValue: rest[1]) else { return nil }
+      self = .archive(id: rest[0], part: part)
+    case ("watchman", 0): self = .watchman
+    case ("gradle-daemons", 0): self = .gradleDaemons
+    default: return nil
+    }
+  }
+
+  var params: JSONValue {
+    switch self {
+    case .cache(let dir): return .object(["kind": .string("cache"), "dir": .string(dir)])
+    case .workspaceOutputs: return .object(["kind": .string("workspace-outputs")])
+    case .archive(let id, let part):
+      var item: [String: JSONValue] = ["kind": .string("archive"), "id": .string(id)]
+      if let part { item["part"] = .string(part.rawValue) }
+      return .object(item)
+    case .watchman: return .object(["kind": .string("watchman")])
+    case .gradleDaemons: return .object(["kind": .string("gradle-daemons")])
+    }
   }
 }

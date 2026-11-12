@@ -1,4 +1,4 @@
-import { SETTINGS } from '../state/settings-registry.ts';
+import { SETTINGS, settingValueError } from '../state/settings-registry.ts';
 import { settingsJsonSchema } from '../state/settings-schema.ts';
 import Ajv from 'ajv/dist/2020.js';
 
@@ -41,4 +41,11 @@ test('native hosting targets accept tailnet names and ports', () => {
     for (const platform of ['ios', 'android']) expect(validate({ [platform]: { remote } })).toBe(true);
   for (const remote of ['bad name', 'mini:0', 'mini:65536', true])
     for (const platform of ['ios', 'android']) expect(validate({ [platform]: { remote } })).toBe(false);
+});
+
+test('maintenance.discoverRoots refuses relative entries, the home folder and the filesystem root', () => {
+  expect(settingValueError('maintenance.discoverRoots', ['/data/projects', '~/Developer'])).toBeNull();
+  expect(settingValueError('maintenance.discoverRoots', ['relative/dir'])).toContain('absolute paths');
+  expect(settingValueError('maintenance.discoverRoots', ['~'])).toContain('too broad');
+  expect(settingValueError('maintenance.discoverRoots', ['/'])).toContain('too broad');
 });

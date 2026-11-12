@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+
 import {
   existsSync,
   lstatSync,
@@ -18,6 +19,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
+import { deleteGcItem } from '../commands/gc/item.ts';
+import * as maintenancePreview from '../stimd/passes/preview.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from '../commands/gc/logs.ts';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -39,6 +42,7 @@ import {
   type WorktreeFacts,
 } from '../commands/gc/worktrees.ts';
 import { planWorktrees } from '../stimd/passes/sweep.ts';
+import * as sweepPasses from '../stimd/passes/sweep.ts';
 import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
@@ -64,7 +68,6 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
-  claimRemoveCommand,
   exclusiveClaimDir,
   tryAcquireClaim,
   releaseClaim,
@@ -86,7 +89,8 @@ import {
   readMaintenanceState,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
-import { liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
+import { gcReportSections } from '../commands/gc/report.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 
@@ -356,6 +360,32 @@ describe('workspace directories without workspace.json', () => {
     });
   });
 
+  test('a directory holding only a native-run lock is kept with its claim path until the claim is removed, then deleted', async () => {
+    const dir = husk(join(projects, 'locked'), {}, null);
+    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+      child: { record: null },
+    });
+    const blocked = listWorkspaceDirs().find((entry) => entry.dir === dir)?.residue?.blocked;
+    expect(blocked).toContain(claim);
+    expect(blocked).toContain(claim.replace(/\.claim$/, '.child'));
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(true);
+
+    rmSync(claim, { force: true });
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('a directory holding only a native-run claim whose owner is gone and that has no child is deleted', async () => {
+    const dir = husk(join(projects, 'dead-lock'), {}, null);
+    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+    });
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(false);
+  });
+
   test('gc --delete removes the leftovers of a removed workspace and keeps everything else', async () => {
     const gone = husk(join(projects, 'gone'), { 'log-error-index.json': '{}' });
     const empty = husk(join(projects, 'empty'), {}, null);
@@ -368,17 +398,20 @@ describe('workspace directories without workspace.json', () => {
     plantClaim(join(held, 'metadata.lock.claims'), 'exclusive', liveClaimOwner());
     const unnamed = husk(join(projects, 'unnamed'), { 'ended-agents.json': '{}' }, null);
 
-    const report = await captureLog(() => runGc({}));
-    expect(report).toContain('Orphaned workspace directories (2):');
-    expect(report).toContain(`the project root its logs name ${join(projects, 'gone')} is gone`);
+    const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+    expect(payload.sections.orphanedWorkspaces.map((entry: { dir: string }) => entry.dir).toSorted()).toEqual(
+      [gone, empty].toSorted(),
+    );
     for (const dir of [gone, empty, present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
 
-    await captureLog(() => runGc({ delete: true }));
+    await gcJson({ pressure: 'normal' });
     expect(existsSync(gone)).toBe(false);
     expect(existsSync(empty)).toBe(false);
     for (const dir of [present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
   });
 });
+
+vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
 test('listWorkspaceDirs resolves each directory through its workspace.json', () => {
   const { root } = goneWorkspace('app');
@@ -457,38 +490,39 @@ test.each(['orphan', 'output'] as const)(
   },
 );
 
-test('gc reports an orphaned workspace directory and --delete removes only the confirmed ones', async () => {
+test('gc reports an orphaned workspace directory and removes only the confirmed ones', async () => {
   const orphan = goneWorkspace('deleted-worktree');
   const busy = goneWorkspace('building-worktree');
   holdNativeRun(busy.root);
   const unresolved = join(tmpHome, 'workspaces', 'bare--0000000000000000');
   mkdirSync(join(unresolved, 'derived-data'), { recursive: true });
 
-  const report = await captureLog(() => runGc({}));
-  expect(report).toContain('Orphaned workspace directories (1):');
-  expect(report).toContain(orphan.dir);
-  expect(report).toContain(`recorded project root ${orphan.root} is gone`);
-  expect(report).toMatch(/building-worktree.*native-run\.lock/);
+  const preview = (await gcJson({ dryRun: true, pressure: 'normal' })).payload;
+  expect(preview.sections.orphanedWorkspaces).toEqual([
+    { dir: orphan.dir, projectRoot: orphan.root, bytes: expect.any(Number) },
+  ]);
+  expect(preview.sections.skipped).toContainEqual(
+    expect.objectContaining({ path: busy.dir, detail: expect.stringContaining('native-run.lock') }),
+  );
   expect(existsSync(orphan.dir)).toBe(true);
 
-  const output = await captureLog(() => runGc({ delete: true }));
-  expect(output).toContain(`Removed the orphaned workspace directory ${orphan.dir}`);
+  const { payload } = await gcJson({ pressure: 'normal' });
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'remove-orphan', target: orphan.dir, outcome: 'done' }),
+  );
   expect(existsSync(orphan.dir)).toBe(false);
   expect(existsSync(busy.dir)).toBe(true);
   expect(existsSync(unresolved)).toBe(true);
 });
 
-test('gc --json reports orphaned workspace directories and workspace build outputs with stable reasons', async () => {
+test('a gc dry run reports orphaned workspace directories and workspace build outputs with stable reasons', async () => {
   const orphan = goneWorkspace('deleted-worktree');
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
-  const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const { raw, payload } = await gcJson({ olderThan: 3 });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
-  expect(payload.worktreeSweep).toBe(null);
-  expect(payload.sections.linkedWorktrees).toEqual([]);
   expect(payload.sections.orphanedWorkspaces).toEqual([
     { dir: orphan.dir, projectRoot: orphan.root, bytes: expect.any(Number) },
   ]);
@@ -503,18 +537,16 @@ test('gc --json reports orphaned workspace directories and workspace build outpu
     detail: null,
     bytes: expect.any(Number),
   });
-  expect(outputs[recent.root]).toMatchObject({ willClear: false, reason: 'recently-used' });
   expect(outputs[busy.root]).toMatchObject({
     willClear: false,
     reason: 'in-use',
     detail: expect.stringMatching(/^in use: /),
   });
-  expect(raw).not.toMatch(/Swift|state\.json, logs/);
   expect(existsSync(orphan.dir)).toBe(true);
   expect(existsSync(join(stale.dir, 'derived-data'))).toBe(true);
 });
 
-test('gc --delete --json reports what it removed apart from what it kept', async () => {
+test('gc at high reports what it removed apart from what it kept', async () => {
   const orphan = goneWorkspace('deleted-worktree');
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
@@ -532,27 +564,25 @@ test('gc --delete --json reports what it removed apart from what it kept', async
     },
   });
 
-  const preview = (await gcJson({ olderThan: 3 })).payload;
+  const preview = (await gcJson({ dryRun: true, pressure: 'high' })).payload;
   expect(preview.results).toEqual([]);
-  for (const level of preview.ladder.levels)
-    expect(level.actions).toContainEqual(
-      expect.objectContaining({
-        rung: 1,
-        kind: 'delete-build-outputs',
-        target: stale.root,
-        outcome: 'would',
-        bytes: expect.any(Number),
-      }),
-    );
-  expect(
-    preview.ladder.levels[0].actions.find((action: { target: string }) => action.target === stale.root).bytes,
-  ).toBeGreaterThan(0);
-  expect(preview.ladder.workspaces).toContainEqual(
-    expect.objectContaining({ path: stale.root, stage: 'stopped', since: expect.any(String) }),
+  expect(preview.actions).toContainEqual(
+    expect.objectContaining({
+      rung: 1,
+      kind: 'delete-build-outputs',
+      target: stale.root,
+      outcome: 'would',
+      bytes: expect.any(Number),
+    }),
   );
-  expect(preview.ladder.workspaces).toContainEqual(expect.objectContaining({ path: busy.root, stage: 'running' }));
+  expect(
+    preview.actions.find(
+      (action: { kind: string; target: string }) =>
+        action.kind === 'delete-build-outputs' && action.target === stale.root,
+    ).bytes,
+  ).toBeGreaterThan(0);
   for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
-  const { payload } = await gcJson({ olderThan: 3, delete: true });
+  const { payload } = await gcJson({ pressure: 'high' });
 
   expect(payload.results).toEqual(
     expect.arrayContaining([
@@ -576,14 +606,13 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   expect(existsSync(orphan.dir)).toBe(false);
 });
 
-test('--delete removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
+test('gc removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
   const orphan = goneWorkspace('linked-away');
   const target = join(projects, 'workspace-target');
   renameSync(orphan.dir, target);
   symlinkSync(target, orphan.dir, 'junction');
 
-  const output = await captureLog(() => runGc({ delete: true }));
-  expect(output).toContain(`Removed the orphaned workspace directory ${orphan.dir}`);
+  await gcJson({ pressure: 'normal' });
   expect(existsSync(orphan.dir)).toBe(false);
   expect(existsSync(join(target, 'workspace.json'))).toBe(true);
   expect(existsSync(join(target, 'state.json'))).toBe(true);
@@ -595,26 +624,26 @@ test('clearing the build outputs of a symlinked workspace directory keeps the li
   renameSync(dir, target);
   symlinkSync(target, dir, 'junction');
 
-  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
+  await deleteGcItem({ kind: 'workspace-outputs' });
   expect(existsSync(join(target, 'derived-data'))).toBe(false);
   expect(lstatSync(dir).isSymbolicLink()).toBe(true);
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
-test('--delete keeps an orphan whose native run started after the report', async () => {
+test('gc keeps an orphan whose native run started after the plan', async () => {
   const orphan = goneWorkspace('raced');
-  const original = console.log;
+  const plan = maintenancePreview.plannedMaintenance;
   let held = false;
-  console.log = (...args) => {
-    if (!held && String(args[0]).includes('Orphaned workspace directories')) {
-      holdNativeRun(orphan.root);
-      held = true;
-    }
-  };
+  const spy = vi.spyOn(maintenancePreview, 'plannedMaintenance').mockImplementation(async (...args) => {
+    const planned = await plan(...args);
+    holdNativeRun(orphan.root);
+    held = true;
+    return planned;
+  });
   try {
-    await runGc({ delete: true });
+    await gcJson({ pressure: 'normal' });
   } finally {
-    console.log = original;
+    spy.mockRestore();
   }
   expect(held).toBe(true);
   expect(existsSync(join(orphan.dir, 'workspace.json'))).toBe(true);
@@ -668,6 +697,19 @@ describe('workspaceInUse', () => {
     expect(workspaceInUse(root).join('\n')).toMatch(/native-run\.lock/);
   });
 
+  test('a native-run claim left by a dead owner with an unknown child names its path, owner and removal command', () => {
+    const { root } = goneWorkspace('stale-fingerprint');
+    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+      child: { record: null },
+      startedAt: '2026-11-12T05:23:46.715Z',
+    });
+    const [reason] = workspaceInUse(root);
+    expect(reason).toContain(claim);
+    expect(reason).toContain('pid 4242 (claimed 2026-11-12T05:23:46.715Z) is no longer running');
+    expect(reason).toContain(`rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`);
+  });
+
   test('a live build lock or slot naming the root marks it in use; one naming another root does not', () => {
     const { root } = goneWorkspace('building');
     plantClaim(join(tmpHome, 'build-locks', 'ios-other.lock'), 'exclusive', liveClaimOwner(), {
@@ -680,14 +722,16 @@ describe('workspaceInUse', () => {
     expect(workspaceInUse(root).join('\n')).toMatch(/live build slot/);
   });
 
-  test('a build lock that names no workspace does not mark every workspace in use, and gc names its remedy', async () => {
+  test('a build lock that names no workspace does not mark every workspace in use, and gc reports it unresolved', async () => {
     const { root } = goneWorkspace('unknown');
     const lock = exclusiveClaimDir(join(tmpHome, 'build-locks', 'ios-unknown.lock'));
     mkdirSync(lock, { recursive: true });
     writeFileSync(join(lock, 'torn.claim'), '{');
     expect(workspaceInUse(root)).toEqual([]);
-    const report = await captureLog(() => runGc({}));
-    expect(report).toContain(claimRemoveCommand(join(tmpHome, 'build-locks', 'ios-unknown.lock')));
+    const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+    expect(payload.sections.unresolvedBuildClaims).toContainEqual(
+      expect.objectContaining({ kind: 'lock', path: expect.stringContaining('ios-unknown.lock') }),
+    );
   });
 
   test('a held managed tunnel lock marks it in use', async () => {
@@ -752,13 +796,13 @@ describe('planning workspace build output clearing', () => {
     expect(busy?.keptReason).toMatch(/^in use: .*native-run/);
   });
 
-  test('--older-than keeps a workspace used more recently, and one whose last use is unknown', () => {
+  test('an age limit keeps a workspace used more recently, and one whose last use is unknown', () => {
     const [old, recent, unknown] = planWorkspaceOutputs(
       [entry(), entry({ lastUsed: now - 2 * DAY_MS }), entry({ lastUsed: NaN })],
       { olderThan: 3, now },
     );
     expect(old?.willClear).toBe(true);
-    expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within --older-than 3' });
+    expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within 3 days' });
     expect(unknown).toMatchObject({ keptCode: 'last-use-unknown', keptReason: 'its last use is unknown' });
   });
 
@@ -780,7 +824,7 @@ describe('planning workspace build output clearing', () => {
   });
 });
 
-test('gc --delete --cache workspaces measures and clears macOS outputs while preserving runtime and workspace state', async () => {
+test('the workspace-outputs item measures and clears macOS outputs while preserving runtime and workspace state', async () => {
   const { root, dir } = builtWorkspace('app', { usedDaysAgo: 1 });
   mkdirSync(join(dir, 'macos', 'runtime.lock'));
   writeFileSync(join(dir, 'macos', 'runtime.lock', 'marker'), 'runtime');
@@ -795,20 +839,13 @@ test('gc --delete --cache workspaces measures and clears macOS outputs while pre
   writeFileSync(join(cacheDir, 'entry', 'blob'), 'x'.repeat(4096));
   register({ dir: cacheDir, name: 'Shared cache' });
 
-  const report = await captureLog(() => runGc({ cache: 'workspaces' }));
-  expect(report).toMatch(/Workspace build outputs \(detected\)/);
-  expect(report).toMatch(/Swift/);
-  expect(report).toContain(`${root} (idle 1d)`);
-  expect(report).toContain('would be LIGHTENED');
-  expect(report).not.toContain('Shared cache');
-
-  const { payload } = await gcJson({ cache: 'workspaces' });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   expect(payload.sections.workspaceBuildOutputs).toEqual([
     expect.objectContaining({ projectRoot: root, willClear: true, bytes: expect.any(Number) }),
   ]);
   expect(payload.sections.workspaceBuildOutputs[0].bytes).toBeGreaterThanOrEqual(OUTPUTS.length * 64 * 1024);
 
-  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  await deleteGcItem({ kind: 'workspace-outputs' });
   for (const output of OUTPUTS) expect(existsSync(join(dir, output))).toBe(false);
   expect(statSync(join(dir, 'macos')).isDirectory()).toBe(true);
   expect(readFileSync(join(dir, 'macos', 'runtime.lock', 'marker'), 'utf8')).toBe('runtime');
@@ -824,7 +861,7 @@ test('gc --delete --cache workspaces measures and clears macOS outputs while pre
 });
 
 test.each(['running', 'building', 'unverified', 'claimed'])(
-  'gc --delete --cache workspaces keeps all outputs of a %s macOS session',
+  'the workspace-outputs item keeps all outputs of a %s macOS session',
   async (session) => {
     const { root, dir } = builtWorkspace('macos-busy', { usedDaysAgo: 30 });
     const owner = { ...liveClaimOwner(), startedAtMicros: 1 };
@@ -844,66 +881,57 @@ test.each(['running', 'building', 'unverified', 'claimed'])(
     });
     if (session === 'claimed') plantClaim(join(dir, 'macos', 'runtime.lock'), 'exclusive', liveClaimOwner());
 
-    const { payload } = await gcJson({ cache: 'workspaces', delete: true });
-    expect(payload.sections.workspaceBuildOutputs).toEqual([
-      expect.objectContaining({ projectRoot: root, willClear: false, reason: 'in-use' }),
-    ]);
-    expect(payload.results).toContainEqual(
-      expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: root }),
-    );
+    const { results } = await deleteGcItem({ kind: 'workspace-outputs' });
+    expect(results).toContainEqual(expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: root }));
     for (const output of OUTPUTS) expect(existsSync(join(dir, output, 'nested', 'blob'))).toBe(true);
   },
 );
 
-test('gc --delete --cache workspaces never follows a symlinked macos directory', async () => {
+test('the workspace-outputs item never follows a symlinked macos directory', async () => {
   const { dir } = builtWorkspace('macos-linked', { outputs: ['derived-data'] });
   const target = join(projects, 'macos-target');
   mkdirSync(join(target, 'build'), { recursive: true });
   writeFileSync(join(target, 'build', 'blob'), 'keep');
   symlinkSync(target, join(dir, 'macos'), 'junction');
 
-  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  await deleteGcItem({ kind: 'workspace-outputs' });
   expect(existsSync(join(dir, 'derived-data'))).toBe(false);
   expect(lstatSync(join(dir, 'macos')).isSymbolicLink()).toBe(true);
   expect(readFileSync(join(target, 'build', 'blob'), 'utf8')).toBe('keep');
 });
 
-test('gc --cache workspaces lists and clears a workspace with only macOS outputs', async () => {
+test('gc lists, and the workspace-outputs item clears, a workspace with only macOS outputs', async () => {
   const { root, dir } = builtWorkspace('macos-only', { outputs: MACOS_OUTPUTS });
 
-  const { payload } = await gcJson({ cache: 'workspaces' });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   expect(payload.sections.workspaceBuildOutputs).toEqual([
     expect.objectContaining({ projectRoot: root, willClear: true, bytes: expect.any(Number) }),
   ]);
   expect(payload.sections.workspaceBuildOutputs[0].bytes).toBeGreaterThanOrEqual(3 * 64 * 1024);
 
-  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  await deleteGcItem({ kind: 'workspace-outputs' });
   for (const output of MACOS_OUTPUTS) expect(existsSync(join(dir, output))).toBe(false);
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
-test('gc --delete --cache workspaces clears idle workspaces, and --older-than limits it by last use', async () => {
+test('the workspace-outputs item clears idle workspaces and keeps one in use', async () => {
   const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces', olderThan: 3 }));
+  const { results } = await deleteGcItem({ kind: 'workspace-outputs' });
   for (const output of OUTPUTS) {
     expect(existsSync(join(stale.dir, output))).toBe(false);
-    expect(existsSync(join(recent.dir, output))).toBe(true);
-    expect(existsSync(join(busy.dir, output))).toBe(true);
-  }
-  expect(report).toMatch(/Kept the build outputs of .*busy: in use/);
-
-  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
-  for (const output of OUTPUTS) {
     expect(existsSync(join(recent.dir, output))).toBe(false);
     expect(existsSync(join(busy.dir, output))).toBe(true);
   }
+  expect(results).toContainEqual(
+    expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: busy.root }),
+  );
 });
 
-test('plain gc --delete leaves a workspace whose dev server runs, and --cache workspaces lightens it, but never a building or just-built one, or the build cache', async () => {
+test('gc at high leaves a workspace whose dev server runs, and the workspace-outputs item lightens it, but never a building or just-built one, or the build cache', async () => {
   const iosBuild = (minutesAgo: number) => ({
     lastIosBuild: {
       platform: 'ios',
@@ -938,7 +966,7 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
   mkdirSync(artifact, { recursive: true });
   writeFileSync(join(artifact, 'binary'), 'artifact');
 
-  const { payload } = await gcJson({ cache: 'workspaces' });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   expect(
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
   ).toMatchObject({
@@ -950,12 +978,12 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
     ]),
   });
 
-  await captureLog(() => runGc({ delete: true }));
+  await gcJson({ pressure: 'high' });
   for (const output of OUTPUTS) expect(existsSync(join(active.dir, output))).toBe(true);
   expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(true);
   expect(existsSync(join(active.root, '.dd'))).toBe(true);
 
-  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
+  const { results } = await deleteGcItem({ kind: 'workspace-outputs' });
   for (const output of OUTPUTS) {
     expect(existsSync(join(active.dir, output))).toBe(false);
     expect(existsSync(join(building.dir, output))).toBe(true);
@@ -969,9 +997,11 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
   expect(readFileSync(join(active.root, 'android', 'build', 'tracked'), 'utf8')).toBe('committed');
   expect(readFileSync(join(active.root, '.build', 'keep'), 'utf8')).toBe('untracked, not ignored');
   expect(readFileSync(join(artifact, 'binary'), 'utf8')).toBe('artifact');
-  expect(report).toMatch(/Lightened .*active: freed/);
-  expect(report).toMatch(/Kept the build outputs of .*building: in use: .*native-run/);
-  expect(report).toMatch(/Kept the build outputs of .*recent: ran ios, android or macos within the last 15 minutes/);
+  expect(results).toContainEqual(
+    expect.objectContaining({ kind: 'workspaceOutputs', status: 'done', label: active.root }),
+  );
+  for (const root of [building.root, recent.root])
+    expect(results).toContainEqual(expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: root }));
 });
 
 function loggedWorkspace(name: string): { root: string; logs: string } {
@@ -1027,7 +1057,7 @@ test.each(['before replacement', 'after replacement'])(
   },
 );
 
-test('gc --json reports the logs of every workspace, and --delete trims oversized capped logs of idle workspaces', async () => {
+test('gc reports the logs of every workspace, and trims oversized capped logs of idle workspaces', async () => {
   const quiet = loggedWorkspace('quiet');
   writeFileSync(join(quiet.logs, 'metro.ndjson'), '{}\n');
   const big = loggedWorkspace('big');
@@ -1043,7 +1073,7 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   oversizedLog(join(collecting.logs, 'device.ndjson'));
   registerCollector(collecting.root, 'ios', { pid: 1 });
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   const byRoot = Object.fromEntries(
     payload.sections.workspaceLogs.map((w: { projectRoot: string }) => [w.projectRoot, w]),
   );
@@ -1058,8 +1088,10 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   const longAgo = new Date(Math.floor((Date.now() - 30 * DAY_MS) / 1000) * 1000);
   utimesSync(join(big.logs, 'device.ndjson'), longAgo, longAgo);
   const buildBytes = statSync(join(big.logs, 'build-ios.ndjson')).size;
-  const output = await captureLog(() => runGc({ delete: true }));
-  expect(output).toContain(`Trimmed the logs of ${big.root}`);
+  const acted = (await gcJson({ pressure: 'normal' })).payload;
+  expect(acted.actions).toContainEqual(
+    expect.objectContaining({ kind: 'trim-workspace-logs', workspace: big.root, outcome: 'done' }),
+  );
   for (const name of ['device.ndjson', 'metro.ndjson.1']) {
     const text = readFileSync(join(big.logs, name), 'utf8');
     expect(text.length).toBeLessThanOrEqual(LOG_ROTATE_BYTES);
@@ -1071,7 +1103,6 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   expect(statSync(join(quiet.logs, 'device.ndjson.1')).size).toBe(rotated.length);
   expect(statSync(join(busy.logs, 'device.ndjson')).size).toBeGreaterThan(LOG_ROTATE_BYTES);
   expect(statSync(join(collecting.logs, 'device.ndjson')).size).toBeGreaterThan(LOG_ROTATE_BYTES);
-  expect(output).toMatch(/Kept the logs of .*collecting: a device log collector is recorded for ios/);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -1083,8 +1114,8 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(dir, 'derived-data', 'nested', 'blob'), 'x');
     upsertProject(root, { metroPort: 8100 });
 
-    await captureLog(() => runGc({ delete: true }));
-    await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
+    await gcJson({ pressure: 'normal' });
+    await deleteGcItem({ kind: 'workspace-outputs' });
     expect(existsSync(join(dir, 'derived-data', 'nested', 'blob'))).toBe(true);
     expect(getProject(root)).toBeTruthy();
   },
@@ -1183,10 +1214,23 @@ describe('linked worktree sweep classification', () => {
     ).toBe('merged into origin/main, 2 uncommitted files archived first');
   });
 
-  test('pod install churn alone does not keep a worktree', () => {
+  test('pod install churn proven by its output does not keep a worktree, and the same files unproven do', () => {
+    const porcelain = [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'];
     expect(
-      worktreeSkipReason(linked({ porcelain: [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'] }), 7),
+      worktreeSkipReason(linked({ porcelain, podChurn: ['ios/Podfile.lock', 'ios/App.xcodeproj/project.pbxproj'] }), 7),
     ).toBe(null);
+    expect(worktreeSkipReason(linked({ porcelain }), 7)?.code).toBe('dirty');
+    expect(worktreeSkipReason(linked({ porcelain, podChurn: ['ios/Podfile.lock'] }), 7)?.code).toBe('dirty');
+  });
+
+  test('a tracked file hidden from git status keeps the worktree even when its changes could be archived', () => {
+    const hidden = 'its tracked file a.txt is marked skip-worktree, so git status may not show an edit to it';
+    expect(worktreeSkipReason(linked({ hiddenEdit: hidden, archiveDirty: true, merge: merged() }), null)).toMatchObject(
+      {
+        code: 'dirty',
+        text: `dirty: ${hidden}`,
+      },
+    );
   });
 
   test('watchman cookies alone do not keep a worktree', () => {
@@ -1525,9 +1569,13 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
   return { repo, remote, worktrees, git };
 }
 
-function repoWithTwoBranches({ registerWorktrees = true }: { registerWorktrees?: boolean } = {}) {
+function repoWithTwoBranches({
+  registerWorktrees = true,
+  files = {},
+}: { registerWorktrees?: boolean; files?: Record<string, string> } = {}) {
   const { repo, remote, worktrees, git } = gitRepoWithWorktrees(['merged', 'open'], 'repo', {
-    '.gitignore': '.claude/\n',
+    '.gitignore': '.claude/\nPods/\n',
+    ...files,
   });
   git('remote set-head origin --auto');
   for (const [name, path] of Object.entries(worktrees)) {
@@ -1564,11 +1612,15 @@ test.each(['remove', 'branch delete', 'pod restore'] as const)(
     const { repo, worktrees } = gitRepoWithWorktrees(
       ['cleanup-refusal'],
       'repo',
-      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original' } : {},
+      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original', '.gitignore': 'Pods/\n' } : {},
     );
     const path = worktrees['cleanup-refusal'];
     if (!path) throw new Error('The fixture worktree is missing');
-    if (phase === 'pod restore') writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
+    if (phase === 'pod restore') {
+      writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
+      mkdirSync(join(path, 'ios', 'Pods'), { recursive: true });
+      writeFileSync(join(path, 'ios', 'Pods', 'Manifest.lock'), 'pod churn');
+    }
     upsertProject(path, { metroPort: null, worktreeBranch: 'cleanup-refusal', worktreeBranchOwned: true });
     resetExecutor();
     const executor = getExecutor();
@@ -1738,7 +1790,8 @@ test.each([
       },
     });
 
-    const { payload } = await gcJson({ worktrees: true, delete: true });
+    const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+    await gcJson({ pressure: 'critical' });
 
     const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === slow);
     expect(entry).toMatchObject({ willRemove: false, reason, detail: expect.stringMatching(detail) });
@@ -1747,9 +1800,8 @@ test.each([
   60_000,
 );
 
-test('gc --worktrees reports each linked worktree, and --delete removes only the clean idle ones', async () => {
-  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty', 'racing']);
-  const reported = { idle: realpathSync.native(worktrees.idle!), racing: realpathSync.native(worktrees.racing!) };
+test('gc at critical removes only the clean idle linked worktrees, and only while maintenance.removeIdleWorktrees is on', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty']);
   for (const [name, path] of Object.entries(worktrees)) {
     upsertProject(path, { metroPort: null });
     recordWorkspaceUse(path, new Date(Date.now() - (name === 'fresh' ? 1 : 10) * DAY_MS));
@@ -1758,36 +1810,18 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   recordWorkspaceUse(repo, new Date(Date.now() - 30 * DAY_MS));
   writeFileSync(join(worktrees.dirty!, 'scratch.txt'), 'wip');
 
-  const originalError = console.error;
-  const errors: string[] = [];
-  console.error = (...args) => errors.push(args.join(' '));
-  const original = console.log;
-  const lines: string[] = [];
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-    if (String(args[0]).startsWith('Linked worktrees')) writeFileSync(join(worktrees.racing!, 'late.txt'), 'x');
-  };
-  try {
-    await runGc({ worktrees: true, delete: true });
-  } finally {
-    console.log = original;
-    console.error = originalError;
-  }
-  const output = lines.join('\n');
-  expect(output).toContain('Linked worktrees (2 removable, 3 kept)');
-  expect(output).toContain('idle 7d or more (the default without --older-than)');
-  expect(output).toMatch(/kept: source checkout/);
-  expect(output).toMatch(/kept: recently used 1d ago/);
-  expect(output).toMatch(/kept: dirty/);
+  await gcJson({ pressure: 'critical' });
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES', 'true');
+  const { payload } = await gcJson({ pressure: 'critical' });
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'remove-worktree', target: worktrees.idle, outcome: 'done' }),
+  );
   expect(existsSync(worktrees.idle!)).toBe(false);
   expect(getProject(worktrees.idle!)).toBe(null);
-  expect(output).toContain(`Removed the worktree ${reported.idle}`);
-  expect(existsSync(worktrees.racing!)).toBe(true);
-  expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
-  expect(errors.join('\n')).toContain(`Kept the worktree ${reported.racing}`);
   for (const name of ['fresh', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
-  expect(process.exitCode).toBe(1);
 }, 30_000);
 
 test('gc reports the in-tree build state of each worktree with its size', async () => {
@@ -1811,21 +1845,13 @@ test('gc reports the in-tree build state of each worktree with its size', async 
   writeFileSync(join(nested, 'node_modules', 'blob'), Buffer.alloc(10_000));
   upsertProject(nested, { metroPort: null });
 
-  const { payload } = await gcJson({ worktrees: true });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
-  const source = payload.sections.linkedWorktrees.find(
-    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(repo),
-  );
-  expect(source.buildState.dirs).toEqual([]);
   const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built);
   const dirs: { path: string; bytes: number }[] = entry.buildState.dirs;
   expect(dirs.map((dir) => dir.path)).toEqual(['node_modules', '.pnpm-store', 'android/app/build']);
   for (const dir of dirs) expect(dir.bytes).toBeGreaterThan(0);
   expect(entry.buildState.bytes).toBe(dirs.reduce((sum, dir) => sum + dir.bytes, 0));
-  const report = await captureLog(() => runGc({ worktrees: true }));
-  expect(report).toMatch(
-    /in-tree build state \S+: node_modules \S+(?: \(\S+ its own\))?, \.pnpm-store \S+, android\/app\/build \S+/,
-  );
 }, 30_000);
 
 test('gc lists DerivedData, CMake and other xcodebuild output in a worktree, with the other-named output marked report-only', async () => {
@@ -1842,7 +1868,7 @@ test('gc lists DerivedData, CMake and other xcodebuild output in a worktree, wit
     writeFileSync(join(root, 'android', 'app', '.cxx', 'blob'), Buffer.alloc(100_000));
   }
 
-  const { payload } = await gcJson({ worktrees: true });
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
   for (const root of [built, loose]) {
     const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === root);
@@ -1851,10 +1877,6 @@ test('gc lists DerivedData, CMake and other xcodebuild output in a worktree, wit
     expect(dirs.map((dir) => dir.path)).toEqual(['.dd', 'packages/rn-tester/build-device', 'android/app/.cxx']);
     expect(dirs.filter((dir) => dir.reportOnly).map((dir) => dir.path)).toEqual(['packages/rn-tester/build-device']);
   }
-  const report = await captureLog(() => runGc({ worktrees: true }));
-  expect(report).toMatch(
-    /\.dd \S+(?: \(\S+ its own\))?, packages\/rn-tester\/build-device \S+.*xcodebuild output, never deleted/,
-  );
 }, 30_000);
 
 test('the maintenance ladder collects .dd and CMake output of a registered worktree only, and never other-named xcodebuild output', async () => {
@@ -2006,7 +2028,7 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
 }
 
 async function buildStateOf(built: string) {
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   return payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built)
     ?.buildState;
 }
@@ -2044,8 +2066,7 @@ test('a du that times out leaves only its own directory unmeasured, and gc measu
     { path: '.build', bytes: null, privateBytes: null },
   ]);
   expect(state.dirs[0].bytes).toBeGreaterThan(0);
-  const report = await captureLog(() => runGc({}));
-  expect(report).toMatch(/in-tree build state size unknown: android\/app\/build \S+, \.build size unknown/);
+  await gcJson({ dryRun: true, pressure: 'normal' });
   expect(calls.filter((args) => args.includes(join(built, '.build')))).toHaveLength(2);
   expect(calls.filter((args) => args.includes(join(built, 'android', 'app', 'build')))).toHaveLength(1);
 }, 30_000);
@@ -2067,7 +2088,7 @@ test('gc reports a directory under .worktrees that git does not list, and never 
   const foreign = join(repo, '.worktrees', 'foreign');
   inOther(`worktree add -q "${foreign}" -b foreign`);
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
   expect(payload.sections.unlistedWorktreeDirectories).toEqual([
     {
@@ -2078,54 +2099,13 @@ test('gc reports a directory under .worktrees that git does not list, and never 
     },
   ]);
   expect(payload.sections.unlistedWorktreeDirectories[0].bytes).toBeGreaterThan(0);
-  const report = await captureLog(() => runGc({ delete: true }));
-  expect(report).toContain('Directories under .worktrees that git does not list as worktrees (1)');
+  await gcJson({ pressure: 'critical' });
   expect(existsSync(join(lost, 'src', 'work.ts'))).toBe(true);
   expect(existsSync(listed)).toBe(true);
   expect(existsSync(foreign)).toBe(true);
 }, 30_000);
 
-test('gc --worktrees --json reports each worktree verdict with its idle threshold and no registry keys', async () => {
-  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh']);
-  for (const [name, path] of Object.entries(worktrees)) {
-    upsertProject(path, { metroPort: null });
-    recordWorkspaceUse(path, new Date(Date.now() - (name === 'fresh' ? 1 : 10) * DAY_MS));
-  }
-  upsertProject(repo, { metroPort: null });
-
-  const { payload } = await gcJson({ worktrees: true });
-
-  expect(payload.worktreeSweep).toEqual({ olderThan: 7, defaulted: true });
-  const byPath = Object.fromEntries(
-    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
-  );
-  expect(byPath[realpathSync.native(worktrees.idle!)]).toEqual({
-    path: expect.any(String),
-    idleDays: 10,
-    mergedInto: null,
-    pullRequest: null,
-    pullRequestUnknown: 'gh is not installed',
-    willRemove: true,
-    reason: null,
-    detail: 'idle 10d',
-    eligibleAt: null,
-    buildState: { bytes: 0, dirs: [] },
-  });
-  expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
-    willRemove: false,
-    reason: 'recently-used',
-    detail: expect.stringMatching(/^recently used 1d ago; merge state unknown: origin\/HEAD is not set/),
-  });
-  expect(byPath[realpathSync.native(repo)]).toMatchObject({ willRemove: false, reason: 'source-checkout' });
-  expect(existsSync(worktrees.idle!)).toBe(true);
-
-  expect((await gcJson({ worktrees: true, olderThan: 30 })).payload.worktreeSweep).toEqual({
-    olderThan: 30,
-    defaulted: false,
-  });
-}, 30_000);
-
-test('gc --delete removes a worktree whose pull request merged or closed only when nothing would be lost', async () => {
+test('gc removes a worktree whose pull request merged or closed only when nothing would be lost', async () => {
   const names = ['shipped', 'abandoned', 'unsaved', 'wip', 'gone', 'noPr'];
   const { worktrees } = gitRepoWithWorktrees(names);
   const git = (args: string, cwd: string) =>
@@ -2194,7 +2174,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   };
   const ghCalls = answerGh((branch) => pulls[branch] ?? []);
 
-  const { payload } = (await checkWorktrees(), await gcJson({}));
+  const { payload } = (await checkWorktrees(), await gcJson({ dryRun: true, pressure: 'normal' }));
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
@@ -2225,13 +2205,13 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
     /^query=.*b0: pullRequests\(headRefName: \$b0, states: \[OPEN, CLOSED, MERGED\], first: 20,.*headRefOid/,
   );
 
-  await captureLog(() => runGc({ delete: true }));
+  await gcJson({ pressure: 'normal' });
   expect(existsSync(worktrees.shipped!)).toBe(false);
   expect(existsSync(worktrees.abandoned!)).toBe(false);
   for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
 }, 240_000);
 
-test('a signed-out or unresponsive gh is asked once per repository per gc run, and every worktree says why', async () => {
+test('a signed-out or unresponsive gh is asked once per repository per worktree check, and every worktree says why', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const current = getExecutor();
@@ -2249,16 +2229,15 @@ test('a signed-out or unresponsive gh is asked once per repository per gc run, a
         throw Object.assign(new Error('gh failed'), failure);
       },
     });
-    const { payload } = await gcJson({ delete: true });
+    const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() });
     expect(calls).toBe(1);
-    expect(payload.sections.linkedWorktrees.map((w: { pullRequestUnknown: string }) => w.pullRequestUnknown)).toEqual([
-      reason,
-      reason,
-    ]);
+    expect(
+      sweep.worktrees.map((w) => (w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null)),
+    ).toEqual([reason, reason]);
   }
 }, 60_000);
 
-test('gc asks GitHub once per repository, and a repository whose query fails leaves the others answered', async () => {
+test('the worktree check asks GitHub once per repository, and a repository whose query fails leaves the others answered', async () => {
   const first = gitRepoWithWorktrees(['alpha', 'beta'], 'first');
   const second = gitRepoWithWorktrees(['gamma'], 'second');
   const heads: Record<string, string> = {};
@@ -2289,9 +2268,9 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
     },
   });
 
-  const { payload } = await gcJson({ delete: true });
+  const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() });
   const byName = Object.fromEntries(
-    payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+    gcReportSections({ worktreeSweep: sweep }).linkedWorktrees.map((w) => [basename(w.path), w]),
   );
   expect(calls.map(({ cwd }) => cwd).toSorted()).toEqual(
     [realpathSync.native(first.repo), realpathSync.native(second.repo)].toSorted(),
@@ -2301,7 +2280,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
   expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
 }, 60_000);
 
-test('one gc report lists simulators and AVDs once for its report and once more for its ladder preview, which lists simulators only on macOS, however many worktrees own devices', async () => {
+test('a gc dry run lists simulators and AVDs the same number of times however many worktrees own devices', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const real = getExecutor();
@@ -2339,25 +2318,24 @@ test('one gc report lists simulators and AVDs once for its report and once more 
   });
   const baseline = async () => {
     lists = { sims: 0, avds: 0 };
-    return (await gcJson({})).payload;
+    return (await gcJson({ dryRun: true, pressure: 'normal' })).payload;
   };
-  await baseline();
-  const without = lists;
-  for (const [name, path] of Object.entries(worktrees)) {
-    upsertProject(path, {
+  const own = (name: string) =>
+    upsertProject(worktrees[name]!, {
       platforms: {
         ios: { deviceUdid: `U-${name}`, owned: true, deviceName: `stim-${name}` },
         android: { avdName: `stim-${name}`, owned: true },
       },
     });
-  }
+  own('two');
+  await baseline();
+  const one = lists;
+  own('one');
+  own('three');
 
   const payload = await baseline();
 
-  expect(lists).toEqual({
-    sims: without.sims + (process.platform === 'darwin' ? 2 : 1),
-    avds: without.avds + 2,
-  });
+  expect(lists).toEqual(one);
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
@@ -2369,7 +2347,7 @@ test('one gc report lists simulators and AVDs once for its report and once more 
     udid: 'U-two',
     until: new Date(Date.now() + 600_000).toISOString(),
   });
-  const afterStop = (await gcJson({})).payload.sections.linkedWorktrees.find(
+  const afterStop = (await gcJson({ dryRun: true, pressure: 'normal' })).payload.sections.linkedWorktrees.find(
     (w: { path: string }) => basename(w.path) === 'two',
   );
   expect(afterStop.reason).not.toBe('in-use');
@@ -2411,56 +2389,30 @@ test('worktree remove accepts local-only commits that a merged pull request hold
   expect(existsSync(worktrees.closed!)).toBe(true);
 }, 60_000);
 
-test('a worktree gc --delete --worktrees keeps because it was used after the report is not a failure', async () => {
+test('an idle worktree gc at critical keeps because it was used after the plan is not a failure', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES', 'true');
   const { worktrees } = gitRepoWithWorktrees(['reused']);
   const reused = worktrees.reused!;
   upsertProject(reused, { metroPort: null });
   recordWorkspaceUse(reused, new Date(Date.now() - 10 * DAY_MS));
-
-  const originalError = console.error;
-  console.error = () => {};
-  const original = console.log;
-  const lines: string[] = [];
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-    if (String(args[0]).startsWith('Linked worktrees')) recordWorkspaceUse(reused);
-  };
+  const plan = sweepPasses.planWorktrees;
+  const spy = vi.spyOn(sweepPasses, 'planWorktrees').mockImplementation(async (...args) => {
+    const planned = await plan(...args);
+    if (planned.actions.some((action) => action.target === reused)) recordWorkspaceUse(reused);
+    return planned;
+  });
+  let payload;
   try {
-    await runGc({ worktrees: true, delete: true });
+    ({ payload } = await gcJson({ pressure: 'critical' }));
   } finally {
-    console.log = original;
-    console.error = originalError;
+    spy.mockRestore();
   }
   expect(existsSync(reused)).toBe(true);
-  expect(lines.join('\n')).toMatch(/Kept the worktree .*reused: used 0d ago since gc checked it/);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'remove-worktree', target: reused, outcome: 'kept' }),
+  );
+  expect(payload.failures).toBe(0);
   expect(process.exitCode).not.toBe(1);
-}, 30_000);
-
-test('gc refuses --cache combined with --worktrees and removes nothing', async () => {
-  const { worktrees } = gitRepoWithWorktrees(['idle']);
-  upsertProject(worktrees.idle!, { metroPort: null });
-  recordWorkspaceUse(worktrees.idle!, new Date(Date.now() - 30 * DAY_MS));
-  const { dir } = builtWorkspace('built', { usedDaysAgo: 30 });
-
-  const originalError = console.error;
-  const errors: string[] = [];
-  console.error = (...args) => errors.push(args.join(' '));
-  let output: string;
-  try {
-    output = await captureLog(() => runGc({ cache: 'workspaces', worktrees: true, delete: true }));
-  } finally {
-    console.error = originalError;
-  }
-  expect(errors.join('\n')).toContain('STIM_BAD_ARG');
-  expect(output).toBe('');
-  expect(process.exitCode).toBe(1);
-
-  process.exitCode = 0;
-  const { payload } = await gcJson({ cache: 'workspaces', worktrees: true, delete: true });
-  expect(payload).toEqual({ code: 'STIM_BAD_ARG', message: expect.any(String), remedy: expect.any(String) });
-  expect(process.exitCode).toBe(1);
-  expect(existsSync(worktrees.idle!)).toBe(true);
-  expect(existsSync(join(dir, 'derived-data'))).toBe(true);
 }, 30_000);
 
 test('worktree removal re-checks for new work under its removal locks', async () => {
@@ -2495,7 +2447,7 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
     git('config user.name test', cwd);
   };
   const commit = (cwd: string, file: string) => {
-    writeFileSync(join(cwd, file), file);
+    writeFileSync(join(cwd, file), file === 'package.json' ? JSON.stringify({ dependencies: { expo: '*' } }) : file);
     git(`add ${file}`, cwd);
     git(`commit -q -m ${file}`, cwd);
   };
@@ -2578,26 +2530,40 @@ test('gc keeps a merged worktree that holds another worktree under an ignored pa
   git(`worktree add -q "${inner}" -b inner`);
   writeFileSync(join(inner, 'wip.txt'), 'work');
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
   expect(entry).toMatchObject({ willRemove: false, reason: 'nested-worktree' });
 
-  await captureLog(() => runGc({ delete: true }));
+  await gcJson({ pressure: 'normal' });
   expect(existsSync(join(inner, 'wip.txt'))).toBe(true);
   expect(existsSync(merged)).toBe(true);
 }, 240_000);
 
-test('gc --delete keeps merged linked worktrees where no stim command ran, and removes the one a stim command used', async () => {
+test('gc keeps merged linked worktrees where no stim command ran, and removes the one a stim command used', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
   upsertProject(worktrees.merged ?? '', { metroPort: null });
   recordWorkspaceUse(worktrees.merged ?? '');
 
-  const output = await captureLog(() => runGc({ delete: true }));
+  await gcJson({ pressure: 'normal' });
 
   expect(existsSync(worktrees.merged ?? '')).toBe(false);
   for (const name of ['squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
-  expect(output).toContain('kept: not registered in this Stim home: no project or workspace record names it');
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
+}, 240_000);
+
+test('gc lists a merged worktree in a maintenance.discoverRoots folder and keeps it while it is recent, with no workspace directory', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const config = loadConfig();
+  if (!config) throw new Error('no config');
+  saveConfig({ ...config, maintenance: { discoverRoots: [projects] } });
+  const before = listWorkspaceDirs().length;
+
+  const { payload } = await gcJson({ pressure: 'normal' });
+
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+  expect(payload.discovered.map((entry: { path: string }) => basename(entry.path))).toContain('merged');
+  expect(listWorkspaceDirs()).toHaveLength(before);
 }, 240_000);
 
 test('a worktree only a workspace.json names counts as used', async () => {
@@ -2605,18 +2571,20 @@ test('a worktree only a workspace.json names counts as used', async () => {
   const merged = worktrees.merged ?? '';
   ensureWorkspaceStorage(merged);
 
-  const output = await captureLog(() => runGc({ delete: true }));
+  const { payload } = await gcJson({ pressure: 'normal' });
 
   expect(existsSync(merged)).toBe(false);
   expect(existsSync(worktrees.squashed ?? '')).toBe(true);
-  expect(output).toContain('Removed the worktree');
+  expect(payload.actions).toContainEqual(expect.objectContaining({ kind: 'remove-worktree', outcome: 'done' }));
 }, 240_000);
 
-test('gc --delete keeps a finished worktree pinned with maintenance.keep', async () => {
+test('gc keeps a finished worktree pinned with maintenance.keep', async () => {
   const { worktrees } = repoWithMergedBranches();
   writeFileSync(join(worktrees.merged ?? '', '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
 
-  const { payload } = await gcJson({ delete: true });
+  await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  await gcJson({ pressure: 'normal' });
 
   const entry = payload.sections.linkedWorktrees.find(
     (w: { path: string }) => realpathSync.native(w.path) === worktrees.merged,
@@ -2626,14 +2594,27 @@ test('gc --delete keeps a finished worktree pinned with maintenance.keep', async
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
-test('gc --delete keeps a finished worktree a running agent session works in', async () => {
+test('gc at critical keeps finished worktrees while maintenance.removeFinishedWorktrees is false', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'critical' });
+
+  expect(existsSync(worktrees.merged ?? '')).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(true);
+}, 240_000);
+
+test('gc keeps a finished worktree a running agent session works in', async () => {
   const { worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';
   vi.spyOn(agentSessions, 'discoverAgentSessions').mockResolvedValue([
     { tool: 'claude-code', sessionId: 'live-session', cwd: join(merged, 'apps') },
   ]);
 
-  const { payload } = await gcJson({ delete: true });
+  await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  await gcJson({ pressure: 'normal' });
 
   const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
   expect(entry).toMatchObject({
@@ -2665,11 +2646,10 @@ test('maintenance clears no node_modules or build output in a worktree no stim c
   expect(paths).not.toContain(worktrees.rebased);
 }, 240_000);
 
-test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
+test('gc removes merged worktrees, squash merges included, after fetching the default branch', async () => {
   const { repo, worktrees, git } = repoWithMergedBranches();
 
-  const { payload } = (await checkWorktrees(), await gcJson({}));
-  expect(payload.worktreeSweep).toBe(null);
+  const { payload } = (await checkWorktrees(), await gcJson({ dryRun: true, pressure: 'normal' }));
   const byPath = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
   );
@@ -2695,9 +2675,11 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(byPath[worktrees.open!]).toMatchObject({ willRemove: false, reason: 'not-merged' });
   expect(byPath[worktrees.dirty!]).toMatchObject({ willRemove: false, reason: 'dirty' });
 
-  const output = await captureLog(() => runGc({ delete: true }));
-  expect(output).toContain(`Removed the worktree ${worktrees.merged} (merged into origin/main)`);
-  expect(output).toContain(`Removed the worktree ${worktrees.squashed} (merged into origin/main)`);
+  const acted = (await gcJson({ pressure: 'normal' })).payload;
+  for (const name of ['merged', 'squashed'])
+    expect(acted.actions).toContainEqual(
+      expect.objectContaining({ kind: 'remove-worktree', target: worktrees[name], outcome: 'done' }),
+    );
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name]!)).toBe(false);
   for (const name of ['fresh', 'followup', 'reused', 'evil', 'spaced', 'open', 'dirty']) {
     expect(existsSync(worktrees[name]!)).toBe(true);
@@ -2760,13 +2742,13 @@ function fetchHeadOf(repo: string): string {
   }).trim();
 }
 
-test('plain gc fetches nothing and asks gh nothing, shows what the maintenance worktree check last learned, and --delete asks again', async () => {
+test('a gc dry run fetches nothing and asks gh nothing, shows what the maintenance worktree check last learned, and an acting gc asks again', async () => {
   const { repo, worktrees, git } = repoWithTwoBranches();
   const trackedMain = git('rev-parse refs/remotes/origin/main').trim();
   const ghCalls = answerGh(() => []);
   const fetches = countFetches();
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
   expect(fetches).toEqual([]);
   expect(ghCalls).toEqual([]);
@@ -2781,7 +2763,7 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
       reason: 'merge-unknown',
       pullRequestUnknown: 'not checked since the last maintenance worktree check',
       detail:
-        'not merged into origin/main; merge state not refreshed: the repository has no recorded fetch, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or `stim gc --delete` checks again',
+        'not merged into origin/main; merge state not refreshed: the repository has no recorded fetch, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or `stim gc` checks again',
     });
   }
 
@@ -2789,7 +2771,10 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
   expect(fetches).toHaveLength(1);
   expect(ghCalls).toHaveLength(1);
   const checked = Object.fromEntries(
-    (await gcJson({})).payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+    (await gcJson({ dryRun: true, pressure: 'normal' })).payload.sections.linkedWorktrees.map((w: { path: string }) => [
+      realpathSync.native(w.path),
+      w,
+    ]),
   );
   expect(fetches).toHaveLength(1);
   expect(ghCalls).toHaveLength(1);
@@ -2801,13 +2786,13 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
     pullRequestUnknown: null,
   });
 
-  await captureLog(() => runGc({ delete: true }));
+  await gcJson({ pressure: 'normal' });
   expect(ghCalls).toHaveLength(2);
   expect(existsSync(worktrees.merged ?? '')).toBe(false);
   expect(existsSync(worktrees.open ?? '')).toBe(true);
 }, 240_000);
 
-test('plain gc trusts a merge proven from existing refs and a fresh cached pull request lookup, never an old one', async () => {
+test('a gc dry run trusts a merge proven from existing refs and a fresh cached pull request lookup, never an old one', async () => {
   const names = ['landed', 'shipped', 'aged', 'abandoned', 'moved', 'legacy', 'quiet', 'unknown'];
   const { repo, worktrees } = gitRepoWithWorktrees(names);
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
@@ -2863,7 +2848,7 @@ test('plain gc trusts a merge proven from existing refs and a fresh cached pull 
   const ghCalls = answerGh(() => []);
   const fetches = countFetches();
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
 
   expect(fetches).toEqual([]);
   expect(ghCalls).toEqual([]);
@@ -2876,24 +2861,27 @@ test('plain gc trusts a merge proven from existing refs and a fresh cached pull 
   expect(byName.quiet).toMatchObject({
     willRemove: false,
     reason: 'merge-unknown',
-    detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+    detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc\` checks again`,
   });
   for (const name of ['aged', 'moved', 'legacy', 'unknown']) {
     expect(byName[name]).toMatchObject({
       willRemove: false,
       reason: 'merge-unknown',
-      detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+      detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc\` checks again`,
     });
   }
 
   utimesSync(fetchHeadOf(repo), new Date(), new Date());
   const fresh = Object.fromEntries(
-    (await gcJson({})).payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+    (await gcJson({ dryRun: true, pressure: 'normal' })).payload.sections.linkedWorktrees.map((w: { path: string }) => [
+      basename(w.path),
+      w,
+    ]),
   );
   expect(fresh.quiet).toMatchObject({ willRemove: false, reason: 'not-merged', detail: `not merged into ${main}` });
   expect(fresh.unknown).toMatchObject({
     reason: 'merge-unknown',
-    detail: `not merged into ${main}; merge state not refreshed: its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+    detail: `not merged into ${main}; merge state not refreshed: its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc\` checks again`,
   });
   expect(fetches).toEqual([]);
   expect(ghCalls).toEqual([]);
@@ -2906,7 +2894,7 @@ function backdateWorktreeActivity(path: string, when: Date): void {
   }
 }
 
-test('gc --worktrees --delete removes idle worktrees with no commits of their own that have a project and no recorded use', async () => {
+test('gc at critical removes idle worktrees with no commits of their own that have a project and no recorded use', async () => {
   unscopedHome();
   const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
   const at = (name: string) => worktrees[name] ?? name;
@@ -2915,35 +2903,33 @@ test('gc --worktrees --delete removes idle worktrees with no commits of their ow
     backdateWorktreeActivity(at(name), new Date(Date.now() - 10 * DAY_MS));
   }
 
-  const { payload } = (await checkWorktrees(), await gcJson({ worktrees: true }));
-  const byPath = Object.fromEntries(
-    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
-  );
-  for (const name of ['fresh', 'followup', 'reused']) {
-    expect(byPath[at(name)]).toMatchObject({
-      idleDays: null,
-      willRemove: true,
-      detail: 'no commits of its own beyond origin/main, idle 10d',
-    });
-  }
-  expect(byPath[at('open')]).toMatchObject({ willRemove: false, reason: 'last-use-unknown' });
-
-  const original = console.log;
-  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const lines: string[] = [];
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-    if (String(args[0]).startsWith('Linked worktrees')) git('checkout -q --detach HEAD~1', at('followup'));
-  };
+  const plan = sweepPasses.planWorktrees;
+  let moved = false;
+  const spy = vi.spyOn(sweepPasses, 'planWorktrees').mockImplementation(async (...args) => {
+    const planned = await plan(...args);
+    if (!moved && planned.actions.some((action) => action.target === at('followup'))) {
+      git('checkout -q --detach HEAD~1', at('followup'));
+      moved = true;
+    }
+    return planned;
+  });
+  let payload;
   try {
-    await runGc({ worktrees: true, delete: true });
+    ({ payload } = await gcJson({ pressure: 'critical' }));
   } finally {
-    console.log = original;
-    error.mockRestore();
+    spy.mockRestore();
   }
-  for (const name of ['fresh', 'reused']) expect(existsSync(at(name))).toBe(false);
+  expect(moved).toBe(true);
+  for (const name of ['fresh', 'reused']) {
+    expect(existsSync(at(name))).toBe(false);
+    expect(payload.actions).toContainEqual(
+      expect.objectContaining({ kind: 'remove-worktree', target: at(name), outcome: 'done' }),
+    );
+  }
   expect(existsSync(at('followup'))).toBe(true);
-  expect(lines.join('\n')).toContain(`Kept the worktree ${at('followup')}: its HEAD moved since gc checked it`);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'remove-worktree', target: at('followup'), outcome: 'kept' }),
+  );
   for (const name of ['open', 'evil', 'dirty']) expect(existsSync(at(name))).toBe(true);
 }, 240_000);
 
@@ -2965,7 +2951,7 @@ test('worktree removal keeps a worktree whose HEAD is not the one the caller app
 }, 240_000);
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete archives a dirty finished worktree, then removes it, and keeps it while archives are off',
+  'gc archives a dirty finished worktree, then removes it, and keeps it while archives are off',
   async () => {
     const { worktrees } = repoWithMergedBranches();
     const dirty = worktrees.dirty ?? '';
@@ -2973,11 +2959,11 @@ test.skipIf(process.platform === 'win32')(
       delete process.env.STIM_ARCHIVE_ENABLED;
     });
 
-    await captureLog(() => runGc({ delete: true }));
+    await gcJson({ pressure: 'normal' });
     expect(existsSync(dirty)).toBe(true);
 
     process.env.STIM_ARCHIVE_ENABLED = 'true';
-    const output = await captureLog(() => runGc({ delete: true }));
+    await gcJson({ pressure: 'normal' });
 
     expect(existsSync(dirty)).toBe(false);
     const repoDir = join(worktreeArchiveRoot(), 'origin-repo');
@@ -2985,14 +2971,72 @@ test.skipIf(process.platform === 'win32')(
     const archive = join(repoDir, entry ?? '');
     const manifest = JSON.parse(readFileSync(join(archive, 'manifest.json'), 'utf8'));
     expect(manifest).toMatchObject({ branch: 'dirty', worktree: dirty, tracked: [], untracked: ['notes.txt'] });
-    expect(output).toContain(
-      `Removed the worktree ${dirty} (merged into origin/main; archived 1 uncommitted file to ${archive}; restore: `,
-    );
     for (const command of manifest.restore) execSync(command, { stdio: 'pipe', timeout: 30_000 });
     expect(readFileSync(join(dirty, 'notes.txt'), 'utf8')).toBe('wip');
   },
   240_000,
 );
+
+test('a sparse checkout alone does not keep a finished registered worktree', async () => {
+  const wt = repoWithTwoBranches({ files: { 'notes.txt': 'tracked\n', 'ios/a.txt': 'a\n' } }).worktrees.merged ?? '';
+  execSync('git sparse-checkout set --no-cone /ios/', { cwd: wt, timeout: 15_000 });
+  expect(existsSync(join(wt, 'notes.txt'))).toBe(false);
+  const found = (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() })).worktrees.find(
+    (w) => realpathSync.native(w.path) === wt,
+  );
+  expect(found).toMatchObject({ skipCode: null });
+}, 240_000);
+
+describe('a finished registered worktree whose uncommitted state is pod churn, a hand edit or hidden from git status', () => {
+  const PBX = ['// !$*UTF8*$!', '{', '\tDEVELOPMENT_TEAM = AAA;', '\tname = App;', '}', ''];
+  const files = {
+    'ios/Podfile.lock': 'PODS: []\n',
+    'ios/App.xcodeproj/project.pbxproj': PBX.join('\n'),
+    'notes.txt': 'tracked\n',
+  };
+  const verdict = async (path: string) =>
+    (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() })).worktrees.find(
+      (w) => realpathSync.native(w.path) === path,
+    );
+  const install = (wt: string) => {
+    writeFileSync(join(wt, 'ios', 'Podfile.lock'), 'PODS:\n  - Yoga\n');
+    mkdirSync(join(wt, 'ios', 'Pods'), { recursive: true });
+    writeFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'PODS:\n  - Yoga\n');
+  };
+
+  test('only churn that matches a pod install in that worktree lets it go', async () => {
+    const wt = repoWithTwoBranches({ files }).worktrees.merged ?? '';
+    install(wt);
+    expect(await verdict(wt)).toMatchObject({ skipCode: null });
+
+    writeFileSync(
+      join(wt, 'ios', 'App.xcodeproj', 'project.pbxproj'),
+      PBX.join('\n').replace('DEVELOPMENT_TEAM = AAA', 'DEVELOPMENT_TEAM = ZZZ'),
+    );
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
+    execSync('git checkout -- ios/App.xcodeproj/project.pbxproj', { cwd: wt, timeout: 15_000 });
+
+    install(wt);
+    rmSync(join(wt, 'ios', 'Pods'), { recursive: true });
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
+  }, 240_000);
+
+  test.each([
+    ['assume-unchanged', 'update-index --assume-unchanged notes.txt', /notes\.txt is marked assume-unchanged/],
+    ['skip-worktree', 'update-index --skip-worktree notes.txt', /notes\.txt is marked skip-worktree/],
+  ])(
+    '%s keeps it',
+    async (_name, command, message) => {
+      const wt = repoWithTwoBranches({ files }).worktrees.merged ?? '';
+      execSync(`git ${command}`, { cwd: wt, timeout: 15_000 });
+      if (command.includes('update-index')) writeFileSync(join(wt, 'notes.txt'), 'edited\n');
+      const found = await verdict(wt);
+      expect(found).toMatchObject({ skipCode: 'dirty' });
+      expect(found?.skipped).toMatch(message);
+    },
+    240_000,
+  );
+});
 
 test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
   const { worktrees } = repoWithTwoBranches();
@@ -3017,7 +3061,7 @@ test('the grace period of a dirty finished worktree counts changes to its uncomm
   });
 }, 240_000);
 
-test('gc --delete removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
+test('gc removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
   unscopedHome();
   const { worktrees, git } = repoWithTwoBranches({ registerWorktrees: false });
   const baseline = join(projects, 'baseline');
@@ -3027,11 +3071,15 @@ test('gc --delete removes a clean detached worktree on the default branch once i
   git(`worktree add -q --detach "${fresh}" origin/main`);
   for (const path of [baseline, fresh]) upsertProject(path, { metroPort: null });
 
-  const output = await captureLog(() => runGc({ delete: true }));
+  const { payload } = await gcJson({ pressure: 'normal' });
 
   expect(existsSync(baseline)).toBe(false);
-  expect(output).toMatch(
-    /Removed the worktree .*baseline \(no commits of its own beyond origin\/main, inactive for 3h/,
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({
+      kind: 'remove-worktree',
+      target: realpathSync.native(projects) + '/baseline',
+      outcome: 'done',
+    }),
   );
   expect(existsSync(fresh)).toBe(true);
   expect(existsSync(worktrees.open ?? '')).toBe(true);
@@ -3049,7 +3097,9 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
     process.argv[1] = argv;
   });
 
-  const { payload } = await gcJson({ delete: true });
+  await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  await gcJson({ pressure: 'normal' });
 
   expect(
     payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged),
@@ -3079,40 +3129,39 @@ test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves a
   utimesSync(join(repo, '.git', 'FETCH_HEAD'), stale, stale);
   renameSync(remote, `${remote}.moved`);
 
-  const { payload } = await gcJson({ delete: true });
-  const merged = payload.sections.linkedWorktrees.find(
-    (w: { path: string }) => realpathSync.native(w.path) === worktrees.merged,
-  );
-  expect(merged).toMatchObject({ willRemove: false, reason: 'merge-unknown' });
-  expect(merged.detail).toMatch(/^merge state unknown: git fetch origin main failed/);
+  const failed = (await gcJson({ pressure: 'normal' })).payload;
+  expect(failed.actions.filter((action: { kind: string }) => action.kind === 'remove-worktree')).toEqual([]);
   expect(existsSync(worktrees.merged!)).toBe(true);
 
   renameSync(`${remote}.moved`, remote);
-  const lines: string[] = [];
-  const original = console.log;
-  const originalError = console.error;
-  console.error = () => {};
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-    if (String(args[0]).startsWith('Linked worktrees')) {
+  const plan = sweepPasses.planWorktrees;
+  let moved = false;
+  const spy = vi.spyOn(sweepPasses, 'planWorktrees').mockImplementation(async (...args) => {
+    const planned = await plan(...args);
+    if (!moved && planned.actions.some((action) => action.target === worktrees.merged)) {
       writeFileSync(join(worktrees.merged!, 'late.txt'), 'x');
       git('add late.txt', worktrees.merged);
       git('commit -q -m late', worktrees.merged);
       git('push -q', worktrees.merged);
+      moved = true;
     }
-  };
+    return planned;
+  });
+  let payload;
   try {
-    await runGc({ delete: true });
+    ({ payload } = await gcJson({ pressure: 'normal' }));
   } finally {
-    console.log = original;
-    console.error = originalError;
+    spy.mockRestore();
   }
+  expect(moved).toBe(true);
   expect(existsSync(worktrees.merged!)).toBe(true);
-  expect(lines.join('\n')).toContain(`Kept the worktree ${worktrees.merged}: its HEAD moved since gc checked it`);
+  expect(payload.actions).toContainEqual(
+    expect.objectContaining({ kind: 'remove-worktree', target: worktrees.merged, outcome: 'kept' }),
+  );
   expect(existsSync(worktrees.open!)).toBe(false);
 }, 240_000);
 
-test('gc --delete keeps a just-merged worktree for the grace period, then removes it and tears down its device', async () => {
+test('gc keeps a just-merged worktree for the grace period, then removes it and tears down its device', async () => {
   process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '120';
   const repo = join(projects, 'grace-repo');
   const remote = join(projects, 'grace.git');
@@ -3209,7 +3258,9 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
   });
 
   const freshActivityAt = statSync(join(workspaceDir(worktrees.fresh!), 'state.json')).mtimeMs;
-  const { payload } = await gcJson({ delete: true });
+  await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  await gcJson({ pressure: 'normal' });
   const byPath = Object.fromEntries(payload.sections.linkedWorktrees.map((w: { path: string }) => [w.path, w]));
   expect(byPath[worktrees.fresh!]).toMatchObject({
     mergedInto: 'origin/main',
@@ -3283,13 +3334,15 @@ test('a workspace whose output size cannot be measured is listed as size unknown
     },
   });
 
-  const report = await captureLog(() => runGc({ cache: 'workspaces' }));
-  expect(report).toContain(`size unknown  ${root} (idle 10d)`);
-  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  expect(payload.sections.workspaceBuildOutputs).toContainEqual(
+    expect.objectContaining({ projectRoot: root, bytes: null, willClear: true }),
+  );
+  await deleteGcItem({ kind: 'workspace-outputs' });
   expect(existsSync(join(dir, 'derived-data'))).toBe(false);
 });
 
-test('--cache workspaces leaves the build outputs of a directory the unscoped run removes whole', async () => {
+test('the workspace-outputs item leaves the build outputs of a directory the maintenance run removes whole', async () => {
   const live = builtWorkspace('live-app', { usedDaysAgo: 10 });
   const orphan = goneWorkspace('gone-app');
   mkdirSync(join(orphan.dir, 'derived-data'), { recursive: true });
@@ -3297,28 +3350,26 @@ test('--cache workspaces leaves the build outputs of a directory the unscoped ru
   const outputs = (payload: { sections: { workspaceBuildOutputs: { projectRoot: string }[] } }) =>
     payload.sections.workspaceBuildOutputs.map((entry) => entry.projectRoot);
 
-  const unscoped = (await gcJson({})).payload;
+  const unscoped = (await gcJson({ dryRun: true, pressure: 'normal' })).payload;
   expect(unscoped.sections.orphanedWorkspaces.map((entry: { dir: string }) => entry.dir)).toContain(orphan.dir);
   expect(outputs(unscoped)).toEqual([live.root]);
 
-  const scoped = (await gcJson({ cache: 'workspaces' })).payload;
-  expect(outputs(scoped)).toEqual([live.root]);
-
-  await gcJson({ cache: 'workspaces', delete: true });
+  await deleteGcItem({ kind: 'workspace-outputs' });
   expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
   expect(existsSync(join(orphan.dir, 'derived-data', 'blob'))).toBe(true);
 });
 
-test('--cache workspaces leaves the build outputs of a dead project to the unscoped run', async () => {
+test('the workspace-outputs item leaves the build outputs of a dead project to the maintenance run', async () => {
   const live = builtWorkspace('live-one', { usedDaysAgo: 10 });
   const dead = builtWorkspace('dead-one', { usedDaysAgo: 10 });
   rmSync(dead.root, { recursive: true, force: true });
 
-  const { payload } = await gcJson({ cache: 'workspaces', delete: true });
-
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   expect(payload.sections.workspaceBuildOutputs.map((entry: { projectRoot: string }) => entry.projectRoot)).toEqual([
     live.root,
   ]);
+
+  await deleteGcItem({ kind: 'workspace-outputs' });
   expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
   expect(existsSync(join(dead.dir, 'derived-data'))).toBe(true);
 });
@@ -3369,7 +3420,7 @@ describe('status cache entries of gone workspaces', () => {
     return file;
   };
 
-  test('gc reports and --delete removes entries whose path is gone, and keeps the rest', async () => {
+  test('gc reports and removes entries whose path is gone, and keeps the rest', async () => {
     const live = join(projects, 'live');
     mkdirSync(join(live, 'node_modules'), { recursive: true });
     const gone = join(projects, 'gone');
@@ -3380,7 +3431,7 @@ describe('status cache entries of gone workspaces', () => {
     const foreign = diskUsageCacheFile(join(projects, 'elsewhere'));
     writeFileSync(foreign, JSON.stringify({ path: join(projects, 'other'), bytes: 1, measuredAt: 'x' }));
 
-    const dry = (await gcJson({})).payload;
+    const dry = (await gcJson({ dryRun: true, pressure: 'normal' })).payload;
     expect(dry.sections.staleStatusCaches.map((e: { file: string }) => e.file).toSorted()).toEqual(stale.toSorted());
     expect(dry.sections.skipped).toContainEqual({
       path: dirname(unreadable),
@@ -3389,12 +3440,10 @@ describe('status cache entries of gone workspaces', () => {
     expect(dry.actionable).toBe(true);
     for (const file of stale) expect(existsSync(file)).toBe(true);
 
-    const { payload } = await gcJson({ delete: true });
+    const { payload } = await gcJson({ pressure: 'normal' });
     for (const file of stale) expect(existsSync(file)).toBe(false);
     for (const file of [...kept, unreadable, foreign]) expect(existsSync(file)).toBe(true);
-    expect(payload.results).toContainEqual(
-      expect.objectContaining({ kind: 'statusCache', status: 'done', label: '2 stale disk-usage cache entries' }),
-    );
+    expect(payload.results).toContainEqual(expect.objectContaining({ kind: 'statusCache', status: 'done' }));
     expect(payload.failures).toBe(0);
   });
 

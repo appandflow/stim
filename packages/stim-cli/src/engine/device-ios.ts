@@ -242,7 +242,7 @@ export async function muteBootedSimulator(udid: string, out: Notify): Promise<vo
 
 export class IosDeviceMismatchError extends Error {
   readonly remedy =
-    'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one, or pass `--slot <name>` to create it beside the current one.';
+    'Run `stim worktree remove` to reap the current sim, then `stim ios` again to create the requested one, or pass `--slot <name>` to create it beside the current one.';
 }
 
 export async function ensureOwnedIosDevice({
@@ -386,7 +386,7 @@ export async function ensureOwnedIosDevice({
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim gc --delete` to clear the assignment so Stim can create an owned sim.',
+              'Boot it yourself, or pass `--slot <name>` to create an owned sim beside it. `stim worktree remove` clears the assignment too, but at a linked worktree root it also removes the worktree and its branch.',
             ),
           );
         }

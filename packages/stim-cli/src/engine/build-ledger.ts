@@ -12,6 +12,8 @@ import {
 import { formatElapsed } from '../command-output.ts';
 import { STIM_VERSION } from '../stim-version.ts';
 import { gitQuiet } from '../workspace/git.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { statsProjectKey } from './stats.ts';
 
 /** What a build knows about itself beyond the `lastBuild` record: carried under `lastBuild.ledger` and stripped from it. */
 export interface BuildLedgerExtras {
@@ -42,6 +44,9 @@ export interface BuildLedgerRun {
   offload?: { host: string; phaseMs: Record<string, number> };
   loadPerCore?: number;
   boot?: { startedAt: string; loadPerCore: number };
+  /** Bytes the run's local compile wrote, from `createBuildHeadroom`. */
+  bytesWritten?: number;
+  projectKey?: string;
 }
 
 function text(value: unknown): string | null {
@@ -121,6 +126,7 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
     id: run.id,
     startedAt: Number.isFinite(startedAt) ? startedAt : run.now - durationMs,
     project: run.root,
+    ...(run.projectKey ? { projectKey: run.projectKey } : {}),
     workspace: run.workspace,
     branch: run.branch,
     platform,
@@ -130,6 +136,7 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
     placement,
     cache,
     durationMs,
+    ...(run.bytesWritten === undefined ? {} : { bytesWritten: Math.round(run.bytesWritten) }),
     phases: wholePhaseMs(run.phases),
     ...(Object.keys(offloadPhases).length ? { offloadPhases } : {}),
     outcome,
@@ -198,6 +205,7 @@ export function writeBuildLedger(
       })?.trim() || null;
     appendBuildLedger(
       buildLedgerRecord({
+        projectKey: statsProjectKey({ root, commonDir: gitCommonDir(root), repoRoot: repoRoot(root) }),
         ...run,
         id: run.id ?? randomUUID(),
         root,

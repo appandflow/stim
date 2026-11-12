@@ -247,15 +247,6 @@ export function removeParkedAfter<P extends PoolPlatform>(
   return settleParkedAfter(platform, udid, beforeRemove, null, operation);
 }
 
-export function eraseParkedAfter<P extends PoolPlatform>(
-  platform: P,
-  udid: string,
-  erase: (record: PoolRecords[P], eraseStarted: () => void) => void | Promise<void>,
-  operation?: StimContext,
-): Promise<PoolRecords[P] | null> {
-  return settleParkedAfter(platform, udid, erase, erasedRecord, operation);
-}
-
 function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
   const erased = { ...record };
   delete (erased as { bundleId?: string }).bundleId;

@@ -105,6 +105,7 @@ export const METHODS = [
   'desktop.run.subscribe',
   'desktop.build.subscribe',
   'desktop.gc.subscribe',
+  'desktop.gc.item.subscribe',
   'desktop.worktree.remove.subscribe',
   'desktop.worktree.warm.subscribe',
   'desktop.plan.get',
@@ -1415,7 +1416,7 @@ export interface MachineHistory {
 }
 
 /**
- * The machine's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
+ * The machine's disk and build detail: the payloads of the `stim gc --dry-run --json` report and of `stim stats --json`, both run in
  * the home directory. A part is null when its command failed, and its `gcError` or `statsError` says why.
  * `measuredAt` is when the commands started. The server keeps one result for 60 seconds, shared by every connection.
  */
@@ -1894,7 +1895,17 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.gc.subscribe': {
-    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean };
+    params: { cwd: string; dryRun: boolean; pressure?: 'normal' | 'high' | 'critical' };
+    result: SubscribeResult;
+  };
+  'desktop.gc.item.subscribe': {
+    params: {
+      cwd: string;
+      item:
+        | { kind: 'cache'; dir: string }
+        | { kind: 'archive'; id: string; part?: 'logs' | 'recordings' | 'agentActions' }
+        | { kind: 'workspace-outputs' | 'watchman' | 'gradle-daemons' };
+    };
     result: SubscribeResult;
   };
   'desktop.worktree.warm.subscribe': {

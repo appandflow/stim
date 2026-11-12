@@ -26,7 +26,17 @@ export type MaintenanceActionKind =
   | 'would-delete-process-locks'
   | 'would-delete-device-lease'
   | 'would-delete-expired-archives'
-  | 'would-dormant-stage';
+  | 'would-dormant-stage'
+  | 'would-prune-project'
+  | 'would-delete-orphaned-devices'
+  | 'would-forget-stale-records'
+  | 'would-trim-workspace-logs'
+  | 'would-delete-recordings'
+  | 'would-delete-hosted-devices'
+  | 'would-delete-eas-sessions'
+  | 'would-delete-archives'
+  | 'would-delete-runtime'
+  | 'would-delete-unavailable-sim';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -39,8 +49,10 @@ export interface MaintenanceAction {
   workspace?: string;
   dir?: string;
   olderThanDays?: number;
+  /** For a Cargo target trim: the bytes the target is over its cap, which the trim still covers after its first steps. */
+  overBytes?: number;
   check?: 'worktree' | 'sweep' | 'disk' | 'idle';
-  /** The disk pressure level that planned the action; it runs only while free disk stays under that level's floor. */
+  /** The disk level that planned a Cargo target trim, 2 for high and 3 for critical, which selects how much it removes. */
   level?: 2 | 3;
 }
 
@@ -115,6 +127,10 @@ export interface MaintenanceState {
   version: 1;
   lastAt: Partial<Record<MaintenanceCheck, number>>;
   deferredAt?: Partial<Record<MaintenanceCheck, number>>;
+  /** When each check was first deferred for host load, until it next runs. */
+  deferredSince?: Partial<Record<MaintenanceCheck, number>>;
+  /** When the Cargo target cap last measured its targets on its own, while the size scan was deferred. */
+  capAt?: number;
   pressure: MaintenancePressure | null;
   sizes: MaintenanceSize[];
   lastPass: MaintenancePass | null;
@@ -142,6 +158,8 @@ export interface MaintenanceStatus {
   sizes: MaintenanceSize[];
   lastPass: MaintenancePass | null;
   running: { startedAt: string; trigger: string } | null;
+  /** The checks deferred for host load now, and since when (epoch ms). Absent when none is. */
+  deferred?: { check: MaintenanceCheck; since: number }[];
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
 }
@@ -172,6 +190,16 @@ const KINDS: readonly string[] = [
   'would-delete-device-lease',
   'would-delete-expired-archives',
   'would-dormant-stage',
+  'would-prune-project',
+  'would-delete-orphaned-devices',
+  'would-forget-stale-records',
+  'would-trim-workspace-logs',
+  'would-delete-recordings',
+  'would-delete-hosted-devices',
+  'would-delete-eas-sessions',
+  'would-delete-archives',
+  'would-delete-runtime',
+  'would-delete-unavailable-sim',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
@@ -197,6 +225,12 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
     (!isJsonObject(value.deferredAt) || !Object.values(value.deferredAt).every(finite))
   )
     return null;
+  if (
+    value.deferredSince !== undefined &&
+    (!isJsonObject(value.deferredSince) || !Object.values(value.deferredSince).every(finite))
+  )
+    return null;
+  if (value.capAt !== undefined && !finite(value.capAt)) return null;
   if (
     !Array.isArray(value.sizes) ||
     !value.sizes.every(
@@ -233,6 +267,7 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         (action.workspace === undefined || typeof action.workspace === 'string') &&
         (action.dir === undefined || typeof action.dir === 'string') &&
         (action.olderThanDays === undefined || finite(action.olderThanDays)) &&
+        (action.overBytes === undefined || finite(action.overBytes)) &&
         (action.check === undefined || ['worktree', 'sweep', 'disk', 'idle'].includes(String(action.check))) &&
         (action.level === undefined || action.level === 2 || action.level === 3),
     )

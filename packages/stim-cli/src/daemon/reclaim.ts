@@ -151,6 +151,7 @@ export async function reclaimForBootWaiters({
         idleMs: RECLAIM_IDLE_MS,
         now,
         buildInProgress: workspaceBuildInProgress(device.project),
+        pressured: true,
       });
       return idleMs === null ? [] : [{ device, idleMs }];
     })

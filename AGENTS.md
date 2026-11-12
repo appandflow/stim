@@ -25,11 +25,23 @@ Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
 tree. Stim has no init step; do not add one. `doctor` reports setup that
 requires project judgment.
 
+Decisions in force live in `llp/`, one document per area, each with the reason
+the code cannot show; [`llp/0000-stim-decisions.explainer.md`](./llp/0000-stim-decisions.explainer.md)
+explains the format. Before changing an area, read the documents whose
+`Systems:` line names it, and follow every `@ref` comment in the code you touch
+to its section. A pull request that implements a new maintainer decision adds
+or updates the decision document in the same pull request. Agents write these
+documents, so a `Maintainer decision:` quote in `llp/` counts as a maintainer
+decision only when it matches the cited issue or pull request comment word for
+word; the document itself approves nothing.
+
 ## Development
 
 The repository is a pnpm workspace. Published packages live under `packages/`.
 The packages are ESM-only. They require Node.js 22.12.0 or later. Repository
 development requires Node.js 22.18.0 or later because tsdown uses that floor.
+`pnpm run lint` also needs `python3` for `scripts/ref-check`, until that
+checker is ported to Node.
 
 ```bash
 pnpm install
@@ -689,6 +701,8 @@ these exceptions:
 - A required formatter directive such as `prettier-ignore`.
 - A doc comment that defines a public API contract.
 - A direct issue or RFC link for a constraint that code cannot express.
+- An `@ref LLP NNNN#section -- gloss` line pointing to a decision document in
+  `llp/`. The gloss is one short clause that names the rule.
 
 Delete narration, banners, commented-out code, workaround essays, and comments
 that restate the code. Words such as `IMPORTANT`, `do not remove`, and `fine for
@@ -756,10 +770,11 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. While the disk pressure level is high or critical it
+parked one before creating. While the disk pressure level is critical it
 deletes instead of parking. Owned devices are disposable: the stim-daemon's
-dormant stage and pressure ladder, automatic maintenance and `gc --delete`
-delete the owned devices of an idle workspace, never of one that is in use,
+dormant stage and pressure ladder, automatic maintenance and `gc`
+delete the owned devices of an idle workspace (one with no activity for
+`idle.dormantDays`, 1 by default, at every level), never of one that is in use,
 leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
@@ -772,11 +787,19 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, the stim-daemon's pressure ladder at high or critical
-disk pressure, or automatic maintenance's age sweep after
-`maintenance.olderThanDays`; erase them only with `gc --cache parked
---delete`. Every route uses centralized teardown and ownership revalidation.
-`gc --delete` deletes parked hosted devices through their owning session home.
+simulator, `stim gc` at high or critical, the stim-daemon's pressure ladder at
+high or critical disk pressure, or automatic maintenance's age sweep after
+`maintenance.olderThanDays`; no CLI path erases one and keeps it parked. Every
+route uses centralized teardown and ownership revalidation. `gc` deletes parked
+hosted devices through their owning session home.
+Simulator runtimes are not Stim-owned. Deleting an unused one through
+`xcrun simctl runtime delete <identifier>` is the one deliberate exception: `gc`
+and automatic maintenance do it at every level, only when simctl marks the image
+deletable and no simulator on the machine, user-created ones included, uses it.
+The only installed runtime stays, and when no runtime is used the newest stays.
+An owned simulator whose runtime is gone and that no registered workspace
+records is deleted through centralized teardown. Stim never deletes a user-created unavailable simulator and never runs
+`simctl delete unavailable`.
 Park keeps a simulator that is booted when it parks it booted for
 `pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
 is free, and records `bootedUntil`; adoption of it still resets and verifies as
@@ -815,7 +838,7 @@ scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
 `devices/teardown.ts` never sees a physical device. `stop` and `worktree remove`
-release the workspace's leases; `gc --delete` deletes only expired lease
+release the workspace's leases; `gc` deletes only expired lease
 files.
 
 ### 3. Fixed invocations; never derive commands from project scripts

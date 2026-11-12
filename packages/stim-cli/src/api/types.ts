@@ -194,9 +194,15 @@ export interface StimMachineAccessOptions extends StimReadOptions {
 export type StimDoctorReport = DoctorReport;
 export type StimGcOptions = GcReadOptions & StimReadOptions;
 export type StimGcReport = Exclude<GcPayload, { code: string }>;
-export type StimGcMutationOptions = Omit<StimGcOptions, 'measureBuildState'> & {
-  delete?: boolean;
-};
+export type StimGcMutationOptions = Omit<StimGcOptions, 'measureBuildState'>;
+export type StimGcItem = import('../commands/gc/item.ts').GcItem;
+export interface StimGcItemOptions extends StimReadOptions {
+  item: StimGcItem;
+}
+export interface StimGcItemResult {
+  results: import('../commands/gc/results.ts').GcResult[];
+  exitCode: 0 | 1;
+}
 export interface StimGcMutationResult {
   report: StimGcReport;
   exitCode: 0 | 1;
@@ -260,10 +266,12 @@ export interface StimClient {
   requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
   /** Predicts the configured native build with a 60 second execution and 35 second cleanup budget; never builds or launches. */
   plan(options: StimPlanOptions): Promise<StimPlan>;
-  /** Reads the GC dry-run report with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
+  /** Reads the GC dry run at the measured or given pressure level, with the storage sections, with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
   gc(options?: StimGcOptions): Promise<StimGcReport>;
-  /** Executes requested GC actions, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
+  /** Runs one maintenance pass at the measured or given pressure level and deletes, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
+  /** Deletes one shared cache, the idle workspaces' build outputs, one archive or part of it, or a helper daemon's memory, under maintenance admission. */
+  deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
   /** Copies missing ignored state from the source checkout into this linked worktree. */
   warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
   /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */

@@ -134,7 +134,7 @@ REMOTE DEVICE BACKENDS
   it creates or reconnects the session, so a failed build starts no session
   and the install follows the connection directly. EAS does not inherit the
   proxy credentials. Always tear the session down: \`stop\`,
-  \`worktree remove\`, and \`gc --delete\` can end sessions that Stim proves
+  \`worktree remove\`, and \`gc\` can end sessions that Stim proves
   it owns.
   \`stim status\` lists each recorded session with its preview URL (see
   \`guide facts\`).
@@ -294,10 +294,12 @@ end the job with \`stim stop\`.
   workspace is in progress, while a stim ios, android, share or stop run holds the
   workspace's native-run lock, while the workspace holds an unexpired device
   lease (\`stim device lock\` or a --device run, physical devices included),
-  while one of its devices is driven, a live agent-device session included,
-  or its activity is unknown (\`guide facts status\`; on Windows, which has
+  while one of its devices is driven by a tool other than agent-device, or by
+  an agent-device session whose last command cannot be dated (a dated session
+  is activity, so one idle past the threshold, runner alive or not, no longer
+  keeps the workspace; under disk pressure its window is 10 minutes, not 2), or its activity is unknown (\`guide facts status\`; on Windows, which has
   no ps, the host driver-process probe is skipped), while simctl or adb cannot
-  list its devices, while its owned Chrome or a hosted device runs, while a
+  list its devices (a timed-out simctl list is retried once with a longer timeout first), while its owned Chrome or a hosted device runs, while a
   web share of it exists, live or stopped for now (\`guide share\`; stim share stop or its
   expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
   holds its metro-start lock. A dev server whose requests or HMR updates Stim
@@ -338,7 +340,7 @@ end the job with \`stim stop\`.
   while the workspace keeps its port (\`stim stop\` releases the port, so its
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
-                   stim worktree remove, stim gc --delete, stim start
+                   stim worktree remove, stim gc, stim start
                    --reset-cache, or automatic maintenance with its idle
                    reason (guide cleanup, IDLE STOP)
     signal         a SIGTERM or SIGINT with no Stim stop request recorded,
@@ -365,9 +367,9 @@ end the job with \`stim stop\`.
   A dev server that dies, or one a restarted stimd took over, leaves its root: remove it with
   \`watchman watch-del <root>\`. Removing a root stops its recrawls; the
   daemon's memory footprint shrinks only when the daemon restarts, which drops
-  the watches of every other client. \`stim gc --cache watchman\` reports the
-  daemon's footprint, roots and clients, and with --delete shuts it down only
-  when no client is connected (\`guide cleanup memory\`).
+  the watches of every other client. \`stim gc --dry-run\` reports the
+  daemon's footprint, roots and clients, and \`stim gc\` at high or critical shuts
+  it down only when no client is connected (\`guide cleanup memory\`).
 
   ENVIRONMENT: the dev server, including a metro.config.js evaluated inside
   the expo child, gets the environment of the command that STARTED it, which

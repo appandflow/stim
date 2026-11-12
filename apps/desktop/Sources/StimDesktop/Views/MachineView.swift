@@ -337,7 +337,7 @@ struct MachineView: View {
       Text(daemon.headline).font(.stim(.body, weight: .semibold))
       Text(
         daemon.mode == "off"
-          ? "daemon.mode is off: nothing reclaims on its own. stim gc --delete runs the pressure ladder now."
+          ? "daemon.mode is off: nothing reclaims on its own. stim gc runs one maintenance pass now."
           : daemon.running == nil
             ? "No stim-daemon runs in this Stim home now; the next stim start, ios or android starts one."
             : daemon.isRaised
@@ -361,7 +361,7 @@ struct MachineView: View {
       if daemon.isRaised {
         Button("Free Disk Space") { pressure.freeDiskSpace() }
           .buttonStyle(.stim(.primary))
-          .help("stim gc --delete")
+          .help("stim gc")
       }
     }
   }
@@ -503,7 +503,7 @@ struct MachineView: View {
             .foregroundStyle(Palette.secondary)
         }
         Text(
-          "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
+          "Rows marked stim gc are freed together by one stim gc, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
@@ -523,7 +523,7 @@ struct MachineView: View {
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         Spacer()
-        let command = StimCommand(["gc", "--json"], cwd: NSHomeDirectory())
+        let command = StimCommand(["gc", "--dry-run", "--json"], cwd: NSHomeDirectory())
         Button("Preview Disk Cleanup") { actions.run("Preview Disk Cleanup", command, key: ActionCenter.machineKey) }
           .buttonStyle(.stim())
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
@@ -551,7 +551,7 @@ struct MachineView: View {
       .labelsHidden()
       .accessibilityLabel("Select \(freeTitle(item))")
       .disabled(!enabled)
-      .help(enabled ? "" : "stim gc --delete frees this too; uncheck the stim gc rows to choose it alone")
+      .help(enabled ? "" : "stim gc frees this too; uncheck the stim gc rows to choose it alone")
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack(spacing: Space.sm) {
           Text(freeTitle(item)).lineLimit(1).truncationMode(.middle)
@@ -576,8 +576,8 @@ struct MachineView: View {
   private func actionLabel(_ action: FreeAction) -> String {
     switch action {
     case .gc: return "stim gc"
-    case .workspaceOutputs: return "gc --cache workspaces"
-    case .cache: return "gc --cache"
+    case .workspaceOutputs: return "gc build outputs"
+    case .cache: return "gc cache"
     case .removeWorktree: return "worktree remove"
     }
   }
@@ -702,18 +702,18 @@ struct MachineView: View {
                 .font(.system(size: 9))
                 .foregroundStyle(workspace.buildOutputsKept == nil ? Palette.warning : Palette.tertiary)
                 .help(
-                  workspace.buildOutputsKept.map { "Kept by stim gc --delete: \(abbreviatingHome($0))" }
-                    ?? "stim gc --delete clears these")
+                  workspace.buildOutputsKept.map { "Kept by stim gc: \(abbreviatingHome($0))" }
+                    ?? "stim gc clears these")
             }
           }
         size(workspace.logs)
           .overlay(alignment: .leading) {
             if let trimmed = workspace.logsTrimmed {
               Image(systemName: "scissors").font(.system(size: 9)).foregroundStyle(Palette.warning)
-                .help("stim gc --delete trims \(Format.fileSize(trimmed)) from logs over twice the 8 MiB cap")
+                .help("stim gc trims \(Format.fileSize(trimmed)) from logs over twice the 8 MiB cap")
             } else if let kept = workspace.logsKept {
               Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(Palette.tertiary)
-                .help("Logs over the cap, kept by stim gc --delete: \(abbreviatingHome(kept))")
+                .help("Logs over the cap, kept by stim gc: \(abbreviatingHome(kept))")
             }
           }
       }
@@ -768,7 +768,7 @@ struct MachineView: View {
   private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, workspace: WorkspaceStorage) -> some View {
     if workspace.missing {
       Pill(tone: .warning) { Text("Folder gone") }
-        .help("stim gc --delete drops this project's record and deletes its owned devices")
+        .help("stim gc drops this project's record and deletes its owned devices")
     } else {
       switch lifecycle {
       case .merged:
@@ -888,10 +888,10 @@ struct MachineView: View {
       .help(device.project.map { abbreviatingHome($0) } ?? "")
     case .parked:
       Pill(tone: .brand) { Text("Stim \u{00B7} parked") }
-        .help("Kept for reuse by the next workspace; stim gc --delete deletes it")
+        .help("Kept for reuse by the next workspace; stim gc deletes it")
     case .orphaned:
       Pill(tone: .warning) { Text("Stim \u{00B7} no workspace") }
-        .help("This Stim home created it and no workspace uses it; stim gc --delete deletes it")
+        .help("This Stim home created it and no workspace uses it; stim gc deletes it")
     case .otherStimHome:
       Pill(tone: .neutral) { Text("Another Stim home") }
         .help("A stim- device this Stim home has no record of creating. Stim lists it and never acts on it.")

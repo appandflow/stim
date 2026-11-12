@@ -33,7 +33,9 @@ import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
+import { prepareNpmInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
+import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
@@ -69,7 +71,6 @@ import {
   hasRemoteAsync,
   hasPopulatedSubmodulesAsync,
   hasUncommittedWorkAsync,
-  isPodInstallChurn,
   listWorktreesAsync,
   matchWorktreeEntry,
   nativeCanonicalPath,
@@ -82,11 +83,13 @@ import {
   unpushedCommitsAsync,
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
-import type { WorktreeEntry } from '../workspace/worktree.ts';
+import type { StaleDependencies, WorktreeEntry } from '../workspace/worktree.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
-import { discoverXcodeProject } from '../integrations/react-native-build.ts';
+import { podsAreStale, readPodState } from '../engine/deps.ts';
+import { hiddenEditHold } from '../workspace/hidden-edits.ts';
+import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -215,7 +218,7 @@ function reportCarriedStateHealth(
   copied: string[],
   configuration: string,
   out: (line: string) => void,
-): void {
+): StaleDependencies[] {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
@@ -265,6 +268,7 @@ function reportCarriedStateHealth(
     const flavor = inspectPodsFlavor(join(root, iosDir), join(target, iosDir), configuration);
     if (flavor) out(chalk.yellow(phaseLine('carry', `carried ${rel}: ${flavor.detail} ${flavor.fix}`)));
   }
+  return outOfSync;
 }
 
 function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => void): void {
@@ -435,12 +439,18 @@ export async function warmWorktreeTarget(opts: {
               exitCode = 1;
               return;
             }
+            const sourceApp = mainCheckoutAppDir(root, target, opts.cwd);
+            recordWarmedFrom(sourceApp);
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
             const generatedFrom = new Map<string, string>();
             const releases: ((failures: readonly unknown[]) => void)[] = [];
             const failures: unknown[] = [];
             const nativeDir = checkNativeDir(root, generatedFrom, releases, failures, operation);
+            // Warming a repository with several apps from its root cannot establish which app's patch inputs apply.
+            const recordNpmInstall = workspace
+              ? prepareNpmInstallCarry(join(root, relative(target, workspace)), workspace)
+              : null;
             let result: Awaited<ReturnType<typeof cloneIgnoredEntries>>;
             try {
               result = await trace.spanAsync('carry ignored entries', () =>
@@ -488,12 +498,31 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
-              reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
+              const stale = reportCarriedStateHealth(
+                root,
+                target,
+                result.copied,
+                iosConfigurationSetting(settings) ?? 'Debug',
+                out,
+              );
+              recordNpmInstall?.(
+                result.copied
+                  .map((rel) => join(target, rel))
+                  .filter((path) => !stale.some(({ dir }) => path === join(target, dir, 'node_modules'))),
+              );
             }
+            const noDependencies = sourceDependenciesNotice({
+              root,
+              target,
+              appDir: sourceApp,
+              iosDir: appIosProjectDir(sourceApp).dir,
+              install: (dir) => dependencyInstallCommand(dir),
+              pods: (dir) => `cd '${dir.replaceAll("'", "'\\''")}' && ${podInstallCommand(root, dir)}`,
+            });
             out(
               phaseLine(
                 'carry',
-                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed${noDependencies ? `; ${noDependencies}` : ''}`,
               ),
             );
             if (result.failed.length) exitCode = 1;
@@ -607,19 +636,14 @@ export function porcelainPath(line: string): string | null {
 
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
 
-const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\.pbxproj)$/;
+const POD_LOCK_PATH = /(?:^|\/)ios\/Podfile\.lock$/;
 export interface CustomIosDir {
   dir: string;
-  project: string | null;
 }
 
-function isPodChurn(path: string, iosDirs: readonly CustomIosDir[]): boolean {
-  if (POD_CHURN_PATH.test(path)) return true;
-  return iosDirs.some(({ dir, project }) => {
-    const prefix = dir === '.' ? '' : `${dir}/`;
-    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : null;
-    return rest === 'Podfile.lock' || (project !== null && rest === `${project}.xcodeproj/project.pbxproj`);
-  });
+function podLockDir(path: string, iosDirs: readonly CustomIosDir[]): string | null {
+  if (POD_LOCK_PATH.test(path)) return dirname(path);
+  return iosDirs.find(({ dir }) => path === (dir === '.' ? 'Podfile.lock' : `${dir}/Podfile.lock`))?.dir ?? null;
 }
 
 export function customIosDirs(worktree: string): CustomIosDir[] {
@@ -633,10 +657,7 @@ export function customIosDirs(worktree: string): CustomIosDir[] {
     .filter((path) => isPathPrefix(worktree, path))
     .map((path) => ({ path, ios: appIosProjectDir(path) }))
     .filter(({ ios }) => ios.custom && existsSync(ios.dir))
-    .map(({ path, ios }) => ({
-      dir: relative(root, ios.dir) || '.',
-      project: discoverXcodeProject(path, ios.dir).name ?? null,
-    }));
+    .map(({ ios }) => ({ dir: relative(root, ios.dir) || '.' }));
 }
 
 function appIosProjectDir(appDir: string): IosProjectDir {
@@ -668,19 +689,50 @@ interface PodChurnResult {
   restore: string[];
 }
 
-export function excludePodChurn(
-  lines: string[] | null | undefined,
+/**
+ * The modified `Podfile.lock` files among `lines` that are `pod install` output, which removal restores. Stim keeps no
+ * record of its own pod installs, so the evidence is the install's output in the worktree: `Pods/Manifest.lock` is a
+ * copy of the `Podfile.lock` the install wrote, so the two match only when it ran there and nothing edited the lock
+ * since. When gc deleted `Pods` while they matched, it recorded the lock's hash, and a lock that still has that hash
+ * with `Pods` absent counts too. Stim cannot tell what `pod install` changed in a `project.pbxproj` from a hand edit,
+ * so that file, and a lock without that evidence, stay in the dirty list. A deliberate `pod update` followed by an
+ * install leaves the same evidence, so an uncommitted one is restored as churn.
+ */
+export function provenPodChurn(
+  path: string,
+  lines: readonly string[] | null | undefined,
   iosDirs: readonly CustomIosDir[] = [],
-): PodChurnResult {
+  keys: readonly string[] = reclaimKeys(path),
+): string[] {
+  const proven: string[] = [];
+  let recorded: Record<string, string> | null = null;
+  for (const line of lines || []) {
+    const file = porcelainPath(line);
+    if (!file || !String(line).startsWith(' M ') || !SAFE_DIFF_PATH.test(file)) continue;
+    const dir = podLockDir(file, iosDirs);
+    if (dir === null) continue;
+    const state = readPodState(path, join(path, dir));
+    const status = podsAreStale(state.lockText, state.manifestText);
+    if (!status.noPods && !status.stale) {
+      proven.push(file);
+      continue;
+    }
+    if (state.lockText === null || existsSync(join(path, dir, 'Pods'))) continue;
+    recorded ??= lightenedPodLocks(keys);
+    try {
+      if (recorded[join(realpathSync(path), file)] === podLockHash(state.lockText)) proven.push(file);
+    } catch {}
+  }
+  return proven;
+}
+
+export function excludePodChurn(lines: string[] | null | undefined, proven: readonly string[]): PodChurnResult {
   const kept: string[] = [];
   const restore: string[] = [];
   for (const line of lines || []) {
-    const path = porcelainPath(line);
-    if (path && String(line).startsWith(' M ') && SAFE_DIFF_PATH.test(path) && isPodChurn(path, iosDirs)) {
-      restore.push(path);
-      continue;
-    }
-    kept.push(line);
+    const file = porcelainPath(line);
+    if (file && String(line).startsWith(' M ') && proven.includes(file)) restore.push(file);
+    else kept.push(line);
   }
   if (kept.length) return { lines: lines ? [...lines] : [], restore: [] };
   return { lines: kept, restore };
@@ -708,13 +760,8 @@ export function removalRemedy(
 
   const lines: string[] = [];
   if (tracked.length) {
-    if (isPodInstallChurn(tracked)) {
-      lines.push('That is only the files `pod install` rewrites. Restore them and retry:');
-      lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
-    } else {
-      lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
-      lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
-    }
+    lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
+    lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
   }
   if (untracked.length) {
     lines.push('Untracked files are also present -- `git checkout` cannot clear those. Delete them and retry:');
@@ -848,7 +895,7 @@ async function reclaimAll(
       r = await reclaimProject(key, {
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
-        parkOwnedDevices: pressure === 'normal',
+        parkOwnedDevices: pressure !== 'critical',
         preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
         operation,
@@ -882,7 +929,7 @@ async function reclaimAll(
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
     }
   }
-  if (pressure !== 'normal' && deletedDevices.length)
+  if (pressure === 'critical' && deletedDevices.length)
     poolNotes.push(`disk pressure ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
@@ -1066,6 +1113,8 @@ interface RemoveOptions {
   removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
   force?: boolean;
   linkedOnly?: boolean;
+  /** A modification to a tracked file is dirty work even in the files `pod install` rewrites, as in a checkout Stim never ran in. */
+  podChurnIsDirty?: boolean;
   guard?: (lockedKeys: readonly string[]) => string[] | Promise<string[]>;
   /** A HEAD whose change gc proved is on the default branch; its local-only commits do not block removal. */
   mergedHead?: string;
@@ -1114,9 +1163,14 @@ function canonicalExistingPath(target: string): string {
   return resolve(realpathSync(existing), ...missing);
 }
 
-async function inspectRemoval(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
+async function inspectRemoval(
+  path: string,
+  mergedHead?: string,
+  operation?: StimContext,
+  podChurnIsDirty = false,
+): Promise<RemovalInspection> {
   try {
-    return await inspectGit(path, mergedHead, operation);
+    return await inspectGit(path, mergedHead, operation, podChurnIsDirty);
   } catch (error) {
     if (!isTimeoutError(error)) throw error;
     return timedOutInspection(error);
@@ -1135,7 +1189,12 @@ function timedOutInspection(error: unknown): RemovalInspection {
   };
 }
 
-async function inspectGit(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
+async function inspectGit(
+  path: string,
+  mergedHead?: string,
+  operation?: StimContext,
+  podChurnIsDirty = false,
+): Promise<RemovalInspection> {
   const options = {
     removal: true,
     env: operation?.env,
@@ -1145,7 +1204,9 @@ async function inspectGit(path: string, mergedHead?: string, operation?: StimCon
   const gitAnswered = await hasUncommittedWorkAsync(path, options);
   const allDirty = gitAnswered ? await dirtyPathsAsync(path, { limit: Infinity }, options) : [];
   const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
-  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
+  const { lines: dirtyLines, restore: podChurn } = podChurnIsDirty
+    ? { lines: withoutCookies, restore: [] }
+    : excludePodChurn(withoutCookies, provenPodChurn(path, withoutCookies, customIosDirs(path)));
   const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = await unpushedCommitsAsync(path, options);
   const merged = Boolean(mergedHead) && (await resolveFullRefAsync(path, 'HEAD', options)) === mergedHead;
@@ -1156,6 +1217,8 @@ async function inspectGit(path: string, mergedHead?: string, operation?: StimCon
   const submodules = await hasPopulatedSubmodulesAsync(path, options);
   if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
   else if (submodules) blockers.push('initialized submodules, which git removes only with --force');
+  const hidden = await hiddenEditHold(path, operation?.signal);
+  if (hidden) blockers.push(`${hidden}; re-run with --force to override`);
   return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
@@ -1346,7 +1409,7 @@ async function removeOrRefuse(
       const mainRoot = pending.worktreeMainRoot;
       if (!existsSync(mainRoot)) {
         output.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
-        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc\`.`));
         output.fail();
         return;
       }
@@ -1518,7 +1581,7 @@ async function removeOrRefuse(
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
   const approvedBranchSha = ownsBranch ? await resolveFullRefAsync(path, 'HEAD', options) : null;
   let mergedHead = opts.mergedHead;
-  let inspection = await inspectRemoval(path, mergedHead, opts.operation);
+  let inspection = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
   if (
     inspection.blockers.length &&
     !opts.force &&
@@ -1534,7 +1597,7 @@ async function removeOrRefuse(
     const pr = endedPullRequest(lookup);
     if (head && pr?.state === 'merged') {
       mergedHead = head;
-      inspection = await inspectRemoval(path, mergedHead, opts.operation);
+      inspection = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
       output.error(
         chalk.dim(`HEAD is in the merged PR #${pr.number} (${pr.url}); its local-only commits stay on GitHub.`),
       );
@@ -1574,7 +1637,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const current = await inspectRemoval(path, mergedHead, opts.operation);
+          const current = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
           if (blockersOf(current, opts).length && !opts.force) {
             await printRemovalRefusal(path, current, output, opts.operation);
             return;
@@ -1800,7 +1863,7 @@ async function removeOrRefuse(
                       ? `deleting ${moved} in the background from ${trash.dir}`
                       : disposed === 'deleted'
                         ? `deleted ${moved}`
-                        : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+                        : `left ${moved} in ${trash.dir}; stim gc deletes them`,
                   ),
                 ),
               );

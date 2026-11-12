@@ -1,7 +1,14 @@
-import { maintenanceRunClaims, readMaintenanceState, type MaintenanceStatus } from '@stim-cli/core/state';
+import {
+  maintenanceRunClaims,
+  readMaintenanceState,
+  type MaintenanceCheck,
+  type MaintenanceStatus,
+} from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatBytes } from '../../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
+
+const CHECKS: readonly MaintenanceCheck[] = ['pressure', 'size', 'worktree', 'sweep', 'idle'];
 
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
@@ -9,6 +16,10 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
   const holder = claims.live[0];
   const unresolved = claims.unresolved[0];
   const settings = resolveMaintenanceSettings(undefined, env);
+  const deferred = CHECKS.flatMap((check) => {
+    const since = state?.deferredSince?.[check];
+    return since === undefined ? [] : [{ check, since }];
+  });
   return {
     mode: settings.mode,
     ...(settings.invalid ? { invalid: settings.invalid } : {}),
@@ -35,6 +46,7 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
           trigger: String(holder.details.trigger ?? 'command'),
         }
       : null,
+    ...(deferred.length ? { deferred } : {}),
     recent: state?.recent ?? [],
     plan: state?.plan ?? [],
   };
@@ -68,7 +80,19 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
     )
     .join(', ');
-  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${deferredNote(status)}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+}
+
+function deferredNote(status: MaintenanceStatus): string {
+  const first = status.deferred?.toSorted((a, b) => a.since - b.since)[0];
+  if (!first) return '';
+  const since = new Date(first.since).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `; ${status.deferred?.map(({ check }) => check).join(', ')} checks deferred for host load since ${since}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

@@ -7,7 +7,6 @@
 [*] declare class StimError extends Error { | remedy?: string | null;
 [*] declare class StimError extends Error { | }, options?: ErrorOptions);
 [*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
-[*] declare const AGENT_TOOLS: readonly ["claude-code", "codex"];
 [*] declare const GRADLE_DAEMONS_KIND;
 [*] declare const HOST_CAPABILITIES: readonly ["physical-ios", "physical-android", "macos-window", "macos-windows", "macos-window-select", "macos-window-control", "macos-keyboard-extended", "duo-frames", "native-xcode-build", "native-xcode-toolchain"];
 [*] declare const PLACEMENT_DECISIONS: readonly ["here", "offloaded", "fell-back"];
@@ -50,6 +49,9 @@
 [*] export type StimDoctorOptions
 [*] export type StimDoctorRepairOptions
 [*] export type StimDoctorReport
+[*] export type StimGcItem
+[*] export type StimGcItemOptions
+[*] export type StimGcItemResult
 [*] export type StimGcMutationOptions
 [*] export type StimGcMutationResult
 [*] export type StimGcOptions
@@ -114,16 +116,6 @@
 [*] interface AgentDeviceUsage { | xcodeBuildVersion: string | null;
 [*] interface AgentDeviceUsage { | } | null;
 [*] interface AgentDeviceUsage { | }[];
-[*] interface AgentSession {
-[*] interface AgentSession { | cwd: string;
-[*] interface AgentSession { | lastActiveAt?: string;
-[*] interface AgentSession { | openUrl?: string;
-[*] interface AgentSession { | pid?: number;
-[*] interface AgentSession { | sessionId: string;
-[*] interface AgentSession { | startedAt?: string;
-[*] interface AgentSession { | title?: string;
-[*] interface AgentSession { | tool: AgentTool;
-[*] interface AgentSession { | webUrl?: string;
 [*] interface AndroidBuildFacts {
 [*] interface AndroidBuildFacts { | abi: string | null;
 [*] interface AndroidBuildFacts { | androidPackage: string | null;
@@ -178,71 +170,6 @@
 [*] interface AndroidFacts { | variant: string | null;
 [*] interface AndroidFacts { | waitedForBuild: {
 [*] interface AndroidFacts { | } | null;
-[*] interface ArchiveSelection {
-[*] interface ArchiveSelection { | bytes: number;
-[*] interface ArchiveSelection { | expires: ArchivedWorkspace["expires"];
-[*] interface ArchiveSelection { | id: string;
-[*] interface ArchiveSelection { | kind: ArchiveKind | null;
-[*] interface ArchiveSelection { | kinds: string[];
-[*] interface ArchiveSelection { | knownIds: string[];
-[*] interface ArchiveSelection { | records: {
-[*] interface ArchiveSelection { | staging: ArchiveStaging[];
-[*] interface ArchiveSelection { | unknownId: string | null;
-[*] interface ArchiveSelection { | willDelete: boolean;
-[*] interface ArchiveSelection { | }[];
-[*] interface ArchiveStaging {
-[*] interface ArchiveStaging { | kept: boolean;
-[*] interface ArchiveStaging { | path: string;
-[*] interface ArchiveStaging { | reason: string | null;
-[*] interface ArchiveStaging { | removeCommand: string | null;
-[*] interface ArchivedBytes {
-[*] interface ArchivedBytes { | agentActions: number;
-[*] interface ArchivedBytes { | logs: number;
-[*] interface ArchivedBytes { | record: number;
-[*] interface ArchivedBytes { | recordings: number;
-[*] interface ArchivedBytes { | total: number;
-[*] interface ArchivedWorkspace {
-[*] interface ArchivedWorkspace { | agentActions: string | null;
-[*] interface ArchivedWorkspace { | agents: EndedAgentSession[];
-[*] interface ArchivedWorkspace { | branch: string | null;
-[*] interface ArchivedWorkspace { | builds: {
-[*] interface ArchivedWorkspace { | bytes: ArchivedBytes;
-[*] interface ArchivedWorkspace { | count: number;
-[*] interface ArchivedWorkspace { | expires: {
-[*] interface ArchivedWorkspace { | head: string | null;
-[*] interface ArchivedWorkspace { | id: string;
-[*] interface ArchivedWorkspace { | last: LastBuildReport | null;
-[*] interface ArchivedWorkspace { | lastErrorCount: number;
-[*] interface ArchivedWorkspace { | lastUsedAt: string | null;
-[*] interface ArchivedWorkspace { | logs: string | null;
-[*] interface ArchivedWorkspace { | merged: boolean | null;
-[*] interface ArchivedWorkspace { | number: number;
-[*] interface ArchivedWorkspace { | project: string;
-[*] interface ArchivedWorkspace { | projectRoot: string;
-[*] interface ArchivedWorkspace { | pullRequest: {
-[*] interface ArchivedWorkspace { | record: string | null;
-[*] interface ArchivedWorkspace { | recordings: string | null;
-[*] interface ArchivedWorkspace { | removedAt: string;
-[*] interface ArchivedWorkspace { | removedBy: string;
-[*] interface ArchivedWorkspace { | replacedBy?: string;
-[*] interface ArchivedWorkspace { | repository: string | null;
-[*] interface ArchivedWorkspace { | state: string;
-[*] interface ArchivedWorkspace { | subject: string | null;
-[*] interface ArchivedWorkspace { | title: string;
-[*] interface ArchivedWorkspace { | url: string;
-[*] interface ArchivedWorkspace { | version: number;
-[*] interface ArchivedWorkspace { | workspace: string;
-[*] interface ArchivedWorkspace { | worktree: {
-[*] interface ArchivedWorkspace { | } | null;
-[*] interface BuildCause {
-[*] interface BuildCause { | file: string | null;
-[*] interface BuildCause { | key: string;
-[*] interface BuildCause { | line: number | null;
-[*] interface BuildDiagnostic {
-[*] interface BuildDiagnostic { | column: number | null;
-[*] interface BuildDiagnostic { | file: string | null;
-[*] interface BuildDiagnostic { | line: number | null;
-[*] interface BuildDiagnostic { | message: string;
 [*] interface BuildMachineDay {
 [*] interface BuildMachineDay { | fallbacks: number;
 [*] interface BuildMachineDay { | offloaded: number;
@@ -337,6 +264,7 @@
 [*] interface DaemonLadderAction { | outcome: "done" | "kept" | "failed" | "would";
 [*] interface DaemonLadderAction { | restore?: string;
 [*] interface DaemonLadderAction { | rung: number;
+[*] interface DaemonLadderAction { | setting?: string;
 [*] interface DaemonLadderAction { | target: string;
 [*] interface DaemonLadderAction { | workspace?: string;
 [*] interface DaemonPressure {
@@ -394,6 +322,10 @@
 [*] interface DevicePlacement { | decision: "local" | "hosted" | "waited-locally" | "eas";
 [*] interface DevicePlacement { | machine?: string;
 [*] interface DevicePlacement { | reason: string;
+[*] interface DiscoveredCheckout {
+[*] interface DiscoveredCheckout { | from: string;
+[*] interface DiscoveredCheckout { | origin: DiscoveryOrigin;
+[*] interface DiscoveredCheckout { | path: string;
 [*] interface DoctorReport {
 [*] interface DoctorReport { | daemon: DaemonStatus & {
 [*] interface DoctorReport { | deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
@@ -407,8 +339,6 @@
 [*] interface DoctorReport { | remoteMachines: Array<BuildMachinesInspection["machines"][number] & {
 [*] interface DoctorReport { | stim: StimVersionReport;
 [*] interface DoctorReport { | toolchain: ToolchainReport | null;
-[*] interface EndedAgentSession extends Omit<AgentSession, "pid"> {
-[*] interface EndedAgentSession extends Omit<AgentSession, "pid"> { | endedAt: string;
 [*] interface Endpoint {
 [*] interface Endpoint { | host: string;
 [*] interface Endpoint { | servername: string;
@@ -432,8 +362,6 @@
 [*] interface GcJsonLock { | projectRoot: string | null;
 [*] interface GcJsonSections {
 [*] interface GcJsonSections { | agentDevice: AgentDeviceUsage | null;
-[*] interface GcJsonSections { | archiveStaging?: ArchiveSelection["staging"];
-[*] interface GcJsonSections { | archived?: ArchiveSelection["records"];
 [*] interface GcJsonSections { | buildState: WorktreeBuildState | null;
 [*] interface GcJsonSections { | buildsInProgress: GcJsonLock[];
 [*] interface GcJsonSections { | bytes: number | null;
@@ -542,14 +470,11 @@
 [*] interface GcJsonSections { | workspaceRoot: string;
 [*] interface GcJsonSections { | } | null;
 [*] interface GcJsonSections { | }[];
-[*] interface GcLadder {
-[*] interface GcLadder { | actions: DaemonLadderAction[];
-[*] interface GcLadder { | command: string;
-[*] interface GcLadder { | level: GcLadderLevel;
-[*] interface GcLadder { | levels: {
-[*] interface GcLadder { | pressure: DaemonPressure;
-[*] interface GcLadder { | workspaces: GcWorkspaceStage[];
-[*] interface GcLadder { | }[];
+[*] interface GcOptions {
+[*] interface GcOptions { | dryRun?: boolean;
+[*] interface GcOptions { | json?: boolean;
+[*] interface GcOptions { | measureBuildState?: boolean;
+[*] interface GcOptions { | pressure?: PressureLevel;
 [*] interface GcRefusal {
 [*] interface GcRefusal { | code: string;
 [*] interface GcRefusal { | message: string;
@@ -561,11 +486,19 @@
 [*] interface GcResult { | kind: GcResultKind;
 [*] interface GcResult { | label: string;
 [*] interface GcResult { | status: GcResultStatus;
-[*] interface GcWorkspaceStage {
-[*] interface GcWorkspaceStage { | kept?: string;
-[*] interface GcWorkspaceStage { | path: string;
-[*] interface GcWorkspaceStage { | since: string | null;
-[*] interface GcWorkspaceStage { | stage: "running" | "idle" | "dormant" | "stopped";
+[*] interface GcRunPayload {
+[*] interface GcRunPayload { | actionable: boolean;
+[*] interface GcRunPayload { | actions: LevelRunAction[];
+[*] interface GcRunPayload { | blocked: string[];
+[*] interface GcRunPayload { | discovered: LevelRun["discovered"];
+[*] interface GcRunPayload { | failures: number | null;
+[*] interface GcRunPayload { | inventory?: GcInventory | null;
+[*] interface GcRunPayload { | level: PressureLevel;
+[*] interface GcRunPayload { | mode: "dry-run" | "delete";
+[*] interface GcRunPayload { | outside: LevelRun["outside"];
+[*] interface GcRunPayload { | pressure: DaemonPressure;
+[*] interface GcRunPayload { | results: GcResult[];
+[*] interface GcRunPayload { | sections?: GcJsonSections;
 [*] interface GradleVersionEntry {
 [*] interface GradleVersionEntry { | bytes: number | null;
 [*] interface GradleVersionEntry { | detail: string | null;
@@ -752,24 +685,32 @@
 [*] interface IosFacts { | waitedForBuild: {
 [*] interface IosFacts { | webPreviewUrl?: string | null;
 [*] interface IosFacts { | } | null;
-[*] interface LastBuildReport {
-[*] interface LastBuildReport { | buildMachine?: string;
-[*] interface LastBuildReport { | builtOn?: string;
-[*] interface LastBuildReport { | cacheHit: BuildCacheHit;
-[*] interface LastBuildReport { | cacheSkipped: boolean;
-[*] interface LastBuildReport { | cause?: BuildCause;
-[*] interface LastBuildReport { | devicePlacement?: DevicePlacement;
-[*] interface LastBuildReport { | diagnostics?: BuildDiagnostic[];
-[*] interface LastBuildReport { | durationMs: number | null;
-[*] interface LastBuildReport { | errorCode?: string;
-[*] interface LastBuildReport { | fingerprint: string | null;
-[*] interface LastBuildReport { | finishedAt: string | null;
-[*] interface LastBuildReport { | missReason?: BuildMissReason;
-[*] interface LastBuildReport { | offloadFallback?: string;
-[*] interface LastBuildReport { | offloadedTo?: string;
-[*] interface LastBuildReport { | platform: BuildPlatform;
-[*] interface LastBuildReport { | startedAt: string;
-[*] interface LastBuildReport { | status: "ok" | "failed";
+[*] interface LevelRun {
+[*] interface LevelRun { | actions: LevelRunAction[];
+[*] interface LevelRun { | blocked: string[];
+[*] interface LevelRun { | bytes: number;
+[*] interface LevelRun { | dir: string;
+[*] interface LevelRun { | discovered: (DiscoveredCheckout & {
+[*] interface LevelRun { | from: string;
+[*] interface LevelRun { | kept?: string;
+[*] interface LevelRun { | level: PressureLevel;
+[*] interface LevelRun { | name: string;
+[*] interface LevelRun { | outside: {
+[*] interface LevelRun { | path: string;
+[*] interface LevelRun { | pressure: DaemonPressure;
+[*] interface LevelRun { | usage: {
+[*] interface LevelRun { | })[];
+[*] interface LevelRun { | }[];
+[*] interface LevelRunAction {
+[*] interface LevelRunAction { | bytes: number;
+[*] interface LevelRunAction { | detail: string;
+[*] interface LevelRunAction { | kind: string;
+[*] interface LevelRunAction { | outcome: "would" | "done" | "kept" | "failed";
+[*] interface LevelRunAction { | reason: string;
+[*] interface LevelRunAction { | restore?: string;
+[*] interface LevelRunAction { | rung: number | null;
+[*] interface LevelRunAction { | target: string;
+[*] interface LevelRunAction { | workspace?: string;
 [*] interface LogsInfo {
 [*] interface LogsInfo { | dir?: string;
 [*] interface MachineCacheReport {
@@ -874,6 +815,7 @@
 [*] interface MaintenanceAction { | kind: MaintenanceActionKind;
 [*] interface MaintenanceAction { | level?: 2 | 3;
 [*] interface MaintenanceAction { | olderThanDays?: number;
+[*] interface MaintenanceAction { | overBytes?: number;
 [*] interface MaintenanceAction { | reason: string;
 [*] interface MaintenanceAction { | target: string;
 [*] interface MaintenanceAction { | workspace?: string;
@@ -886,10 +828,6 @@
 [*] interface MaintenancePass { | startedAt: number;
 [*] interface MaintenancePass { | stopped: 0;
 [*] interface MaintenancePass { | trigger: string;
-[*] interface MaintenancePlan {
-[*] interface MaintenancePlan { | actions: MaintenanceAction[];
-[*] interface MaintenancePlan { | blocked: string[];
-[*] interface MaintenancePlan { | skips: MaintenanceSkip[];
 [*] interface MaintenancePressure {
 [*] interface MaintenancePressure { | availableBytes: number | null;
 [*] interface MaintenancePressure { | culprits?: MemoryCulprit[];
@@ -902,11 +840,6 @@
 [*] interface MaintenancePressure { | volume: string;
 [*] interface MaintenancePressure { | warningSince: number | null;
 [*] interface MaintenancePressure { | }[];
-[*] interface MaintenancePreview extends MaintenancePlan {
-[*] interface MaintenancePreview extends MaintenancePlan { | invalid?: string;
-[*] interface MaintenancePreview extends MaintenancePlan { | mode: MaintenanceMode;
-[*] interface MaintenancePreview extends MaintenancePlan { | note: string | null;
-[*] interface MaintenancePreview extends MaintenancePlan { | pressure: MaintenancePressure | null;
 [*] interface MaintenanceRecord extends NdjsonRecord {
 [*] interface MaintenanceRecord extends NdjsonRecord { | event: "maintenance_pass" | "maintenance_action" | "maintenance_skip" | "maintenance_failure" | "maintenance_check";
 [*] interface MaintenanceRecord extends NdjsonRecord { | level: "debug" | "info" | "warn" | "error";
@@ -926,7 +859,9 @@
 [*] interface MaintenanceSize { | name: string;
 [*] interface MaintenanceSize { | workspace?: string;
 [*] interface MaintenanceStatus {
+[*] interface MaintenanceStatus { | check: MaintenanceCheck;
 [*] interface MaintenanceStatus { | claim?: {
+[*] interface MaintenanceStatus { | deferred?: {
 [*] interface MaintenanceStatus { | invalid?: string;
 [*] interface MaintenanceStatus { | lastChecks: {
 [*] interface MaintenanceStatus { | lastPass: MaintenancePass | null;
@@ -937,6 +872,7 @@
 [*] interface MaintenanceStatus { | recent: MaintenanceRecord[];
 [*] interface MaintenanceStatus { | removeCommand: string;
 [*] interface MaintenanceStatus { | running: {
+[*] interface MaintenanceStatus { | since: number;
 [*] interface MaintenanceStatus { | size: number | null;
 [*] interface MaintenanceStatus { | sizes: MaintenanceSize[];
 [*] interface MaintenanceStatus { | startedAt: string;
@@ -945,6 +881,7 @@
 [*] interface MaintenanceStatus { | unresolved: string;
 [*] interface MaintenanceStatus { | worktree: number | null;
 [*] interface MaintenanceStatus { | } | null;
+[*] interface MaintenanceStatus { | }[];
 [*] interface MemoryCulprit {
 [*] interface MemoryCulprit { | bytes: number;
 [*] interface MemoryCulprit { | command: string | null;
@@ -1091,13 +1028,6 @@
 [*] interface RemoteListing { | revoke: string[];
 [*] interface RemoteListing { | serverKeyFingerprint: string | null;
 [*] interface RemoteListing { | }[];
-[*] interface RunGcOptions {
-[*] interface RunGcOptions { | cache?: string;
-[*] interface RunGcOptions { | delete?: boolean;
-[*] interface RunGcOptions { | json?: boolean;
-[*] interface RunGcOptions { | measureBuildState?: boolean;
-[*] interface RunGcOptions { | olderThan?: number;
-[*] interface RunGcOptions { | worktrees?: boolean;
 [*] interface RunLeaseFacts {
 [*] interface RunLeaseFacts { | expiresAt: string;
 [*] interface RunLeaseFacts { | kind: string;
@@ -1188,6 +1118,7 @@
 [*] interface StimClient { | build(options: StimBuildOptions): Promise<StimBuildResult>;
 [*] interface StimClient { | build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
 [*] interface StimClient { | collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
+[*] interface StimClient { | deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
 [*] interface StimClient { | deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
 [*] interface StimClient { | diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
 [*] interface StimClient { | doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
@@ -1251,6 +1182,11 @@
 [*] interface StimFailure { | details?: unknown;
 [*] interface StimFailure { | message: string;
 [*] interface StimFailure { | remedy: string | null;
+[*] interface StimGcItemOptions extends StimReadOptions {
+[*] interface StimGcItemOptions extends StimReadOptions { | item: StimGcItem;
+[*] interface StimGcItemResult {
+[*] interface StimGcItemResult { | exitCode: 0 | 1;
+[*] interface StimGcItemResult { | results: GcResult[];
 [*] interface StimGcMutationResult {
 [*] interface StimGcMutationResult { | exitCode: 0 | 1;
 [*] interface StimGcMutationResult { | report: StimGcReport;
@@ -1468,7 +1404,6 @@
 [*] type Access = "build" | "device-host";
 [*] type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
 [*] type ActivityState = "driven" | "active" | "idle" | "unknown";
-[*] type AgentTool = (typeof AGENT_TOOLS)[number];
 [*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, {
 [*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "android";
 [*] type ArchiveKind = "logs" | "recordings" | "agentActions";
@@ -1476,7 +1411,6 @@
 [*] type BuildMachineCredential = MachineCredential;
 [*] type BuildMachineIo = TailnetMachineIo;
 [*] type BuildMissCategory = "native-dependency" | "config-plugin" | "app-config" | "app-asset" | "package" | "native-dir" | "autolinking" | "package-scripts" | "file" | "other";
-[*] type BuildPlatform = StatsPlatform | "macos";
 [*] type BuildReport = Awaited<ReturnType<typeof inspectBuildMachines>>["machines"][number];
 [*] type CacheHitLevel = "local" | "remote" | false;
 [*] type DaemonMode = "on" | "report" | "off";
@@ -1487,26 +1421,15 @@
 [*] type DeviceToolRequest = { | platform: "ios" | "android";
 [*] type DeviceToolRequest = { | set: string;
 [*] type DeviceToolRequest = { | tool: "location";
+[*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
-[*] type GcLadderLevel = "high" | "critical";
-[*] type GcPayload = {
-[*] type GcPayload = { | actionable: boolean;
-[*] type GcPayload = { | cacheScope: string | null;
-[*] type GcPayload = { | defaulted: boolean;
-[*] type GcPayload = { | failures: number | null;
-[*] type GcPayload = { | inventory: GcInventory | null;
-[*] type GcPayload = { | ladder?: GcLadder;
-[*] type GcPayload = { | maintenance?: MaintenancePreview;
-[*] type GcPayload = { | mode: "dry-run" | "delete";
-[*] type GcPayload = { | olderThan: number | null;
-[*] type GcPayload = { | olderThan: number;
-[*] type GcPayload = { | results: GcResult[];
-[*] type GcPayload = { | sections: GcJsonSections;
-[*] type GcPayload = { | worktreeSweep: {
-[*] type GcPayload = { | } | null;
-[*] type GcReadOptions = Pick<RunGcOptions, "olderThan" | "cache" | "worktrees" | "measureBuildState">;
-[*] type GcResultKind = "archive" | "device" | "parkedDevice" | "parkedHostedDevice" | "idleDevice" | "deviceRecord" | "workspaceOutputs" | "worktreeDependencies" | "recording" | "workspaceDirectory" | "project" | "buildLock" | "buildSlot" | "deviceLease" | "easSession" | "worktree" | "cache" | "statusCache" | "tempLeftover" | "trash" | "watchmanRoot" | "watchman" | "gradleDaemon" | "gradleVersion" | "kotlinDaemon" | "devServer" | "workspaceLogs" | "ledgerEntry" | "easLedgerEntry" | "homeEntry";
+[*] type GcItem = {
+[*] type GcItem = { | dir: string;
+[*] type GcItem = { | kind: "cache";
+[*] type GcPayload = GcRunPayload | GcRefusal;
+[*] type GcReadOptions = Pick<GcOptions, "pressure" | "measureBuildState">;
+[*] type GcResultKind = "archive" | "device" | "parkedDevice" | "parkedHostedDevice" | "idleDevice" | "deviceRecord" | "workspaceOutputs" | "worktreeDependencies" | "recording" | "workspaceDirectory" | "project" | "buildLock" | "buildSlot" | "deviceLease" | "easSession" | "worktree" | "cache" | "statusCache" | "tempLeftover" | "trash" | "watchmanRoot" | "watchman" | "gradleDaemon" | "gradleVersion" | "kotlinDaemon" | "devServer" | "workspaceLogs" | "ledgerEntry" | "easLedgerEntry" | "homeEntry" | "runtime" | "toolCache";
 [*] type GcResultStatus = "done" | "kept" | "failed";
 [*] type GeneratedTickets = Map<string, {
 [*] type GeneratedTickets = Map<string, { | expiresAt: string;
@@ -1570,13 +1493,9 @@
 [*] type MachineAuth = { | serverKey: string;
 [*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, {
 [*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "macos";
-[*] type MaintenanceActionKind = "would-clear-outputs" | "would-trim-cache" | "would-empty-cache" | "would-shutdown-device" | "would-stop-workspace" | "would-remove-worktree" | "would-remove-orphan" | "would-unregister-cache" | "would-delete-parked-device" | "would-delete-devices" | "would-clear-build-dirs" | "would-delete-dependencies" | "would-stop-gradle-daemons" | "would-stop-watchman" | "would-delete-gradle-version" | "would-delete-temp-leftovers" | "would-delete-trash" | "would-delete-status-caches" | "would-delete-process-locks" | "would-delete-device-lease" | "would-delete-expired-archives" | "would-dormant-stage";
+[*] type MaintenanceActionKind = "would-clear-outputs" | "would-trim-cache" | "would-empty-cache" | "would-shutdown-device" | "would-stop-workspace" | "would-remove-worktree" | "would-remove-orphan" | "would-unregister-cache" | "would-delete-parked-device" | "would-delete-devices" | "would-clear-build-dirs" | "would-delete-dependencies" | "would-stop-gradle-daemons" | "would-stop-watchman" | "would-delete-gradle-version" | "would-delete-temp-leftovers" | "would-delete-trash" | "would-delete-status-caches" | "would-delete-process-locks" | "would-delete-device-lease" | "would-delete-expired-archives" | "would-dormant-stage" | "would-prune-project" | "would-delete-orphaned-devices" | "would-forget-stale-records" | "would-trim-workspace-logs" | "would-delete-recordings" | "would-delete-hosted-devices" | "would-delete-eas-sessions" | "would-delete-archives" | "would-delete-runtime" | "would-delete-unavailable-sim";
+[*] type MaintenanceCheck = "pressure" | "size" | "worktree" | "sweep" | "idle";
 [*] type MaintenanceMode = "off" | "report" | "on";
-[*] type MaintenanceSkip = {
-[*] type MaintenanceSkip = { | code?: string;
-[*] type MaintenanceSkip = { | reason: string;
-[*] type MaintenanceSkip = { | target: string;
-[*] type MaintenanceSkip = { | workspace?: string;
 [*] type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 [*] type MemoryKeptCode = "in-use" | "busy" | "unknown" | "build-running" | "stim-server";
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{
@@ -1636,8 +1555,8 @@
 [*] type StimBuildResult = { | facts: IosBuildFacts;
 [*] type StimBuildResult = { | platform: "ios";
 [*] type StimDoctorReport = DoctorReport;
-[*] type StimGcMutationOptions = Omit<StimGcOptions, "measureBuildState"> & {
-[*] type StimGcMutationOptions = Omit<StimGcOptions, "measureBuildState"> & { | delete?: boolean;
+[*] type StimGcItem = GcItem;
+[*] type StimGcMutationOptions = Omit<StimGcOptions, "measureBuildState">;
 [*] type StimGcOptions = GcReadOptions & StimReadOptions;
 [*] type StimGcReport = Exclude<GcPayload, {
 [*] type StimGcReport = Exclude<GcPayload, { | code: string;
@@ -1678,7 +1597,6 @@
 [*] type WorkspaceLaunchPlatform = "ios" | "android";
 [*] type WorkspaceLogsKeptCode = "unresolved" | "in-use" | "collector";
 [*] type WorktreeSkipCode = "not-a-worktree" | "bare-repository" | "source-checkout-unknown" | "source-checkout" | "not-registered" | "locked" | "pinned" | "nested-worktree" | "in-use" | "status-unreadable" | "dirty" | "unpushed-unchecked" | "unpushed" | "submodules" | "not-merged" | "merge-unknown" | "last-use-unknown" | "recently-used" | "activity-unknown" | "recent-activity";
-[*] } | GcRefusal;
 [*] } | HostedAgentIssuedGrant;
 [*] } | null;
 [*] } | {
@@ -1705,15 +1623,21 @@
 [*] } | { | facts: {
 [*] } | { | failed: string;
 [*] } | { | headed?: boolean;
+[*] } | { | id: string;
+[*] } | { | kind: "archive";
+[*] } | { | kind: "gradle-daemons";
 [*] } | { | kind: "other";
 [*] } | { | kind: "refused";
 [*] } | { | kind: "silent";
 [*] } | { | kind: "tls";
+[*] } | { | kind: "watchman";
+[*] } | { | kind: "workspace-outputs";
 [*] } | { | launched: boolean | "unverified";
 [*] } | { | logs: {
 [*] } | { | message: string;
 [*] } | { | name: string;
 [*] } | { | onServerKey?: (serverKey: string) => void | Promise<void>;
+[*] } | { | part?: ArchiveKind;
 [*] } | { | payload: string;
 [*] } | { | pid: number | null;
 [*] } | { | platform: "android";

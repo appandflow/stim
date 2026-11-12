@@ -299,17 +299,30 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test(arguments: [
-    (["gc", "--json"], [String: JSONValue]()),
+    (["gc", "--json"], "desktop.gc.subscribe", ["dryRun": JSONValue.bool(false)]),
+    (["gc", "--dry-run", "--json"], "desktop.gc.subscribe", ["dryRun": .bool(true)]),
+    (["gc"], "desktop.gc.subscribe", ["dryRun": .bool(false)]),
     (
-      ["gc", "--delete", "--cache", "archived:history", "--json"], ["delete": .bool(true), "cache": .string("archived:history")]
+      ["gc", "--pressure", "critical", "--json"], "desktop.gc.subscribe",
+      ["dryRun": .bool(false), "pressure": .string("critical")]
     ),
-    (["gc", "--delete", "--cache", "archived:history"], ["delete": .bool(true), "cache": .string("archived:history")]),
     (
-      ["gc", "--delete", "--worktrees", "--older-than", "7", "--json"],
-      ["delete": .bool(true), "worktrees": .bool(true), "olderThan": .number(7)]
+      GcItem.archive(id: "history", part: nil).arguments, "desktop.gc.item.subscribe",
+      ["item": .object(["kind": .string("archive"), "id": .string("history")])]
     ),
+    (
+      GcItem.archive(id: "history", part: .agentActions).arguments, "desktop.gc.item.subscribe",
+      ["item": .object(["kind": .string("archive"), "id": .string("history"), "part": .string("agentActions")])]
+    ),
+    (
+      GcItem.cache(dir: "/s/build-cache").arguments, "desktop.gc.item.subscribe",
+      ["item": .object(["kind": .string("cache"), "dir": .string("/s/build-cache")])]
+    ),
+    (GcItem.workspaceOutputs.arguments, "desktop.gc.item.subscribe", ["item": .object(["kind": .string("workspace-outputs")])]),
   ])
-  func cleanupKeepsSelectorsOrderedProgressAndPartialFailureReports(arguments: [String], options: [String: JSONValue])
+  func cleanupKeepsOptionsOrderedProgressAndPartialFailureReports(
+    arguments: [String], method: String, options: [String: JSONValue]
+  )
     async throws
   {
     let key = DesktopBootstrapKey.random()
@@ -330,9 +343,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         )
       }
       await settle()
-      #expect(socket.sent.last?["method"] == .string("desktop.gc.subscribe"))
+      #expect(socket.sent.last?["method"] == .string(method))
       #expect(socket.sent.last?["params"] == .object(options.merging(["cwd": .string("/selected")]) { _, selected in selected }))
-      socket.answer("desktop.gc.subscribe", .object(["subscription": .string("g\(exit)")]))
+      socket.answer(method, .object(["subscription": .string("g\(exit)")]))
       socket.reply([
         "event": .string("desktop-gc-progress"), "subscription": .string("g\(exit)"),
         "stream": .string("stdout"), "message": .string("Inspecting cache\nCleaning cache\n"),
@@ -366,7 +379,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
-  @Test func cleanupRefusesMalformedSelectorsBeforeDispatch() async throws {
+  @Test func cleanupRefusesMalformedOptionsBeforeDispatch() async throws {
     let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
@@ -376,9 +389,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     let environment = ["STIM_HOME": "/tmp/stim-test"]
     for invalid in [
-      ["gc", "--cache"], ["gc", "--cache", "--json"], ["gc", "--cache", " "], ["gc", "--json", "--json"],
-      ["gc", "--older-than", "1.5"], ["gc", "--older-than", "9007199254740992"],
-      ["gc", "--idle", "30m"], ["gc", "--reclaim"],
+      ["gc", "--pressure"], ["gc", "--pressure", "--json"], ["gc", "--pressure", "extreme"], ["gc", "--json", "--json"],
+      ["gc", "--delete"], ["gc", "--cache", "x"], ["gc", "--idle", "30m"], ["gc", "--reclaim"],
     ] {
       do {
         _ = try await runServerGc(

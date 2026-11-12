@@ -26,9 +26,11 @@ import { deviceLeasePath, LEASE_VERSION } from '../engine/device-lease.ts';
 import { executeAction, type ActContext } from '../stimd/passes/act.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { planPrune } from '../stimd/passes/prune.ts';
+import { planRecords } from '../stimd/passes/records.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
+import { testContext } from './_context.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
-import { saveConfig } from '../workspace/config.ts';
+import { saveConfig, upsertProject } from '../workspace/config.ts';
 import * as inUse from '../workspace/in-use.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
@@ -353,4 +355,31 @@ test('the daily sweep prunes all four, logs each prune and each keep, and a repo
   expect(records.filter((record) => record.event === 'gc_item').map((record) => record.kind)).toEqual(
     expect.arrayContaining(['statusCache', 'deviceLease', 'archive', 'homeEntry']),
   );
+});
+
+test('a pass that stimd aborts while it lists devices plans no device action and ends at once', async () => {
+  upsertProject(join(projects, 'gone'), {
+    platforms: { ios: { deviceUdid: 'U-GONE', owned: true, deviceName: 'stim-gone' } },
+  });
+  const controller = new AbortController();
+  let listing = false;
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: (file, _args, opts) =>
+      new Promise((_resolve, reject) => {
+        if (file !== 'xcrun') return reject(new Error(`unexpected ${file}`));
+        listing = true;
+        opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true });
+      }),
+  });
+  const operation = testContext({ env: { ...process.env, STIM_HOME: undefined }, signal: controller.signal });
+
+  const planned = planRecords({ devices: true, background: true, operation }).then(
+    (result) => result.actions,
+    () => [],
+  );
+  await vi.waitFor(() => expect(listing).toBe(true));
+  controller.abort();
+
+  expect((await planned).filter((action) => action.kind === 'would-delete-orphaned-devices')).toEqual([]);
 });

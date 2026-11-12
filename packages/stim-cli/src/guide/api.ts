@@ -59,7 +59,7 @@ before the report settles. Plans use the report budgets below. Providers must se
 cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
 the download directory rather than deleting files a provider may still write.
 
-doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
+doctor({ platform? }) and gc({ pressure?, measureBuildState? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt
 owned cleanup before rejecting. Deadline expiry rejects with
 STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
@@ -127,13 +127,19 @@ beforeRemove(workspace) runs for every canonical workspace in the resolved
 cleanup scope before effects, including registered descendants and pending
 branch cleanup. Throwing refuses the operation.
 
-gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
-signal? }) runs the same GC selections and actions as the CLI, including an
-unscoped sweep and the pressure ladder. It returns { report, exitCode }; exitCode
-is 0 or 1 and does not change process.exitCode. delete: true enables deletion.
-The existing CLI rules for cache selection, workspace safety and scoped homes apply.
+gc() stays read-only: the stim gc --dry-run --json report, at the measured
+pressure level or at pressure (normal, high or critical). measureBuildState
+false reports each worktree's buildState only from the disk-usage cache.
+collectGarbage({ pressure?, signal? }) runs stim gc in process at the measured
+level or at pressure, and returns { report, exitCode }; exitCode is 0 or 1 and
+does not change process.exitCode. An invalid pressure rejects with STIM_BAD_ARG.
+The CLI's scoped-home rules apply.
+deleteGarbageItem({ item, signal? }) deletes one item, for Stim Desktop's
+Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },
+{ kind: 'workspace-outputs' }, { kind: 'archive', id, part? }, { kind:
+'watchman' } or { kind: 'gradle-daemons' }; the CLI has no command for it.
 
-A deletion takes this home's exclusive maintenance claim;
+collectGarbage and deleteGarbageItem take this home's exclusive maintenance claim;
 concurrent maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
 Execution and cleanup use the report budgets above. Cancellation stops pending
 lock waits and further actions; completed actions remain applied. An archive

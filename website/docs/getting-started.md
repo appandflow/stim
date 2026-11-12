@@ -22,8 +22,8 @@ at once. A slot, selected with `--slot <name>`, runs another device in the same
 workspace. `stop` shuts down the workspace's Metro server and devices (an owned iOS
 simulator stays booted for a grace period when memory permits) and
 releases its leases; `worktree remove` reclaims everything the workspace owns.
-`gc` reports resources left behind by workspaces that are gone, and
-`gc --delete` removes them.
+`gc --dry-run` reports resources left behind by workspaces that are gone, and
+`gc` removes them.
 
 ## Install Stim
 

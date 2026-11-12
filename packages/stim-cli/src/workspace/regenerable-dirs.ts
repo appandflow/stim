@@ -1,5 +1,5 @@
-import { lstatSync, readdirSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
@@ -18,7 +18,7 @@ export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   dependencies: ['node_modules', 'ios/Pods'],
 };
 
-type DirRead = { names: string } | { directory: string };
+type DirRead = { names: string } | { directory: string } | { signature: string };
 type DirReads<T> = Generator<DirRead, T, string[] | boolean>;
 
 function* namesIn(path: string): DirReads<string[]> {
@@ -30,8 +30,15 @@ function* realDirectory(path: string): DirReads<boolean> {
   return (yield { directory: path }) === true;
 }
 
+const CACHEDIR_SIGNATURE = 'Signature: 8a477f597d28d172789f06886806bc55';
+
+function signatureHeads(text: string): boolean {
+  return text.startsWith(CACHEDIR_SIGNATURE);
+}
+
 function answerSync(read: DirRead): string[] | boolean {
   try {
+    if ('signature' in read) return signatureHeads(readFileSync(read.signature, 'utf8').slice(0, 64));
     return 'names' in read ? readdirSync(read.names) : lstatSync(read.directory).isDirectory();
   } catch {
     return 'names' in read ? [] : false;
@@ -40,6 +47,7 @@ function answerSync(read: DirRead): string[] | boolean {
 
 async function answerAsync(read: DirRead): Promise<string[] | boolean> {
   try {
+    if ('signature' in read) return signatureHeads((await readFile(read.signature, 'utf8')).slice(0, 64));
     return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
   } catch {
     return 'names' in read ? [] : false;
@@ -115,7 +123,7 @@ function* derivedDataDirs(root: string): DirReads<{ path: string; named: boolean
 }
 
 const CARGO_TARGET = 'target';
-const EXACT_APP_FILES = ['exact.mjs', 'Cargo.toml'];
+const EXACT_APP_FILES = ['exact.mjs'];
 
 function* exactTargetDirs(root: string): DirReads<string[]> {
   const names = yield* namesIn(root);
@@ -124,18 +132,41 @@ function* exactTargetDirs(root: string): DirReads<string[]> {
   return (yield* realDirectory(path)) ? [path] : [];
 }
 
+const CACHEDIR_TAG = 'CACHEDIR.TAG';
+
+function* cargoRootTargetDirs(root: string): DirReads<string[]> {
+  const path = join(root, CARGO_TARGET);
+  if (!(yield* realDirectory(path))) return [];
+  return (yield* namesIn(path)).includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true
+    ? [path]
+    : [];
+}
+
+function* cargoTargetDirsReads(root: string): DirReads<string[]> {
+  return [...new Set([...(yield* exactTargetDirs(root)), ...(yield* cargoRootTargetDirs(root))])];
+}
+
+/**
+ * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`) or one that
+ * carries Cargo's `CACHEDIR.TAG` with its signature line. At most one, even when both rules match it.
+ */
+export function cargoTargetDirsAsync(root: string): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root));
+}
+
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
-  const cargo = yield* exactTargetDirs(root);
+  const cargo = yield* cargoTargetDirsReads(root);
   return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
- * out as DerivedData, and an Exact app's Cargo `target/` (beside its `exact.mjs` and `Cargo.toml`). A `.dd` that is not
- * laid out as DerivedData is not one, nor is a `target/` anywhere else.
+ * out as DerivedData, and a Cargo `target/` directly under `root`: an Exact app's (beside its `exact.mjs`) or any
+ * that carries Cargo's `CACHEDIR.TAG` with its signature line. A `.dd` that is not laid out as DerivedData is not one, nor is a `target/`
+ * anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {
   return readSync(discoveredBuildDirsReads(root));
@@ -174,17 +205,22 @@ export function isBuildDirPath(path: string): boolean {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET) return readSync(exactTargetDirs(dirname(path))).includes(path);
+  if (name === CARGO_TARGET) return readSync(cargoTargetDirsReads(dirname(path))).includes(path);
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
 /**
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
- * directory inside `root` whose every file git ignores and, for an Exact app's `target/`, no other process runs from or
+ * directory inside `root` whose every file git ignores and, for a Cargo `target/`, no other process runs from or
  * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
  * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
-export async function regenerableDirProblem(root: string, path: string, signal?: AbortSignal): Promise<string | null> {
+export async function regenerableDirProblem(
+  root: string,
+  path: string,
+  signal?: AbortSignal,
+  { processes = true }: { processes?: boolean } = {},
+): Promise<string | null> {
   const rel = relative(root, path);
   try {
     if (!lstatSync(path).isDirectory()) return 'it is not a directory';
@@ -193,13 +229,22 @@ export async function regenerableDirProblem(root: string, path: string, signal?:
   }
   if (canonicalPath(path) !== join(canonicalPath(root), rel))
     return 'it or a directory above it is a link, or it lies outside its project';
+  try {
+    if (statSync(path).dev !== statSync(dirname(path)).dev) return 'it is a mount point';
+  } catch {
+    return 'it is gone';
+  }
   const tracked = await gitQuietAsync(root, ['ls-files', '--', rel], { signal });
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
-  if (basename(path) === CARGO_TARGET && (await readAsync(exactTargetDirs(dirname(path)))).includes(path)) {
+  if (
+    processes &&
+    basename(path) === CARGO_TARGET &&
+    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
+  ) {
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;

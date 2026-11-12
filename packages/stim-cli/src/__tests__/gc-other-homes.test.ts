@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createdDevicesFile, readStimHomes } from '@stim-cli/core/state';
-import { collectOtherHomes, forgetGoneHomes, otherHomeLines } from '../commands/gc/other-homes.ts';
+import { collectOtherHomes, forgetGoneHomes } from '../commands/gc/other-homes.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 import { recordStimHome } from '../engine/stim-home-registry.ts';
 import { listMountedVolumes } from '../fs-util.ts';
@@ -12,8 +12,6 @@ import type { IosSimRecord } from '../devices/ios.ts';
 vi.mock('../private-size.ts', () => ({
   measureTree: async () => ({ bytes: 5 * 1024 ** 3, privateBytes: 3 * 1024 ** 3 }),
 }));
-
-const NOW = Date.parse('2026-11-03T12:00:00Z');
 
 function sim(udid: string, name: string): IosSimRecord {
   return { udid, name, state: 'Shutdown', runtime: 'iOS 27', deviceTypeIdentifier: 'iPhone-17', available: true };
@@ -81,15 +79,11 @@ describe('the other Stim homes of gc', () => {
         ],
         teardown: [
           `cd '${project}' && STIM_HOME='${home}' stim worktree remove`,
-          `STIM_HOME='${home}' stim gc --delete`,
+          `STIM_HOME='${home}' stim gc`,
           `rm -rf '${home}'`,
         ],
       }),
     ]);
-    const text = otherHomeLines(homes, NOW).join('\n');
-    expect(text).toContain('3.0G private');
-    expect(text).toContain('1 workspace');
-    expect(text).toContain('last seen 3h ago');
   });
 
   test('a project inside a linked worktree is torn down from the worktree root, and a source checkout keeps the project folder', async () => {
@@ -121,7 +115,7 @@ describe('the other Stim homes of gc', () => {
 
     expect(teardown(linked)).toEqual([
       `cd '${tree}' && STIM_HOME='${linked}' stim worktree remove`,
-      `STIM_HOME='${linked}' stim gc --delete`,
+      `STIM_HOME='${linked}' stim gc`,
       `rm -rf '${linked}'`,
     ]);
     expect(teardown(source)?.[0]).toBe(
@@ -153,9 +147,6 @@ describe('the other Stim homes of gc', () => {
         devices: [expect.objectContaining({ id: 'UDID-1', present: true, command: 'xcrun simctl delete UDID-1' })],
       }),
     ]);
-    const text = otherHomeLines(homes, NOW).join('\n');
-    expect(text).toContain(`orphaned from ${home}: ios stim-scratch (iPhone 17 iOS 27)`);
-    expect(text).toContain('xcrun simctl delete UDID-1');
   });
 
   test('a gone home with no device left can be forgotten, and only when the listing was complete', async () => {
@@ -190,7 +181,6 @@ describe('the other Stim homes of gc', () => {
       },
     );
     expect(homes[0]).toMatchObject({ state: 'unverified', devices: [expect.objectContaining({ command: null })] });
-    expect(otherHomeLines(homes, NOW).join('\n')).not.toContain('orphaned from');
   });
 
   test('an unreadable list is a notice and no homes', async () => {

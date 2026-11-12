@@ -26,12 +26,15 @@ export function plan({
   protectedRoot,
   pinned = () => false,
   recentlyUsed = () => null,
+  sourceRoots = new Set(),
 }: {
   sizes: readonly MaintenanceSize[];
   settings: MaintenanceSettings;
   protectedRoot: string;
   pinned?: (workspace: string) => boolean;
   recentlyUsed?: (workspace: string) => string | null;
+  /** Workspaces that are source checkouts: a cap trims them after every linked worktree. */
+  sourceRoots?: ReadonlySet<string>;
 }): MaintenancePlan {
   const actions: MaintenanceAction[] = [];
   const blocked: string[] = [];
@@ -66,7 +69,10 @@ export function plan({
     const why = `${category} ${(total / 1024 ** 3).toFixed(1)}G over the ${capGb}G cap; ${
       category === 'compilation-cache' ? 'emptied whole' : `target ${(targetBytes / 1024 ** 3).toFixed(1)}G`
     }`;
-    for (const size of entries.toSorted((a, b) => (b.idleDays ?? 0) - (a.idleDays ?? 0))) {
+    const sourceRank = (size: MaintenanceSize) => (size.workspace && sourceRoots.has(size.workspace) ? 1 : 0);
+    for (const size of entries.toSorted(
+      (a, b) => sourceRank(a) - sourceRank(b) || (b.idleDays ?? 0) - (a.idleDays ?? 0),
+    )) {
       if (remaining <= targetBytes) break;
       const kept = size.workspace === protectedRoot ? 'the triggering workspace is protected' : size.blocked;
       if (kept) {

@@ -46,7 +46,19 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// The install reaches the registry; a cache that survives runs keeps that fast without naming the developer's ~/.npm.
+const NPM_TEST_CACHE = fileURLToPath(new URL('../../../node_modules/.cache/stim-test-npm', import.meta.url));
+
 describe('installing uploaded packages (engine.update packages) against real npm', () => {
+  let previousCache: string | undefined;
+  beforeAll(() => {
+    previousCache = process.env.npm_config_cache;
+    process.env.npm_config_cache = NPM_TEST_CACHE;
+  });
+  afterAll(() => {
+    process.env.npm_config_cache = previousCache;
+  });
+
   it('installs packed Stim packages at an unpublished version and still audits registry packages', async () => {
     const from = join(root, 'incoming');
     const versions = join(root, 'versions');

@@ -255,7 +255,7 @@ tell me which actions Stim recorded for the page.
   simulators and emulators keep running, so a fresh `stim web` does not cost
   a native relaunch.
 - `stim worktree remove` closes Chrome and deletes the profile.
-- `stim gc --delete` does the same for a workspace whose path is gone.
+- `stim gc` does the same for a workspace whose path is gone.
 
 Stim signals Chrome only after it verifies the process identity it recorded,
 and deletes a profile only when its ledger lists it.

@@ -10,6 +10,8 @@ const MB = 1024 * 1024;
 export interface VolumeSpace {
   volume: string;
   freeMb: number;
+  /** The device id `stat` reported; two volumes can share a `volume` label. */
+  device?: number;
 }
 
 function existingAncestor(path: string): string {
@@ -55,7 +57,7 @@ export async function readVolumeSpaceAsync(paths: readonly string[], signal?: Ab
       seen.add(info.dev);
       const fs = await statfs(existing);
       signal?.throwIfAborted();
-      volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB });
+      volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB, device: info.dev });
     } catch {
       signal?.throwIfAborted();
     }

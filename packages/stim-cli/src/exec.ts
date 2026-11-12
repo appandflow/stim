@@ -70,6 +70,24 @@ export interface Executor {
   findExecutable(name: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null;
 }
 
+export interface DetachedChildObserver {
+  begin(): string;
+  started(token: string, pid: number): void;
+  settled(token: string): void;
+}
+
+let detachedObserver: DetachedChildObserver | null = null;
+
+const quietly = (call: () => void): void => {
+  try {
+    call();
+  } catch {}
+};
+
+export function observeDetachedChildren(observer: DetachedChildObserver | null): void {
+  detachedObserver = observer;
+}
+
 const MAX_BUFFER = 64 * 1024 * 1024;
 const REPORT_CHILD_EXIT_CAP_MS = 15_000;
 
@@ -482,7 +500,20 @@ const defaultExecutor: Executor = {
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
       const start = () => (contained ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
-      const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
+      const observed = opts.detached ? detachedObserver : null;
+      const watch = observed?.begin();
+      let child: ChildProcess;
+      try {
+        child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
+      } catch (error) {
+        if (observed && watch !== undefined) quietly(() => observed.settled(watch));
+        throw error;
+      }
+      if (observed && watch !== undefined) {
+        const pid = child.pid;
+        if (pid === undefined) quietly(() => observed.settled(watch));
+        else quietly(() => observed.started(watch, pid));
+      }
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -529,6 +560,11 @@ const defaultExecutor: Executor = {
             void cancel?.().catch(reject);
           });
         void lifetime?.closed.catch(reject);
+        if (observed && watch !== undefined && child.pid !== undefined)
+          void lifetime?.closed.then(
+            () => quietly(() => observed.settled(watch)),
+            () => {},
+          );
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);
       } catch (error) {
@@ -671,8 +707,21 @@ const defaultExecutor: Executor = {
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
     const claims = report ? [...operationState(context).declaring] : [];
     const contained = startsInReportJob(cmd, childOpts, false);
-    const child = spawnReportProbe(cmd, args, childOpts);
-    reportChild(
+    const observed = childOpts.detached ? detachedObserver : null;
+    const watch = observed?.begin();
+    let child: ChildProcess;
+    try {
+      child = spawnReportProbe(cmd, args, childOpts);
+    } catch (error) {
+      if (observed && watch !== undefined) quietly(() => observed.settled(watch));
+      throw error;
+    }
+    if (observed && watch !== undefined) {
+      const pid = child.pid;
+      if (pid === undefined) quietly(() => observed.settled(watch));
+      else quietly(() => observed.started(watch, pid));
+    }
+    const lifetime = reportChild(
       child,
       undefined,
       (error) =>
@@ -688,6 +737,11 @@ const defaultExecutor: Executor = {
           : error,
       contained,
     );
+    if (observed && watch !== undefined && child.pid !== undefined)
+      void lifetime?.closed.then(
+        () => quietly(() => observed.settled(watch)),
+        () => {},
+      );
     return child;
   },
   findExecutable(name, options = {}) {
@@ -855,6 +909,11 @@ export function setExecutor(e: MockExecutor): void {
 /** @internal Test seam that restores the process executor. */
 export function resetExecutor(): void {
   active = debugExecutor;
+}
+
+/** Whether child processes reach the real system: true unless a test replaced the executor's async runner. */
+export function runsRealCommands(): boolean {
+  return active.runFileAsync === debugExecutor.runFileAsync;
 }
 
 export function getExecutor(): Executor {

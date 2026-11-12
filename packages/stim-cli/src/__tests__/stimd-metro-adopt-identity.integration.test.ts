@@ -68,7 +68,9 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
           const answer = await ensureMetro({ root, port: 8182 }, () => {});
           expect(answer).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
           expect(original({ pid, processToken: token })).toBe('same');
-          expect(readClaimSet(claimRoot).live).toMatchObject([{ childDeclared: true, child: null }]);
+          expect(readClaimSet(claimRoot).live).toMatchObject([
+            { childDeclared: true, child: { pid, processToken: token } },
+          ]);
           await expect(closeMetroChildren()).rejects.toMatchObject({ reportCleanup: true });
         } finally {
           inspect.mockRestore();
@@ -123,7 +125,9 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
           await expect(stopping).resolves.toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
           expect(signal).toHaveBeenCalledTimes(when === 'before TERM' ? 0 : 1);
           expect(original({ pid, processToken: token })).toBe('same');
-          expect(readClaimSet(claimRoot).live).toMatchObject([{ childDeclared: true, child: null }]);
+          expect(readClaimSet(claimRoot).live).toMatchObject([
+            { childDeclared: true, child: { pid, processToken: token } },
+          ]);
         } finally {
           vi.useRealTimers();
           signal.mockRestore();

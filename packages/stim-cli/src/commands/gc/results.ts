@@ -28,7 +28,9 @@ type GcResultKind =
   | 'workspaceLogs'
   | 'ledgerEntry'
   | 'easLedgerEntry'
-  | 'homeEntry';
+  | 'homeEntry'
+  | 'runtime'
+  | 'toolCache';
 
 type GcResultStatus = 'done' | 'kept' | 'failed';
 

@@ -480,12 +480,6 @@ function dropExpiredLease(entry: LeaseFileEntry, io: LeaseIo): boolean {
   return true;
 }
 
-export function removeExpiredLease(entry: LeaseFileEntry, io: LeaseIo = fileLeaseIo): boolean {
-  const lease = entry.lease;
-  if (!lease) return false;
-  return io.withLeaseLock(deviceLeaseLockPath(lease.platform, lease.id), () => dropExpiredLease(entry, io));
-}
-
 export async function removeExpiredLeaseAsync(entry: LeaseFileEntry, signal?: AbortSignal): Promise<boolean> {
   const lease = entry.lease;
   if (!lease) return false;

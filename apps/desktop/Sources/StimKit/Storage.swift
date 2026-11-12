@@ -85,7 +85,7 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   public var repository: String?
   public var branch: String?
   public var buildOutputs: DiskSize
-  /// Why `stim gc --delete` keeps the build outputs, or nil when it clears them.
+  /// Why `stim gc` keeps the build outputs, or nil when it clears them.
   public var buildOutputsKept: String?
   public var nodeModules: DiskSize
   /// The part of node_modules that clones or hard links share with other folders and that `nodeModules` leaves out.
@@ -94,14 +94,14 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// A primary checkout, whose `nodeModules` counts the bytes its clones share.
   public var isCheckout = false
   public var logs: DiskSize
-  /// What `stim gc --delete` would trim from the logs, or nil when it trims nothing.
+  /// What `stim gc` would trim from the logs, or nil when it trims nothing.
   public var logsTrimmed: Int64?
-  /// Why `stim gc --delete` keeps logs it would otherwise trim.
+  /// Why `stim gc` keeps logs it would otherwise trim.
   public var logsKept: String?
   public var devices: DiskSize
   public var deviceCount: Int
   public var worktree: GcReport.LinkedWorktree?
-  /// A registered project whose folder is gone; `stim gc --delete` drops its record and devices.
+  /// A registered project whose folder is gone; `stim gc` drops its record and devices.
   public var missing = false
   /// A linked worktree `stim worktree warm` has not set up, listed by `stim status` apart from workspaces.
   public var unprovisioned = false
@@ -210,16 +210,16 @@ public struct RepositoryStorage: Identifiable, Hashable, Sendable {
 
 /// The CLI command that frees a "Safe to free now" item.
 public enum FreeAction: Hashable, Sendable {
-  /// `stim gc --delete`: devices, records, logs, idle build outputs and merged worktrees together.
+  /// `stim gc`: one maintenance pass over devices, records, logs, idle build outputs and merged worktrees.
   case gc
-  /// `stim gc --delete --cache workspaces`: build outputs of idle workspaces.
+  /// The workspace-outputs item: build outputs of idle workspaces.
   case workspaceOutputs
-  /// `stim gc --delete --cache <selector>`: one shared cache, emptied whole.
+  /// The cache item: one shared cache, emptied whole, named by its directory.
   case cache(String)
   /// `stim worktree remove <path>`, run from the repository.
   case removeWorktree(path: String, repository: String?)
 
-  /// Whether `stim gc --delete` also frees what this action frees.
+  /// Whether `stim gc` also frees what this action frees.
   public var partOfGc: Bool {
     switch self {
     case .gc, .workspaceOutputs, .removeWorktree: return true
@@ -255,7 +255,7 @@ public enum FreePlan {
     selected.contains(action) || (action.partOfGc && selected.contains(.gc))
   }
 
-  /// Whether the item's own checkbox decides, rather than `stim gc --delete` including it anyway.
+  /// Whether the item's own checkbox decides, rather than `stim gc` including it anyway.
   public static func canToggle(_ action: FreeAction, selected: Set<FreeAction>) -> Bool {
     action == .gc || !action.partOfGc || !selected.contains(.gc)
   }
@@ -272,22 +272,22 @@ public enum FreePlan {
         commands.append(StimCommand(["worktree", "remove", path], cwd: repository ?? home))
       }
       if selected.contains(.workspaceOutputs) {
-        commands.append(StimCommand(["gc", "--json", "--delete", "--cache", "workspaces"], cwd: home))
+        commands.append(GcItem.workspaceOutputs.command(cwd: home))
       }
     } else {
-      commands.append(StimCommand(["gc", "--json", "--delete"], cwd: home))
+      commands.append(StimCommand(["gc", "--json"], cwd: home))
     }
-    for case .cache(let selector) in selected.sorted(by: { "\($0)" < "\($1)" }) {
-      commands.append(StimCommand(["gc", "--json", "--delete", "--cache", selector], cwd: home))
+    for case .cache(let dir) in selected.sorted(by: { "\($0)" < "\($1)" }) {
+      commands.append(GcItem.cache(dir: dir).command(cwd: home))
     }
     return commands
   }
 
-  /// The `stim gc --json` dry run that previews `commands` when they are one gc run, whose sheet then offers
-  /// the same scope with `--delete`; nil when they need a confirmation of their own.
+  /// The `stim gc --dry-run --json` that previews `commands` when they are one maintenance pass, whose sheet then
+  /// offers the real run; nil when they need a confirmation of their own.
   public static func preview(_ commands: [StimCommand]) -> [String]? {
-    guard commands.count == 1, let only = commands.first, only.arguments.first == "gc" else { return nil }
-    return only.arguments.filter { $0 != "--delete" }
+    guard commands.count == 1, let only = commands.first, only.arguments == ["gc", "--json"] else { return nil }
+    return only.arguments + ["--dry-run"]
   }
 }
 
@@ -323,7 +323,7 @@ public struct StorageReport: Sendable {
   public var workspaces: [WorkspaceStorage]
   /// Workspaces grouped by repository, largest first.
   public var repositories: [RepositoryStorage]
-  /// Every cache `stim gc --json` reports, for `--cache` selection and titles.
+  /// Every cache `stim gc --dry-run --json` reports, for titles.
   public var allCaches: [GcReport.Cache]
   /// What Stim can free now, largest first.
   public var free: [FreeItem]
@@ -599,11 +599,10 @@ public struct StorageReport: Sendable {
           action: .removeWorktree(path: worktree.path, repository: inside.first?.repository)))
     }
     for cache in caches where (cache.bytes ?? 0) > 0 && cache.scopedEmpty?.willEmpty != false {
-      guard let selector = cache.selector(among: caches) else { continue }
       items.append(
         FreeItem(
           id: "cache:\(cache.dir)", title: cache.title(among: caches), path: nil,
-          detail: "Shared cache, emptied whole; builds refill it", bytes: cache.bytes, action: .cache(selector)))
+          detail: "Shared cache, emptied whole; builds refill it", bytes: cache.bytes, action: .cache(cache.dir)))
     }
     return items.sorted(by: largestFirst(\.bytes, \.id))
   }

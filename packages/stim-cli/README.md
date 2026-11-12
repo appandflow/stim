@@ -180,14 +180,15 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
-`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees?, measureBuildState? })` read their CLI
+`doctor({ platform?, record? })` and `gc({ pressure?, measureBuildState? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record
 its checked platforms after the report and owned cleanup succeed. Recording waits
 asynchronously for the config lock, honors `signal`, and rejects unavailable state.
-GC never
-deletes or shuts down idle devices. Reads can refresh their own usage caches
+`gc()` never
+deletes or shuts down idle devices; `collectGarbage({ pressure? })` runs `stim gc`
+in process. Reads can refresh their own usage caches
 and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
 after owned cleanup; a caller abort rejects with
@@ -260,7 +261,7 @@ reference:
 - [Web in an owned Chrome](https://stim.appandflow.com/docs/web): `stim web`
   for Expo web and other web servers, page logs, and attaching browser tools.
 - [Worktrees](https://stim.appandflow.com/docs/worktrees): `worktree warm`,
-  `--refresh`, `worktree remove`, and `gc --worktrees` to remove finished
+  `--refresh`, `worktree remove`, and `gc` to remove finished
   worktrees in bulk.
 - [Build caches](https://stim.appandflow.com/docs/build-caches): what `gc`
   reports and trims, including the build outputs of idle workspaces.
