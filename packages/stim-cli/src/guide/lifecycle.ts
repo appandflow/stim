@@ -2396,6 +2396,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             A workspace's own booted or booting device
                             bypasses the queue.
 
+    concurrency.maxTests    how many test commands run at once on this
+                            machine; derived max(1, floor(CPU cores / 6)).
+                            It is a semaphore of N slots (~/.stim/test-slots)
+                            that never counts against concurrency.maxBuilds.
+                            A run past it waits in arrival order in
+                            ~/.stim/test-waits and shows in status as a
+                            daemon.testWaiting entry.
+
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
   critical, or warning with under 2 GB available. A boot that needs a new

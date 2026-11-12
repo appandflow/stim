@@ -116,6 +116,7 @@ it('classifies each environment-named setting by the process that makes its deci
     'concurrency.maxIosDevices',
     'concurrency.maxAndroidDevices',
     'concurrency.maxMacosApps',
+    'concurrency.maxTests',
     'disk.minFreeGb',
     'disk.hardFloorGb',
     'disk.criticalFreeGb',

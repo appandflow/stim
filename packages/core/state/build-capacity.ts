@@ -18,6 +18,7 @@ import type { LoadState } from './status.ts';
 const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
 const SLOT_PREFIX = 'slot-';
 const SLOT_LABEL = 'build slot';
+const TEST_SLOT_LABEL = 'test slot';
 
 export function buildSlotsDir(): string {
   return join(configDir(), 'build-slots');
@@ -27,24 +28,38 @@ export function buildSlotPath(index: number): string {
   return join(buildSlotsDir(), `${SLOT_PREFIX}${index}`);
 }
 
-/**
- * Takes the first free one of `max` `concurrency.maxBuilds` slots, recording `details` and the slot `index`. Returns
- * null while every slot is held; throws the claim refusal when no slot is busy but one cannot be resolved.
- */
-export function tryAcquireBuildSlotClaim({
+export function testSlotsDir(): string {
+  return join(configDir(), 'test-slots');
+}
+
+export function testSlotPath(index: number): string {
+  return join(testSlotsDir(), `${SLOT_PREFIX}${index}`);
+}
+
+interface SlotClaim {
+  claim: ClaimHandle;
+  index: number;
+  path: string;
+}
+
+function tryAcquireSlotClaim({
   max,
   details,
+  slotPath,
+  label,
 }: {
   max: number;
   details: Record<string, unknown>;
-}): { claim: ClaimHandle; index: number; path: string } | null {
+  slotPath: (index: number) => string;
+  label: string;
+}): SlotClaim | null {
   let refusal: ClaimRefusedError | null = null;
   let busy = false;
   for (let index = 0; index < max; index++) {
-    const path = buildSlotPath(index);
+    const path = slotPath(index);
     let attempt;
     try {
-      attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label: SLOT_LABEL, details: { ...details, index } });
+      attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label, details: { ...details, index } });
     } catch (err) {
       if (!isClaimRefusal(err)) throw err;
       refusal ??= err;
@@ -59,6 +74,19 @@ export function tryAcquireBuildSlotClaim({
   }
   if (refusal && !busy) throw refusal;
   return null;
+}
+
+/**
+ * Takes the first free one of `max` `concurrency.maxBuilds` slots, recording `details` and the slot `index`. Returns
+ * null while every slot is held; throws the claim refusal when no slot is busy but one cannot be resolved.
+ */
+export function tryAcquireBuildSlotClaim(options: { max: number; details: Record<string, unknown> }): SlotClaim | null {
+  return tryAcquireSlotClaim({ ...options, slotPath: buildSlotPath, label: SLOT_LABEL });
+}
+
+/** The same for the `concurrency.maxTests` slots under `$STIM_HOME/test-slots`. */
+export function tryAcquireTestSlotClaim(options: { max: number; details: Record<string, unknown> }): SlotClaim | null {
+  return tryAcquireSlotClaim({ ...options, slotPath: testSlotPath, label: TEST_SLOT_LABEL });
 }
 
 /** The client of each build slot a remote machine's offloaded build holds now; those builds run under another Stim home. */
