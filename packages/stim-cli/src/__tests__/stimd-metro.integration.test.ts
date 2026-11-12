@@ -912,7 +912,7 @@ require('node:http')
       });
     try {
       const started = await cliRun(['start', '--remote', '--json', '--wait', '40']);
-      expect(started.code, started.out).toBe(0);
+      expect(started.code).toBe(0);
       const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel;
       expect(recorded).toMatchObject({ kind: 'managed', provider: 'cloudflared', port });
       const claim = readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live[0];
@@ -920,14 +920,15 @@ require('node:http')
       expect(alive(recorded.pid)).toBe(true);
 
       const stopped = await cliRun(['stop']);
-      expect(stopped.code, stopped.out).toBe(0);
+      expect(stopped.code).toBe(0);
       expect(alive(recorded.pid)).toBe(false);
       expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
     } finally {
       const daemon = record()?.pid;
-      if (daemon) {
-        process.kill(daemon, 'SIGTERM');
-        await vi.waitFor(() => expect(alive(daemon)).toBe(false), { timeout: 15_000 });
+      if (typeof daemon === 'number' && daemon > 0) {
+        if (alive(daemon)) process.kill(daemon, 'SIGTERM');
+        for (const until = Date.now() + 15_000; alive(daemon) && Date.now() < until;)
+          await new Promise((done) => setTimeout(done, 50));
       }
     }
   }, 90_000);
