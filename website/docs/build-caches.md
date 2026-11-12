@@ -686,6 +686,8 @@ Cleanup protects active builds, leases, live shares and pinned workspaces. It ca
 
 Run `stim gc --dry-run` to preview cleanup at the measured level, or add `--pressure high` or `--pressure critical` to preview that level. `stim gc` runs the measured level, and `stim gc --pressure high` or `--pressure critical` runs the ladder at that level, regardless of the current pressure. Plain output ends with the path of the full report, `$STIM_HOME/gc/last-report.txt`, and each deleted item is appended to `$STIM_HOME/gc/gc.ndjson`. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
 
+Before a native compile on this Mac, Stim estimates the bytes it will write: the largest recorded size among the project's recent builds of that platform, or a default for the project type (Expo 6 GB on iOS and Android, bare React Native and Re.Pack 8 and 6 GB, standalone native 4 and 3 GB, an Exact app 20 GB on iOS, SwiftPM on macOS 2 GB). The defaults are estimates. A cache hit or an offloaded build writes little here and is not checked. When free disk is under that estimate plus `disk.criticalFreeGb`, Stim runs the ladder to make room and builds regardless. If the space is still short, it prints one warning on stderr with the bytes expected and available; it never refuses a build for this, and `stim logs --source builds` records each build's `bytesWritten`.
+
 If a run reports `STIM_LOW_DISK`, run `stim gc` or free disk space yourself, then retry. See the installed reference for the full cleanup rules and recovery options.
 
 <StimTabs code="stim guide cleanup" />
