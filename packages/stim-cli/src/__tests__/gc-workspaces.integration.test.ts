@@ -89,7 +89,7 @@ import {
   readMaintenanceState,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
-import { liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -358,6 +358,23 @@ describe('workspace directories without workspace.json', () => {
     withDirLock(join(dir, 'metadata.lock'), () => {
       expect(listWorkspaceDirs().find((entry) => entry.dir === dir)?.residue?.blocked).toBe('metadata.lock is held');
     });
+  });
+
+  test('a directory holding only a native-run lock is kept with its claim path until the claim is removed, then deleted', async () => {
+    const dir = husk(join(projects, 'locked'), {}, null);
+    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+      child: { record: null },
+    });
+    const blocked = listWorkspaceDirs().find((entry) => entry.dir === dir)?.residue?.blocked;
+    expect(blocked).toContain(claim);
+    expect(blocked).toContain(`rm -f ${claim}`);
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(true);
+
+    rmSync(claim, { force: true });
+    await gcJson({ pressure: 'normal' });
+    expect(existsSync(dir)).toBe(false);
   });
 
   test('gc --delete removes the leftovers of a removed workspace and keeps everything else', async () => {
@@ -669,6 +686,19 @@ describe('workspaceInUse', () => {
     const { root } = goneWorkspace('native');
     holdNativeRun(root);
     expect(workspaceInUse(root).join('\n')).toMatch(/native-run\.lock/);
+  });
+
+  test('a native-run claim left by a dead owner with an unknown child names its path, owner and removal command', () => {
+    const { root } = goneWorkspace('stale-fingerprint');
+    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+      details: { purpose: 'fingerprint evaluation' },
+      child: { record: null },
+      startedAt: '2026-11-12T05:23:46.715Z',
+    });
+    const [reason] = workspaceInUse(root);
+    expect(reason).toContain(claim);
+    expect(reason).toContain('pid 4242 (claimed 2026-11-12T05:23:46.715Z) is no longer running');
+    expect(reason).toContain(`rm -f ${claim}`);
   });
 
   test('a live build lock or slot naming the root marks it in use; one naming another root does not', () => {
