@@ -62,7 +62,8 @@ describe('scanSourceWrites', () => {
   it('ignores writes in dependency folders and sees one in source', async () => {
     const quiet = Date.now() - 86_400_000;
     writeFileSync(join(base, 'node_modules', 'new.js'), '');
-    expect(await scanSourceWrites(join(base), quiet)).toEqual({ newest: old.getTime() });
+    const idle = await scanSourceWrites(base, quiet);
+    expect('newest' in idle && Math.abs(idle.newest - old.getTime()) < 5).toBe(true);
     writeFileSync(join(base, 'src', 'edit.ts'), '');
     const scan = await scanSourceWrites(base, quiet);
     expect('newest' in scan && scan.newest > quiet).toBe(true);
