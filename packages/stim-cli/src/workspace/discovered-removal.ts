@@ -3,15 +3,21 @@ import { join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { decideIdleStop } from '../policy/idle.ts';
 import { ARTIFACT_DIRS, existingBuildDirsAsync } from './regenerable-dirs.ts';
-import { discoveredEvidence } from './discovered-activity.ts';
+import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
 
-const regenerable = (rel: string, folders: readonly string[]) =>
-  rel.split('/').includes('node_modules') || folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
+const regenerable = (rel: string, isDirectory: boolean, folders: readonly string[]) => {
+  const segments = rel.split('/');
+  const directories = isDirectory ? segments : segments.slice(0, -1);
+  return (
+    directories.some((name) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name)) ||
+    folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`))
+  );
+};
 
 async function sameAsMain(path: string, main: string, rel: string, budget: { bytes: number }): Promise<boolean | null> {
   const mine = await lstat(join(path, rel));
@@ -31,7 +37,7 @@ async function sameAsMain(path: string, main: string, rel: string, budget: { byt
 
 /**
  * Why removing the worktree would lose a git-ignored file git cannot recover, or null: every ignored path outside the
- * regenerable folders must exist, byte for byte, at the same place in the repository's main checkout. More than
+ * regenerable folders (dependency folders and directories named like build output) must exist, byte for byte, at the same place in the repository's main checkout. More than
  * MAX_IGNORED_FILES files, more than MAX_COMPARED_BYTES to compare, or anything unreadable keeps the worktree.
  */
 async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
@@ -75,14 +81,16 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
       const child = join(rel, name);
       const stat = await lstat(join(path, child)).catch(() => null);
       if (!stat) return unreadable;
-      const hold = stat.isDirectory() && !stat.isSymbolicLink() ? await walk(child) : await check(child);
+      const directory = stat.isDirectory() && !stat.isSymbolicLink();
+      if (regenerable(child, directory, folders)) continue;
+      const hold = directory ? await walk(child) : await check(child);
       if (hold) return hold;
     }
     return null;
   };
   for (const entry of listed.split('\0').filter(Boolean)) {
     const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
-    if (regenerable(rel, folders)) continue;
+    if (regenerable(rel, entry.endsWith('/'), folders)) continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
     if (hold) return hold;
   }

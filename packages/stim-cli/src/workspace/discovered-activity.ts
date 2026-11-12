@@ -11,7 +11,7 @@ import { runningFromReason } from './running-from.ts';
 const ALWAYS_SKIPPED = new Set(['.git', '.worktrees', 'node_modules', 'Pods']);
 
 /** Folders holding build output, skipped only where git ignores them: a tracked or unignored one is source. */
-const SKIPPED_WHERE_IGNORED = new Set([
+export const SKIPPED_WHERE_IGNORED: ReadonlySet<string> = new Set([
   'build',
   'dist',
   'target',

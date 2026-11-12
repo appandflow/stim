@@ -1,9 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
+import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import * as reads from '../workspace/discovered-reads.ts';
 import { worktreeInScope } from '../workspace/discovery.ts';
 
@@ -65,7 +74,7 @@ describe('a discovered worktree on the removal path', () => {
     main = join(base, 'roots', 'main');
     mkdirSync(join(main, 'ios', 'App.xcodeproj'), { recursive: true });
     writeFileSync(join(main, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    writeFileSync(join(main, '.gitignore'), '.env\nlocal.db\nnotes/\nnode_modules/\n');
+    writeFileSync(join(main, '.gitignore'), '.env\nlocal.db\nnotes/\nnode_modules/\ndist/\nAGENTS.override.md\n');
     writeFileSync(join(main, 'ios', 'App.xcodeproj', 'project.pbxproj'), 'original\n');
     git(main, 'init', '-q', '-b', 'main');
     git(base, 'init', '-q', '--bare', '-b', 'main', join(base, 'remote.git'));
@@ -99,6 +108,28 @@ describe('a discovered worktree on the removal path', () => {
     expect((await sweep())['env-wt']?.skipped).toContain('.env');
     writeFileSync(join(main, '.env'), 'SECRET=1');
     expect((await sweep())['env-wt']?.skipped).toBeNull();
+  });
+
+  it('skips ignored directories named like build output at any depth but names any other ignored file that differs', async () => {
+    const wt = worktree('nested');
+    mkdirSync(join(wt, 'packages', 'x', 'dist'), { recursive: true });
+    writeFileSync(join(wt, 'packages', 'x', 'dist', 'index.d.mts'), 'built');
+    age(wt);
+    expect((await sweep()).nested?.skipped).toBeNull();
+    writeFileSync(join(wt, 'AGENTS.override.md'), 'local notes');
+    age(wt);
+    expect((await sweep()).nested?.skipped).toContain('AGENTS.override.md');
+  });
+
+  it('keeps a worktree at removal when a file is edited between the plan and the act', async () => {
+    const wt = worktree('late');
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(planned.worktrees.find((entry) => entry.path === wt)?.skipped).toBeNull();
+    writeFileSync(join(wt, 'local.db'), 'edited after the plan');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await removeWorktrees(planned, { now: Date.now() });
+    expect(existsSync(wt)).toBe(true);
   });
 
   it('keeps a hand edit to a tracked project.pbxproj as dirty work', async () => {
