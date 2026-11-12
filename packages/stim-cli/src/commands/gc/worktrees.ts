@@ -870,6 +870,7 @@ export async function collectWorktreeSweep({
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
+    // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
     const podChurn = linked && !discoveredOnly ? provenPodChurn(path, porcelain, [], keys) : [];
     const hiddenEdit = linked && !discoveredOnly ? await hiddenEditHold(path, operation?.signal) : null;
     const dirty = linked ? dirtyLines(porcelain, podChurn).length : 0;

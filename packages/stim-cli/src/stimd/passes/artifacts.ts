@@ -785,6 +785,7 @@ export async function clearSourceTrees(
   const hold = async (keys: readonly string[]): Promise<void> => {
     const [head, ...rest] = keys;
     if (head === undefined) {
+      // @ref LLP 0001#the-main-checkout-goes-last -- no warm may copy from a tree being deleted
       const warm = takeWarmClaim(worktree.path);
       if ('kept' in warm) return keepAll(selected, warm.kept);
       try {
