@@ -74,6 +74,10 @@ that produced the delivered bundle logged an error, the launch reports
 `metro.command` for Re.Pack 4. `stim start --reset-cache` passes Re.Pack's
 `--reset-cache`. Stim turns off Re.Pack's own `adb reverse`, because it would
 reach every connected device, and manages the reverse for its port itself.
+`stim reload` reaches a Re.Pack app through the dev server's `/message`
+socket. That socket cannot name its connected apps, so the reload goes to
+every app connected to the dev server, and Stim skips its Metro warmup
+request.
 
 Stim starts Re.Pack on `localhost`, and Re.Pack writes that host into the
 bundle's asset and chunk URLs. Simulators, emulators and Android phones reach

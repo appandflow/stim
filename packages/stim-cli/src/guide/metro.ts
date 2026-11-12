@@ -218,7 +218,11 @@ WHO RUNS IT
                  that compiled with errors, so a launch whose bundle came
                  from a compile that logged an error reports
                  launched: "unverified", not true; read \`stim logs --source
-                 metro\` for the errors. Re.Pack 5 or later is required;
+                 metro\` for the errors. \`stim reload\` reaches a Re.Pack
+                 app through the dev server's /message socket, which
+                 cannot name its clients, so the reload is broadcast to
+                 every connected app. Stim skips its Metro warmup request.
+                 Re.Pack 5 or later is required;
                  Re.Pack 4 needs metro.command. Stim starts Re.Pack on its
                  own host, localhost, and Re.Pack writes that host into the
                  bundle's asset and chunk URLs. A simulator, an emulator and

@@ -5,6 +5,7 @@ import { rotatedLogPath } from '@stim-cli/core';
 import { acceptsShape, settingDefinition } from '@stim-cli/core/state';
 import { tailLines } from '../devices/activity.ts';
 import { ownBuildLines } from '../stimd/metro/injected.ts';
+import { MODE_REPACK, workspaceDevServerMode } from '../stimd/metro/state.ts';
 
 const WARMUP_TIMEOUT_MS = 60_000;
 
@@ -96,6 +97,7 @@ export async function warmMetro({
   root?: string | null;
 }): Promise<void> {
   try {
+    if (root && workspaceDevServerMode(root) === MODE_REPACK) return;
     const origin = `http://127.0.0.1:${port}`;
     const supported = await requestLocal(new URL('/_stim/metro-warmup', origin), platform, false);
     if (supported !== 'ready') return;
