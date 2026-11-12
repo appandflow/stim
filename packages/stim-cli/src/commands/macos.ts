@@ -50,6 +50,7 @@ import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import {
+  describeLaunchGroup,
   drainMacosOutput,
   requestMacosStop,
   stopBundleInstances,
@@ -486,7 +487,9 @@ async function cleanupFailedMacosLaunch(
       await stopMacosChildren(owned);
     }
     if (owned && !(await stopOwnedProcess(owned)))
-      throw new Error('The app process group could not be stopped.', { cause: error });
+      throw new Error(`The app process group could not be stopped (${await describeLaunchGroup(owned)}).`, {
+        cause: error,
+      });
     await stopBundleInstances(root);
     const recorded = requiredMacosRecord(root);
     if (owned && (recorded?.launchId !== record.launchId || recorded.app?.processToken !== owned.processToken))

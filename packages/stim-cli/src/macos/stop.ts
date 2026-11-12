@@ -105,6 +105,28 @@ async function groupMembers(pgid: number, operation?: StimContext): Promise<numb
     .map((match) => Number(match?.[1]));
 }
 
+/** The leader's identity state and the members of its process group, for a refusal that a person reads. */
+export async function describeLaunchGroup(app: Pick<MacosProcess, 'pid' | 'processToken'>): Promise<string> {
+  const leader = inspectProcessIdentity(app);
+  if (process.platform === 'win32') return `leader ${leader}`;
+  let members: string;
+  try {
+    const listed = await getExecutor().runFileAsync('ps', ['-axo', 'pid=,pgid=,stat='], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+    });
+    const rows = listed
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/))
+      .filter(([pid, pgid]) => pid && Number(pgid) === app.pid)
+      .map(([pid, , stat]) => `${pid} (${stat ?? '?'})`);
+    members = rows.length ? `members ${rows.join(', ')}` : 'no member left';
+  } catch (error) {
+    members = `members unknown (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`;
+  }
+  return `leader ${leader}, ${members}`;
+}
+
 function memberRecord(pid: number): MacosProcess | null {
   const captured = captureProcessIdentity(pid);
   const start = processStartMicros(pid);
