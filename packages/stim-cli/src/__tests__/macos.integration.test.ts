@@ -401,6 +401,41 @@ test('a detached helper exits when its listener closes before it connects', asyn
   }
 });
 
+// kill(-pgid, 0) answers EPERM for a zombie-only group on macOS only; macosProcess reads the Darwin start time.
+test.skipIf(process.platform !== 'darwin')(
+  'stopping an orphaned group with a live member reports success, not the EPERM of unreaped zombies',
+  async () => {
+    const launcher = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `const a = require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 60 & echo member $!; wait'], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); process.stdout.write('app ' + a.pid + '\\n', () => process.exit(0));`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(launcher);
+    let printed = '';
+    launcher.stdout?.on('data', (data) => (printed += String(data)));
+    const pids = await vi.waitFor(() => {
+      const app = /app (\d+)/.exec(printed)?.[1];
+      const member = /member (\d+)/.exec(printed)?.[1];
+      if (!app || !member) throw new Error('the fixture group has not started');
+      return { app: Number(app), member: Number(member) };
+    });
+    const owner = macosProcess(pids.app);
+    try {
+      expect(await owning.stopOwnedProcess(owner)).toBe(true);
+      expect(() => process.kill(pids.member, 0)).toThrow(/ESRCH/);
+    } finally {
+      for (const pid of [pids.member, pids.app])
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+    }
+  },
+  20_000,
+);
+
 test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves its declaration pending', async () => {
   const gate = await detachedHelper(join(dir, 'helper.pid'));
   const helperFile = join(dir, 'helper.pid');
