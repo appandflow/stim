@@ -680,6 +680,15 @@ export interface DependencyEditsStatus {
   at: string;
 }
 
+/** Changed files saved out of a dependency tree before it was deleted, and the command that puts them back. */
+export interface DependencyEditsSavedStatus {
+  tree: string;
+  dir: string;
+  restore: string;
+  count: number;
+  at: string;
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
@@ -717,6 +726,8 @@ export interface EnvironmentState {
   sourceDependenciesCleared?: SourceDependenciesRecord;
   /** The workspace's node_modules and Pods trees that maintenance keeps because files in them changed after the install. */
   dependencyEdits?: DependencyEditsStatus[];
+  /** Changed dependency files that maintenance or a removal saved before deleting their tree, until restored or pruned. */
+  dependencyEditsSaved?: DependencyEditsSavedStatus[];
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**

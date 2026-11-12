@@ -77,7 +77,11 @@ export function workspaceLightenedFile(projectRoot: string): string {
  * to no workspace and writing state.json is workspace activity.
  */
 export function dependencyInstallFile(tree: string): string {
-  return join(configDir(), 'dependency-installs', `${workspaceName(tree)}.json`);
+  return join(dependencyInstallDir(), `${workspaceName(tree)}.json`);
+}
+
+export function dependencyInstallDir(): string {
+  return join(configDir(), 'dependency-installs');
 }
 
 /** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */

@@ -2439,19 +2439,25 @@ whose files git ignores, with no tracked or unignored file, not reached through 
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
 
 A `node_modules` or `ios/Pods` tree with files modified after its install is
-never deleted silently. The install's time is when an install, `pod install`
-or `stim worktree warm` that Stim ran there finished, or else the package
-manager's stamp plus 10 minutes, so a root `postinstall` does not count.
-Build output (`node_modules/.cache`, Gradle and CMake output in a package's
-`android` directory or beside a Gradle build script, a package's `ios/build`,
-Xcode's `xcuserdata`) does not count either. At normal and high such a tree is
-kept, and `gc --dry-run`, `stim status` and `stim doctor` name the files. At
-critical the files are copied to `$STIM_HOME/archive/worktrees/` first, kept
-there under the worktree archive retention, and the tree is deleted; the
-action prints the `cp` command that puts them back after a reinstall. More
-than 1000 files or 64 MB keeps the tree even at critical.
-`stim worktree remove` saves them the same way before it removes the worktree.
-An edit in `node_modules` is never durable: make it a patch with
+never deleted silently. The reference is when an install, `pod install` or
+`stim worktree warm` that Stim ran there finished, or else the package
+manager's stamp; a 10-minute window after the stamp counts as install output
+only when the root `package.json` declares `preinstall`, `install`,
+`postinstall` or `prepare`. An edit found once stays an edit while the file is
+unchanged, and a later install does not hide it unless it reinstalled that
+package. Gradle, CMake and Xcode output (`node_modules/.cache`, `.gradle`,
+`.kotlin`, `.cxx` and Gradle's `build` in a package's `android` directory or
+beside a Gradle build script, a package's `ios/build`, Pods' `xcuserdata`)
+does not count. At normal and high such a tree is kept, and `gc --dry-run`,
+`stim status` and `stim doctor` name the files. At critical the files are
+copied to `$STIM_HOME/archive/worktrees/` first and the tree is deleted; the
+action prints the `cp -R` command that puts them back after a reinstall, and
+`stim status`, `stim doctor` and `stim worktree warm` name the copy until it is
+restored or archive retention (`archive.maxAgeDays`, 30 days) removes it. A
+tree with more than 1000 changed files or 64 MB, or a directory that cannot be
+read, is kept even at critical. Not seen: an edit that keeps an older
+modification time (`cp -p`, `rsync -t`, a tar extract) and a file deleted by
+hand. An edit in `node_modules` is never durable: make it a patch with
 `pnpm patch`, `yarn patch` or `patch-package`.
 
 Everything `gc` deletes, by category (N normal, H high, C critical):

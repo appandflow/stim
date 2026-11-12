@@ -52,33 +52,64 @@ maintainer.
 ## Edits inside dependency folders
 
 A node_modules or Pods tree whose files changed after its install is never
-deleted silently, and never blocks freeing disk at critical:
+deleted silently. Below critical it is kept; at critical its changed files are
+saved, then it is deleted. Two cases keep it even at critical, so they can block
+freeing disk: more changed files than are saved (over 1000 files or 64 MB), or
+a directory in it that cannot be read.
 
-- Before a tree is deleted, Stim lists its files modified after the install
-  from file times alone; it never reads or hashes them. The install's time is
-  when an install, `pod install` or `stim worktree warm` that Stim ran there
-  finished, after every script; for an install Stim did not run, the package
-  manager's stamp plus 10 minutes, so a root `postinstall` is not an edit and
-  an edit made within those 10 minutes is missed.
-- Build and tool output does not count: `node_modules/.cache`, the `build`,
-  `.gradle`, `.kotlin` and `.cxx` directories in a package's `android`
-  directory or beside a Gradle build script, a package's `ios/build`, Xcode's
-  `xcuserdata` in Pods, and the package manager's own state files.
-- At normal and high a tree with changed files is kept, with a reason that
-  names them, until it is reinstalled; it is not walked again before that.
-- At critical the changed files are copied into the worktree archive with a
-  manifest, then the tree is deleted, and the action says how to put them
-  back. Over 1000 files or 64 MB, or when the copy cannot be written, the tree
-  is kept even at critical. A tree that cannot be checked is kept below
-  critical and deleted at critical with a note.
-- `stim worktree remove` saves them the same way, and refuses without
-  `--force` when it cannot.
+- Before a tree is deleted, Stim lists its files modified after a reference,
+  from file times alone; it never reads or hashes them.
+- The reference is when an install, `pod install` or `stim worktree warm`
+  that Stim ran there finished, after every script. Otherwise it is the
+  package manager's stamp (`.modules.yaml`, `.package-lock.json`,
+  `.yarn-state.yml`, `.yarn-integrity`, `Pods/Manifest.lock`). A package's
+  node_modules without a stamp uses the nearest one above it. A tree no stamp
+  covers (Bun) uses its own and its `.bin` directory's modification times
+  plus one minute, which is not saved at critical. With no usable reference
+  the tree is kept.
+- A 10-minute window after the stamp is install-script output, not an edit,
+  only when the root `package.json` (the tree's or the worktree's) declares
+  `preinstall`, `install`, `postinstall` or `prepare`. With none the reference
+  is the bare stamp. Pods get 60 seconds, since `pod install` writes its
+  project after `Manifest.lock`. At critical, files inside the window are saved
+  too, except the Pods project, `Target Support Files`, `Headers` and `Local
+Podspecs`.
+- A later install does not hide an edit. Edits found once are recorded with
+  their size and modification time and stay edits while the file is unchanged,
+  whatever happens to the stamp. Before Stim runs an install or `pod install`
+  into an existing tree it records the edits first. When an install Stim did
+  not run moved the stamp past the last reference, a file changed after that
+  older reference is still an edit unless its package was reinstalled (its
+  `package.json`, or for Pods the pod's directory, was created after it).
+- Not counted as edits: the package manager's state files at the tree's root,
+  `node_modules/.cache`, `.gradle`, `.kotlin` and `.cxx` directories in a
+  package's `android` directory or beside a Gradle build script, a `build`
+  directory there that holds Gradle's own output (`intermediates`,
+  `generated`, `outputs`, `tmp`, `.transforms`, `kotlin` or `classes`) and
+  that the package's `package.json` points nothing into, a package's
+  `ios/build`, and `xcuserdata` in Pods.
+- Not seen: an edit that keeps an older modification time (`cp -p`,
+  `rsync -t`, a tar extract), a file deleted by hand, edits inside the
+  excluded directories, and an edit made within the script window after an
+  install Stim did not run (seen only at critical, where it is saved).
+- At normal and high a tree with edits is kept with a reason naming them, in
+  the kept action, `stim status` and `stim doctor`. A kept tree is not walked
+  again while its install signature and its recorded edits are unchanged.
+- At critical the files are copied into the worktree archive with a manifest;
+  each copy is checked by size only. The tree is deleted and the action gives
+  the `cp -R` command that puts them back. `stim status`, `stim doctor` and
+  `stim worktree warm` name the copy until it is restored or retention removes
+  it (`archive.maxAgeDays`, 30 days by default, and `archive.maxTotalGb`).
+- `stim worktree remove` saves the edits of every dependency tree it deletes,
+  nested ones included, the same way. Without `--force` it refuses when a save
+  cannot be done; `--force` still saves and only lets a failed save not stop
+  the removal.
+- `stim doctor`, `stim gc --dry-run` and a report-mode pass write nothing.
 
 Reason: an agent patches a library in node_modules to get a build working, and
 a reinstall silently undoes it. Below critical, a wrong keep costs disk until
 the next reinstall; at critical, saving every changed file costs kilobytes, so
-a guess that build output is an edit never loses a fix and never keeps
-gigabytes.
+a guess that build output is an edit does not lose a fix.
 
 The maintainer raised the case ("there is 1 case i worry about is agwnt doing
 changes locally in node modules to fix libs and it being deleted on
@@ -86,10 +117,14 @@ maintenance"), was shown the measures of #5581, and approved them:
 
 Maintainer decision: "I approve of all fixes", 2026-11-12.
 
-The reference times, the 10-minute grace, the exclusion list, the 1000-file and
-64 MB caps, saving under the worktree archive and its retention, and saving on
-`stim worktree remove` were chosen by the implementing lane and the
-coordinator in #5581, not by the maintainer.
+The coordinator decided, in the review of #5615, that a later install must not
+hide edits, that the script window applies only with an install script and is
+saved at critical, that `--force` still saves, that an unreadable directory
+keeps the tree at critical, that removal checks nested trees, and that
+read-only commands write nothing. The reference times, the exclusion list, the
+1000-file and 64 MB caps, the Pods window and the save location were chosen by
+the implementing lane and the coordinator in #5581 and #5615, not by the
+maintainer.
 
 ## Machine-wide deletion refuses in a scoped home
 
@@ -131,7 +166,7 @@ work or breaks a build in progress.
 
 ## Links
 
-- Issues: #5492, #5512, #5520, #5581. Pull requests: #5514, #5519, #5526.
+- Issues: #5492, #5512, #5520, #5581. Pull requests: #5514, #5519, #5526, #5615.
 - Code: `packages/stim-cli/src/stimd/passes/runtimes.ts` (`planRuntimes`),
   `packages/stim-cli/src/stimd/passes/unowned.ts` (`machineCleanupRefusal`),
   `packages/stim-cli/src/commands/worktree.ts` (`provenPodChurn`),

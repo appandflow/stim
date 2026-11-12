@@ -372,7 +372,7 @@ export async function wouldDelete(
   const edits = await checkDependencyEdits(dependency.candidate.path, {
     level,
     worktree: dependency.candidate.worktree,
-    dryRun: true,
+    readOnly: true,
     signal: operation?.signal,
   });
   if ('keep' in edits) return { status: 'kept', bytes: 0, detail: edits.keep };

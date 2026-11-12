@@ -10,7 +10,7 @@ import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { killOnAbort } from '../workspace/git-read.ts';
-import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
+import { noteEditsBeforeInstall, recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -699,6 +699,7 @@ export async function runPodInstall(
   const args = [...(bundler ? ['bundle', 'exec', 'pod'] : ['pod']), ...podArgs];
   const command = args.join(' ');
   const markers = readBuildMarkers(join(iosDir, 'Pods'));
+  await noteEditsBeforeInstall([join(iosDir, 'Pods')]);
   const run = await runCaptured({
     ...ctx,
     cmd: args[0] as string,

@@ -1,33 +1,56 @@
 import { randomUUID } from 'node:crypto';
-import { constants, copyFileSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  type Stats,
+} from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
-import { ensurePrivateDir, quotedPath, withDirLock } from '@stim-cli/core';
+import { ensurePrivateDir, quotedPath } from '@stim-cli/core';
 import {
-  dependencyInstallFile,
   readDependencyInstall,
+  readJsonObject,
   worktreeArchiveRoot,
-  type DependencyEdits,
+  type DependencyEditFile,
+  type DependencyEditsSavedStatus,
   type DependencyEditsStatus,
   type DependencyInstallRecord,
+  type DependencySavedEdits,
   type PressureLevel,
 } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { treeSignature } from '../private-size.ts';
 import { worktreeArchiveBytes, worktreeArchiveLimits } from '../archive.ts';
 import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
+import { gitQuietAsync } from './git.ts';
+import { updateDependencyInstall as updateRecord } from './dependency-install-records.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
 import { safeName, stamp } from './worktree-archive.ts';
 
 /**
- * How long after an install stamp Stim did not write itself a file still counts as the install's own output: a root
- * `postinstall` (patch-package, a codegen step) writes into node_modules after the package manager's stamp.
+ * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
+ * `postinstall`, `prepare`) may still write into node_modules; applied only when the root `package.json` declares one.
  */
-export const INSTALL_GRACE_MS: number = 10 * 60_000;
-/** Changed files listed before a walk stops listing; a folder with more is kept even at critical. */
+const SCRIPT_GRACE_MS = 10 * 60_000;
+/** `pod install` writes the Pods project and xcconfigs up to 2 s after `Manifest.lock` (measured on an Expo app). */
+const POD_GRACE_MS = 60_000;
+/**
+ * A tree no stamp covers takes its reference from its own directory's modification time, which an install changes
+ * when it links a package but before it writes that package's files.
+ */
+const LINKED_GRACE_MS = 60_000;
+const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
+/** Changed files listed before a walk stops listing; a tree with more is kept even at critical. */
 const LISTED_EDITS = 1000;
-/** The most changed bytes saved before a folder is deleted at critical; a folder with more is kept. */
-const SAVE_CAP_BYTES: number = 64 * 1024 ** 2;
+/** The most changed bytes saved before a tree is deleted at critical; a tree with more is kept. */
+const SAVE_CAP_BYTES = 64 * 1024 ** 2;
 const SHOWN = 3;
 const WALK_ENTRIES = 2_000_000;
 const YIELD_EVERY = 256;
@@ -39,25 +62,72 @@ const STAMPS: Record<TreeKind, readonly string[]> = {
   Pods: ['Manifest.lock'],
 };
 
+/** What `pod install` generates afresh for every pod, rather than a pod's own sources. */
+const POD_GENERATED = ['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs'];
+const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
+/** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
+const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
+const PACKAGE_ENTRY_FIELDS = ['main', 'module', 'types', 'typings', 'react-native', 'browser', 'source'];
+
 function kindOf(tree: string): TreeKind {
   return basename(tree) === 'Pods' ? 'Pods' : 'node_modules';
 }
 
-const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
-const GRADLE_OUTPUT = ['build', '.gradle', '.kotlin', '.cxx'];
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function canonicalOr(path: string): string {
+  try {
+    return canonicalPath(path);
+  } catch {
+    return path;
+  }
+}
+
+/** Every string a package.json's entry fields and exports point at. */
+function packageTargets(json: unknown): string[] {
+  if (typeof json === 'string') return [json];
+  if (Array.isArray(json)) return json.flatMap(packageTargets);
+  if (json && typeof json === 'object') return Object.values(json).flatMap(packageTargets);
+  return [];
+}
+
+/**
+ * Whether `dir`, a `build` directory beside a Gradle build script or in an `android` directory, is Gradle's output:
+ * it holds an entry Gradle writes there, and the package's own package.json at `packageRoot` points nothing into it.
+ */
+function gradleBuildDir(dir: string, packageRoot: string | null): boolean {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  if (!names.some((name) => GRADLE_BUILD_ENTRIES.includes(name))) return false;
+  if (!packageRoot) return true;
+  const json = readJsonObject(join(packageRoot, 'package.json'));
+  const targets = [...PACKAGE_ENTRY_FIELDS.map((field) => json?.[field]), json?.exports].flatMap(packageTargets);
+  const rel = relative(packageRoot, dir).split(sep).join('/');
+  return !targets.some((target) => {
+    const path = target.replace(/^\.\//, '');
+    return path === rel || path.startsWith(`${rel}/`);
+  });
+}
 
 // @ref LLP 0002#edits-inside-dependency-folders -- what tools write inside a dependency folder is not an edit
 /**
- * Whether the file or directory at `segments`, relative to a dependency tree of `kind` and beside `siblings`, holds
- * what package managers and native builds write there after an install rather than an edit: the package manager's own
- * state at the tree's root, `node_modules/.cache`, the output Gradle and CMake write beside a Gradle build script or
- * in a package's `android` directory, a package's `ios/build`, and Xcode's per-user data in Pods.
+ * Whether the entry at `segments`, relative to a dependency tree of `kind`, holds what package managers and native
+ * builds write after an install rather than an edit. Directories: `node_modules/.cache`; `.gradle`, `.kotlin` and
+ * `.cxx` in a package's `android` directory or beside a Gradle build script, and `build` there when Gradle wrote it;
+ * a package's `ios/build`; `xcuserdata` in Pods. Files: the package manager's own state at the tree's root.
  */
 function excludedFromEdits(
   kind: TreeKind,
   segments: readonly string[],
   directory: boolean,
-  siblings: readonly string[] = [],
+  siblings: readonly string[],
+  isGradleBuild: () => boolean,
 ): boolean {
   const name = segments.at(-1) ?? '';
   const parent = segments.at(-2);
@@ -72,59 +142,96 @@ function excludedFromEdits(
   if (kind === 'Pods') return name === 'xcuserdata';
   if (segments.length === 1 && name === '.cache') return true;
   if (parent === 'ios' && name === 'build') return true;
-  return (
-    GRADLE_OUTPUT.includes(name) &&
-    (parent === 'android' || siblings.some((sibling) => GRADLE_SCRIPTS.includes(sibling)))
-  );
+  const gradleSide = parent === 'android' || siblings.some((sibling) => GRADLE_SCRIPTS.includes(sibling));
+  if (!gradleSide) return false;
+  if (name === '.gradle' || name === '.kotlin' || name === '.cxx') return true;
+  return name === 'build' && isGradleBuild();
 }
 
-function isMissing(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+function bornAt(stat: Stats): number {
+  return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs;
 }
 
-interface EditScan {
-  files: { rel: string; bytes: number }[];
+function byPath(a: DependencyEditFile, b: DependencyEditFile): number {
+  return a.rel.localeCompare(b.rel);
+}
+
+interface Scan {
+  /** Files changed after the reference and outside the script grace window. */
+  edits: DependencyEditFile[];
+  /** Files changed inside the script grace window, saved at critical but not kept for. */
+  grace: DependencyEditFile[];
   /** False when the listing stopped at LISTED_EDITS. */
   complete: boolean;
-  bytes: number;
+}
+
+interface ScanWindow {
+  /** Files changed after it are candidates. */
+  since: number;
+  /** Files changed after it are edits; between `since` and it, install-script output. */
+  graceEnd: number;
+  /** Install-script output changed after it is saved at critical. */
+  saveFrom: number;
+  /**
+   * The reference before an install Stim did not run moved it: a file changed after it is still an edit when its
+   * package (node_modules) or pod (Pods) was not reinstalled since, which a new package.json or pod directory shows.
+   */
+  before: number | null;
 }
 
 /**
- * The files under `tree` modified after `since`, outside `excludedFromEdits`, from metadata alone: no file is read.
- * A problem instead when the tree cannot be fully listed.
+ * The files under `tree` changed inside `window`, outside `excludedFromEdits`, from metadata alone: only a Gradle
+ * `build` directory's listing and its package's package.json are read. A problem when part of the tree cannot be
+ * listed.
  */
-async function scanEdits(
-  tree: string,
-  since: number,
-  signal?: AbortSignal,
-): Promise<EditScan | { problem: string }> {
+async function scanEdits(tree: string, window: ScanWindow, signal?: AbortSignal): Promise<Scan | { problem: string }> {
   const kind = kindOf(tree);
-  const files: EditScan['files'] = [];
-  let bytes = 0;
+  const edits: DependencyEditFile[] = [];
+  const grace: DependencyEditFile[] = [];
   let entries = 0;
   let directories = 0;
-  const pending: string[][] = [[]];
-  for (let segments = pending.pop(); segments; segments = pending.pop()) {
+  const pending: { segments: string[]; unitBorn: number; packageRoot: string | null }[] = [
+    { segments: [], unitBorn: -Infinity, packageRoot: null },
+  ];
+  const full = () => edits.length + grace.length >= LISTED_EDITS;
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    const { segments } = next;
     if (++directories % YIELD_EVERY === 0) {
       await nextTurn();
       signal?.throwIfAborted();
     }
+    const dir = join(tree, ...segments);
     let names;
     try {
-      names = readdirSync(join(tree, ...segments), { withFileTypes: true });
+      names = readdirSync(dir, { withFileTypes: true });
     } catch (error) {
       if (segments.length && isMissing(error)) continue;
-      return { problem: `${join(tree, ...segments)} cannot be listed` };
+      return { problem: `${dir} cannot be listed` };
     }
     const siblings = names.map(({ name }) => name);
+    let { unitBorn, packageRoot } = next;
+    if (kind === 'node_modules' && siblings.includes('package.json')) {
+      packageRoot = dir;
+      try {
+        unitBorn = bornAt(lstatSync(join(dir, 'package.json')));
+      } catch {}
+    }
+    if (kind === 'Pods' && segments.length === 1) {
+      try {
+        unitBorn = POD_GENERATED.includes(segments[0] ?? '') ? Infinity : bornAt(lstatSync(dir));
+      } catch {}
+    }
     for (const entry of names) {
       if (++entries > WALK_ENTRIES) return { problem: `it holds more than ${WALK_ENTRIES} entries to check` };
       const path = [...segments, entry.name];
       if (entry.isDirectory()) {
-        if (!excludedFromEdits(kind, path, true, siblings)) pending.push(path);
+        const excluded = excludedFromEdits(kind, path, true, siblings, () =>
+          gradleBuildDir(join(tree, ...path), packageRoot),
+        );
+        if (!excluded) pending.push({ segments: path, unitBorn, packageRoot });
         continue;
       }
-      if (!entry.isFile() || excludedFromEdits(kind, path, false)) continue;
+      if (!entry.isFile() || excludedFromEdits(kind, path, false, siblings, () => false)) continue;
       let stat;
       try {
         stat = lstatSync(join(tree, ...path));
@@ -132,30 +239,23 @@ async function scanEdits(
         if (isMissing(error)) continue;
         return { problem: `${join(tree, ...path)} cannot be read` };
       }
-      if (stat.mtimeMs <= since) continue;
-      if (files.length === LISTED_EDITS) return { files, complete: false, bytes };
-      files.push({ rel: path.join('/'), bytes: stat.size });
-      bytes += stat.size;
+      const file = { rel: path.join('/'), mtimeMs: stat.mtimeMs, size: stat.size };
+      const kept =
+        stat.mtimeMs > window.graceEnd ||
+        (window.before !== null && stat.mtimeMs > window.before && unitBorn <= window.before);
+      if (!kept && (stat.mtimeMs <= window.saveFrom || unitBorn === Infinity)) continue;
+      if (full()) return { edits, grace, complete: false };
+      (kept ? edits : grace).push(file);
     }
   }
-  return { files: files.toSorted((a, b) => a.rel.localeCompare(b.rel)), complete: true, bytes };
-}
-
-/**
- * The time a file in a dependency tree must be newer than to count as an edit: when the install or warm copy Stim ran
- * there finished, unless an install stamp is newer, then that stamp plus INSTALL_GRACE_MS. Null when there is neither.
- */
-function editReference(recorded: number | null, stampedAt: number | null): number | null {
-  if (recorded !== null && (stampedAt === null || recorded >= stampedAt)) return recorded;
-  return stampedAt === null ? null : stampedAt + INSTALL_GRACE_MS;
+  return { edits: edits.toSorted(byPath), grace: grace.toSorted(byPath), complete: true };
 }
 
 function newestStamp(tree: string): number | null {
   let newest: number | null = null;
   for (const name of STAMPS[kindOf(tree)]) {
     try {
-      const { mtimeMs } = lstatSync(join(tree, name));
-      newest = Math.max(newest ?? 0, mtimeMs);
+      newest = Math.max(newest ?? 0, lstatSync(join(tree, name)).mtimeMs);
     } catch {}
   }
   return newest;
@@ -169,77 +269,76 @@ function mtimeOf(path: string): number | null {
   }
 }
 
+function declaresInstallScript(dir: string): boolean {
+  const scripts = readJsonObject(join(dir, 'package.json'))?.scripts;
+  return Boolean(scripts && typeof scripts === 'object' && INSTALL_SCRIPTS.some((name) => name in scripts));
+}
+
 /**
- * The install evidence that covers `tree`: its own record and stamp, or for a node_modules with neither, those of the
- * nearest node_modules above it inside `worktree`, since a workspace install (pnpm, Yarn, npm) writes a package's
- * node_modules without a stamp of its own. A node_modules no stamp covers (Bun writes none) falls back to the newest
- * of its own and its `.bin` directory's modification times, which an install changes when it links packages.
+ * The reference that covers `tree` and how long after it install-time scripts may still write. When Stim ran the
+ * install there, its recorded end; otherwise the newest package-manager stamp of the tree, or of the nearest
+ * node_modules above it inside `worktree` (a workspace install writes a package's node_modules without a stamp), or
+ * for a tree no stamp covers (Bun writes none) its own and its `.bin` directory's modification times plus a minute.
  */
-function installEvidence(tree: string, worktree: string): { recorded: number | null; stampedAt: number | null } {
+function reference(tree: string, worktree: string, record: DependencyInstallRecord | null): ScanWindow | null {
+  const kind = kindOf(tree);
   const root = canonicalOr(worktree);
-  if (kindOf(tree) === 'Pods')
-    return { recorded: readDependencyInstall(tree)?.installedAt ?? null, stampedAt: newestStamp(tree) };
-  for (let current = tree; ;) {
-    const recorded = readDependencyInstall(current)?.installedAt ?? null;
-    const stampedAt = newestStamp(current);
-    if (recorded !== null || stampedAt !== null) return { recorded, stampedAt };
-    const parent = dirname(dirname(current));
-    if (parent === dirname(current) || !(parent === root || parent.startsWith(`${root}${sep}`))) break;
-    current = join(parent, 'node_modules');
+  let recorded = record?.installedAt ?? null;
+  let stampedAt = newestStamp(tree);
+  let installRoot = dirname(tree);
+  if (kind === 'node_modules')
+    for (let current = tree; recorded === null && stampedAt === null;) {
+      const parent = dirname(dirname(current));
+      if (parent === dirname(current) || !(parent === root || parent.startsWith(`${root}${sep}`))) break;
+      current = join(parent, 'node_modules');
+      recorded = readDependencyInstall(current)?.installedAt ?? null;
+      stampedAt = newestStamp(current);
+      installRoot = parent;
+    }
+  if (recorded !== null && (stampedAt === null || recorded >= stampedAt))
+    return { since: recorded, graceEnd: recorded, saveFrom: recorded, before: null };
+  let linkedOnly = false;
+  if (stampedAt === null) {
+    const linked = [mtimeOf(tree), mtimeOf(join(tree, '.bin'))].filter((at): at is number => at !== null);
+    if (linked.length) stampedAt = Math.max(...linked);
+    linkedOnly = true;
   }
-  const linked = [mtimeOf(tree), mtimeOf(join(tree, '.bin'))].filter((at): at is number => at !== null);
-  return { recorded: null, stampedAt: linked.length ? Math.max(...linked) : null };
+  if (stampedAt === null) return null;
+  const scripts =
+    kind === 'node_modules' && [installRoot, root].some((dir) => declaresInstallScript(dir)) ? SCRIPT_GRACE_MS : 0;
+  const grace = Math.max(kind === 'Pods' ? POD_GRACE_MS : scripts, linkedOnly ? LINKED_GRACE_MS : 0);
+  return {
+    since: stampedAt,
+    graceEnd: stampedAt + grace,
+    saveFrom: linkedOnly ? stampedAt + grace : stampedAt,
+    before: null,
+  };
 }
 
-function canonicalOr(path: string): string {
+function unchanged(tree: string, file: DependencyEditFile): boolean {
   try {
-    return canonicalPath(path);
+    const stat = lstatSync(join(tree, ...file.rel.split('/')));
+    return stat.isFile() && stat.mtimeMs === file.mtimeMs && stat.size === file.size;
   } catch {
-    return path;
+    return false;
   }
 }
 
-function updateRecord(tree: string, update: (record: DependencyInstallRecord) => DependencyInstallRecord): void {
-  const file = dependencyInstallFile(tree);
-  ensurePrivateDir(dirname(file));
-  withDirLock(`${file}.lock`, () => {
-    const next = update(readDependencyInstall(tree) ?? { tree, installedAt: null, edits: null });
-    const tmp = `${file}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, file);
-  });
+function merge(...lists: DependencyEditFile[][]): DependencyEditFile[] {
+  const files = new Map<string, DependencyEditFile>();
+  for (const list of lists) for (const file of list) files.set(file.rel, file);
+  return [...files.values()].toSorted(byPath);
 }
 
-/**
- * Records that an install or warm copy Stim ran into each of `trees` finished now, after every script it ran, so later
- * writes into the tree count as edits. Best effort: a failure leaves the install stamp as the reference.
- */
-export function recordDependencyInstall(trees: readonly string[], at: number = Date.now()): void {
-  for (const path of trees) {
-    try {
-      lstatSync(path);
-      const tree = canonicalPath(path);
-      updateRecord(tree, (record) => ({ ...record, installedAt: at, edits: null }));
-    } catch {}
-  }
-}
-
-/** Forgets what Stim recorded about `tree` once it is deleted. */
-export function forgetDependencyInstall(path: string): void {
-  try {
-    rmSync(dependencyInstallFile(canonicalOr(path)), { force: true });
-  } catch {}
-}
-
-function countText(edits: Pick<DependencyEdits, 'count' | 'complete'>): string {
-  return `${edits.complete ? '' : 'at least '}${edits.count} file${edits.count === 1 && edits.complete ? '' : 's'}`;
+function countText(count: number, complete: boolean): string {
+  return `${complete ? '' : 'at least '}${count} file${count === 1 && complete ? '' : 's'}`;
 }
 
 /** Why maintenance keeps a dependency tree whose files changed after its install. */
-export function editsKeptReason(edits: Pick<DependencyEdits, 'count' | 'complete' | 'files'>): string {
+export function editsKeptReason(edits: { count: number; complete: boolean; files: readonly string[] }): string {
   const shown = edits.files.slice(0, SHOWN).join(', ');
   const more = edits.count > SHOWN || !edits.complete ? ', ...' : '';
-  return `${countText(edits)} in it changed after its install (${shown}${more}), so maintenance keeps it until critical pressure; make the change a patch (pnpm patch, yarn patch or patch-package) so a reinstall keeps it`;
+  return `${countText(edits.count, edits.complete)} in it changed after its install (${shown}${more}), so maintenance keeps it until critical pressure; make the change a patch (pnpm patch, yarn patch or patch-package) so a reinstall keeps it`;
 }
 
 export interface SavedEdits {
@@ -252,42 +351,23 @@ export interface SavedEdits {
 export type EditCheck = { keep: string; edited?: true } | { delete: true; note?: string; saved?: SavedEdits };
 
 /**
- * What deleting a dependency tree at `level` does with files changed after its install: below critical, any keeps it;
- * at critical they are saved first, and a tree whose changes cannot all be saved is kept. A tree that cannot be checked
- * is kept below critical and deleted at critical with a note, so it never blocks freeing disk there.
+ * Copies `files` of `tree` into the worktree archive with a manifest. Each copy is checked by size only; a file that
+ * changed size while copied, an archive that is disabled or full, or a disk without room for it throws.
  */
-function decideEdits(
-  scan: EditScan | { problem: string },
-  level: PressureLevel,
-): { keep: string; edited?: true } | { delete: true; note?: string } | { save: EditScan } {
-  if ('problem' in scan)
-    return level === 'critical'
-      ? { delete: true, note: `its files were not checked for edits: ${scan.problem}` }
-      : { keep: `its files cannot be checked for edits: ${scan.problem}` };
-  if (!scan.files.length) return { delete: true };
-  const edits = { count: scan.files.length, complete: scan.complete, files: scan.files.map(({ rel }) => rel) };
-  if (level !== 'critical') return { keep: editsKeptReason(edits), edited: true };
-  if (!scan.complete || scan.bytes > SAVE_CAP_BYTES)
-    return {
-      edited: true,
-      keep: `${countText(edits)} in it changed after its install, more than the ${SAVE_CAP_BYTES / 1024 ** 2} MB maintenance saves before deleting, so it stays even at critical pressure (${edits.files.slice(0, SHOWN).join(', ')}, ...)`,
-    };
-  return { save: scan };
-}
-
 async function saveEdits(
   tree: string,
   worktree: string,
-  scan: EditScan,
+  files: readonly DependencyEditFile[],
   level: PressureLevel,
   signal?: AbortSignal,
 ): Promise<SavedEdits> {
+  const bytes = files.reduce((sum, file) => sum + file.size, 0);
   const limits = worktreeArchiveLimits(worktree);
   if ('refusal' in limits) throw new Error(limits.refusal);
-  if ((await worktreeArchiveBytes(signal)) + scan.bytes > limits.maxBytes)
+  if ((await worktreeArchiveBytes(signal)) + bytes > limits.maxBytes)
     throw new Error('they do not fit in archive.maxTotalGb beside the other archives');
   const [volume] = await readVolumeSpaceAsync([dirname(worktreeArchiveRoot())], signal);
-  if (!volume || volume.freeMb * 1024 ** 2 < 2 * scan.bytes + 64 * 1024 ** 2)
+  if (!volume || volume.freeMb * 1024 ** 2 < 2 * bytes + 64 * 1024 ** 2)
     throw new Error('there is no free disk to copy them to');
   const at = Date.now();
   const label = relative(worktree, tree).split(sep).join('-') || basename(tree);
@@ -299,13 +379,13 @@ async function saveEdits(
   const target = join(dir, 'files');
   try {
     ensurePrivateDir(dir);
-    for (const { rel, bytes } of scan.files) {
+    for (const { rel, size } of files) {
       const to = join(target, ...rel.split('/'));
       mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
       copyFileSync(join(tree, ...rel.split('/')), to, constants.COPYFILE_FICLONE);
-      if (lstatSync(to).size !== bytes) throw new Error(`${rel} changed while it was copied`);
+      if (lstatSync(to).size !== size) throw new Error(`${rel} changed while it was copied`);
     }
-    const restore = `cp -Rp ${quotedPath(`${target}/.`)} ${quotedPath(tree)}`;
+    const restore = `cp -R ${quotedPath(`${target}/.`)} ${quotedPath(tree)}`;
     const manifest = {
       version: 1,
       kind: 'dependency-edits',
@@ -313,7 +393,7 @@ async function saveEdits(
       source: tree,
       worktree,
       pressure: level,
-      files: scan.files.map(({ rel }) => rel),
+      files: files.map(({ rel }) => rel),
       restore: [restore],
     };
     const tmp = join(dir, '.manifest.json.tmp');
@@ -327,59 +407,123 @@ async function saveEdits(
 }
 
 /**
- * The edit check a dependency tree passes before it is deleted at `level`: the files changed after its reference, read
- * from metadata alone. A tree kept for edits is not walked again until its install signature changes, except at
- * critical. With `dryRun` nothing is saved.
+ * The edit check a dependency tree passes before it is deleted at `level`. Files changed after the tree's reference
+ * are edits, and so are files found changed before that are still unchanged, whatever a later install did to the
+ * stamp; when an install Stim did not run moved the reference, files changed after the old one in a package or pod
+ * that install did not reinstall stay edits. Below critical any edit keeps the tree; at critical the edits and the
+ * install-script output are saved first. A tree kept for edits is not walked again while its install signature and
+ * its known edits are unchanged, except at critical. With `readOnly` nothing is written or saved.
  */
 export async function checkDependencyEdits(
   path: string,
   {
     level,
     worktree,
-    dryRun = false,
+    readOnly = false,
     signal,
-  }: { level: PressureLevel; worktree: string; dryRun?: boolean; signal?: AbortSignal },
+  }: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
 ): Promise<EditCheck> {
   const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
-  if (level !== 'critical' && record?.edits && signature !== null && record.edits.signature === signature)
-    return { keep: editsKeptReason(record.edits), edited: true };
-  const evidence = installEvidence(tree, worktree);
-  const since = editReference(evidence.recorded, evidence.stampedAt);
-  const scan =
-    since === null
-      ? { problem: 'it has no install stamp to compare its files with' }
-      : await scanEdits(tree, since, signal);
-  const decision = decideEdits(scan, level);
-  if (signature !== null && !('problem' in scan)) {
-    const edits = scan.files.length
-      ? { count: scan.files.length, complete: scan.complete, files: scan.files.slice(0, SHOWN).map(({ rel }) => rel) }
-      : null;
-    if (edits || record?.edits)
-      try {
-        updateRecord(tree, (current) => ({
-          ...current,
-          edits: edits ? { signature, ...edits, at: new Date().toISOString() } : null,
-        }));
-      } catch {}
-  }
-  if (!('save' in decision)) return decision;
-  if (dryRun)
+  const known = (record?.edits?.files ?? []).filter((file) => unchanged(tree, file));
+  if (
+    level !== 'critical' &&
+    known.length &&
+    record?.edits &&
+    record.edits.signature === signature &&
+    known.length === record.edits.files.length
+  )
     return {
-      delete: true,
-      note: `it would first save ${countText({ count: decision.save.files.length, complete: true })} changed after its install`,
+      keep: editsKeptReason({ count: known.length, complete: record.edits.complete, files: known.map((f) => f.rel) }),
+      edited: true,
     };
+  const window = reference(tree, worktree, record);
+  if (!window) return { keep: 'it has no install stamp to compare its files with, so its edits cannot be checked' };
+  if (record?.reference !== null && record?.reference !== undefined && window.since > record.reference)
+    window.before = record.reference;
+  const scan = await scanEdits(tree, window, signal);
+  if ('problem' in scan) return { keep: `its files cannot be checked for edits: ${scan.problem}` };
+  const edits = merge(known, scan.edits);
+  const complete = scan.complete && (record?.edits?.complete ?? true);
+  if (!readOnly && signature !== null)
+    try {
+      updateRecord(tree, (current) => ({
+        ...current,
+        reference: window.since,
+        edits: edits.length ? { signature, files: edits, complete, at: new Date().toISOString() } : null,
+      }));
+    } catch {}
+  if (level !== 'critical')
+    return edits.length
+      ? { keep: editsKeptReason({ count: edits.length, complete, files: edits.map((f) => f.rel) }), edited: true }
+      : { delete: true };
+  const toSave = merge(edits, scan.grace);
+  if (!toSave.length) return { delete: true };
+  const bytes = toSave.reduce((sum, file) => sum + file.size, 0);
+  if (!complete || bytes > SAVE_CAP_BYTES)
+    return {
+      edited: true,
+      keep: `${countText(toSave.length, complete)} in it changed after its install, more than the ${LISTED_EDITS} files or ${SAVE_CAP_BYTES / 1024 ** 2} MB maintenance saves before deleting, so it stays even at critical pressure (${toSave
+        .slice(0, SHOWN)
+        .map((f) => f.rel)
+        .join(', ')}, ...)`,
+    };
+  if (readOnly)
+    return { delete: true, note: `it would first save ${countText(toSave.length, true)} changed after its install` };
   try {
-    const saved = await saveEdits(tree, worktree, decision.save, level, signal);
+    const saved = await saveEdits(tree, worktree, toSave, level, signal);
+    try {
+      updateRecord(tree, (current) => ({
+        ...current,
+        saved: [
+          ...current.saved,
+          { dir: saved.dir, restore: saved.restore, at: new Date().toISOString(), count: saved.files.length },
+        ],
+      }));
+    } catch {}
     return { delete: true, saved };
   } catch (error) {
     signal?.throwIfAborted();
     return {
       edited: true,
-      keep: `${countText({ count: decision.save.files.length, complete: true })} in it changed after its install and could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+      keep: `${countText(toSave.length, true)} in it changed after its install and could not be saved: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+/**
+ * Before an install or pod install Stim runs into existing `trees`: records the files changed since the current
+ * reference, so the install moving the reference does not hide them.
+ */
+export async function noteEditsBeforeInstall(trees: readonly string[], signal?: AbortSignal): Promise<void> {
+  for (const tree of trees) {
+    if (!existsSync(tree)) continue;
+    await checkDependencyEdits(tree, { level: 'high', worktree: dirname(tree), signal });
+  }
+}
+
+/**
+ * Records that an install or warm copy Stim ran into each of `trees` finished now, after every script it ran. Known
+ * edits stay recorded and remain edits while unchanged. Best effort: a failure leaves the install stamp as the
+ * reference.
+ */
+export function recordDependencyInstall(trees: readonly string[], at: number = Date.now()): void {
+  for (const path of trees) {
+    try {
+      lstatSync(path);
+      updateRecord(canonicalPath(path), (record) => ({ ...record, installedAt: at, reference: at }));
+    } catch {}
+  }
+}
+
+/** Forgets what Stim recorded about a deleted tree, except the copies it saved from it. */
+export function forgetDependencyInstall(path: string): void {
+  try {
+    updateRecord(canonicalOr(path), (record) =>
+      record.saved.length ? { ...record, installedAt: null, reference: null, edits: null } : null,
+    );
+  } catch {}
 }
 
 /** The detail of a deletion that saved changed files first: where they are and how to put them back. */
@@ -387,63 +531,135 @@ export function savedEditsDetail(saved: SavedEdits): string {
   return `saved ${saved.files.length} file${saved.files.length === 1 ? '' : 's'} changed after its install to ${saved.dir}; after reinstalling, put them back with ${saved.restore}`;
 }
 
-function dependencyTreesOf(worktree: string, bases: readonly string[]): string[] {
+function inside(root: string, path: string): boolean {
+  return path.startsWith(`${root}${sep}`);
+}
+
+/**
+ * Every dependency tree a whole-worktree removal deletes: the git-ignored `node_modules` and `Pods` directories git
+ * lists, which include the nested ones of npm and Yarn workspaces, and those the cleanup paths take at the worktree's
+ * root and its workspaces `keys`.
+ */
+async function removedTrees(worktree: string, keys: readonly string[], signal?: AbortSignal): Promise<string[]> {
   const root = canonicalOr(worktree);
   const trees = new Set<string>();
-  for (const base of new Set([worktree, ...bases]))
+  const listed = await gitQuietAsync(
+    worktree,
+    ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
+    {
+      signal,
+    },
+  );
+  for (const entry of (listed ?? '').split('\0')) {
+    const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
+    if (basename(rel) === 'node_modules' || basename(rel) === 'Pods') {
+      const tree = canonicalOr(join(worktree, rel));
+      if (inside(root, tree)) trees.add(tree);
+    }
+  }
+  for (const base of new Set([worktree, ...keys]))
     for (const path of existingDirsOf(base, ARTIFACT_DIRS.dependencies)) {
       const tree = canonicalOr(path);
-      if (tree.startsWith(`${root}${sep}`)) trees.add(tree);
+      if (inside(root, tree)) trees.add(tree);
     }
-  return [...trees];
+  return [...trees].filter((tree) => {
+    try {
+      return lstatSync(tree).isDirectory();
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
  * Before a whole worktree is removed: saves the files changed after the install in each of its dependency trees, as
- * critical pressure does, or the reason the removal must stop because one tree's changes cannot be saved.
+ * critical pressure does. `kept` names the first tree whose changes could not be saved.
  */
 export async function saveEditsBeforeRemoval(
   worktree: string,
   keys: readonly string[],
   signal?: AbortSignal,
-): Promise<{ saved: SavedEdits[] } | { kept: string }> {
+): Promise<{ saved: SavedEdits[]; kept: string | null }> {
   const saved: SavedEdits[] = [];
-  for (const tree of dependencyTreesOf(worktree, keys)) {
+  let kept: string | null = null;
+  for (const tree of await removedTrees(worktree, keys, signal)) {
     const check = await checkDependencyEdits(tree, { level: 'critical', worktree, signal });
-    if ('keep' in check) return { kept: `${relative(worktree, tree)}: ${check.keep}` };
-    if (check.saved) saved.push(check.saved);
+    if ('keep' in check) kept ??= `${relative(worktree, tree)}: ${check.keep}`;
+    else if (check.saved) saved.push(check.saved);
   }
-  return { saved };
-}
-
-/** The dependency trees of `worktree` and the workspaces `keys` holding files changed after the install, with why they stay. */
-export async function editedDependencyTrees(
-  worktree: string,
-  keys: readonly string[],
-  signal?: AbortSignal,
-): Promise<{ tree: string; reason: string; edited: boolean }[]> {
-  const found: { tree: string; reason: string; edited: boolean }[] = [];
-  for (const tree of dependencyTreesOf(worktree, keys)) {
-    const check = await checkDependencyEdits(tree, { level: 'high', worktree, signal });
-    if ('keep' in check) found.push({ tree, reason: check.keep, edited: check.edited === true });
-  }
-  return found;
+  return { saved, kept };
 }
 
 /** Why a worktree that maintenance would remove keeps a dependency tree with files changed after its install, or null. */
 export async function dependencyEditsHold(worktree: string, signal?: AbortSignal): Promise<string | null> {
-  const [first] = await editedDependencyTrees(worktree, [], signal);
-  return first ? `its ${relative(worktree, first.tree)}: ${first.reason}` : null;
+  for (const tree of await removedTrees(worktree, [], signal)) {
+    const check = await checkDependencyEdits(tree, { level: 'high', worktree, readOnly: true, signal });
+    if ('keep' in check) return `its ${relative(worktree, tree)}: ${check.keep}`;
+  }
+  return null;
 }
 
-/** The trees of the workspace at `root` that maintenance keeps for files changed after the install, as last walked. */
-export function keptDependencyEdits(root: string): { dependencyEdits?: DependencyEditsStatus[] } {
+function restored(tree: string, saved: DependencySavedEdits): boolean {
+  const manifest = readJsonObject(join(saved.dir, 'manifest.json'));
+  const files = Array.isArray(manifest?.files) ? manifest.files.filter((f): f is string => typeof f === 'string') : [];
+  const at = Date.parse(saved.at);
+  return (
+    files.length > 0 &&
+    files.every((rel) => {
+      try {
+        const copy = lstatSync(join(saved.dir, 'files', ...rel.split('/')));
+        const current = lstatSync(join(tree, ...rel.split('/')));
+        return current.size === copy.size && current.mtimeMs > at;
+      } catch {
+        return false;
+      }
+    })
+  );
+}
+
+/** The saved copies of `tree` still on disk and not put back yet. */
+function liveSaved(tree: string, saved: readonly DependencySavedEdits[]): DependencySavedEdits[] {
+  return saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')) && !restored(tree, entry));
+}
+
+/**
+ * What maintenance last found in the dependency trees at the root of the workspace `root`, without walking them: the
+ * trees it keeps for files changed after the install, and the copies it saved before deleting one.
+ */
+export function dependencyEditsOf(root: string): {
+  dependencyEdits?: DependencyEditsStatus[];
+  dependencyEditsSaved?: DependencyEditsSavedStatus[];
+} {
   const kept: DependencyEditsStatus[] = [];
-  for (const path of existingDirsOf(root, ARTIFACT_DIRS.dependencies)) {
+  const saved: DependencyEditsSavedStatus[] = [];
+  for (const path of ARTIFACT_DIRS.dependencies.map((dir) => join(root, dir))) {
     const tree = canonicalOr(path);
-    const edits = readDependencyInstall(tree)?.edits;
-    if (!edits || edits.signature !== treeSignature(tree)) continue;
-    kept.push({ tree, count: edits.count, complete: edits.complete, files: edits.files, at: edits.at });
+    const record = readDependencyInstall(tree);
+    if (!record) continue;
+    const edits = record.edits;
+    if (edits && edits.signature === treeSignature(tree))
+      kept.push({
+        tree,
+        count: edits.files.length,
+        complete: edits.complete,
+        files: edits.files.slice(0, SHOWN).map((f) => f.rel),
+        at: edits.at,
+      });
+    for (const entry of liveSaved(tree, record.saved)) saved.push({ tree, ...entry });
   }
-  return kept.length ? { dependencyEdits: kept } : {};
+  return {
+    ...(kept.length ? { dependencyEdits: kept } : {}),
+    ...(saved.length ? { dependencyEditsSaved: saved } : {}),
+  };
+}
+
+/** One line per saved copy of `trees` still waiting to be put back, for a warm that installs them again. */
+export function savedEditsLines(trees: readonly string[]): string[] {
+  return trees.flatMap((path) => {
+    const tree = canonicalOr(path);
+    return liveSaved(tree, readDependencyInstall(tree)?.saved ?? []).map(
+      (entry) =>
+        `${entry.count} file${entry.count === 1 ? '' : 's'} changed in ${tree} were saved to ${entry.dir} before it was deleted; put them back with ${entry.restore}`,
+    );
+  });
 }

@@ -641,30 +641,41 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   ignores, with no tracked or unignored file, not reached through a link.
 
   Edited dependencies: before a node_modules or ios/Pods tree is deleted, Stim
-  lists the files in it modified after its install, from file times alone. The
-  install's time is when an install, pod install or worktree warm that Stim ran
+  lists the files in it modified after its install, from file times alone.
+  The reference is when an install, pod install or worktree warm that Stim ran
   there finished; otherwise the package manager's stamp (node_modules/
   .modules.yaml, .package-lock.json, .yarn-state.yml, .yarn-integrity, or
-  Pods/Manifest.lock) plus 10 minutes for a root postinstall, so an edit made
-  within 10 minutes of an install Stim did not run is not seen. Build output
-  does not count: node_modules/.cache, the build, .gradle, .kotlin and .cxx
-  directories in a package's android directory or beside a Gradle build
-  script, a package's ios/build, Pods' xcuserdata, and the package manager's
-  own state files. Below critical a tree with edited files is kept, and the
-  kept action, \`stim status\` (--json dependencyEdits) and \`stim doctor\`
-  name them; the tree is walked again only once it is reinstalled. At critical
-  the files are copied to $STIM_HOME/archive/worktrees/<checkout>/
-  <tree>-edits-<time>/files with a manifest.json, then the tree is deleted;
-  the action detail prints the cp command that puts them back after a
-  reinstall. Over 1000 files or 64 MB, or when the copy cannot be written
-  (archive.enabled false, archive.maxTotalGb full, no disk), the tree is kept
-  even at critical. A tree that cannot be checked (no install stamp, an
-  unreadable directory) is kept below critical and deleted at critical with a
-  note. stim worktree remove saves them the same way before removing the
-  worktree, and refuses without --force when they cannot be saved. The saved
-  copies follow the worktree archive retention (archive.maxAgeDays,
-  archive.maxTotalGb). Make the change a patch (pnpm patch, yarn patch or
-  patch-package) so a reinstall keeps it.
+  Pods/Manifest.lock). A 10-minute window after the stamp counts as install
+  output only when the root package.json declares preinstall, install,
+  postinstall or prepare (Pods: 60 seconds). An edit found once stays an edit
+  while the file is unchanged, and a later install does not hide it: before
+  Stim runs an install it records the edits, and after an install it did not
+  run, a file changed since the previous reference stays an edit unless its
+  package (its package.json, or the pod's directory) was reinstalled. Not
+  counted: the package manager's state files, node_modules/.cache, .gradle,
+  .kotlin and .cxx in a package's android directory or beside a Gradle build
+  script, a build directory there holding Gradle output (intermediates,
+  generated, outputs, tmp, .transforms, kotlin, classes) that the package's
+  package.json points nothing into, a package's ios/build, and Pods'
+  xcuserdata. Not seen: an edit that keeps an older modification time (cp -p,
+  rsync -t, tar), a file deleted by hand, and edits inside those directories.
+  Below critical a tree with edits is kept, and the kept action, \`stim
+  status\` (--json dependencyEdits) and \`stim doctor\` name them. At critical
+  the edits, and files inside the install window, are copied (checked by size
+  only) to $STIM_HOME/archive/worktrees/<checkout>/<tree>-edits-<time>/files
+  with a manifest.json, then the tree is deleted; the action prints the cp -R
+  command that puts them back after a reinstall, and \`stim status\` (--json
+  dependencyEditsSaved), \`stim doctor\` and \`stim worktree warm\` name the
+  copy until it is restored or archive retention removes it
+  (archive.maxAgeDays, 30). A tree is kept even at critical when it has over
+  1000 changed files or 64 MB, when the copy cannot be written
+  (archive.enabled false, archive.maxTotalGb full, no disk), when a directory
+  in it cannot be read, or when it has no install stamp. stim worktree remove
+  saves the edits of every dependency tree it deletes, nested ones included;
+  without --force it refuses when a save cannot be done, and --force still
+  saves and only lets a failed save not stop the removal. stim doctor, stim gc
+  --dry-run and report-mode passes write nothing. Make the change a patch
+  (pnpm patch, yarn patch or patch-package) so a reinstall keeps it.
 
   Concurrency: an acting stim gc takes the same exclusive maintenance claim as
   the stim-daemon's maintenance pass. While one holds it the other refuses at

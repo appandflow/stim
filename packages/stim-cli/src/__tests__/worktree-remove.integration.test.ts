@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1777,6 +1778,70 @@ test('against a real repo: an untracked file beside watchman cookies is still re
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+function editedDependencyRepo(base: string): string {
+  const repo = join(base, 'repo');
+  mkdirSync(join(repo, 'packages', 'a'), { recursive: true });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+  writeFileSync(join(repo, 'packages', 'a', 'package.json'), '{}');
+  git('git add -A');
+  git('git commit -q -m init');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-deps`);
+  const hourAgo = new Date(Date.now() - 60 * 60_000);
+  const nested = join(wt, 'packages', 'a', 'node_modules', 'dep');
+  mkdirSync(nested, { recursive: true });
+  for (const file of [join(nested, 'package.json'), join(nested, 'index.js')]) {
+    writeFileSync(file, 'installed');
+    utimesSync(file, hourAgo, hourAgo);
+  }
+  mkdirSync(join(wt, 'node_modules'));
+  writeFileSync(join(wt, 'node_modules', '.package-lock.json'), '{}');
+  utimesSync(join(wt, 'node_modules', '.package-lock.json'), hourAgo, hourAgo);
+  writeFileSync(join(nested, 'index.js'), 'patched by hand');
+  return wt;
+}
+
+test.each([
+  { archive: true, force: false, removed: true, saved: true },
+  { archive: true, force: true, removed: true, saved: true },
+  { archive: false, force: false, removed: false, saved: false },
+  { archive: false, force: true, removed: true, saved: false },
+])(
+  'against a real repo: an edit in a nested node_modules is saved before removal (archive $archive, --force $force)',
+  async ({ archive, force, removed, saved }) => {
+    resetExecutor();
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-deps-')));
+    const originalCwd = process.cwd();
+    const errs: string[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation((m) => void errs.push(String(m)));
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const wt = editedDependencyRepo(base);
+      if (archive) process.env.STIM_ARCHIVE_ENABLED = 'true';
+      await captureAction(removeOp)(wt, force ? { force: true } : {});
+      expect(stdout).not.toHaveBeenCalled();
+      expect(existsSync(wt)).toBe(!removed);
+      expect(process.exitCode === 1).toBe(!removed);
+      const text = errs.join('\n');
+      expect(text).toContain(saved ? 'cp -R' : 'packages/a/node_modules');
+      const copies = execSync(`find "${tmpHome}" -path '*/files/dep/index.js'`, { encoding: 'utf-8' }).trim();
+      expect(copies ? readFileSync(copies, 'utf-8') : null).toBe(saved ? 'patched by hand' : null);
+    } finally {
+      error.mockRestore();
+      stdout.mockRestore();
+      delete process.env.STIM_ARCHIVE_ENABLED;
+      process.chdir(originalCwd);
+      process.exitCode = 0;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 const PBXPROJ = [
   '// !$*UTF8*$!',

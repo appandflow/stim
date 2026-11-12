@@ -91,7 +91,12 @@ import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
-import { recordDependencyInstall, savedEditsDetail, saveEditsBeforeRemoval } from '../workspace/dependency-edits.ts';
+import {
+  recordDependencyInstall,
+  savedEditsDetail,
+  savedEditsLines,
+  saveEditsBeforeRemoval,
+} from '../workspace/dependency-edits.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -500,11 +505,11 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
-              recordDependencyInstall(
-                result.copied
-                  .filter((rel) => basename(rel) === 'node_modules' || basename(rel) === 'Pods')
-                  .map((rel) => join(target, rel)),
-              );
+              const trees = result.copied
+                .filter((rel) => basename(rel) === 'node_modules' || basename(rel) === 'Pods')
+                .map((rel) => join(target, rel));
+              recordDependencyInstall(trees);
+              for (const line of savedEditsLines(trees)) out(chalk.yellow(phaseLine('carry', line)));
               const stale = reportCarriedStateHealth(
                 root,
                 target,
@@ -1236,18 +1241,21 @@ async function saveDependencyEditsFirst(
   path: string,
   keys: readonly string[],
   output: RemovalOutput,
+  force: boolean,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  // @ref LLP 0002#edits-inside-dependency-folders -- removal saves changed dependency files first
+  // @ref LLP 0002#edits-inside-dependency-folders -- removal saves changed dependency files first, --force too
   const edits = await saveEditsBeforeRemoval(path, keys, signal);
-  if ('kept' in edits) {
-    output.error(chalk.red(`Refusing to remove ${path}: ${edits.kept}.`));
-    output.error(chalk.dim('Save or patch those files, or re-run with --force to remove it anyway.'));
-    output.fail();
-    return false;
-  }
   for (const saved of edits.saved) output.error(chalk.dim(phaseLine('archive', savedEditsDetail(saved))));
-  return true;
+  if (!edits.kept) return true;
+  if (force) {
+    output.error(chalk.yellow(phaseLine('archive', `not saved, removing anyway (--force): ${edits.kept}`)));
+    return true;
+  }
+  output.error(chalk.red(`Refusing to remove ${path}: ${edits.kept}.`));
+  output.error(chalk.dim('Save or patch those files, or re-run with --force to remove it without them.'));
+  output.fail();
+  return false;
 }
 
 async function printRemovalRefusal(
@@ -1678,7 +1686,7 @@ async function removeOrRefuse(
           const discardArchive = async (): Promise<void> => {
             if (archive) await discardWorktreeArchive(archive);
           };
-          if (!opts.force && !(await saveDependencyEditsFirst(path, lockedKeys, output, options.signal))) {
+          if (!(await saveDependencyEditsFirst(path, lockedKeys, output, Boolean(opts.force), options.signal))) {
             await discardArchive();
             return;
           }
