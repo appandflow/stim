@@ -84,6 +84,7 @@ import {
   type NetAnswer,
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
+import { resolveTailscaleBinary } from '../engine/metro-reach.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
@@ -1768,11 +1769,15 @@ function hostedNativeWork(session: HostedDeviceSession): boolean {
 /**
  * Whether this home has a saved share to restore or a share route claim whose holder is gone, which a share-only net
  * thread restores or removes. A share started with no service and no Desktop lives only in such a thread, so a
- * successor stimd (a handover or a start after a crash) finds its work here, not in its arguments.
+ * successor stimd (a handover or a start after a crash) finds its work here, not in its arguments. A thread that
+ * refuses a saved share marks it stopped, so it counts once. A dead claim counts only while a tailscale command exists
+ * to remove its route; without one, a thread would fail the same way on every boot.
  */
 function shareWorkPending(): boolean {
+  if (readLiveShareLinks().length > 0) return true;
   const claims = readClaimSet(shareRouteClaimRoot());
-  return readLiveShareLinks().length > 0 || claims.dead.length > 0 || claims.orphans.length > 0;
+  const dead = claims.dead.length > 0 || claims.orphans.length > 0;
+  return dead && resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) !== null;
 }
 
 /**

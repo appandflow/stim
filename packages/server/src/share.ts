@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { isJsonObject, SHARE_TOKEN, type StatusPayload } from '@stim-cli/core/state';
+import { isJsonObject, shareLinkKey, SHARE_TOKEN, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
 import { CLIPBOARD_INPUT_COST, parseInput, take } from './control.ts';
 import { MAX_CLIENT_MESSAGE_BYTES } from '@stim-cli/core/noise-session';
@@ -140,7 +140,10 @@ export interface ShareDeps {
   gaveUp?: (request: ShareTarget, link: string) => Promise<void>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
-  /** Called when the last share has ended and its route is gone. */
+  /**
+   * Called when the last share has ended and its route is gone. Its presence marks the hub of a share-only server,
+   * where a share a restart restored gives way to a new start of its link or of its target.
+   */
   idle?: () => void;
   /**
    * Holds the workspace's native-run claim while a share reads its device and registers, so an automatic shutdown or
@@ -324,6 +327,8 @@ interface Bound {
 interface Share {
   id: string;
   key: string;
+  /** Whether a restore of the saved link started it, not a person's `share.start`. */
+  restored: boolean;
   request: ShareTarget;
   auth: ShareAuth;
   passwordDigest: Buffer | null;
@@ -487,10 +492,35 @@ export class ShareHub {
     this.retrying.unref?.();
   }
 
-  private reusedLive(request: ShareRequest): boolean {
+  /** Whether the request's link is live or being released; a restored share does not count for a start that replaces it. */
+  private reusedLive(request: ShareRequest, strict = true): boolean {
     if (request.token === undefined) return false;
     const key = digest(request.token).toString('hex');
-    return this.shares.has(key) || this.marking.has(key);
+    const holder = this.shares.get(key);
+    if (holder && !strict && this.replaces(holder, request)) return false;
+    return holder !== undefined || this.marking.has(key);
+  }
+
+  private replaces(holder: Share, request: ShareRequest): boolean {
+    return this.deps.idle !== undefined && holder.restored && holder.request.workspace === request.workspace;
+  }
+
+  private async endRestored(workspace: string, matches: (share: Share) => boolean): Promise<void> {
+    if (this.deps.idle === undefined) return;
+    const ending = [...this.shares.values()].filter(
+      (share) => share.restored && share.request.workspace === workspace && matches(share),
+    );
+    await Promise.all(ending.map((share) => this.end(share, 'The saved link was started again.')));
+  }
+
+  /**
+   * In a share-only server, ends the shares a restore started for the target of `request` other than `keep`, the
+   * share just saved in their place: the saved file names one link per target, and a restored one it no longer names
+   * must not stay public until its expiry.
+   */
+  endReplaced(request: ShareTarget, keep: string): Promise<void> {
+    const target = shareLinkKey(request);
+    return this.endRestored(request.workspace, (share) => share.id !== keep && shareLinkKey(share.request) === target);
   }
 
   private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
@@ -518,7 +548,7 @@ export class ShareHub {
     if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
       return { code: 'bad-request', message: 'That link has expired.' };
     }
-    if (this.reusedLive(request)) return { code: 'bad-request', message: 'That link is live now.' };
+    if (this.reusedLive(request, restore)) return { code: 'bad-request', message: 'That link is live now.' };
     const held = this.deps.holdWorkspace ? await this.deps.holdWorkspace(request.workspace, () => this.closed) : null;
     if (held && 'code' in held) return held;
     try {
@@ -534,6 +564,11 @@ export class ShareHub {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     const resolved = this.resolve(status, request, null);
     if (typeof resolved === 'string' && !restore) return { code: 'action-failed', message: resolved };
+    if (!restore && request.token !== undefined) {
+      const link = digest(request.token).toString('hex');
+      await this.endRestored(request.workspace, (share) => share.key === link);
+      if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
+    }
     const bound = typeof resolved === 'string' ? null : resolved;
     const source = bound ? bound.open(request) : null;
     let base: string;
@@ -572,6 +607,7 @@ export class ShareHub {
     const share: Share = {
       id,
       key: digest(secret).toString('hex'),
+      restored: restore,
       request: kept,
       auth,
       passwordDigest: auth === 'none' ? null : digest(chosen ?? shown ?? ''),

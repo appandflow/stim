@@ -13,6 +13,8 @@ export interface ResolvedExposure {
   mode: 'tailscale' | 'proxy';
   port: number;
   publicUrl: string | null;
+  /** Whether `auto` chose the mode, so a later check may choose the other one, for example once Tailscale is up. */
+  auto: boolean;
 }
 
 const NO_PUBLIC_URL_WARNING =
@@ -33,9 +35,14 @@ function valid(key: string, raw: unknown): unknown {
 
 /** Whether the tailscale status shows a node that is logged in and running, so a Funnel route can be tried. */
 export function tailscaleLoggedIn(status: unknown): boolean {
-  if (!isJsonObject(status) || status.BackendState !== 'Running') return false;
-  const self = isJsonObject(status.Self) ? status.Self : null;
-  return typeof self?.DNSName === 'string' && self.DNSName.replace(/\.$/, '') !== '';
+  return isJsonObject(status) && status.BackendState === 'Running' && tailscaleHost(status) !== null;
+}
+
+/** The DNS name of this node in a tailscale status, which is the host of its Funnel links; null without one. */
+export function tailscaleHost(status: unknown): string | null {
+  const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : null;
+  const name = typeof self?.DNSName === 'string' ? self.DNSName.replace(/\.$/, '') : '';
+  return name === '' ? null : name;
 }
 
 /**
@@ -59,7 +66,7 @@ export async function resolveExposure(
     );
   }
   const mode = choice === 'auto' ? ((await loggedIn()) ? 'tailscale' : 'proxy') : choice;
-  return { mode, port, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null };
+  return { mode, port, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null, auto: choice === 'auto' };
 }
 
 /** The link base proxy mode hands out: the public address, or the loopback listener with a warning. */
@@ -73,6 +80,12 @@ function proxyBase(exposure: ResolvedExposure, listenerPort: number): OpenedRout
   };
 }
 
+/** Why a saved share cannot come back; `retry` when the exposure may change by itself, as Tailscale coming up does. */
+export interface Unadmitted {
+  why: string;
+  retry: boolean;
+}
+
 /**
  * The route the share hub uses: Funnel through `tailscale` or a plain loopback listener for a reverse proxy,
  * whichever the settings choose when a listener is about to open. Proxy mode never reaches `tailscale`.
@@ -82,11 +95,44 @@ export class ExposedRoute {
   private readonly tailscale: FunnelRoute;
   private readonly settings: () => ShareSettings;
   private readonly loggedIn: () => Promise<boolean>;
+  private readonly host: () => Promise<string | null>;
 
-  constructor(tailscale: FunnelRoute, settings: () => ShareSettings, loggedIn: () => Promise<boolean>) {
+  constructor(
+    tailscale: FunnelRoute,
+    settings: () => ShareSettings,
+    loggedIn: () => Promise<boolean>,
+    host: () => Promise<string | null> = async () => null,
+  ) {
     this.tailscale = tailscale;
     this.settings = settings;
     this.loggedIn = loggedIn;
+    this.host = host;
+  }
+
+  /**
+   * Why a share saved under `savedOrigin` (the link up to `/s/`) cannot come back under the exposure that would serve
+   * it now, or null when it can: the same kind and the same address. A proxy link needs the address the proxy
+   * settings give now; a Funnel link needs this node's Funnel host, whichever Funnel port it gets. A link saved
+   * without an address cannot be told apart, so it is refused. Opens nothing and never runs `tailscale funnel` or
+   * `tailscale serve`; `listenerOpen` says the exposure is the one the open listener already has.
+   */
+  async admits(savedOrigin: string | undefined, listenerOpen: boolean): Promise<Unadmitted | null> {
+    if (savedOrigin === undefined) return { why: 'it was saved without the address it was shared under', retry: false };
+    const exposure =
+      listenerOpen && this.current ? this.current : await resolveExposure(this.settings(), this.loggedIn);
+    if (exposure.mode === 'proxy') {
+      const now = `${exposure.publicUrl ?? `http://127.0.0.1:${exposure.port}`}/s/`;
+      return savedOrigin === now
+        ? null
+        : { why: `it was shared under ${savedOrigin}, and proxy exposure serves ${now} now`, retry: exposure.auto };
+    }
+    const host = await this.host();
+    const saved = URL.parse(savedOrigin);
+    if (host !== null && saved?.protocol === 'https:' && saved.hostname === host) return null;
+    return {
+      why: `it was shared under ${savedOrigin}, not through this node's Funnel address, which tailscale exposure serves now`,
+      retry: host === null,
+    };
   }
 
   /** Chooses the mode for the listener about to open and returns the loopback port to bind (0 for any free one). */

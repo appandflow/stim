@@ -48,7 +48,11 @@ async function scratchHome() {
   const bin = join(home, 'bin');
   const calls = join(home, 'tailscale-calls.txt');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'tailscale'), `#!/bin/sh\necho "$@" >> ${calls}\necho '{}'\n`);
+  const running = '{"BackendState":"Running","Self":{"DNSName":"mac.tail.ts.net."}}';
+  writeFileSync(
+    join(bin, 'tailscale'),
+    `#!/bin/sh\necho "$@" >> ${calls}\nif [ "$1" = status ]; then echo '${running}'; else echo '{}'; fi\n`,
+  );
   chmodSync(join(bin, 'tailscale'), 0o755);
   const env = {
     ...process.env,
@@ -59,9 +63,17 @@ async function scratchHome() {
   };
   mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
   writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+  const setExposure = (exposure: string) =>
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: {} },
+        share: { exposure, publicUrl: 'https://demo.example.com', port },
+      }),
+    );
   const save = (links: Record<string, unknown>) =>
     writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links }));
-  return { home, workspace, env, save, calls, port };
+  return { home, workspace, env, save, setExposure, calls, port };
 }
 
 const link = (over: Record<string, unknown> = {}) => ({
@@ -70,6 +82,7 @@ const link = (over: Record<string, unknown> = {}) => ({
   physical: false,
   control: false,
   token: TOKEN,
+  origin: 'https://demo.example.com/s/',
   password: 'saved-password',
   auth: 'generated',
   viewAuth: null,
@@ -105,19 +118,22 @@ async function startStimd(env: NodeJS.ProcessEnv, previousPid?: number) {
   });
   children.push(child);
   const exited = once(child, 'exit');
-  const deadline = Date.now() + 15_000;
-  for (;;) {
-    if (child.exitCode !== null) throw new Error('stimd exited before it recorded itself');
+  const recorded = (): { pid?: number; socket?: string } | null => {
     try {
-      const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-      if (record.pid === child.pid && record.pid !== previousPid)
-        return { child, exited, socket: String(record.socket) };
+      return JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
     } catch {
-      // the record is not written yet
+      return null;
     }
-    if (Date.now() > deadline) throw new Error('stimd wrote no run/stimd.json');
-    await new Promise((done) => setTimeout(done, 50));
-  }
+  };
+  await vi.waitFor(
+    () => {
+      if (child.exitCode !== null) throw new Error('stimd exited before it recorded itself');
+      const record = recorded();
+      expect(record?.pid === child.pid && record?.pid !== previousPid).toBe(true);
+    },
+    { timeout: 15_000, interval: 50 },
+  );
+  return { child, exited, socket: String(recorded()?.socket) };
 }
 
 /** The shares the home's net thread serves, read through stimd's CLI socket; empty while no net thread listens. */
@@ -180,7 +196,6 @@ test('a stimd with no saved share and no share route left starts no net thread',
   home = scratch.home;
   scratch.save({ ios: link({ state: 'stopped' }) });
   const stimd = await startStimd(scratch.env);
-  await new Promise((done) => setTimeout(done, 1000));
   await expect(stimdConnect(stimd.socket)).rejects.toThrow(/net-off/);
   stimd.child.kill('SIGTERM');
   await stimd.exited;
@@ -208,6 +223,22 @@ tryAcquireClaim({ root: ${JSON.stringify(shareRouteClaimRoot())}, mode: 'exclusi
   const stimd = await startStimd(scratch.env);
   await vi.waitFor(() => expect(existsSync(shareRouteClaimRoot())).toBe(false), { timeout: 20_000 });
   expect(readFileSync(scratch.calls, 'utf8')).toContain('serve status');
+  stimd.child.kill('SIGTERM');
+  await stimd.exited;
+}, 60_000);
+
+test('a saved share is left stopped, and no funnel or serve command runs, when Funnel exposure is chosen after it was shared under proxy', async () => {
+  const scratch = await scratchHome();
+  home = scratch.home;
+  scratch.setExposure('tailscale');
+  expect(loadConfig()?.share?.exposure).toBe('tailscale');
+  expect(scratch.env.PATH.startsWith(join(home, 'bin'))).toBe(true);
+  scratch.save({ ios: link() });
+  const stimd = await startStimd(scratch.env);
+  await vi.waitFor(() => expect(readLiveShareLinks()).toEqual([]), { timeout: 20_000 });
+  expect(JSON.parse(readFileSync(workspaceShareLinksFile(scratch.workspace), 'utf8')).links.ios.state).toBe('stopped');
+  expect(await servedShares(stimd.socket)).toEqual([]);
+  expect(existsSync(scratch.calls) ? readFileSync(scratch.calls, 'utf8') : '').not.toMatch(/^(funnel|serve)/m);
   stimd.child.kill('SIGTERM');
   await stimd.exited;
 }, 60_000);

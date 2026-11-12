@@ -94,6 +94,7 @@ import { pauseShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs } from './share-save.ts';
+import { digest } from './share-identity.ts';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
@@ -134,7 +135,7 @@ import { ShareHub } from './share.ts';
 import { androidScreen, simulatorScreen } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { PresenceHub, presenceKey } from './presence.ts';
-import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { ExposedRoute, tailscaleHost, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
@@ -901,6 +902,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return { exposure: share?.exposure, publicUrl: share?.publicUrl, port: share?.port };
     },
     async () => tailscaleLoggedIn(await tailnet.rawStatus()),
+    async () => tailscaleHost(await tailnet.rawStatus()),
   );
   const shares = new ShareHub({
     frames,
@@ -947,6 +949,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if ('code' in resolved) return { code: 'bad-request', message: resolved.message };
         const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true });
         return 'code' in started ? started : { started: true, id: started.id };
+      },
+      refused: async ({ share }) => {
+        try {
+          return await exposedRoute.admits(share.origin, shares.port !== null);
+        } catch (cause) {
+          return { why: cause instanceof Error ? cause.message : String(cause), retry: false };
+        }
+      },
+      leave: async ({ workspace, key, share }) => {
+        const secret = share.token ?? share.slug ?? '';
+        const unsaved = await markSavedStopped(() =>
+          pauseShareLinkAsync(workspace, key, (saved) => savedLinkIs(saved, digest(secret).toString('hex'))),
+        );
+        if (unsaved !== null) {
+          console.error(`stim-server: could not mark the saved web share of ${workspace} stopped: ${unsaved}`);
+        }
       },
       wanted: ({ workspace, key, share }) => {
         const saved = readShareLinks(workspace)[key];

@@ -46,7 +46,7 @@ describe('resolving how shares are exposed', () => {
         settings({ exposure: 'proxy', port: 8123, publicUrl: 'https://demo.example.com/stim/' }),
         async () => false,
       ),
-    ).toEqual({ mode: 'proxy', port: 8123, publicUrl: 'https://demo.example.com/stim' });
+    ).toMatchObject({ mode: 'proxy', port: 8123, publicUrl: 'https://demo.example.com/stim' });
   });
 
   it('refuses a hand-edited value the settings registry would not accept, naming the setting', async () => {
@@ -385,5 +385,54 @@ describe('the Funnel route of an auto exposure', () => {
     expect(await exposed.prepare()).toBe(0);
     expect(await exposed.open(4321)).toEqual({ url: 'https://mac.tail.ts.net', port: 443 });
     expect(opened).toEqual([4321]);
+  });
+});
+
+describe('whether a saved share may come back under the exposure chosen now', () => {
+  const opened: number[] = [];
+  const funnel = {
+    open: async (target: number) => {
+      opened.push(target);
+      return { url: 'https://mac.tail.ts.net', port: 443 };
+    },
+    close: async () => {},
+    stranded: () => null,
+    removeStranded: async () => {},
+  };
+  const route = (config: Partial<ShareSettings>, loggedIn: boolean) =>
+    new ExposedRoute(
+      funnel,
+      () => ({ exposure: 'proxy', publicUrl: undefined, port: 7790, ...config }),
+      async () => loggedIn,
+      async () => (loggedIn ? 'mac.tail.ts.net' : null),
+    );
+
+  it('admits a proxy link only under the address proxy exposure serves now', async () => {
+    const proxy = route({ publicUrl: 'https://demo.example.com' }, false);
+    expect(await proxy.admits('https://demo.example.com/s/', false)).toBeNull();
+    expect(await proxy.admits('https://other.example.com/s/', false)).toMatchObject({ retry: false });
+    expect(await proxy.admits('https://mac.tail.ts.net:8443/s/', false)).toMatchObject({ retry: false });
+    expect(await route({}, false).admits('http://127.0.0.1:7790/s/', false)).toBeNull();
+    expect(await route({}, false).admits('http://127.0.0.1:7791/s/', false)).toMatchObject({ retry: false });
+  });
+
+  it('refuses a proxy link under Funnel exposure without opening a route, and admits a Funnel link on any Funnel port', async () => {
+    const tailscale = route({ exposure: 'tailscale' }, true);
+    expect(await tailscale.admits('https://demo.example.com/s/', false)).toMatchObject({ retry: false });
+    expect(await tailscale.admits('http://127.0.0.1:7790/s/', false)).toMatchObject({ retry: false });
+    expect(await tailscale.admits('https://mac.tail.ts.net/s/', false)).toBeNull();
+    expect(await tailscale.admits('https://mac.tail.ts.net:8443/s/', false)).toBeNull();
+    expect(opened).toEqual([]);
+  });
+
+  it('refuses a link saved without its address, and waits out Funnel that is not up yet or that auto may still choose', async () => {
+    expect(await route({}, false).admits(undefined, false)).toMatchObject({ retry: false });
+    expect(await route({ exposure: 'tailscale' }, false).admits('https://mac.tail.ts.net/s/', false)).toMatchObject({
+      retry: true,
+    });
+    expect(await route({ exposure: 'auto' }, false).admits('https://mac.tail.ts.net/s/', false)).toMatchObject({
+      retry: true,
+    });
+    expect(await route({ exposure: 'auto' }, true).admits('https://mac.tail.ts.net/s/', false)).toBeNull();
   });
 });

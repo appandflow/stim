@@ -65,9 +65,23 @@ way. The thread ends once nothing is shared and the restore has settled. A stimd
 that has no work of this kind starts no net thread, and nothing starts a stimd on
 its own: the next command that starts one resumes the shares. A live share does
 not hold an engine switch of stimd's own follower; the switch carries it by
-restoring it in the successor. Restoring starts only shares `stim share` saved,
-so it never widens exposure, never enables Funnel for a link nobody shared, and
-never touches a route Stim does not own. The route claim path is
+restoring it in the successor. Restoring starts only shares `stim share` saved
+and never touches a route Stim does not own. A restore never changes how a
+share is exposed: it starts a saved share only when the exposure it would get
+now is the kind and the address it was shared under (a proxy link under the
+address proxy exposure serves now, a Funnel link under this node's Funnel host),
+and a saved entry that does not record its address is not restored. Any other
+saved share is marked stopped, with one log line, and `stim share --reuse`
+starts it again under the exposure of that day. The check runs before anything
+opens and never runs `tailscale funnel` or `tailscale serve` for a share saved
+under proxy exposure; while `auto` may still choose the other mode (Tailscale not
+up yet), the restore waits and tries again before it gives up. Marking the entry
+stopped means a later stimd does not start a thread for it. A dead share route
+claim starts a thread only while a tailscale command exists to remove its route.
+In a share-only server a restored share gives way: `stim share --reuse` of its
+link replaces it and takes the passwords and expiry of that command, and a new
+share of the same target ends it, so the saved file and the running shares name
+the same link. The route claim path is
 `shareRouteClaimRoot` in `@stim-cli/core/state`.
 
 Maintainer decision: "another important consteaint of stimd is being resumable", 2026-11-12.
