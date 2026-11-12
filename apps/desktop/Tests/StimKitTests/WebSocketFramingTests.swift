@@ -276,7 +276,7 @@ struct WebSocketFramingTests {
   }
 
   @Test func aListenerStimdCannotStartRefusesWithItsTextBeforeTheUpgrade() async throws {
-    let refusal = "stim-server 1.42.0 (Stim Desktop bundle, pid 42) holds port 7787; update Stim Desktop or quit it."
+    let refusal = "port 7787 is held by pid 42; stop it (kill 42), or run stim serve --port <n>."
     let (peer, events, listening) = try await run([
       #"{"op":"hello","kind":"stimd","pid":1,"build":"3f9a1c0d22e8","version":"1.43.0"}"#,
       #"{"op":"net","listening":false,"message":"\#(refusal)"}"#,

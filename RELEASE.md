@@ -140,12 +140,6 @@ preparation, `git status --short` may show only the draft
    runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
    and a workspace build first.
 
-   Release floors live in `packages/core/state/release-floors.json`. A null
-   floor resolves to the next minor from a stable build version, or the minor
-   named by a release candidate. A stable `X.Y.0` prep pins every null floor
-   and rebuilds the CI action bundle. Candidates leave floors unpinned. A
-   patch prep refuses while any floor is null. Pinned floors never move.
-
    Workspace links stay at `workspace:*` during a bump, including Stim's
    development dependencies. Stim bundles the `@stim-cli/*` code and ships no
    runtime dependency on those packages. pnpm substitutes remaining workspace
@@ -214,8 +208,7 @@ preparation, `git status --short` may show only the draft
    stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   published package manifests, any newly pinned release floors, the rebuilt
-   action bundle and the draft release notes. `pnpm-lock.yaml` no
+   published package manifests and the draft release notes. `pnpm-lock.yaml` no
    longer moves with a version bump -- it records the internal edges as
    `workspace:` specifiers and `link:` targets, neither of which carries a
    version. Resolve anything else before QA.

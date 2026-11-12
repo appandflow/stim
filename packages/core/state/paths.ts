@@ -335,11 +335,6 @@ export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
 }
 
-/** The socket of a stim-daemon from Stim 1.40 to 1.42, which stimd stops at boot. */
-export function daemonSocket(): string {
-  return localSocket(join(daemonDir(), 'daemon.sock'));
-}
-
 /** The daemon's own log, rotated like workspace logs. */
 export function daemonNdjsonFile(): string {
   return join(daemonDir(), 'daemon.ndjson');

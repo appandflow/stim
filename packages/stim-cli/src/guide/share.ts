@@ -183,7 +183,7 @@ WHAT IT NEEDS
   stim stop, worktree remove) or when no share starts within 2 minutes, and
   removes its Funnel route on the way out (it stays up, retrying, while that
   removal fails), unless Stim Desktop, stim pair or stim serve asked for it
-  meanwhile. When it cannot start, such as while an older stim-server holds
+  meanwhile. When it cannot start, such as while another process holds
   its port, stim share refuses with STIM_SERVER_NOT_RUNNING and the reason;
   while a stimd of another Stim build holds the home, with
   STIM_DAEMON_UNAVAILABLE naming that build.
