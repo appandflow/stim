@@ -175,6 +175,18 @@ test('a dry run at critical changes nothing; each level deletes only its own cat
   expect(existsSync(join(cache, 'aa', 'entry', 'blob'))).toBe(false);
 });
 
+test('the critical run keeps the recordings of a workspace pinned with maintenance.keep', async () => {
+  const pinned = liveWorkspace('pinned', [[now - 120_000, now - 60_000]]);
+  const other = liveWorkspace('other', [[now - 120_000, now - 60_000]]);
+  writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+
+  const critical = await gcJson({ pressure: 'critical' });
+
+  expect(critical.failures).toBe(0);
+  expect(readdirSync(pinned.dir)).toHaveLength(1);
+  expect(readdirSync(other.dir)).toEqual([]);
+});
+
 test('cancelling the critical run while it deletes recordings keeps later footage and releases admission', async () => {
   const live = liveWorkspace('live', [
     [now - 10 * DAY_MS, now - 10 * DAY_MS + 60_000],

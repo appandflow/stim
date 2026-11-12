@@ -2,7 +2,11 @@ import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { MaintenanceAction } from '@stim-cli/core/state';
 import { parseSimRuntimeList, type SimRuntimeRecord } from '../../commands/gc/inventory.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isStimOwnedSim } from '../../devices/device-ownership.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { teardownUnavailableOwnedIosSim } from '../../devices/teardown.ts';
 import { resolveRuntime } from '../../commands/ios/support.ts';
@@ -24,22 +28,86 @@ function pinsVersion(pin: string, version: string | null): boolean {
   return Boolean(wanted && version && (version === wanted || version.startsWith(`${wanted}.`)));
 }
 
-async function pinnedRuntimes(operation?: StimContext): Promise<string[]> {
-  const pins: string[] = [];
+/** What one registered project says about runtimes: its `ios.runtime` pin, or that its settings cannot be read. */
+export type ProjectPin =
+  | { path: string; state: 'resolved'; pin: string | null }
+  | { path: string; state: 'gone' }
+  | { path: string; state: 'unresolved'; reason: string };
+
+/**
+ * The runtime pins of every registered project, or the projects whose settings cannot be read. A project on an
+ * unmounted volume, or with a settings file that cannot be parsed, could pin any runtime, so it blocks runtime cleanup.
+ */
+export function runtimePins(projects: readonly ProjectPin[]): { pins: string[]; unresolved: string[] } {
+  return {
+    pins: projects.flatMap((project) => (project.state === 'resolved' && project.pin ? [project.pin] : [])),
+    unresolved: projects.flatMap((project) =>
+      project.state === 'unresolved' ? [`${project.path}: ${project.reason}`] : [],
+    ),
+  };
+}
+
+function unreadableSettings(dir: string | null): boolean {
+  if (!dir) return false;
+  const file = join(dir, '.stim.json');
+  if (!existsSync(file)) return false;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf-8'));
+    return typeof parsed !== 'object' || parsed === null || Array.isArray(parsed);
+  } catch {
+    return true;
+  }
+}
+
+async function projectPins(operation?: StimContext): Promise<ProjectPin[]> {
+  const mounted = listMountedVolumes();
+  const projects: ProjectPin[] = [];
   for (const path of Object.keys(loadConfig()?.projects ?? {})) {
+    if (!existsSync(path)) {
+      projects.push(
+        isAbsentPath(path) && isOnMountedVolume(path, mounted)
+          ? { path, state: 'gone' }
+          : { path, state: 'unresolved', reason: 'its path cannot be reached' },
+      );
+      continue;
+    }
     try {
-      const { settings } = await resolveProjectSettingsAsync(
+      const { context, settings } = await resolveProjectSettingsAsync(
         path,
         operation ? { env: operation.env, signal: operation.signal, declareFor: operation } : {},
       );
-      const pin = resolveRuntime(null, settings);
-      if (pin) pins.push(pin);
+      projects.push(
+        [context.projectPath, context.repoRoot].some(unreadableSettings)
+          ? { path, state: 'unresolved', reason: 'its .stim.json cannot be read' }
+          : { path, state: 'resolved', pin: resolveRuntime(null, settings) },
+      );
     } catch (error) {
       if (isClaimUnavailable(error)) throw error;
       operation?.signal.throwIfAborted();
+      projects.push({ path, state: 'unresolved', reason: error instanceof Error ? error.message : String(error) });
     }
   }
-  return pins;
+  return projects;
+}
+
+function workspaceSimulators(): Set<string> {
+  const udids = new Set<string>();
+  for (const project of Object.values(loadConfig()?.projects ?? {}))
+    for (const { platforms } of projectDeviceSlots(project))
+      if (platforms.ios?.deviceUdid) udids.add(platforms.ios.deviceUdid);
+  return udids;
+}
+
+/**
+ * The owned simulators whose runtime is gone that maintenance deletes on its own: those no registered workspace records,
+ * such as parked or orphaned ones. A workspace's own simulator goes only through that workspace's dormant stage or
+ * teardown, which apply its pin, lock, lease and activity checks.
+ */
+export function unavailableSimsToDelete<T extends Pick<IosSimRecord, 'udid' | 'available'>>(
+  owned: readonly T[],
+  inWorkspace: ReadonlySet<string>,
+): T[] {
+  return owned.filter((sim) => !sim.available && !inWorkspace.has(sim.udid));
 }
 
 function versionKey(version: string | null): number[] {
@@ -55,8 +123,8 @@ function newer(a: SimRuntimeRecord, b: SimRuntimeRecord): number {
 
 /**
  * Which installed iOS simulator runtime images to delete: those simctl marks deletable, no simulator on the machine
- * uses, owned or not, available or not, and no registered project pins with `ios.runtime`. The only installed runtime is never deleted, and when no remaining
- * runtime would be used the newest stays, so the machine always keeps one runtime.
+ * uses, owned or not, available or not, and no registered project pins with `ios.runtime`. The only installed runtime
+ * is never deleted, and when no remaining runtime would be used the newest stays, so the machine always keeps one.
  */
 export function selectUnusedRuntimes(
   runtimes: readonly SimRuntimeRecord[],
@@ -146,7 +214,11 @@ export async function planRuntimes(operation?: StimContext): Promise<Maintenance
       blocked: [`Could not list simulator runtimes: ${error instanceof Error ? error.message : String(error)}`],
     };
   }
-  const { take, kept } = selectUnusedRuntimes(runtimes, sims, await pinnedRuntimes(operation));
+  const blocked: string[] = [];
+  const { pins, unresolved } = runtimePins(await projectPins(operation));
+  if (unresolved.length)
+    blocked.push(`Simulator runtimes stay until these projects' settings can be read: ${unresolved.join('; ')}`);
+  const { take, kept } = unresolved.length ? { take: [], kept: [] } : selectUnusedRuntimes(runtimes, sims, pins);
   for (const runtime of take)
     actions.push({
       kind: 'would-delete-runtime',
@@ -155,14 +227,14 @@ export async function planRuntimes(operation?: StimContext): Promise<Maintenance
       reason: `${label(runtime)}: no simulator uses it`,
     });
   for (const { runtime, reason } of kept) skips.push({ target: label(runtime), reason });
-  for (const sim of sims.filter((entry) => !entry.available && isStimOwnedSim(entry)))
+  for (const sim of unavailableSimsToDelete(sims.filter(isStimOwnedSim), workspaceSimulators()))
     actions.push({
       kind: 'would-delete-unavailable-sim',
       target: sim.udid,
       bytes: sim.dataPathSize ?? 0,
       reason: `${sim.name}: its runtime ${sim.runtime} is no longer installed`,
     });
-  return { actions, skips, blocked: [] };
+  return { actions, skips, blocked };
 }
 
 /** Deletes one runtime after listing again and finding it still unused and still not the only one. */
@@ -174,7 +246,10 @@ export async function deleteRuntimeAction(action: MaintenanceAction, operation?:
       signal: operation?.signal,
     });
     const runtimes = await listRuntimes(operation);
-    const { take, kept } = selectUnusedRuntimes(runtimes, sims, await pinnedRuntimes(operation));
+    const { pins, unresolved } = runtimePins(await projectPins(operation));
+    if (unresolved.length)
+      return { status: 'kept', bytes: 0, detail: `project settings cannot be read: ${unresolved.join('; ')}` };
+    const { take, kept } = selectUnusedRuntimes(runtimes, sims, pins);
     const runtime = take.find((entry) => entry.identifier === action.target);
     if (!runtime)
       return {
@@ -207,6 +282,8 @@ export async function deleteUnavailableSimAction(
   action: MaintenanceAction,
   operation?: StimContext,
 ): Promise<ActionOutcome> {
+  if (workspaceSimulators().has(action.target))
+    return { status: 'kept', bytes: 0, detail: 'a registered workspace records it as its simulator' };
   const outcome = await teardownUnavailableOwnedIosSim(action.target, {
     operation,
   });

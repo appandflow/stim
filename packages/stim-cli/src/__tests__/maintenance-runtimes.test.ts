@@ -1,11 +1,17 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { teardownUnavailableOwnedIosSim } from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { SimRuntimeRecord } from '../commands/gc/inventory.ts';
-import { deleteRuntimeAction, selectUnusedRuntimes } from '../stimd/passes/runtimes.ts';
+import { collectsEngineStore } from '../commands/gc.ts';
+import {
+  deleteRuntimeAction,
+  runtimePins,
+  selectUnusedRuntimes,
+  unavailableSimsToDelete,
+} from '../stimd/passes/runtimes.ts';
 
 const runtime = (version: string, overrides: Partial<SimRuntimeRecord> = {}): SimRuntimeRecord => ({
   identifier: `IMG-${version}`,
@@ -159,5 +165,49 @@ describe('an owned simulator whose runtime is gone', () => {
     const outcome = await teardownUnavailableOwnedIosSim('U1');
     expect(outcome.status === 'torn-down').toBe(deleted);
     expect(calls.some((call) => call.join(' ') === 'xcrun simctl delete U1')).toBe(deleted);
+  });
+});
+
+test('a project whose settings cannot be read blocks runtime cleanup, and a provably gone one does not', () => {
+  expect(
+    runtimePins([
+      { path: '/a', state: 'resolved', pin: '26.2' },
+      { path: '/gone', state: 'gone' },
+    ]),
+  ).toEqual({ pins: ['26.2'], unresolved: [] });
+  expect(
+    runtimePins([
+      { path: '/a', state: 'resolved', pin: null },
+      { path: '/Volumes/off/app', state: 'unresolved', reason: 'its path cannot be reached' },
+    ]).unresolved,
+  ).toEqual(['/Volumes/off/app: its path cannot be reached']);
+});
+
+test('maintenance deletes only unavailable owned simulators no registered workspace records', () => {
+  const sims = [
+    { udid: 'PARKED', available: false },
+    { udid: 'WORKSPACE', available: false },
+    { udid: 'LIVE', available: true },
+  ];
+  expect(unavailableSimsToDelete(sims, new Set(['WORKSPACE'])).map((entry) => entry.udid)).toEqual(['PARKED']);
+});
+
+describe('the shared engine store', () => {
+  let root = '';
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-engine-scope-')));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  test.each([
+    { name: 'the default home collects it', scoped: false, inside: false, collects: true },
+    { name: 'a scoped home leaves a store outside it', scoped: true, inside: false, collects: false },
+    { name: 'a scoped home collects a store inside it', scoped: true, inside: true, collects: true },
+  ])('$name', ({ scoped, inside, collects }) => {
+    const home = join(root, 'home');
+    const store = inside ? join(home, 'engine') : join(root, 'shared', 'engine');
+    mkdirSync(store, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    expect(collectsEngineStore(scoped ? { STIM_HOME: home } : {}, store, home)).toBe(collects);
   });
 });

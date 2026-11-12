@@ -1,9 +1,9 @@
 import { throwIfCancelled } from '../cancellation.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
-import { ensurePrivateDir } from '@stim-cli/core';
-import { renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
+import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, sep } from 'node:path';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { gcReportFile, maintenanceRunClaims, type DaemonPressure, type PressureLevel } from '@stim-cli/core/state';
@@ -438,6 +438,23 @@ export async function withGcMaintenanceClaim<T>(
   }
 }
 
+/**
+ * Whether gc collects the engine store at `store`: always from the default home, and from a home STIM_HOME scopes only
+ * when the store lies inside that home, since the shared store under `~/.stim/engine` serves every home.
+ */
+export function collectsEngineStore(env: NodeJS.ProcessEnv, store: string, home: string): boolean {
+  if (!isScopedHome(env)) return true;
+  const real = (path: string) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return null;
+    }
+  };
+  const [root, scope] = [real(store), real(home)];
+  return root !== null && scope !== null && (root === scope || root.startsWith(`${scope}${sep}`));
+}
+
 const gc: Op = defineOp({
   name: 'gc',
   description:
@@ -452,10 +469,11 @@ const gc: Op = defineOp({
     json: { flags: '--json', description: 'print the result as JSON on stdout; every other line goes to stderr' },
   },
   run: async ({ options: opts }) => {
-    if (!opts.dryRun) {
+    const { engineRoot } = await import('../engine-store/store.ts');
+    const store = engineRoot(process.env);
+    if (!opts.dryRun && collectsEngineStore(process.env, store, configDir())) {
       const { collectInstalledStore } = await import('../engine-store/gc.ts');
-      const { engineRoot } = await import('../engine-store/store.ts');
-      await collectInstalledStore(engineRoot(process.env)).catch((error: unknown) =>
+      await collectInstalledStore(store).catch((error: unknown) =>
         console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
       );
     }

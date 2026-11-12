@@ -10,7 +10,9 @@ import { forgetStaleLedgerEntries } from '../../commands/gc/ledger.ts';
 import { forgetStaleEasLedgerEntries } from '../../commands/gc/eas-ledger.ts';
 import { forgetGoneHomes } from '../../commands/gc/other-homes.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from '../../commands/gc/logs.ts';
-import { collectRecordings, deleteRecordings } from '../../commands/gc/recordings.ts';
+import { collectRecordings, deleteRecordings, type WorkspaceRecordings } from '../../commands/gc/recordings.ts';
+import { withIdleWorkspace } from '../../workspace/in-use.ts';
+import { maintenancePinned } from './protect.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../../commands/gc/hosted-devices.ts';
 import { deleteEasSessions } from '../../commands/gc/eas-sessions.ts';
 import { collectArchives, deleteArchives, type ArchiveKind } from '../../commands/gc/archives.ts';
@@ -170,11 +172,22 @@ export async function planRecords({
   return { actions, blocked, skips };
 }
 
+/**
+ * The closed device recordings a critical run deletes: every workspace's, except one `maintenance.keep` pins. Each
+ * resolved workspace is checked again for pins and use under its native-run claim right before its deletion.
+ */
+function recordingsToDelete(
+  entries: readonly WorkspaceRecordings[],
+  pinned: (root: string) => boolean,
+): WorkspaceRecordings[] {
+  return entries.filter((entry) => entry.willDelete && !(entry.projectRoot !== null && pinned(entry.projectRoot)));
+}
+
 /** At critical: every device recording, and the logs, recordings and agent actions of every archive. */
 export async function planHistory(operation?: StimContext): Promise<MaintenanceAction[]> {
   const actions: MaintenanceAction[] = [];
   const recordings = await collectRecordings({ whole: false, olderThan: 0, now: Date.now() }, [], operation?.signal);
-  const bytes = recordings.filter((entry) => entry.willDelete).reduce((sum, entry) => sum + entry.deleteBytes, 0);
+  const bytes = recordingsToDelete(recordings, maintenancePinned).reduce((sum, entry) => sum + entry.deleteBytes, 0);
   if (bytes > 0)
     actions.push({
       kind: 'would-delete-recordings',
@@ -262,7 +275,25 @@ export async function executeRecordAction(
     case 'would-delete-recordings':
       return run(async () => {
         const plan = { whole: false, olderThan: 0, now: Date.now() };
-        return deleteRecordings(await collectRecordings(plan, [], signal), plan, GC_OUTPUT, signal);
+        let failures = 0;
+        for (const entry of recordingsToDelete(await collectRecordings(plan, [], signal), maintenancePinned)) {
+          const root = entry.projectRoot;
+          if (root === null) {
+            failures += await deleteRecordings([entry], plan, GC_OUTPUT, signal);
+            continue;
+          }
+          const result = await withIdleWorkspace(
+            root,
+            async () =>
+              recordingsToDelete([entry], maintenancePinned).length
+                ? deleteRecordings([entry], plan, GC_OUTPUT, signal)
+                : 0,
+            { purpose: 'maintenance', operation },
+          );
+          if (result.ran) failures += result.value;
+          else GC_OUTPUT.record('recording', 'kept', root, { detail: `in use: ${result.reasons.join('; ')}` });
+        }
+        return failures;
       });
     case 'would-delete-archives':
       return run(async () =>
