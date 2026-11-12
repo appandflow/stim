@@ -388,13 +388,22 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   await child.roots?.beforeClose();
   try {
     if (!GROUPS) {
-      if (
-        inspectProcessIdentity(child) !== 'same' ||
-        !(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' }))
-      )
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+      const unconfirmed = (detail: string) =>
+        new Error(`Could not confirm shutdown of dev-server pid ${child.pid}: ${detail}.`);
+      const identity = inspectProcessIdentity(child);
+      if (identity !== 'same') throw unconfirmed(`its identity reads ${identity}`);
+      const failed = await getExecutor()
+        .runFileAsync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000, killSignal: 'SIGKILL' })
+        .then(
+          () => null,
+          (error: { status?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown }) => error,
+        );
+      if (failed)
+        throw unconfirmed(
+          `taskkill /T /F exited ${String(failed.status ?? failed.message)}: ${`${String(failed.stdout ?? '')} ${String(failed.stderr ?? '')}`.replace(/\s+/g, ' ').trim()}`,
+        );
       if (!(await gone(() => running(child), STOP_MS)))
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+        throw unconfirmed(`it still runs ${STOP_MS / 1000} s after taskkill`);
     } else if (child.handle) await child.handle.close();
     else if (processGroupAlive(child.pid)) {
       const signal = (sig: NodeJS.Signals) => {
