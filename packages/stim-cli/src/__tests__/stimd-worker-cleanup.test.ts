@@ -3,12 +3,13 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 
 test('a worker cleanup refusal stays visible after the lane settles', async () => {
   const failure = new WorkspaceProcessCleanupError([], 'worker child is unverified', 'Inspect worker child.');
-  const reported = vi.fn<(error: unknown) => void>();
+  const reported = vi.fn<(error: unknown) => boolean>(() => false);
   const threads: ThreadTable = {
     run: async () => {
       throw failure;
     },
     abort: () => {},
+    settle: () => {},
     close: async () => {},
   };
   const lane = createPassesLane(threads, () => {}, reported);

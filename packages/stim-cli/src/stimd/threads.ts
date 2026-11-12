@@ -2,6 +2,8 @@ import { isMainThread, parentPort, Worker, workerData } from 'node:worker_thread
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { childKey } from './cleanup-watch.ts';
+import { serveThreadJobs } from './thread-jobs.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -24,7 +26,15 @@ type FromThread =
       fields: Record<string, unknown>;
     }
   | { type: 'done'; result: DaemonLadderAction[] }
-  | { type: 'failed'; message: string; code?: string; remedy?: string; reportCleanup?: boolean };
+  | {
+      type: 'failed';
+      message: string;
+      code?: string;
+      remedy?: string;
+      reportCleanup?: boolean;
+      contained?: { pid: number; processToken: string | null };
+    }
+  | { type: 'settled'; pending: string[] };
 
 interface Thread {
   worker: Worker;
@@ -33,6 +43,9 @@ interface Thread {
     reject: (error: Error) => void;
   } | null;
   idle: NodeJS.Timeout | null;
+  /** The children whose cleanup a job on this thread could not verify, which the thread itself watches. */
+  unsettled: Set<string>;
+  lost: boolean;
 }
 
 export interface ThreadTable {
@@ -40,13 +53,27 @@ export interface ThreadTable {
   run(name: ThreadName, input: ThreadInput): Promise<DaemonLadderAction[]>;
   /** Asks the named thread's running job to stop. */
   abort(name: ThreadName): void;
+  /** Asks every thread that watches an unverified child to check it again. */
+  settle(): void;
   /** Waits for every running job, then ends every thread. */
   close(): Promise<void>;
 }
 
-/** stimd's worker threads, each started on its first job and ended once it has had none for two minutes. */
-export function createThreadTable(log: Log): ThreadTable {
+/**
+ * stimd's worker threads, each started on its first job and ended once it has had none for two minutes and watches no
+ * unverified child. A job's unverified cleanup that names one child is watched on its thread, which releases what the
+ * child held once it has stopped; the job's rejection then names that child and says whether it has stopped. A thread
+ * that ends while it still watches a child reports `onLost`, since nothing can release what that child held any more.
+ */
+export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
+  const idleEnd = (name: ThreadName, thread: Thread) => {
+    thread.idle = setTimeout(() => {
+      if (thread.unsettled.size === 0) end(name, thread);
+      else idleEnd(name, thread);
+    }, IDLE_MS);
+    thread.idle.unref();
+  };
   const end = (name: ThreadName, thread: Thread) => {
     if (thread.idle) clearTimeout(thread.idle);
     if (threads.get(name) === thread) threads.delete(name);
@@ -56,25 +83,44 @@ export function createThreadTable(log: Log): ThreadTable {
     const worker = new Worker(spawnEntry('stimd-thread'), {
       workerData: { stimdThread: name },
     });
-    const thread: Thread = { worker, pending: null, idle: null };
+    const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), lost: false };
     worker.on('message', (message: FromThread) => {
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
+      if (message.type === 'settled') {
+        thread.unsettled = new Set(message.pending);
+        return;
+      }
       const pending = thread.pending;
       thread.pending = null;
-      thread.idle = setTimeout(() => end(name, thread), IDLE_MS);
-      thread.idle.unref();
-      if (message.type === 'done') pending?.resolve(message.result);
-      else
-        pending?.reject(
-          Object.assign(new Error(message.message), {
-            ...(message.code ? { code: message.code } : {}),
-            ...(message.remedy ? { remedy: message.remedy } : {}),
-            ...(message.reportCleanup ? { reportCleanup: true } : {}),
-          }),
-        );
+      idleEnd(name, thread);
+      if (message.type === 'done') return pending?.resolve(message.result);
+      const child = message.contained;
+      const key = child ? childKey({ reportChild: child }) : null;
+      if (key) thread.unsettled.add(key);
+      pending?.reject(
+        Object.assign(new Error(message.message), {
+          ...(message.code ? { code: message.code } : {}),
+          ...(message.remedy ? { remedy: message.remedy } : {}),
+          ...(message.reportCleanup ? { reportCleanup: true } : {}),
+          ...(key ? { reportChild: child, cleanupSettled: () => !thread.unsettled.has(key) } : {}),
+        }),
+      );
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
+      if (thread.unsettled.size > 0 && !thread.lost) {
+        thread.lost = true;
+        onLost(
+          Object.assign(
+            new Error(`the ${name} thread ended while a child whose cleanup was not verified may still run`),
+            {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              reportCleanup: true,
+              remedy: `Verify the ${name} thread's child processes and their descendants have stopped.`,
+            },
+          ),
+        );
+      }
       thread.pending?.reject(
         Object.assign(error, {
           code: 'STIM_CLAIM_UNAVAILABLE',
@@ -109,6 +155,10 @@ export function createThreadTable(log: Log): ThreadTable {
       const thread = threads.get(name);
       if (thread?.pending) thread.worker.postMessage({ type: 'abort' });
     },
+    settle() {
+      for (const thread of threads.values())
+        if (thread.unsettled.size > 0) thread.worker.postMessage({ type: 'settle' });
+    },
     async close() {
       await Promise.all(
         [...threads.entries()].map(async ([name, thread]) => {
@@ -136,7 +186,7 @@ export function createThreadTable(log: Log): ThreadTable {
 export function createPassesLane(
   threads: ThreadTable,
   log: Log,
-  onCleanupFailure?: (error: unknown) => void,
+  onCleanupFailure?: (error: unknown) => boolean,
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -155,10 +205,7 @@ export function createPassesLane(
         })
         .then((actions) => void taken.push(...actions))
         .catch((error: unknown) => {
-          if (error instanceof Error && 'reportCleanup' in error) {
-            failure = error;
-            onCleanupFailure?.(error);
-          }
+          if (error instanceof Error && 'reportCleanup' in error && !onCleanupFailure?.(error)) failure = error;
           log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
@@ -185,42 +232,23 @@ else if (thread && parentPort) {
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   const { processContext } = await import('../cli-operation.ts');
   let lane: MaintenanceLane | undefined;
-  let controller = new AbortController();
-  port.on('message', async (message: { type: 'run'; input: ThreadInput } | { type: 'abort' }) => {
-    if (message.type === 'abort') return controller.abort();
-    controller = new AbortController();
-    const { signal } = controller;
-    const { input } = message;
-    const operation = processContext(input.cwd, signal);
-    try {
+  serveThreadJobs<ThreadInput>(
+    port,
+    processContext,
+    async (input, operation) => {
       if ('act' in input) {
         const { createMaintenanceLane } = await import('../daemon/passes.ts');
         lane ??= createMaintenanceLane(log);
         lane.start({ ...input, operation }, input.act);
         await lane.settled();
-        port.postMessage({ type: 'done', result: lane.take() });
-      } else {
-        const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
-        await measureDependencyTrees(operation);
-        port.postMessage({ type: 'done', result: [] });
+        return lane.take();
       }
-    } catch (error) {
-      const cleanup = error instanceof Error && 'reportCleanup' in error;
-      port.postMessage({
-        type: 'failed',
-        message: signal.aborted && !cleanup ? 'aborted' : error instanceof Error ? error.message : String(error),
-        ...(cleanup
-          ? {
-              reportCleanup: true,
-              ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? { code: error.code }
-                : {}),
-              ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
-                ? { remedy: error.remedy }
-                : {}),
-            }
-          : {}),
-      });
-    }
-  });
+      const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
+      await measureDependencyTrees(operation);
+      return [];
+    },
+    () => {
+      lane = undefined;
+    },
+  );
 }
