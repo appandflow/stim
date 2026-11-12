@@ -78,7 +78,7 @@ A worktree whose workspace has had no activity for `idle.dormantDays` (one day b
 
 Stim keeps active, locked and pinned worktrees. It also keeps unpushed commits unless it can verify they were covered by a merge, including a squash or rebase merge. The default grace period for finished work is two hours. Lock an important checkout with `git worktree lock` or pin it with `maintenance.keep`. To turn off automatic removal, set `maintenance.removeFinishedWorktrees` to `false`. [Cleanup options](./commands.md#gc)
 
-A finished worktree with uncommitted changes can be removed after Stim saves a recovery archive. The archive includes tracked changes and unignored untracked files, which can contain secrets. Stim keeps the worktree if it cannot safely save the archive or archiving is disabled. The removal output gives the exact restore commands.
+A finished worktree with uncommitted changes can be removed after Stim saves a recovery archive. A `ios/Podfile.lock` change is ignored only when `Pods/Manifest.lock` holds the same text; every `project.pbxproj` change is archived or keeps the worktree. A tracked file marked `assume-unchanged` or `skip-worktree`, or a sparse checkout, keeps the worktree, because git status hides those edits from the archive. The archive includes tracked changes and unignored untracked files, which can contain secrets. Stim keeps the worktree if it cannot safely save the archive or archiving is disabled. The removal output gives the exact restore commands.
 
 ## Checkouts Stim never ran in
 

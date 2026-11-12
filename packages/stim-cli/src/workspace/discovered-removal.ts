@@ -6,6 +6,7 @@ import { ARTIFACT_DIRS, existingBuildDirsAsync } from './regenerable-dirs.ts';
 import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
+import { hiddenEditHold } from './hidden-edits.ts';
 
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
@@ -93,18 +94,6 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
       continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
     if (hold) return hold;
-  }
-  return null;
-}
-
-/** A tracked file hidden from git status (assume-unchanged or skip-worktree), whose edit removal would lose silently. */
-async function hiddenEditHold(path: string, signal?: AbortSignal): Promise<string | null> {
-  const listed = await gitQuietAsync(path, ['ls-files', '-v', '-z'], { signal });
-  if (listed === null) return 'git cannot list its tracked files';
-  for (const record of listed.split('\0')) {
-    const tag = record[0];
-    if (tag !== undefined && record.length > 2 && (tag === 'S' || (tag >= 'a' && tag <= 'z')))
-      return `its tracked file ${record.slice(2)} is marked ${tag === 'S' ? 'skip-worktree' : 'assume-unchanged'}, which hides edits from git status`;
   }
   return null;
 }

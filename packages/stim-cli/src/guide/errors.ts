@@ -1688,13 +1688,18 @@ emulator process <pid> is still running"
       summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',
       body: () => `"Refusing to remove <path>: uncommitted changes / untracked files / commits
 not on any remote"  (worktree remove)
-  A native build rewrites tracked files, and Stim now RESTORES the one class
-  it can prove is not work: when the only dirt left is \`pod install\` churn
-  (\`<app>/ios/Podfile.lock\`, \`<app>/ios/*.xcodeproj/project.pbxproj\`,
-  tracked and unstaged), \`worktree remove\` runs the checkout itself and says
-  so per file -- those files die with the worktree either way, and a lockfile
-  change anyone meant would have been committed. ONE other dirty path and the
-  whole set is refused, churn included, so this never eats real work.
+  A native build rewrites tracked files, and Stim RESTORES the one class it can
+  prove is not work: a modified \`<app>/ios/Podfile.lock\` (tracked and
+  unstaged) whose text \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes,
+  holds too. When the only dirt left is such a lock, \`worktree remove\` runs the
+  checkout itself and says so. Stim cannot tell what \`pod install\` changed in
+  \`*.xcodeproj/project.pbxproj\` from a hand edit, so that file, and a lock
+  whose Pods were deleted or differ, count as uncommitted work. ONE other
+  dirty path and the whole set is refused, so this never eats real work.
+  A tracked file marked assume-unchanged or skip-worktree hides edits from git
+  status, so \`worktree remove\` refuses and names it; \`--force\` overrides.
+  A sparse checkout marks the files it leaves out skip-worktree too, so it is
+  refused the same way.
   Untracked \`.watchman-cookie-*\` files, which watchman writes into the roots
   it watches, are not work either: \`worktree remove\` deletes them itself and
   ignores them when it counts dirty paths. Any other untracked file still

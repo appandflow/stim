@@ -2331,6 +2331,14 @@ repository directory is refused because it is not a worktree. `--force` permits 
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
 
+Removal restores a modified `ios/Podfile.lock` itself only when
+`Pods/Manifest.lock`, the copy `pod install` makes, holds the same text. Any
+other change to it, and every change to `project.pbxproj`, is treated as your
+edit and refused like any uncommitted change. A tracked file marked
+`assume-unchanged` or `skip-worktree` hides edits from `git status`, so removal
+refuses and names it until you pass `--force`; a sparse checkout marks the files it leaves out the
+same way.
+
 ## `gc`
 
 ```text
