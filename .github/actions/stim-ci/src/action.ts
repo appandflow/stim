@@ -18,7 +18,6 @@ import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
 import { diagnosticArtifactFiles } from 'stim/ci/artifacts';
 import type { CIBuildResult, CIResult } from 'stim/ci';
-import { refuseCiBelowFloor } from './ci-floor.ts';
 
 interface Inputs {
   platform: 'ios' | 'android' | 'macos' | 'web';
@@ -65,7 +64,6 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) {
     throw new Error('version must be an exact published version when cli-path is absent.');
   }
-  refuseCiBelowFloor(version, cli);
   const timeout = input('timeout') || '1800';
   if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout) * 1000) || Number(timeout) <= 0) {
     throw new Error('timeout must be a positive whole number of seconds.');
@@ -221,6 +219,10 @@ async function installCli(version: string, root: string): Promise<{ cli: string;
         cpSync(staging, base, { recursive: true, verbatimSymlinks: true });
       }
     }
+    if (!existsSync(cli))
+      throw new Error(
+        `stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref`,
+      );
     return { cli, code: 0 };
   } finally {
     rmSync(staging, { recursive: true, force: true });

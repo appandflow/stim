@@ -451,3 +451,18 @@ cp "${join(root, 'fixture.mjs')}" "$3/node_modules/stim/bin/stim.mjs"
   expect(npm).not.toContain('@stim-cli/ci');
   expect(seen.calls().map((call) => call.slice(0, 2))).toEqual([['ci', 'run']]);
 });
+
+test.skipIf(process.platform === 'win32')('refuses a stim release that ships no bin/stim.mjs', async () => {
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'npm'), '#!/bin/sh\nmkdir -p "$3/node_modules/stim/dist"\n', { mode: 0o755 });
+  vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+  vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'cache'));
+  vi.stubEnv('RUNNER_TEMP', root);
+  delete github.inputs['cli-path'];
+  github.inputs.version = '1.41.0';
+  delete github.inputs.artifacts;
+  await expect(runAction()).rejects.toThrow(
+    'stim@1.41.0 has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref',
+  );
+});

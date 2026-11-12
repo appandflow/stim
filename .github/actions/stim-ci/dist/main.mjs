@@ -21,7 +21,7 @@ import "timers";
 import { spawn } from "node:child_process";
 import fs, { cpSync, existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
-import { basename, dirname, join, resolve as resolve$1 } from "node:path";
+import { dirname, join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
 import https from "node:https";
 import * as stream$2 from "stream";
@@ -97549,17 +97549,6 @@ async function diagnosticArtifactFiles(artifactsDir) {
 	return [...files, ...(await regularFiles(logs)).filter(isLog).map((name) => join(logs, name))];
 }
 //#endregion
-//#region ../../../packages/core/state/release-floors.json
-var oneEngine = null;
-//#endregion
-//#region src/ci-floor.ts
-function refuseCiBelowFloor(version, cliPath, floor = oneEngine) {
-	const oldBin = basename(cliPath) === "stim-ci.mjs";
-	const order = floor ? version.replace(/-.*/, "").localeCompare(floor, "en", { numeric: true }) : 0;
-	const message = oldBin ? "cli-path names a stim-ci executable; this action runs stim ci. Point cli-path at stim's bin (node_modules/stim/bin/stim.mjs or packages/stim-cli/bin/stim.mjs in the stim repo), or pin the action to an older ref" : version && floor && (order < 0 || !order && version.includes("-")) ? `version ${version} installs @stim-cli/ci; this action runs stim ci from stim ${floor} or later. Set version: ${floor} or pin the action to an older ref` : "";
-	if (message) throw new Error(message);
-}
-//#endregion
 //#region src/action.ts
 const SELECTOR_INPUTS = [
 	"scheme",
@@ -97586,7 +97575,6 @@ function readInputs(input, root, host = process.platform) {
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
-	refuseCiBelowFloor(version, cli);
 	const timeout = input("timeout") || "1800";
 	if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout) * 1e3) || Number(timeout) <= 0) throw new Error("timeout must be a positive whole number of seconds.");
 	const upload = input("upload-artifacts") || "true";
@@ -97726,6 +97714,7 @@ async function installCli(version, root) {
 				});
 			}
 		}
+		if (!existsSync$1(cli)) throw new Error(`stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref`);
 		return {
 			cli,
 			code: 0
