@@ -534,8 +534,12 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
 import { existsSync, readFileSync } from 'node:fs';
 const streams = createStreams(console.error);
 await streams.start({ root: ${JSON.stringify(root)}, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' }, process.env);
-while (!existsSync(${JSON.stringify(pidFile)})) await new Promise(r => setTimeout(r, 10));
-console.log(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim());
+let pid = 0;
+while (!(pid > 0)) {
+  pid = existsSync(${JSON.stringify(pidFile)}) ? Number(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim()) : 0;
+  if (!(pid > 0)) await new Promise(r => setTimeout(r, 10));
+}
+console.log(pid);
 process.exit(0);`;
     const ownerScript = join(home, 'owner.mjs');
     writeFileSync(ownerScript, script);
