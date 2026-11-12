@@ -116,7 +116,8 @@ export class ShareRoute {
     return this.recovering;
   }
 
-  async open(target: number): Promise<OpenedRoute> {
+  /** `only` names the one Funnel port to take, as a restored share needs; it is refused when that port is not free. */
+  async open(target: number, only?: number): Promise<OpenedRoute> {
     if (this.claim) throw new Error('The share route is already open.');
     const status = await this.tool.status();
     const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : null;
@@ -131,7 +132,13 @@ export class ShareRoute {
     }
     await this.removeStranded();
     await this.recover();
-    const port = freeFunnelPort(await this.tool.serveConfig(), allowed);
+    const port = freeFunnelPort(
+      await this.tool.serveConfig(),
+      only === undefined ? allowed : allowed.filter((p) => p === only),
+    );
+    if (port === null && only !== undefined) {
+      throw new Error(`Funnel port ${only}, which the saved link was shared on, is not free.`);
+    }
     if (port === null) {
       throw new Error(
         `Every Funnel port this node may use (${allowed.join(', ')}) already serves something. Free one (see \`tailscale serve status\`), then share again.`,

@@ -30,6 +30,7 @@ import {
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
 import { delimiter, dirname, join } from 'node:path';
 import {
   buildLedgerFile,
@@ -68,13 +69,18 @@ import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
+  async function routeServer(
+    config: unknown = {},
+    env: Record<string, string> = {},
+    options: { shareServer?: { idle: () => void; graceMs?: number } } = {},
+  ) {
     const status = join(root, 'serve.json');
     const commandLog = join(root, 'serve-calls.ndjson');
     writeFileSync(status, typeof config === 'string' ? config : JSON.stringify(config));
     const port = await start({
       tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
       env: { FAKE_SERVE_STATUS: status, FAKE_SERVE_CALLS: commandLog, ...env },
+      ...options,
     });
     return {
       port,
@@ -267,10 +273,18 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     };
     mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
     writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const origin = 'https://demo.example.com/s/';
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: {} },
+        share: { exposure: 'proxy', publicUrl: 'https://demo.example.com' },
+      }),
+    );
     const entries = {
-      ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
-      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), state: 'live' },
-      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), state: 'stopped' },
+      ios: { ...saved, platform: 'ios', token: TOKEN, origin, state: 'live' },
+      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), origin, state: 'live' },
+      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), origin, state: 'stopped' },
     };
     writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links: entries }));
     const started = vi
@@ -299,10 +313,11 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
         control: false,
         expiresAt: Date.parse(saved.expiresAt),
       }),
-      { restore: true },
+      { restore: true, origin },
     );
     expect(started).toHaveBeenCalledWith(expect.objectContaining({ slot: 'tablet', token: 'T'.repeat(43) }), {
       restore: true,
+      origin,
     });
 
     expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toEqual(
@@ -314,6 +329,108 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     await client.request('share.stop', { workspace });
     expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
     expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
+  });
+
+  it('a share-only server lists the saved live share it restored, not an expired or stopped one, and ends once nothing is shared', async () => {
+    const probe = createNetServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({ projects: { [workspace]: {} }, share: { exposure: 'proxy', port } }),
+    );
+    const origin = `http://127.0.0.1:${port}/s/`;
+    const saved = {
+      slot: 'default',
+      physical: false,
+      control: false,
+      password: 'saved-password',
+      auth: 'generated',
+      viewAuth: null,
+      origin,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    writeFileSync(
+      workspaceShareLinksFile(workspace),
+      JSON.stringify({
+        version: 1,
+        links: {
+          ios: { ...saved, platform: 'ios', token: 'A'.repeat(43), state: 'live' },
+          'ios@old': {
+            ...saved,
+            platform: 'ios',
+            slot: 'old',
+            token: 'B'.repeat(43),
+            state: 'live',
+            expiresAt: new Date(Date.now() - 1000).toISOString(),
+          },
+          android: { ...saved, platform: 'android', token: 'C'.repeat(43), state: 'stopped' },
+        },
+      }),
+    );
+    const idle = vi.fn<() => void>();
+    await start({
+      tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
+      shareServer: { idle, graceMs: 50 },
+    });
+    const client = await desktop();
+    const listed = async () =>
+      JSON.parse(JSON.stringify(await client.request('share.list'))).result.shares.map(
+        (row: { slot: string }) => row.slot,
+      );
+    await vi.waitFor(async () => expect(await listed()).toEqual(['default']));
+    expect(idle).not.toHaveBeenCalled();
+    await client.request('share.stop', { workspace });
+    await vi.waitFor(() => expect(idle).toHaveBeenCalledTimes(1));
+    expect(await listed()).toEqual([]);
+  });
+
+  it('leaves a saved share stopped, and runs no Funnel or serve command, when it was shared under another address', async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: {} },
+        share: { exposure: 'proxy', publicUrl: 'https://other.example.com' },
+      }),
+    );
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    writeFileSync(
+      workspaceShareLinksFile(workspace),
+      JSON.stringify({
+        version: 1,
+        links: {
+          ios: {
+            slot: 'default',
+            physical: false,
+            control: false,
+            password: 'saved-password',
+            auth: 'generated',
+            viewAuth: null,
+            platform: 'ios',
+            token: TOKEN,
+            origin: 'https://demo.example.com/s/',
+            state: 'live',
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        },
+      }),
+    );
+    const started = vi.spyOn(ShareHub.prototype, 'start');
+    const fixture = await routeServer({}, {}, { shareServer: { idle: () => {}, graceMs: 50 } });
+    expect(fixture.port).toBeGreaterThan(0);
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped'),
+    );
+    expect(started).not.toHaveBeenCalled();
+    expect(fixture.commands()).toEqual([]);
   });
 
   it("saves a share started over share.start, keeps the first start's password kind on a start under the same link, and share.stop pauses it", async () => {

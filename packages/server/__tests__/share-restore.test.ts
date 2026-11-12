@@ -67,8 +67,15 @@ describe('restoring saved shares', () => {
     const lines: string[] = [];
     const waits: number[] = [];
     const calls: Record<string, unknown>[] = [];
+    const left: string[] = [];
+    const refusals: Array<{ why: string; retry: boolean } | null> = [];
     let closed = false;
     const d: ShareRestoreDeps = {
+      refused: async () => refusals.shift() ?? null,
+      leave: async ({ key }) => {
+        left.push(key);
+        return true;
+      },
       start: async (params) => {
         calls.push(params);
         return answers.shift() ?? { code: 'action-failed', message: 'out of answers' };
@@ -89,6 +96,8 @@ describe('restoring saved shares', () => {
       waits,
       calls,
       ended,
+      left,
+      refusals,
       close: () => {
         closed = true;
       },
@@ -161,6 +170,37 @@ describe('restoring saved shares', () => {
     await restoreSavedShares(midStart.d, [link()]);
     expect(midStart.ended).toEqual(['w7']);
     expect(midStart.lines).toEqual([]);
+  });
+
+  it('leaves a share stopped, starting nothing, when its exposure is not the one it was shared under', async () => {
+    const f = deps([{ started: true, id: 'w1' }]);
+    f.refusals.push({ why: 'it was shared under a proxy', retry: false });
+    await restoreSavedShares(f.d, [link()]);
+    expect(f.calls).toEqual([]);
+    expect(f.waits).toEqual([]);
+    expect(f.left).toEqual(['ios']);
+    expect(f.lines).toEqual([
+      'did not restore the web share of ios of /work/app: it was shared under a proxy. It stays stopped; stim share --reuse starts it again.',
+    ]);
+  });
+
+  it('waits out an exposure that may still change, restores the share when it matches, and leaves the entry as it is after five waits', async () => {
+    const changes = deps([{ started: true, id: 'w1' }]);
+    changes.refusals.push({ why: 'not yet', retry: true }, { why: 'not yet', retry: true });
+    await restoreSavedShares(changes.d, [link()]);
+    expect(changes.waits).toEqual([5000, 10_000]);
+    expect(changes.left).toEqual([]);
+    expect(changes.lines).toEqual(['restored the web share of ios of /work/app']);
+
+    const never = deps([]);
+    for (let i = 0; i < 6; i++) never.refusals.push({ why: 'not yet', retry: true });
+    await restoreSavedShares(never.d, [link()]);
+    expect(never.waits).toEqual([5000, 10_000, 20_000, 40_000, 60_000]);
+    expect(never.calls).toEqual([]);
+    expect(never.left).toEqual([]);
+    expect(never.lines).toEqual([
+      'did not restore the web share of ios of /work/app: not yet. It stays saved for a later start.',
+    ]);
   });
 
   it('stops when the server is closing', async () => {
