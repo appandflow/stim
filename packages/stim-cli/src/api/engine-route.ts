@@ -5,7 +5,7 @@ import { installKind } from '../../bin/route.mjs';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
 import { engineRoot, FORMAT } from '../engine-store/store.ts';
 
-/** F3's per-op entry: `dist/api.mjs` and `dist/ci.mjs` export it; it resolves the result or rejects a plain failure. */
+/** F3's per-op entry: `dist/api.mjs` exports it; it resolves the result or rejects a plain failure. */
 export type RunOp = (name: string, args: unknown[], ctx: unknown) => Promise<unknown>;
 
 let pointer: { root: string; key: string; dir: string | null } | null = null;

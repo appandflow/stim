@@ -1,4 +1,5 @@
 // The stim API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+[*] @internal declare function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown>;
 [*] declare class StimError extends Error {
 [*] declare class StimError extends Error { | constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
 [*] declare class StimError extends Error { | readonly code: string;
@@ -15,7 +16,6 @@
 [*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
 [*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
 [*] declare function createStim(options: StimOptions): StimClient;
-[*] declare function holdCIStimd(env: NodeJS.ProcessEnv, projectRoot: string, ownedInstance: string | null, signal?: AbortSignal): Promise<() => void>;
 [*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: {
 [*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | check?: OffloadCheck | null;
 [*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | confirmKey?: KeyConfirmer;
@@ -32,14 +32,12 @@
 [*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | tickets?: GeneratedTickets;
 [*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | version?: string;
 [*] declare function maintenanceStatus(env?: NodeJS.ProcessEnv): MaintenanceStatus;
-[*] declare function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown>;
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): {
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { | groups: TempLeftoverGroup[];
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { | root: string;
 [*] export STIM_API_VERSION
 [*] export StimError
 [*] export createStim
-[*] export holdCIStimd
 [*] export runOp
 [*] export type StimBuildOptions
 [*] export type StimBuildResult

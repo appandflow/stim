@@ -180,7 +180,7 @@ export async function holdCIStimd(
   ownedInstance: string | null,
   signal?: AbortSignal,
 ): Promise<() => void> {
-  return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
+  return (await import('../api/client.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
 }
 
 const unavailable = () => ({

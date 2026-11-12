@@ -98,20 +98,11 @@ function isPlainFailure(value: unknown): value is StimFailure {
 }
 
 /**
- * F3's per-op entry: runs the operation `name` of a client made from `ctx` (the options of `createStim`) with `args`,
- * in this build. Resolves the operation's result, or rejects a plain `{code, message, remedy, details}`, so a caller
- * of another build can wrap it in its own `StimError`.
+ * @internal Not part of the `stim` API: the entry another Stim build imports from this build's `dist/api.mjs` to
+ * route an operation here, so it stays exported under this name. Runs the operation `name` of a client made from `ctx`
+ * (the options of `createStim`) with `args`, in this build. Resolves the operation's result, or rejects a plain
+ * `{code, message, remedy, details}`, so a caller of another build can wrap it in its own `StimError`.
  */
 export async function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown> {
   return (await import('./api/client.ts')).runOp(name, args, ctx);
-}
-
-/** Pins an existing daemon for the duration of a CI job. */
-export async function holdCIStimd(
-  env: NodeJS.ProcessEnv,
-  projectRoot: string,
-  ownedInstance: string | null,
-  signal?: AbortSignal,
-): Promise<() => void> {
-  return (await import('./api/client.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
 }

@@ -55,7 +55,7 @@ import {
   requestDaemonTick,
   stimdBuildId,
 } from '../daemon/client.ts';
-import { holdCIStimd } from '../api.ts';
+import { holdCIStimd } from '../stimd/attached.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
