@@ -10,12 +10,12 @@ export function sameProcessRecord(a: ProcessRecord | null | undefined, b: Proces
   return a.pid === b.pid && a.processToken === b.processToken;
 }
 
-export type CapturedIdentity = { ok: true; token: string } | { ok: false; reason: string };
+export type CapturedIdentity = { ok: true; token: string } | { ok: false; reason: string; code?: string };
 
 export function captureProcessIdentity(pid: number): CapturedIdentity {
   const result = capture(pid);
   if (result.ok) return { ok: true, token: result.value };
-  return { ok: false, reason: `${result.error.code} (${result.error.message})` };
+  return { ok: false, reason: `${result.error.code} (${result.error.message})`, code: result.error.code };
 }
 
 export function captureProcessToken(pid: number): string | null {

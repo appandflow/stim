@@ -8,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -173,6 +174,27 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
 };
+
+let launchedByLaunchd = false;
+
+function launcherKind(attached: boolean, service: boolean, desktop: boolean): string {
+  if (attached) return 'attached';
+  if (service) return 'service';
+  if (desktop) return 'desktop';
+  if (launchedByLaunchd) return 'launchd';
+  return process.env.INVOCATION_ID ? 'systemd' : 'direct';
+}
+
+/** The `runId` of the last record in the daemon log, which the previous stimd wrote; null without one. */
+function previousRunId(file: string): string | null {
+  try {
+    const text = readFileSync(file, 'utf8').trimEnd();
+    const runId: unknown = JSON.parse(text.slice(text.lastIndexOf('\n') + 1)).runId;
+    return typeof runId === 'string' ? runId : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Records this stimd's boot as abnormal and keeps its home claim; set while `runStimd` holds that claim. */
 let markAbnormal: ((reason: string, cause?: unknown) => void) | null = null;
@@ -721,7 +743,8 @@ async function runStimdInner(
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
-  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+  const previousRun = previousRunId(daemonNdjsonFile());
+  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES, reportFailures: true });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
   const path = stimdSocket();
@@ -1059,8 +1082,7 @@ async function runStimdInner(
       !enginePinned() &&
       !net.running()?.shareOnly
     ) {
-      relaunchDone = relaunch(updatedInPlace, spawnEntry('cli'));
-      void relaunchDone.catch(() => {});
+      relaunchDone = relaunch(updatedInPlace, spawnEntry('cli')).catch(relaunchFailed);
     }
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
@@ -1073,8 +1095,7 @@ async function runStimdInner(
     }
     if (!next || switchedTo || closing) return;
     if (!enginePinned()) {
-      relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs'));
-      void relaunchDone.catch(() => {});
+      relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs')).catch(relaunchFailed);
     } else if (!heldSwitch) {
       heldSwitch = true;
       log(
@@ -1083,6 +1104,13 @@ async function runStimdInner(
         `the engine switched to ${next.version} under pinned work; relaunching after it`,
       );
     }
+  };
+  const relaunchFailed = (error: unknown): void => {
+    log(
+      'error',
+      'relaunch_failed',
+      `the handover failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     switchedTo = next;
@@ -1108,9 +1136,16 @@ async function runStimdInner(
     } catch (error) {
       return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
+    const launchedAt = Date.now();
+    for (const deadline = launchedAt + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
-      if (record?.build === next.build && record.pid !== process.pid) return;
+      if (record?.build === next.build && record.pid !== process.pid) {
+        log('info', 'successor_bound', `the stimd of ${next.version} bound after ${Date.now() - launchedAt}ms`, {
+          pid: record.pid,
+          ms: Date.now() - launchedAt,
+        });
+        return;
+      }
       await new Promise((done) => setTimeout(done, 20));
     }
     missing(`it did not bind within ${SUCCESSOR_BIND_MS / 1000} s`);
@@ -1551,8 +1586,16 @@ async function runStimdInner(
         await threads.close();
         return undefined;
       })
-      .catch(() => {})
+      .catch((error: unknown) =>
+        log('error', 'daemon_shutdown_cleanup_failed', `shutdown cleanup failed: ${errorText(error)}`),
+      )
       .then(() => {
+        if (keepOwn || keepDaemon)
+          log(
+            'warn',
+            'daemon_claims_kept',
+            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
+          );
         follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
@@ -1562,9 +1605,11 @@ async function runStimdInner(
       });
     writerDone = shutdownDone
       .then(() => attachedEnding)
-      .catch(() => {})
+      .catch((error: unknown) =>
+        log('error', 'attached_ending_failed', `ending the attached stimd failed: ${errorText(error)}`),
+      )
       .then(async () => {
-        await relaunchDone?.catch(() => {});
+        await relaunchDone;
         await writer.close();
         return undefined;
       });
@@ -1616,7 +1661,14 @@ async function runStimdInner(
     'info',
     'daemon_started',
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
-    { build, version: identity.version },
+    {
+      build,
+      version: identity.version,
+      pid: process.pid,
+      ppid: process.ppid,
+      launcher: launcherKind(attached !== undefined, service, desktopKey !== undefined),
+      previousRunId: previousRun,
+    },
   );
   let emptyTicks = 0;
   let interval = tickMs;
@@ -1910,6 +1962,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   const serve = serviceArguments(argv);
   if (relaunchWithLogFile(['__stimd', ...argv])) return;
   const label = process.env[LAUNCHD_LABEL_ENV];
+  launchedByLaunchd = label !== undefined;
   delete process.env[LAUNCHD_LABEL_ENV];
   if (label) {
     removeExitedJobs(label);

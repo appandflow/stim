@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -410,7 +411,7 @@ function exitedWithoutBeingReaped(pid: number): boolean {
   return state === null || state.startsWith('Z');
 }
 
-test('a cancelled child whose exit is seen only after a stalled event loop is not a cleanup failure', async () => {
+async function cancelThenStall(onSpawn: (child: ChildProcess) => void = () => {}): Promise<void> {
   const controller = new AbortController();
   const reason = new Error('cancelled');
   let pid: number | undefined;
@@ -420,6 +421,7 @@ test('a cancelled child whose exit is seen only after a stalled event loop is no
       signal: controller.signal,
       onSpawn: (child) => {
         pid = child.pid;
+        onSpawn(child);
       },
     })
     .catch((error: unknown) => error);
@@ -435,4 +437,22 @@ test('a cancelled child whose exit is seen only after a stalled event loop is no
   blockEventLoop(stallUntil - performance.now());
   expect(await call).toBe(reason);
   expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+}
+
+test('a cancelled child whose exit is seen only after a stalled event loop is not a cleanup failure', async () => {
+  await expect(cancelThenStall()).resolves.toBeUndefined();
+}, 30_000);
+
+test('a cancelled child whose pipes close after the stalled event loop resumes is not a cleanup failure', async () => {
+  await expect(
+    cancelThenStall((child) => {
+      const stdout = child.stdout;
+      assert(stdout);
+      const destroy = stdout.destroy.bind(stdout);
+      stdout.destroy = (error?: Error) => {
+        setTimeout(() => destroy(error), 1600);
+        return stdout;
+      };
+    }),
+  ).resolves.toBeUndefined();
 }, 30_000);

@@ -114,6 +114,12 @@ describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record'
     expect(await exited(second)).toBe(0);
     const third = start();
     await bound(third);
+    await vi.waitFor(() =>
+      expect(logged().filter((entry) => entry.event === 'daemon_started' && entry.pid === third.pid)).toHaveLength(1),
+    );
+    const started = logged().find((entry) => entry.event === 'daemon_started' && entry.pid === third.pid);
+    expect(started).toMatchObject({ pid: third.pid, ppid: process.pid, launcher: 'direct' });
+    expect(started).toHaveProperty('previousRunId', expect.any(String));
     expect(logged().filter((entry) => entry.event === 'stimd_predecessor_lost')).toHaveLength(1);
   }, 60_000);
 

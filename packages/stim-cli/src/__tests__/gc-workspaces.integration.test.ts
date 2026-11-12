@@ -89,7 +89,7 @@ import {
   readMaintenanceState,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
-import { goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
+import { IMPOSSIBLE_PID, goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -182,6 +182,18 @@ beforeEach(() => {
   });
   saveConfig({ version: 2, projects: {}, repos: {} });
 });
+
+function hideMachineTools(): void {
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    runFileAsync: (file, args, opts) => {
+      if (file === 'du' || file === 'git') return current.runFileAsync(file, args, opts);
+      if (file === 'xcrun') return Promise.resolve(JSON.stringify({ devices: {}, devicetypes: [] }));
+      return Promise.reject(Object.assign(new Error(`spawn ${file} ENOENT`), { code: 'ENOENT' }));
+    },
+  });
+}
 
 afterEach(() => {
   scope?.mockRestore();
@@ -362,7 +374,7 @@ describe('workspace directories without workspace.json', () => {
 
   test('a directory holding only a native-run lock is kept with its claim path until the claim is removed, then deleted', async () => {
     const dir = husk(join(projects, 'locked'), {}, null);
-    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
       child: { record: null },
     });
@@ -379,7 +391,7 @@ describe('workspace directories without workspace.json', () => {
 
   test('a directory holding only a native-run claim whose owner is gone and that has no child is deleted', async () => {
     const dir = husk(join(projects, 'dead-lock'), {}, null);
-    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
     });
     await gcJson({ pressure: 'normal' });
@@ -547,6 +559,7 @@ test('a gc dry run reports orphaned workspace directories and workspace build ou
 });
 
 test('gc at high reports what it removed apart from what it kept', async () => {
+  hideMachineTools();
   const orphan = goneWorkspace('deleted-worktree');
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
@@ -604,7 +617,7 @@ test('gc at high reports what it removed apart from what it kept', async () => {
   expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
   for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
-});
+}, 30_000);
 
 test('gc removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
   const orphan = goneWorkspace('linked-away');
@@ -699,14 +712,14 @@ describe('workspaceInUse', () => {
 
   test('a native-run claim left by a dead owner with an unknown child names its path, owner and removal command', () => {
     const { root } = goneWorkspace('stale-fingerprint');
-    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
       child: { record: null },
       startedAt: '2026-11-12T05:23:46.715Z',
     });
     const [reason] = workspaceInUse(root);
     expect(reason).toContain(claim);
-    expect(reason).toContain('pid 4242 (claimed 2026-11-12T05:23:46.715Z) is no longer running');
+    expect(reason).toContain(`pid ${IMPOSSIBLE_PID} (claimed 2026-11-12T05:23:46.715Z) is no longer running`);
     expect(reason).toContain(`rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`);
   });
 
@@ -723,6 +736,7 @@ describe('workspaceInUse', () => {
   });
 
   test('a build lock that names no workspace does not mark every workspace in use, and gc reports it unresolved', async () => {
+    hideMachineTools();
     const { root } = goneWorkspace('unknown');
     const lock = exclusiveClaimDir(join(tmpHome, 'build-locks', 'ios-unknown.lock'));
     mkdirSync(lock, { recursive: true });
@@ -732,7 +746,7 @@ describe('workspaceInUse', () => {
     expect(payload.sections.unresolvedBuildClaims).toContainEqual(
       expect.objectContaining({ kind: 'lock', path: expect.stringContaining('ios-unknown.lock') }),
     );
-  });
+  }, 30_000);
 
   test('a held managed tunnel lock marks it in use', async () => {
     const { root } = goneWorkspace('tunnel');
@@ -932,6 +946,7 @@ test('the workspace-outputs item clears idle workspaces and keeps one in use', a
 });
 
 test('gc at high leaves a workspace whose dev server runs, and the workspace-outputs item lightens it, but never a building or just-built one, or the build cache', async () => {
+  hideMachineTools();
   const iosBuild = (minutesAgo: number) => ({
     lastIosBuild: {
       platform: 'ios',
@@ -1002,7 +1017,7 @@ test('gc at high leaves a workspace whose dev server runs, and the workspace-out
   );
   for (const root of [building.root, recent.root])
     expect(results).toContainEqual(expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: root }));
-});
+}, 30_000);
 
 function loggedWorkspace(name: string): { root: string; logs: string } {
   const root = join(projects, name);
