@@ -61,6 +61,15 @@ describe('the Cargo target trim under disk pressure', () => {
     const measured = await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now(), diskLevel });
     expect(measured.actions).toMatchObject([{ target: short, level: 3, bytes: expect.any(Number) }]);
     expect(measured.actions[0]?.bytes).toBeGreaterThan(1500);
+    expect(measured.actions[0]?.reason).not.toContain('build units');
+
+    const now = Date.now();
+    writeFileSync(
+      join(short, '.exact-sweep.json'),
+      JSON.stringify({ at: now, units: { 'debug#aaaaaaaaaaaaaaa1': now - 5 * DAY, 'debug#aaaaaaaaaaaaaaa2': now } }),
+    );
+    const withLedger = await planCargoTargets({ sizes, settings, pinned: () => false, now, diskLevel });
+    expect(withLedger.actions[0]?.reason).toContain('build units unused for a day (all of them)');
 
     const explicit = await planCargoTargets({
       sizes,
@@ -74,6 +83,7 @@ describe('the Cargo target trim under disk pressure', () => {
       [short, 2],
       [roomy, 2],
     ]);
+    for (const action of explicit.actions) expect(action.reason).not.toContain('build units');
 
     const normal = await planCargoTargets({
       sizes,
