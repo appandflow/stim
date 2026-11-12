@@ -274,8 +274,9 @@ export async function installSystemImage({
         onSpawn: (child) => {
           if (child.pid === undefined) return;
           const captured = captureProcessIdentity(child.pid);
-          if (!captured.ok) throw new Error(`Cannot record the sdkmanager process: ${captured.reason}`);
-          setClaimChild(held, { pid: child.pid, processToken: captured.token });
+          if (captured.ok) setClaimChild(held, { pid: child.pid, processToken: captured.token });
+          else if (captured.code !== 'NOT_FOUND')
+            throw new Error(`Cannot record the sdkmanager process: ${captured.reason}`);
         },
       });
     } catch (error) {

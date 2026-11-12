@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { capture, check, decode } from 'unique-pid';
 
 export interface ProcessRecord {
@@ -16,6 +17,33 @@ export function captureProcessIdentity(pid: number): CapturedIdentity {
   const result = capture(pid);
   if (result.ok) return { ok: true, token: result.value };
   return { ok: false, reason: `${result.error.code} (${result.error.message})`, code: result.error.code };
+}
+
+export const EXITED_CHILD_GRACE_MS = 2000;
+
+type ObservableChild = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'once'>;
+
+/**
+ * A child that exited before its identity was read is a zombie, and capture reports `NOT_FOUND` for it. That code is
+ * not proof of exit: a live process misread as not found would run with no claim record. After a `NOT_FOUND`
+ * capture, this resolves true only once the child's own `exit` is seen, and false when it is not seen within `graceMs`.
+ */
+export function childExitedWithin(child: ObservableChild, graceMs: number = EXITED_CHILD_GRACE_MS): Promise<boolean> {
+  if (child.exitCode != null || child.signalCode != null) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), graceMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+/** Runs `onLive` when a child whose capture read `NOT_FOUND` has not been seen to exit; see {@link childExitedWithin}. */
+export function unlessChildExits(child: ObservableChild, onLive: () => void, graceMs?: number): void {
+  void (async () => {
+    if (!(await childExitedWithin(child, graceMs))) onLive();
+  })();
 }
 
 export function captureProcessToken(pid: number): string | null {

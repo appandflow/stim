@@ -25,7 +25,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, inspectProcessIdentity, unlessChildExits } from '@stim-cli/core/process-identity';
 import {
   buildWorkerRoot,
   isJsonObject,
@@ -1081,7 +1081,8 @@ export class BuildHost {
     };
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      if (!captured?.ok) cancel();
+      if (captured?.ok === false && captured.code === 'NOT_FOUND') unlessChildExits(child, cancel);
+      else if (!captured?.ok) cancel();
     } catch {
       cancel();
     }

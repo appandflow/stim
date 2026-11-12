@@ -146,10 +146,12 @@ export async function ensureIosRuntime({
               if (slot?.claim) setClaimChild(slot.claim, claim.owner);
             } else {
               const captured = captureProcessIdentity(child.pid);
-              if (!captured.ok) throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
-              const identity = { pid: child.pid, processToken: captured.token };
-              setClaimChild(claim, identity);
-              if (slot?.claim) setClaimChild(slot.claim, identity);
+              if (captured.ok) {
+                const identity = { pid: child.pid, processToken: captured.token };
+                setClaimChild(claim, identity);
+                if (slot?.claim) setClaimChild(slot.claim, identity);
+              } else if (captured.code !== 'NOT_FOUND')
+                throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
             }
             child.stdout?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
             child.stderr?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));

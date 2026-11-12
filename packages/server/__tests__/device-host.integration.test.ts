@@ -686,6 +686,67 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'a hosted fold that exits before its identity is read reports its own failure',
+  async () => {
+    const tool = join(home, 'xcrun');
+    writeFileSync(tool, `#!${process.execPath}\nprocess.stderr.write('fold broke\\n');process.exit(3);\n`);
+    chmodSync(tool, 0o755);
+    const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
+    const frames = new FramePool(env);
+    vi.spyOn(frames, 'control').mockReturnValue({
+      send: () => {},
+      keys: () => true,
+      clipboard: async () => null,
+      detach: () => {},
+    });
+    vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
+    const claim = tryAcquireClaim({ root: join(home, 'exited-owner.claims'), mode: 'exclusive' }).acquired;
+    if (!claim) throw new Error('The test claim was not acquired.');
+    const control = new ControlHub({
+      frameHelper: () => null,
+      env,
+      stimCli: 'unused',
+      frames,
+      subscribeStatus: () => () => {},
+      audit: () => {},
+      lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+      idleMs: 60_000,
+      renewMs: 60_000,
+      leaseFor: '1m',
+      foldHelper: async () => 'fixture-fold',
+      foldTimeoutMs: 5000,
+      conflict: () => {},
+    });
+    const owner = { device: { id: 'client', name: 'Client' }, send: () => {} };
+    try {
+      const begun = await control.beginHosted(
+        owner,
+        { workspace: '/client/worktree', platform: 'ios' },
+        home,
+        { platform: 'ios', udid: 'owned-duo', foldable: true },
+        frames,
+        () => true,
+        claim,
+      );
+      if ('code' in begun) throw new Error(begun.message);
+      const captureIdentity = processIdentity.captureProcessIdentity;
+      vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) => {
+        if (pid !== process.pid) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+        return captureIdentity(pid);
+      });
+      const result = await control.input(owner, begun.session, { input: 'posture', posture: 'unfolded' });
+      expect(result).toMatchObject({ code: 'action-failed', message: expect.stringContaining('fold broke') });
+      expect(result).not.toMatchObject({ message: expect.stringContaining('child identity') });
+    } finally {
+      vi.restoreAllMocks();
+      await control.close();
+      await frames.close();
+      releaseClaim(claim);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
   'refuses restarted native teardown while a hosted fold survives owner death',
   async () => {
     const capture = join(home, 'capture-helper');
@@ -2062,6 +2123,25 @@ test.each([
         : 'Hosted device capacity is full: 1 hosted + 1 local of 2 device reservations are occupied (concurrency.maxDevices), including unresolved sessions.',
   );
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a worker that exits before its identity is read reports its own failure',
+  async () => {
+    writeFileSync(join(home, 'worker.mjs'), "process.stderr.write('worker broke\\n');process.exit(5);\n");
+    const capture = processIdentity.captureProcessIdentity;
+    vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) => {
+      if (pid !== process.pid) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+      return capture(pid);
+    });
+    try {
+      const answer = await host.offer('client', { platform: 'ios' });
+      expect(answer).toMatchObject({ error: { message: expect.stringContaining('worker broke') } });
+      expect(JSON.stringify(answer)).not.toContain('identity');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 test('macOS app sessions and simulator sessions fill separate pools of concurrency.maxDevices', async () => {
   hostEnv.STIM_MAX_DEVICES = '1';

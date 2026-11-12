@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, childExitedWithin } from '@stim-cli/core/process-identity';
 import { trashRoot } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import {
@@ -215,7 +215,7 @@ export async function deleteTrashEntry(dir: string, operation?: StimContext): Pr
   await removeTemporaryEntryAsync(dir, operation?.signal);
 }
 
-function deleteInBackground(trash: WorktreeTrash): 'background' | 'deleted' | 'left' {
+async function deleteInBackground(trash: WorktreeTrash): Promise<'background' | 'deleted' | 'left'> {
   try {
     markClaimChildPending(trash.claim);
     const child = getExecutor().spawn(
@@ -235,9 +235,16 @@ function deleteInBackground(trash: WorktreeTrash): 'background' | 'deleted' | 'l
     child.on?.('error', () => {});
     child.unref?.();
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-    if (captured?.ok === false && captured.reason.startsWith('NOT_FOUND')) {
-      clearClaimChild(trash.claim);
-      releaseClaim(trash.claim);
+    if (captured?.ok === false && captured.code === 'NOT_FOUND') {
+      const release = () => {
+        clearClaimChild(trash.claim);
+        releaseClaim(trash.claim);
+      };
+      if (!(await childExitedWithin(child))) {
+        child.once('exit', release);
+        return 'background';
+      }
+      release();
       return existsSync(trash.dir) ? 'left' : 'deleted';
     }
     if (!captured?.ok || child.pid === undefined) throw new Error('the trash deletion process was not recorded');

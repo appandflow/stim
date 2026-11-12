@@ -1,11 +1,20 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { readCreatedDevices } from '@stim-cli/core/state';
 import { decideSystemImage, ensureSystemImage, installSystemImage } from '../devices/android-image.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
 const ARM = 'system-images;android-36;google_apis;arm64-v8a';
 const HOST = `system-images;android-36;google_apis;${hostSystemImageArch()}`;
@@ -115,6 +124,30 @@ test.skipIf(!roomToInstall)(
       remedy: expect.stringContaining('--licenses'),
     });
     expect(existsSync(join(sdk, 'system-images'))).toBe(false);
+  },
+);
+
+test.skipIf(!roomToInstall || process.platform === 'win32')(
+  'an sdkmanager that exits before its identity is read refuses with its own output',
+  async () => {
+    const tool = join(sdk, 'cmdline-tools', 'latest', 'bin', 'sdkmanager');
+    writeFileSync(tool, `#!${process.execPath}\nprocess.stdout.write('sdkmanager broke\\n');process.exit(1);\n`);
+    chmodSync(tool, 0o755);
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: (file, args, opts) =>
+        real.runFileAsync(file, args, {
+          ...opts,
+          onSpawn: (child) => {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+            opts?.onSpawn?.(child);
+          },
+        }),
+    });
+    const result = await installSystemImage({ pkg: ARM, env, note: () => {} });
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining('sdkmanager broke') });
+    expect(JSON.stringify(result)).not.toContain('Cannot record');
   },
 );
 
