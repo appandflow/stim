@@ -26,6 +26,7 @@ import {
   readDaemonSnapshot,
   readDiskUsage,
   readMaintenanceState,
+  readStimdBoots,
   stimBuildId,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -73,7 +74,6 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { daemonFindings, daemonStatus } from '../daemon/status.ts';
-import { parseBoots } from '../stimd/crash-hold.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -994,8 +994,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await running;
       for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
         expect(readClaimSet(claimRoot)).toMatchObject({ live: [{ childDeclared: false }], unresolved: [] });
-      const [own] = readClaimSet(stimdClaimRoot()).live;
-      expect(parseBoots(own?.details.boots).some((boot) => boot.abnormal)).toBe(false);
+      expect(readStimdBoots().some((boot) => boot.abnormal)).toBe(false);
       threads.mockRestore();
       const gone = goneClaimOwner();
       for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])

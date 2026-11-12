@@ -34,6 +34,7 @@ export * from './workspace-state.ts';
 export * from './share-links.ts';
 export * from './viewers.ts';
 export * from './daemon.ts';
+export * from './stimd-boots.ts';
 export * from './stats.ts';
 export * from './device-host.ts';
 export * from './hosted-app.ts';

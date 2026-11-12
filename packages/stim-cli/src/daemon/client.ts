@@ -17,6 +17,7 @@ import {
   stimBuildId,
   readJsonObject,
   stimdClaimRoot,
+  readSuccessorMissing,
   stimdRecordFile,
   stimdRunDir,
   stimdSocket,
@@ -1275,11 +1276,20 @@ function successorExpected(): boolean {
 async function successorBound(): Promise<boolean> {
   if (successorMissed) return false;
   const waitMs = refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS;
+  let started = false;
   for (const deadline = Date.now() + waitMs; Date.now() < deadline;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
       return true;
+    }
+    if (!started && !stimdLive() && readSuccessorMissing()) {
+      started = true;
+      try {
+        launchStimd(process.env, daemonMode(process.env), process.platform);
+      } catch {
+        break;
+      }
     }
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
