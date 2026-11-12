@@ -99,4 +99,6 @@ the workflow.
 - [LLP 0013](./0013-owned-devices.decision.md) covers owned devices, pools, and leases.
 - [LLP 0014](./0014-native-builds.decision.md) covers native build invocations, artifacts, and signing.
 - [LLP 0015](./0015-compatibility-removals.decision.md) covers the compatibility mechanisms that ended in 2.0.
+- [LLP 0016](./0016-stimd-managed-tunnel.decision.md) covers the managed tunnel that stimd runs.
+- [LLP 0017](./0017-macos-app-supervisor.decision.md) covers why the macOS app keeps its supervisor while the other long-lived children run in stimd.
 - [LLP 0021](./0021-stimd-reliability.decision.md) covers stimd exit records, the crash hold and handovers with no successor.

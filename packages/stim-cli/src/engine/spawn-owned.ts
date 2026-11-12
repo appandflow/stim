@@ -151,7 +151,9 @@ export async function stopOwnedProcess(owner: { pid: number; processToken: strin
     try {
       process.kill(-owner.pid, 0);
     } catch (error) {
-      return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      // macOS answers EPERM for a group that holds only zombies its parent has not reaped yet.
+      if (code !== 'EPERM') return code === 'ESRCH';
     }
     if (Date.now() >= deadline) return false;
     await new Promise((done) => setTimeout(done, 50));

@@ -7,7 +7,14 @@ import {
   setSettingValueAt,
   type SettingDefinition,
 } from '../state/settings-registry.ts';
-import { getBootedGraceMinutes, getConcurrencyLimits, getParkedMax, loadConfig } from '../state/config.ts';
+import {
+  derivedTestCap,
+  getBootedGraceMinutes,
+  getConcurrencyLimits,
+  getParkedMax,
+  loadConfig,
+  testSlotLimit,
+} from '../state/config.ts';
 
 let tmpHome: string;
 
@@ -143,4 +150,35 @@ test.each(['bogus', '-1', '1.5'])('an invalid concurrency environment limit %s r
   expect(() => getConcurrencyLimits({ env: { STIM_MAX_BUILDS: raw } })).toThrow(
     `Invalid STIM_MAX_BUILDS value ${JSON.stringify(raw)}. Expected a whole number, 0 or more.`,
   );
+});
+
+test.each([
+  [4, 1],
+  [6, 1],
+  [10, 1],
+  [12, 2],
+  [14, 2],
+  [24, 4],
+])('the derived test cap on %i cores is %i', (cores, cap) => {
+  expect(derivedTestCap(cores)).toBe(cap);
+});
+
+describe('testSlotLimit', () => {
+  test('derives the cap from the cores when concurrency.maxTests is unset or 0', () => {
+    expect(testSlotLimit({ env: {}, cores: 14 })).toEqual({ max: 2, derived: true });
+    writeConfig({ concurrency: { maxTests: 0 }, projects: {}, repos: {} });
+    expect(testSlotLimit({ env: {}, cores: 10 })).toEqual({ max: 1, derived: true });
+  });
+
+  test('STIM_MAX_TESTS overrides config.json, which overrides the derived cap', () => {
+    writeConfig({ concurrency: { maxTests: 3 }, projects: {}, repos: {} });
+    expect(testSlotLimit({ env: {}, cores: 14 })).toEqual({ max: 3, derived: false });
+    expect(testSlotLimit({ env: { STIM_MAX_TESTS: '5' }, cores: 14 })).toEqual({ max: 5, derived: false });
+  });
+
+  test('an invalid STIM_MAX_TESTS refuses with STIM_BAD_ARG', () => {
+    expect(() => testSlotLimit({ env: { STIM_MAX_TESTS: 'many' } })).toThrow(
+      expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+    );
+  });
 });

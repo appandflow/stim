@@ -15,7 +15,7 @@ import type { Finding } from '../diagnostics/doctor.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { listWaiting } from '../engine/wait-queue.ts';
+import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
 import { crashHoldRemedy } from '../stimd/crash-hold.ts';
 import { ownStoreEngine } from './engine-switch.ts';
 import { daemonMode, parseDaemonMode } from './mode.ts';
@@ -40,6 +40,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const read = readDaemonSnapshot();
   const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
   const waiting = listWaiting();
+  const testWaiting = listTestWaiting();
   const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
   const mode = runningMode ?? setting;
   const unverified = parseUnverifiedCleanups(holder?.details.unverified);
@@ -65,6 +66,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     intervalMs: snapshot?.intervalMs ?? null,
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
+    ...(testWaiting.length ? { testWaiting } : {}),
     ...(read?.recent?.length ? { recent: read.recent } : {}),
     ...(unverified.length ? { unverified } : {}),
     ...(loop
@@ -142,12 +144,18 @@ export function lastActionLine(status: DaemonStatus, now: number = Date.now()): 
   return `Last daemon action ${when}: ${verb}${action.kind.replaceAll('-', ' ')} ${action.target}${action.bytes ? ` (${formatBytes(action.bytes)})` : ''}${recent.length > 1 ? `; ${recent.length} recent in ${daemonSnapshotFile()}` : ''}`;
 }
 
-/** One line per run waiting for a build slot or a device boot, in arrival order per resource. */
+/** One line per run waiting for a build slot, a device boot or a test slot, in arrival order per resource. */
 export function waitingLines(status: DaemonStatus, now: number = Date.now()): string[] {
-  return (status.waiting ?? []).map(
-    (waiter) =>
-      `Waiting for ${waiter.resource === 'build' ? 'a build slot' : 'a device boot'}: #${waiter.position} ${waiter.label}${waiter.platform ? ` (${waiter.platform})` : ''}, ${formatLongDuration(Math.max(0, now - Date.parse(waiter.since)))}`,
-  );
+  const age = (since: string) => formatLongDuration(Math.max(0, now - Date.parse(since)));
+  return [
+    ...(status.waiting ?? []).map(
+      (waiter) =>
+        `Waiting for ${waiter.resource === 'build' ? 'a build slot' : 'a device boot'}: #${waiter.position} ${waiter.label}${waiter.platform ? ` (${waiter.platform})` : ''}, ${age(waiter.since)}`,
+    ),
+    ...(status.testWaiting ?? []).map(
+      (waiter) => `Waiting for a test slot: #${waiter.position} ${waiter.label}, ${age(waiter.since)}`,
+    ),
+  ];
 }
 
 /** The workspaces whose dev server runs, so a daemon should be deciding their idle stop. */

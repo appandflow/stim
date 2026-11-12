@@ -279,7 +279,7 @@ Run `stim guide settings` for the complete key and value list.
 
 ```json
 {
-  "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
+  "concurrency": { "maxBuilds": 2, "maxTests": 1, "maxDevices": 3 },
   "disk": { "minFreeGb": 40, "hardFloorGb": 5 },
   "iosSimulatorApp": "xcode",
   "androidEmulatorApp": "emulator",
@@ -307,6 +307,11 @@ once, and no boot starts while macOS memory pressure is critical, or warning
 with under 2 GB available. A boot that needs a new simulator or emulator
 creates it inside its slot, so a burst of new workspaces creates at most 2
 devices at a time.
+
+`concurrency.maxTests` caps the test commands a machine runs at once the same
+way, derived as `max(1, floor(CPU cores / 6))` (2 on a 14-core Mac, 1 on a
+10-core one; also `STIM_MAX_TESTS`). Test slots are separate from build slots,
+and a test run waiting for one appears under `daemon.testWaiting`.
 
 A run past a cap waits in arrival order per resource and prints its queue
 position and what it waits for every 10 seconds, and keeps waiting while every
