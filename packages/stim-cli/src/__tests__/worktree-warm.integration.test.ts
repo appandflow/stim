@@ -358,6 +358,7 @@ test.each([
   'removed patch',
   'patch deleted in source before warm',
   'declared patch directory deleted in source before warm',
+  'default patch directory deleted in source before warm',
   'stale source install',
   'mismatched installed package',
   'patch removed after warm',
@@ -366,11 +367,12 @@ test.each([
 ])(
   'the cache gate checks the carried npm install with %s',
   async (scenario) => {
-    const removedDirectory = scenario === 'declared patch directory deleted in source before warm';
+    const declaredDirectory = scenario === 'declared patch directory deleted in source before warm';
+    const removedDirectory = declaredDirectory || scenario === 'default patch directory deleted in source before warm';
     const manifest = JSON.stringify({
       name: 'warm-fixture',
       dependencies: { 'react-native': '1.0.0' },
-      ...(removedDirectory ? { scripts: { postinstall: 'patch-package' } } : {}),
+      ...(declaredDirectory ? { scripts: { postinstall: 'patch-package' } } : {}),
     });
     const lockfile = 'package-lock.json';
     const stamp = 'node_modules/.package-lock.json';
@@ -402,6 +404,7 @@ test.each([
     utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);
     const patchDir = join(root, dirname(patch));
     utimesSync(patchDir, beforeInstall, beforeInstall);
+    utimesSync(root, beforeInstall, beforeInstall);
     if (scenario === 'patch deleted in source before warm') rmSync(join(root, patch));
     if (removedDirectory) rmSync(patchDir, { recursive: true });
     utimesSync(join(target, lockfile), checkout, checkout);
@@ -419,6 +422,32 @@ test.each([
   },
   30_000,
 );
+
+test('warm does not certify an npm workspace with a pre-existing app-local dependency tree', async () => {
+  const app = 'apps/example';
+  const targetApp = join(target, app);
+  const stamp = 'node_modules/.package-lock.json';
+  const lock = JSON.stringify({
+    lockfileVersion: 3,
+    packages: { [`${app}/node_modules/react-native`]: { version: '1.0.0' } },
+  });
+  for (const checkout of [root, target]) {
+    write(checkout, 'package.json', '{"name":"monorepo","workspaces":["apps/*"]}');
+    write(checkout, `${app}/package.json`, '{"name":"app","dependencies":{"react-native":"1.0.0"}}');
+    write(checkout, 'package-lock.json', lock);
+  }
+  write(root, stamp, lock);
+  write(targetApp, 'node_modules/react-native/package.json', '{"version":"0.9.0"}');
+  const beforeInstall = new Date(Date.now() - 60_000);
+  for (const path of ['', 'package.json', 'package-lock.json', app, `${app}/package.json`])
+    utimesSync(join(root, path), beforeInstall, beforeInstall);
+  const checkoutTime = new Date(Date.now() + 60_000);
+  utimesSync(join(target, 'package-lock.json'), checkoutTime, checkoutTime);
+
+  expect((await runWarm(targetApp)).code).toBe(0);
+  expect(existsSync(join(target, stamp))).toBe(true);
+  expect(fingerprintInstallProblem(targetApp)).toMatch(/package-lock.json changed after the last install/);
+}, 30_000);
 
 test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {
   write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
