@@ -141,16 +141,24 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
     inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 6 }, line('three'), line('three'));
     resume();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three']);
+    const interrupted = () => {
+      const tail = tailMacosApp(dir, record, 'Fixture', 'fixture');
+      if (!tail) throw new Error('the tail did not resume');
+      tail.close();
+    };
+    const all = ['one', 'two', 'Observing Fixture output.', 'three'];
+    const expectOnce = (...added: string[]) => {
+      all.push(...added);
+      expect(messages(dir)).toEqual(all);
+    };
     appendFileSync(out, 'four\n');
     inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('four'), line('four').slice(0, 20));
-    const grown = readFileSync(sink).length;
     resume();
-    expect(readFileSync(sink).length).toBeGreaterThan(grown);
-    expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four']);
+    expectOnce('four');
     appendFileSync(out, 'five\n');
     inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('five'), '');
     resume();
-    expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four', 'five']);
+    expectOnce('five');
     appendFileSync(out, 'six\nseven\n');
     inFlight(
       { ...readMark(mark), out: Number(readMark(mark).out) + 10 },
@@ -158,7 +166,26 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
       line('six') + line('seven').slice(0, 10),
     );
     resume();
-    expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four', 'five', 'six', 'seven']);
+    expectOnce('six', 'seven');
+    appendFileSync(out, 'a\nb\n');
+    inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 4 }, line('a') + line('b'), line('a').slice(0, -1));
+    resume();
+    expectOnce('a', 'b');
+    appendFileSync(out, 'c\nd\ne\n');
+    const cde = { ...readMark(mark), out: Number(readMark(mark).out) + 6 };
+    inFlight(cde, line('c') + line('d') + line('e'), line('c') + line('d') + line('e').slice(0, 7));
+    interrupted();
+    inFlight(cde, line('c') + line('d') + line('e'), line('c') + line('d').slice(0, 12));
+    resume();
+    expectOnce('c', 'd', 'e');
+    appendFileSync(out, 'f\ng\nh\ni\n');
+    const fghi = { ...readMark(mark), out: Number(readMark(mark).out) + 8 };
+    const text = line('f') + line('g') + line('h') + line('i');
+    inFlight(fghi, text, line('f') + line('g'));
+    interrupted();
+    inFlight(fghi, text, line('f') + line('g') + line('h'));
+    resume();
+    expectOnce('f', 'g', 'h', 'i');
     process.kill(record.pid, 'SIGKILL');
     await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
     inFlight({ ...readMark(mark), exited: true }, line('Exited Fixture.'), line('Exited Fixture.'));

@@ -461,7 +461,7 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
 });
 
 test.skipIf(process.platform === 'win32')(
-  'an app that dies with a group member left keeps the run open; a requested end stops the group and records the death as an error',
+  'an app that dies with a group member left keeps the run open, and stop refuses to signal the group until the member is stopped',
   async () => {
     const declaration = tryAcquireClaim({
       root: join(dir, 'launch.lock'),
@@ -504,8 +504,14 @@ test.skipIf(process.platform === 'win32')(
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
       expect(await streams.drain(root, true)).toContain(`process group ${owned.pid} remains`);
       expect(readFileSync(log, 'utf8')).not.toContain('Exited Sample.');
+      await expect(stopMacosApp(root)).rejects.toMatchObject({
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        remedy: expect.stringContaining(`kill ${member}`),
+      });
+      expect(() => process.kill(member, 0)).not.toThrow();
+      process.kill(member, 'SIGKILL');
+      await vi.waitFor(() => expect(() => process.kill(member, 0)).toThrow(/ESRCH/));
       expect(await stopMacosApp(root)).toBe(true);
-      expect(() => process.kill(member, 0)).toThrow(/ESRCH/);
       const records = readFileSync(log, 'utf8')
         .trim()
         .split('\n')
@@ -515,6 +521,54 @@ test.skipIf(process.platform === 'win32')(
     } finally {
       drain.mockRestore();
       streams.close();
+      try {
+        process.kill(-owned.pid, 'SIGKILL');
+      } catch {}
+      releaseClaim(owned.claim);
+      releaseClaim(declaration);
+    }
+  },
+  20_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a stop of a running app ends the members of its launch group',
+  async () => {
+    const declaration = tryAcquireClaim({
+      root: join(dir, 'launch.lock'),
+      mode: 'exclusive',
+      label: 'launch',
+    }).acquired;
+    assert(declaration);
+    const logs = workspaceLogsDir(root);
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    const owned = await owning.spawnOwned({
+      file: process.execPath,
+      args: [
+        '-e',
+        `const { spawn } = require('node:child_process'); const child = spawn('/bin/sleep', ['60'], { stdio: 'ignore' }); child.on('spawn', () => console.log('member ' + child.pid)); setInterval(() => {}, 1000);`,
+      ],
+      cwd: root,
+      env: process.env,
+      stdout: out,
+      stderr: join(logs, macosAppLogName('test-launch', 'err')),
+      claim: { root: macosRuntimeClaim(root), label: 'app' },
+      declare: [declaration],
+    });
+    const app = macosProcess(owned.pid);
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+    try {
+      const member = await vi.waitFor(() => {
+        const pid = /member (\d+)/.exec(readFileSync(out, 'utf8'))?.[1];
+        if (!pid) throw new Error('the group member has not started');
+        return Number(pid);
+      });
+      expect(await stopMacosApp(root)).toBe(true);
+      expect(inspectProcessIdentity(app)).not.toBe('same');
+      await vi.waitFor(() => expect(() => process.kill(member, 0)).toThrow(/ESRCH/));
+    } finally {
+      drain.mockRestore();
       try {
         process.kill(-owned.pid, 'SIGKILL');
       } catch {}
@@ -544,7 +598,7 @@ test.skipIf(process.platform !== 'darwin')(
     writeWorkspaceState(root, { macos: record({ app: reused, supervisor: reused }) });
     const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
     try {
-      await expect(stopMacosApp(root)).rejects.toMatchObject({ code: 'STIM_MACOS_OWNER_UNVERIFIED' });
+      expect(await stopMacosApp(root)).toBe(true);
       expect(inspectProcessIdentity(real)).toBe('same');
     } finally {
       drain.mockRestore();

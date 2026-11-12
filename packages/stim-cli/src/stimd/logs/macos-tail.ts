@@ -41,7 +41,6 @@ interface TailState {
   observed: boolean;
   exited: boolean;
   dropped: boolean;
-  skip: number;
 }
 
 interface Mark extends TailState {
@@ -57,7 +56,6 @@ const EMPTY: TailState = {
   observed: false,
   exited: false,
   dropped: false,
-  skip: 0,
 };
 
 function readMark(dir: string): Record<string, unknown> | null {
@@ -84,7 +82,6 @@ function tailState(value: unknown): TailState {
     observed: value.observed === true,
     exited: value.exited === true,
     dropped: value.dropped === true,
-    skip: offset(value.skip),
   };
 }
 
@@ -100,17 +97,6 @@ export function removeRawOutput(dir: string, launchId: string): void {
     try {
       rmSync(join(dir, macosAppLogName(launchId, stream)), { force: true });
     } catch {}
-}
-
-function endsWithNewline(sink: string, size: number): boolean {
-  const last = Buffer.alloc(1);
-  const fd = openSync(sink, 'r');
-  try {
-    readSync(fd, last, 0, 1, size - 1);
-  } finally {
-    closeSync(fd);
-  }
-  return last[0] === 10;
 }
 
 function sinkIdentity(sink: string): { ino: string; size: number } | null {
@@ -131,15 +117,8 @@ function resumeState(mark: Record<string, unknown> | null, token: string, sink: 
   const before = offset(pending.size);
   const same = now !== null && (pending.ino === null || now.ino === pending.ino);
   if (same && now.size === offset(pending.end) && now.size > before) return tailState(pending.next);
-  if (!same || now.size <= before) return tailState(mark);
-  const landed = Buffer.alloc(now.size - before);
-  const fd = openSync(sink, 'r');
-  try {
-    readSync(fd, landed, 0, landed.length, before);
-  } finally {
-    closeSync(fd);
-  }
-  return { ...tailState(mark), skip: landed.reduce((lines, byte) => lines + (byte === 10 ? 1 : 0), 0) };
+  if (same && now.size > before) truncateSync(sink, before);
+  return tailState(mark);
 }
 
 function crashReport(executable: string, pid: number, since: number): string | null {
@@ -266,16 +245,13 @@ export function tailMacosApp(
     writeMark({ processToken: app.processToken, ...state });
     unsettled = false;
   };
-  const commit = (batch: string[], target: TailState) => {
-    const skipped = Math.min(state.skip, batch.length);
-    const lines = batch.slice(skipped);
-    const next = { ...target, skip: state.skip - skipped };
+  const commit = (lines: string[], next: TailState) => {
     if (lines.length) {
       try {
         rotateLog(sink, LOG_ROTATE_BYTES);
       } catch {}
       const before = sinkIdentity(sink);
-      const text = (before && before.size > 0 && !endsWithNewline(sink, before.size) ? '\n' : '') + lines.join('');
+      const text = lines.join('');
       const size = before?.size ?? 0;
       unsettled = true;
       writeMark({
@@ -410,7 +386,7 @@ export function tailMacosApp(
           identity === 'unknown' ? 'the macOS app identity cannot be verified' : `the macOS app (pid ${app.pid}) runs`;
         return false;
       }
-      if (processGroupAlive(app.pid)) {
+      if (identity === 'gone' && processGroupAlive(app.pid)) {
         reason = `the macOS app exited but process group ${app.pid} remains`;
         waiting = true;
         return false;

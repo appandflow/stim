@@ -51,7 +51,9 @@ crash report. Crash report: <path>` at error level, whatever the marker says.
 
 So a crash, or any exit Stim did not ask for, shows in `stim logs --errors`. A
 crash that happens while a requested stop runs and leaves no crash report is
-recorded at info.
+recorded at info. A stop cancelled after it sent SIGTERM removes the marker
+while the app still runs, so the app's later death from that signal is recorded
+as an error.
 
 This rule was chosen by the coordinator and the reviews of #5559, not by the
 maintainer.
@@ -99,40 +101,48 @@ This rule was chosen by the implementing agent and the coordinating session.
 
 ## The launch group
 
-A requested end also ends what is left of the process group Stim created for
-the launch. After the app's leader exits, Stim lists the group's members, then,
-with no wait in between, checks and signals: SIGTERM to the group, up to five
-seconds, then the same check and SIGKILL.
+A requested end of a running app ends the process group Stim created for the
+launch. Stim lists the group's members, then in one step checks that the
+recorded app still runs and sends SIGTERM to the group, capturing the identity
+of each member at that moment. After up to five seconds it sends SIGKILL, by
+pid, only to the app and the captured members whose identity still matches. It
+never signals the group once the app may be gone.
 
-It signals only when all of these hold:
+When the app is no longer running at a requested end, Stim sends no signal to
+its group:
 
-- the record's app is its own recorded owner (a `spawnOwned` launch);
-- the tail has not recorded the run's end;
-- the leader's identity reads gone: no process has its pid;
-- every remaining member started at or after the app.
+- If the app's pid names another process, the launch group is gone, since a
+  pid is not reused while it is the id of a live group. The stop goes on.
+- If no process has the app's pid, or its identity cannot be read, and
+  processes remain in a group with that id, Stim cannot tell whether they are
+  the launch's, for example after a reboot or once the pids wrapped. The stop
+  refuses with `STIM_MACOS_OWNER_UNVERIFIED`, listing each remaining pid and the
+  `kill` command for them. The person checks them and stops them.
 
-A pid is not reused while it is still the id of a live group, so a live group
-whose leader's pid names no process is the launch's group. A leader pid that
-names another process, an identity that cannot be read, or a member that
-started before the app or cannot be compared, refuses with
-`STIM_MACOS_OWNER_UNVERIFIED` and sends no signal. So does a recorded end,
-because the group was empty at that point. When a group is left after an end
-Stim did not request, the run stays open until a requested end.
+While members remain after the app exited on its own, the run stays open.
 
-The macOS supervisor this replaces ended the app and the commands it started
-(its direct children and the groups they lead). Ending the whole launch group is
-a superset of that.
+Everywhere in this flow a signal follows, in the same synchronous step, a check
+that the exact pid signalled, or the leader of the group signalled, is the
+recorded running process.
 
-Stim Desktop is the case this is for. Its server controller starts a stimd as a
-plain child in Desktop's own process group when Desktop's Stim home has none.
-After Cmd-Q or a crash, that stimd is a remaining member, and `stim stop` ending
-it is the intended result, since it is that app's own child. A `stim stop` that
-such a Desktop copy runs for its own workspace is itself a member of the group;
-it does not signal its own group and refuses instead, and the group empties
-once that command exits.
+The macOS supervisor this replaces did the same for an app that was still
+running when it was stopped. For an app that exited first while a child kept
+its output, the run stayed open until that child closed it. A stop then ended
+the supervisor, left the child running with its output lost, and succeeded.
 
-This rule was chosen by the coordinator and the reviews of #5559, not by the
-maintainer.
+Stim Desktop starts a stimd as a plain child in Desktop's own process group
+when Desktop's Stim home has none, so a stop of a running Desktop copy ends that
+stimd with it. A `stim stop` that such a Desktop copy runs for its own workspace
+is itself a member of the group. It refuses, naming its own pid, and says to
+run `stim stop` from outside the app.
+
+A hosted session whose stop refuses this way stays in the unknown state and
+keeps its slot until the person on the host stops the listed processes and
+stops the session again.
+
+This rule was chosen by the coordinator after the third review of #5559, and
+replaces the earlier coordinator rule that signalled a group whose leader had
+exited. It is not a maintainer decision.
 
 ## Each line once
 
@@ -153,15 +163,13 @@ flight compares the file:
 
 - exactly the expected size with the same identity means the append landed;
 - an unchanged size means the append did not land;
-- a file that grew but falls short holds part of the append. The tail counts
-  the complete records that landed, ends the partial line with a newline, and
-  appends the rest of the records. The file never shrinks, so a `stim logs`
-  follower never rereads it. Every reader (core's ndjson readers behind
-  `stim logs`, the server and the phone and Desktop through them) skips the
-  one unparseable line the partial record leaves.
+- a file that grew but falls short holds part of the append, so the tail cuts it
+  back to its size before the append and appends again.
 
 Only the tail appends to `macos-app.ndjson` or rotates it, so a stimd killed at
-any point, restarted or replaced neither repeats nor skips a record. A tail that
+any point, restarted or replaced neither repeats nor skips a record in the file.
+A `stim logs --follow` that read the partial bytes sees the file shrink, takes it
+for a rotation and can replay records it already printed. That is a limit. A tail that
 resumes after the end was recorded only removes the raw files.
 
 A failure of stimd's logs worker does not block a macOS drain: the tail's

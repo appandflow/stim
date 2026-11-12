@@ -64,14 +64,15 @@ owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. If the
-app leader has exited, no process has its pid, and the process group Stim
-created for the launch remains with only members that started after the app,
-stop, relaunch and removal end that group too: SIGTERM, up to 5 s, then SIGKILL.
-Otherwise (the pid names another process, a member is older than the app, or the
-run's end was already recorded) Stim refuses and sends no signal; inspect the
-group with ps -A -o pid,pgid,command and stop only verified owned members before
-retrying.
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. When a
+running app is stopped, stop, relaunch and removal also end the process group
+Stim created for the launch: SIGTERM to the group while the app still runs, up to
+5 s, then SIGKILL by pid to the processes that were in it. If the app had
+already exited and processes remain in a group with its pid, Stim sends no signal
+and refuses, listing their pids and the kill command; check them and stop them
+before retrying. A stim stop that runs inside the app's own process group (a
+Desktop copy stopping its own workspace) refuses; run stim stop from outside the
+app.
 A reused PID can also leave the runtime claim unresolved after its group is gone;
 inspect that claim and remove it only after verifying no owned process remains.
 If a launch cannot publish its runtime claim, Stim retains the launch claim even
