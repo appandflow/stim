@@ -68,6 +68,16 @@ const EAS_OPERATION_TIMEOUT_MS = 30000;
 const EAS_COLLECTION_TIMEOUT_MS = 60000;
 const EAS_MAX_LIST_PAGES = 100;
 const EAS_LOCK_WAIT_MS = 0;
+const EXPO_CONFIG_FILES = [
+  'app.json',
+  'app.config.json',
+  'app.config.ts',
+  'app.config.mts',
+  'app.config.cts',
+  'app.config.mjs',
+  'app.config.cjs',
+  'app.config.js',
+];
 const EAS_LOCK_SNAPSHOT_RETRIES = 3;
 const PROXY_CREDENTIAL_ENV = ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] as const;
 
@@ -174,6 +184,15 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
   });
   if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) return empty();
   if (deps.easSweepBlockedNotice) return empty([deps.easSweepBlockedNotice]);
+  // EAS CLI's simulator:list creates app.json before authentication if it cannot find an Expo config file.
+  const hasExpoConfig = EXPO_CONFIG_FILES.some((name) => {
+    try {
+      return statSync(join(projectRoot, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (!hasExpoConfig) return empty();
 
   const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(projectRoot);
   if (!eas) return empty(['EAS session sweep skipped: eas-cli is not available for the current Expo project.']);
