@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import assert from 'node:assert';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
@@ -74,4 +75,66 @@ parentPort.on('message', (message) => {
     },
     15_000,
   );
+});
+
+describe('a cleanup a thread watches', () => {
+  test('crosses as the named child, settles once the thread finds it stopped, and is reported lost when the thread ends first', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-watch-'));
+    const fixture = join(root, 'worker.mjs');
+    writeFileSync(
+      fixture,
+      `
+import { parentPort } from 'node:worker_threads';
+let settles = 0;
+parentPort.on('message', (message) => {
+  if (message.type === 'run') {
+    parentPort.postMessage({
+      type: 'failed',
+      message: 'Report child 4242 did not close within the cleanup budget.',
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: 'Check whether the report child 4242 is still running.',
+      contained: { pid: 4242, processToken: 'fixture' },
+    });
+  } else if (message.type === 'settle') {
+    settles++;
+    if (settles === 3) process.exit(1);
+    parentPort.postMessage({ type: 'settled', pending: settles === 1 ? ['4242:fixture'] : [] });
+  }
+});
+`,
+    );
+    const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+    const lost: Error[] = [];
+    const threads = createThreadTable(
+      () => {},
+      (error) => lost.push(error),
+    );
+    try {
+      const failure: unknown = await threads.run('measure', { cwd: root }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        reportChild: { pid: 4242, processToken: 'fixture' },
+      });
+      const settled = Reflect.get(Object(failure), 'cleanupSettled');
+      assert(typeof settled === 'function');
+      expect(settled()).toBe(false);
+      threads.settle();
+      await new Promise((done) => setTimeout(done, 200));
+      expect(settled()).toBe(false);
+      threads.settle();
+      await vi.waitFor(() => expect(settled()).toBe(true));
+      expect(lost).toEqual([]);
+
+      await threads.run('measure', { cwd: root }).catch(() => {});
+      threads.settle();
+      await vi.waitFor(() => expect(lost).toHaveLength(1));
+      expect(lost[0]).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    } finally {
+      entry.mockRestore();
+      await threads.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 });

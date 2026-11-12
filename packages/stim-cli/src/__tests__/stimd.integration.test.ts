@@ -891,34 +891,29 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   }, 60_000);
 
   test.each(['passes', 'measure'])(
-    'a %s thread refusal ends stimd even when it names one child, so a claim another child still needs is never released when that one exits',
+    'a %s thread cleanup the thread watches keeps stimd up until the thread finds the child stopped, then stimd releases its claims as usual',
     async (worker) => {
       const before = new Set(process.listeners('SIGTERM'));
-      const sleeper = spawnChild('sleep', ['30'], { detached: true, stdio: 'ignore' });
-      const exited = new Promise((done) => sleeper.once('exit', done));
-      assert(sleeper.pid);
-      const captured = captureProcessIdentity(sleeper.pid);
-      assert(captured.ok);
-      const child = { pid: sleeper.pid, processToken: captured.token };
-      const retained = tryAcquireClaim({ root: join(home, 'native-run.lock'), mode: 'exclusive' }).acquired;
-      assert(retained);
-      setClaimChild(retained, child);
+      let stopped = false;
       let failed = false;
+      const settle = vi.fn<() => void>();
       const actual = await vi.importActual<typeof stimdThreads>('../stimd/threads.ts');
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation(actual.createPassesLane);
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
         run: async (name) => {
-          if (name !== worker || failed) return [];
+          if (name !== worker) return [];
+          if (failed) return [];
           failed = true;
-          throw Object.assign(new Error(`Cannot verify cleanup for report child ${child.pid}.`), {
+          throw Object.assign(new Error('Report child 4242 did not close within the cleanup budget.'), {
             code: 'STIM_CLAIM_UNAVAILABLE',
             remedy: 'Inspect fixture child.',
             reportCleanup: true,
-            reportChild: child,
-            claims: [retained],
+            reportChild: { pid: 4242, processToken: 'fixture' },
+            cleanupSettled: () => stopped,
           });
         },
         abort: () => {},
+        settle,
         close: async () => {},
       });
       let running: Promise<boolean> | undefined;
@@ -926,22 +921,32 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         running = runStimd({ mode: 'on', tickMs: 60_000 });
         await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
         void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+        await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_unverified'), {
+          timeout: 10_000,
+          interval: 20,
+        });
+        void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+        await vi.waitFor(() => expect(settle).toHaveBeenCalled(), { timeout: 10_000, interval: 20 });
+        expect(daemonEvents()).not.toContain('daemon_exited');
+        expect(daemonEvents()).not.toContain('daemon_cleanup_settled');
+        stopped = true;
+        void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+        await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_settled'), {
+          timeout: 10_000,
+          interval: 20,
+        });
+        stopInProcess(before);
         await running;
-        expect(daemonEvents()).toContain('daemon_exited');
-        expect(daemonEvents()).not.toContain('daemon_cleanup_unverified');
-        sleeper.kill('SIGKILL');
-        await exited;
-        expect(readClaimSet(retained.root).live).toHaveLength(1);
+        expect(readClaimSet(stimdClaimRoot())).toMatchObject({ live: [], unresolved: [] });
+        expect(readClaimSet(daemonClaimRoot())).toMatchObject({ live: [], unresolved: [] });
       } finally {
         stopInProcess(before);
         await running?.catch(() => {});
         threads.mockRestore();
         lane.mockRestore();
-        releaseClaim(retained);
-        sleeper.kill('SIGKILL');
       }
     },
-    20_000,
+    30_000,
   );
 
   test.each(['passes', 'measure'])(
@@ -965,6 +970,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
           return [];
         },
         abort: () => {},
+        settle: () => {},
         close: async () => {},
       });
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation((_threads, _log, onFailure) => ({

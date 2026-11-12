@@ -50,6 +50,30 @@ The unresolved-claim reason in `stim status`, `stim gc` and maintenance names
 the claim path, its owner (pid and claim time, and whether it still runs) and the
 command that removes the claim and child files.
 
+## stimd stays up for a child it can watch
+
+A cleanup refusal that names one child and carries a way to tell when that
+child has stopped does not end stimd, whether it comes from the tick, a Metro or
+tunnel stop, or a job on the passes or measure thread. stimd logs
+`daemon_cleanup_unverified`, holds idle exit and engine switches, and checks
+the child again on every tick; once it has stopped, the claims only that
+failure retained are released. Any other unverified cleanup, a thread that
+crashes, and a net thread failure end stimd; its home, daemon and engine claims
+stay complete, so the next start recovers them once that stimd is gone.
+
+A thread job's check stays on that thread, which also releases the claims the
+job retained. Only the child's pid and identity token cross to stimd's main
+thread, with a flag the thread updates when stimd asks it to check again. The
+thread does not end on idle while it watches a child, and a thread that ends
+while it watches one ends stimd, since nothing can release what that child held
+any more. Reason: the checks are functions that cannot be posted between
+threads, and a check rebuilt from the child's pid alone would release a claim
+that another child of the same job may still need (#5510).
+
+This rule was chosen by the coordinator and the lane that implemented #5499,
+not by the maintainer. The maintainer's requirement it serves, from #5499:
+Maintainer decision: "We really need to fix stimd crashing and not being able to restart automatically", 2026-11-11.
+
 ## Releasing a claim after a killed fingerprint child
 
 The fingerprint child (`bin/fingerprint-precompute.ts`) runs project code in
@@ -119,3 +143,4 @@ Related: #5498, #5510, #5546.
 - `packages/stim-cli/src/fingerprint/detached-groups.ts`: the ledger and the
   owner's check.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
+- `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.
