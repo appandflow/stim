@@ -118,12 +118,12 @@ leaves a file named by `ballast.path` and nothing else to find it by.
 2. `stim worktree remove --force` in each worktree (`git worktree remove --force` if that leaves one behind);
 3. `xcrun simctl shutdown` and `delete` for simulators that were in the private ledger at any point and still exist.
    This is raw `simctl`, not stim's centralized teardown, and it only ever names UDIDs from the private ledger;
-4. a bounded wait for the home's `trash` to empty and for the run's supervisors, collectors and daemon to exit, then
-   SIGTERM and SIGKILL for a process only when it is proven the run's. A supervisor's title is a bare
-   `stim-supervisor`, so a command line cannot be the proof; the proof is identity. A pid recorded in the private home
-   (a workspace's `supervisor` and `collectors`, or the `daemon/` directory) is accepted the first time it is seen
+4. a bounded wait for the home's `trash` to empty and for the run's stimd to exit, then
+   SIGTERM and SIGKILL for a process only when it is proven the run's. stimd's title is a bare
+   `stimd`, so a command line cannot be the proof; the proof is identity. A pid recorded in the private home
+   (a workspace's `supervisor` (its Metro) and `collectors`, or the `run/` and `daemon/` directories) is accepted the first time it is seen
    alive, only if the process started after the run began, started no later than the moment its record first appeared
-   (a process that takes the pid later is never adopted) and looks like a stim process of the run (a stim title, or a
+   (a process that takes the pid later is never adopted) and looks like a stim process of the run (the `stimd` title, or a
    command line naming the home or a worktree). Its start time (`ps -o lstart=` under `LC_ALL=C`) is remembered, and
    it is signalled only while the process at that pid still has that start time and still looks the same. Process
    groups of the harness's own children are signalled by group only;
@@ -167,8 +167,8 @@ timestamps, and `took_ms` says how long the measurement took) it appends a row t
 memory pressure level (`kern.memorystatus_vm_pressure_level`), `vm_stat` free, active, inactive, speculative, purgeable,
 wired and compressed pages with the page size, swap
 used, free space on the simulators', the home's and the worktrees' volumes, booted simulators on the machine and the
-run's own booted and booting simulators (those in the private ledger), and the count and RSS of the run's supervisors,
-collectors, daemon, Metro and `xcodebuild`. A process is the run's when its pid is recorded in the private home (or
+run's own booted and booting simulators (those in the private ledger), and the count and RSS of the run's stimd, its
+Metro child and `xcodebuild`. A process is the run's when its pid is recorded in the private home (or
 descends from one that is) or its command line names the home or the worktrees. Every 30 seconds it saves
 `stim status --json` to `status/<epoch ms>.json`, run from `--out` so the read is never attributed to a workspace. The
 driver also polls status every 15 seconds for the assertions. The report's Sampler section lists gaps of more than three
@@ -292,11 +292,11 @@ A field the build lacks makes its assertion `N/A`; nothing else depends on it. T
 - `stim revive --json`: `revived.metro.restarted` and `revived.devices[].rebooted` and `.app.launched`.
 - The private home: `created-devices.json`, `workspaces/<id>/state.json` (recorded pids),
   `workspaces/<id>/derived-data`, `workspaces/<id>/logs/metro.ndjson` (the newest `bundle_response_*`,
-  `expo_stdout` and `command_stdout` record, reported next to the idle-stage evidence), and the `daemon/` directory
-  (any `pid` in its JSON files, `snapshot.json` and `daemon.ndjson` kept as evidence).
+  `expo_stdout` and `command_stdout` record, reported next to the idle-stage evidence), `run/stimd.json` (stimd's pid), and the `daemon/` directory
+  (any `pid` in its JSON files; `snapshot.json` and `daemon.ndjson`, stimd's log, kept as evidence).
 - Settings through `stim settings get` and `set`: `idle.minutes` (else `metro.idleStopMinutes` and
   `devices.idleShutdownMinutes`) and `idle.dormantDays`.
-- Process titles `stim-supervisor`, `stim-collector` and `stim-daemon` in `ps`.
+- The process title `stimd` in `ps`.
 
 `idle.dormantDays` has to accept a fraction of a day, or a build has to offer an environment override in minutes
 (passed with `--env`), for the dormant clock to be shortened; otherwise the dormant assertions are `N/A`.

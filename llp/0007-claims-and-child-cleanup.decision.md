@@ -7,6 +7,37 @@
 **Date:** 2026-11-12
 **Related:** LLP 0002
 
+## One ownership protocol
+
+Lock every read-modify-write to global config or workspace
+state. Use atomic writes. An ownership claim held across a long operation -- a
+build, an install, a supervisor lifetime -- goes through
+`@stim-cli/core/ownership-claim` (re-exported by the CLI): a claim built privately
+and renamed into place, named
+by its own token, whose liveness is the holder's `ProcessRecord` read through
+`inspectProcessIdentity`. No mtime, no heartbeat, no staleness threshold, and
+no second implementation. A state it cannot establish is a refusal naming the
+claim and the command that removes it, never a silent wait or a reap. A
+process that cannot capture its own identity takes no claim and refuses with
+`STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
+
+## Short transactions and claim-set removal
+
+Short synchronous transactions use core `withDirLock`, which shares that
+claim protocol at `<lock>.claims` and retains reentrant nesting and bounded
+waiting. The claim is the only lock state. Keep subprocess work outside short
+locks and protect it with a child-aware claim. Only a complete claim whose
+owner is proven gone is automatically recovered.
+Core owns the `unique-pid` dependency and process-identity implementation;
+cache packages remain usable without the CLI.
+Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim
+first, so no sweep can delete a claim taken since it was surveyed. Device
+leases use a declared expiry because the holder can be an agent with no
+process. `pidExists` answers only "does a process with this pid exist"; it
+cannot answer whether a record on disk still describes its writer.
+
+A process ID can be reused after a crash, and a busy build can outlive any age limit. The claim binds ownership to process identity. The claim-set lock closes the gap between a cleanup survey and a new claimant arriving. The shared protocol also lets cache packages recover claims without depending on the CLI. [Shared ownership claims](https://github.com/appandflow/stim/pull/681), [Claim-only directory locks](https://github.com/appandflow/stim/pull/5340).
+
 ## A null child is never recovered
 
 A claim whose child file reads `{"record":null}` means an unidentified child may
@@ -83,6 +114,7 @@ Related: #5498, #5510, #5546.
 
 ## Code
 
+- [Ownership claims](../packages/core/ownership-claim.ts) and [short transactions](../packages/core/dir-lock.ts).
 - `packages/stim-cli/src/fingerprint-precompute.ts`: the release decision.
 - `packages/stim-cli/src/fingerprint/detached-groups.ts`: the ledger and the
   owner's check.

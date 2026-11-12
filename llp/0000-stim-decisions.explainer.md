@@ -36,8 +36,17 @@ edit the document; do not append to it.
 ## How to read them
 
 Before changing an area, read the documents whose **Systems:** line names it.
-`grep -rl "Systems:.*Cleanup" llp/` lists them. Code that implements a rule an
-agent might otherwise simplify away carries a comment pointing at the section:
+`grep -rl "Systems:.*Cleanup" llp/` lists the cleanup decisions. Use these
+labels consistently in document headers.
+
+- Repository guidance uses `Repo`.
+- Cleanup and state use `Cleanup`, `Claims`, and `Fingerprint`.
+- Native and development builds use `Builds`, `Exact`, `EAS`, `Signing`, and `Metro`.
+- Runtime ownership uses `Devices` and `Hosted devices`.
+- Connections and services use `Desktop`, `Engine`, `Server`, `Transport`, and `Web shares`.
+
+Code that implements a rule an agent might otherwise simplify away carries a
+comment pointing at its section:
 
 ```text
 // @ref LLP 0003#rung-9-runs-only-at-critical -- tool caches cost every project a re-download
@@ -82,4 +91,11 @@ the workflow.
 - LLP 0005: Cargo `target/` directories.
 - LLP 0006: making room before a build.
 - LLP 0007: claims and child cleanup.
-- LLP 0016: macOS app output without a supervisor.
+- [LLP 0008](./0008-machine-authentication.decision.md) covers machine authentication and pairing.
+- [LLP 0009](./0009-build-offload.decision.md) covers build offload and worker services.
+- [LLP 0010](./0010-hosted-devices.decision.md) covers hosted runtime ownership and connections.
+- [LLP 0011](./0011-web-shares.decision.md) covers web share exposure and lifetime.
+- [LLP 0012](./0012-desktop-engine.decision.md) covers stim Desktop and the matching-home engine.
+- [LLP 0013](./0013-owned-devices.decision.md) covers owned devices, pools, and leases.
+- [LLP 0014](./0014-native-builds.decision.md) covers native build invocations, artifacts, and signing.
+- [LLP 0016](./0016-macos-app-output.decision.md) covers macOS app output without a supervisor.

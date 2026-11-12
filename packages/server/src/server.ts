@@ -1876,6 +1876,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       return;
     }
+    // @ref LLP 0008#authenticate-the-key -- approval follows the proved key across transports
     const publicKey = accepted.clientKey.toString('base64url');
     let records: KeyRecords | null;
     if (accepted.mode === MODE_FIRST_CONTACT) {

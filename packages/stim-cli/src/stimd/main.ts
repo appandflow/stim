@@ -1134,6 +1134,7 @@ async function runStimdInner(
             socket.end();
             return;
           }
+          // @ref LLP 0012#use-the-engine-that-owns-the-home -- Desktop follows the resident engine
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
             refuseClient(socket, message);
             return;
