@@ -86,6 +86,27 @@ export interface Unadmitted {
   retry: boolean;
 }
 
+/** Why a share saved under `savedOrigin` may not come back under `exposure`; null when it may. */
+function unadmitted(
+  exposure: ResolvedExposure,
+  savedOrigin: string | undefined,
+  host: string | null,
+): Unadmitted | null {
+  if (savedOrigin === undefined) return { why: 'it was saved without the address it was shared under', retry: false };
+  if (exposure.mode === 'proxy') {
+    const now = `${exposure.publicUrl ?? `http://127.0.0.1:${exposure.port}`}/s/`;
+    return savedOrigin === now
+      ? null
+      : { why: `it was shared under ${savedOrigin}, and proxy exposure serves ${now} now`, retry: exposure.auto };
+  }
+  const saved = URL.parse(savedOrigin);
+  if (host !== null && saved?.protocol === 'https:' && saved.hostname === host) return null;
+  return {
+    why: `it was shared under ${savedOrigin}, not through this node's Funnel address, which tailscale exposure serves now`,
+    retry: host === null,
+  };
+}
+
 /**
  * The route the share hub uses: Funnel through `tailscale` or a plain loopback listener for a reverse proxy,
  * whichever the settings choose when a listener is about to open. Proxy mode never reaches `tailscale`.
@@ -96,6 +117,7 @@ export class ExposedRoute {
   private readonly settings: () => ShareSettings;
   private readonly loggedIn: () => Promise<boolean>;
   private readonly host: () => Promise<string | null>;
+  private funnelPort: number | undefined;
 
   constructor(
     tailscale: FunnelRoute,
@@ -112,34 +134,33 @@ export class ExposedRoute {
   /**
    * Why a share saved under `savedOrigin` (the link up to `/s/`) cannot come back under the exposure that would serve
    * it now, or null when it can: the same kind and the same address. A proxy link needs the address the proxy
-   * settings give now; a Funnel link needs this node's Funnel host, whichever Funnel port it gets. A link saved
+   * settings give now; a Funnel link needs this node's Funnel host (its port is held when the route opens). A link saved
    * without an address cannot be told apart, so it is refused. Opens nothing and never runs `tailscale funnel` or
    * `tailscale serve`; `listenerOpen` says the exposure is the one the open listener already has.
    */
   async admits(savedOrigin: string | undefined, listenerOpen: boolean): Promise<Unadmitted | null> {
-    if (savedOrigin === undefined) return { why: 'it was saved without the address it was shared under', retry: false };
     const exposure =
       listenerOpen && this.current ? this.current : await resolveExposure(this.settings(), this.loggedIn);
-    if (exposure.mode === 'proxy') {
-      const now = `${exposure.publicUrl ?? `http://127.0.0.1:${exposure.port}`}/s/`;
-      return savedOrigin === now
-        ? null
-        : { why: `it was shared under ${savedOrigin}, and proxy exposure serves ${now} now`, retry: exposure.auto };
-    }
-    const host = await this.host();
-    const saved = URL.parse(savedOrigin);
-    if (host !== null && saved?.protocol === 'https:' && saved.hostname === host) return null;
-    return {
-      why: `it was shared under ${savedOrigin}, not through this node's Funnel address, which tailscale exposure serves now`,
-      retry: host === null,
-    };
+    return unadmitted(exposure, savedOrigin, await this.host());
   }
 
-  /** Chooses the mode for the listener about to open and returns the loopback port to bind (0 for any free one). */
-  async prepare(): Promise<number> {
+  /**
+   * Chooses the mode for the listener about to open and returns the loopback port to bind (0 for any free one). With
+   * `savedOrigin`, the share being restored, the choice made here is the one checked against it, so no second answer
+   * can differ from the one admitted: a different kind or address throws before anything opens, and a Funnel route
+   * is opened only on the saved port.
+   */
+  async prepare(savedOrigin?: string): Promise<number> {
     this.current = null;
-    this.current = await resolveExposure(this.settings(), this.loggedIn);
-    return this.current.mode === 'proxy' ? this.current.port : 0;
+    this.funnelPort = undefined;
+    const exposure = await resolveExposure(this.settings(), this.loggedIn);
+    if (savedOrigin !== undefined) {
+      const refused = unadmitted(exposure, savedOrigin, await this.host());
+      if (refused) throw new Error(`The saved share cannot come back: ${refused.why}.`);
+      if (exposure.mode === 'tailscale') this.funnelPort = Number(URL.parse(savedOrigin)?.port || 443);
+    }
+    this.current = exposure;
+    return exposure.mode === 'proxy' ? exposure.port : 0;
   }
 
   /** Whether the choice `prepare` made is a reverse proxy at a public address: the only exposure whose listener is kept. */
@@ -150,7 +171,7 @@ export class ExposedRoute {
   async open(target: number): Promise<OpenedRoute> {
     const exposure = this.current;
     if (!exposure) throw new Error('The share route was not prepared.');
-    return exposure.mode === 'proxy' ? proxyBase(exposure, target) : this.tailscale.open(target);
+    return exposure.mode === 'proxy' ? proxyBase(exposure, target) : this.tailscale.open(target, this.funnelPort);
   }
 
   async close(): Promise<void> {

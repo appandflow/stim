@@ -181,7 +181,8 @@ WHAT IT NEEDS
   stim command starts a stimd, and nothing starts one by itself. A restore never
   changes how a share is exposed: one whose exposure now is not the kind and
   address it was shared under (a proxy link while Funnel is chosen, or the
-  reverse) stays stopped, with one log line, until stim share --reuse starts it
+  reverse, or a Funnel link whose port is taken) is not restored, with one log
+  line; a share-only stimd marks it stopped until stim share --reuse starts it
   under today's exposure. stim share --reuse of a restored link replaces it. When none runs, stim share asks stimd, started when none runs, to
   start one for shares (loopback only, no Tailscale listener). That net
   thread stops on its own when its last share ends (stim share stop, expiry,

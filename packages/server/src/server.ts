@@ -942,12 +942,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const restoreShares = () =>
     restoreSavedShares({
-      start: async (params) => {
+      start: async (params, origin) => {
         const parsed = parseShareStart(params);
         if (typeof parsed === 'string') return { code: 'bad-request', message: parsed };
         const resolved = registeredWorkspace(parsed.workspace);
         if ('code' in resolved) return { code: 'bad-request', message: resolved.message };
-        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true });
+        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true, origin });
         return 'code' in started ? started : { started: true, id: started.id };
       },
       refused: async ({ share }) => {
@@ -958,6 +958,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
       },
       leave: async ({ workspace, key, share }) => {
+        if (!options.shareServer) return false;
         const secret = share.token ?? share.slug ?? '';
         const unsaved = await markSavedStopped(() =>
           pauseShareLinkAsync(workspace, key, (saved) => savedLinkIs(saved, digest(secret).toString('hex'))),
@@ -965,6 +966,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (unsaved !== null) {
           console.error(`stim-server: could not mark the saved web share of ${workspace} stopped: ${unsaved}`);
         }
+        return unsaved === null;
       },
       wanted: ({ workspace, key, share }) => {
         const saved = readShareLinks(workspace)[key];

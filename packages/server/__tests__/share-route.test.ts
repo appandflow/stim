@@ -106,6 +106,15 @@ describe('the share Funnel route claim', () => {
     expect(existsSync(root)).toBe(false);
   });
 
+  it('takes only the Funnel port it is asked for, and opens nothing when that port is busy', async () => {
+    const funnel = tool(served(443, 8788));
+    const route = new ShareRoute(root, funnel);
+    await expect(route.open(51234, 443)).rejects.toThrow(/Funnel port 443.*not free/);
+    expect(funnel.config).toEqual(served(443, 8788));
+    expect(await route.open(51234, 10000)).toEqual({ url: `https://${HOST}:10000`, port: 10000 });
+    await route.close();
+  });
+
   it('keeps a route it could not remove after a failed open, and removes it before the next open', async () => {
     const funnel = tool({});
     let unreadable = false;

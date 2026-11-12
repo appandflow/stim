@@ -69,14 +69,22 @@ restoring it in the successor. Restoring starts only shares `stim share` saved
 and never touches a route Stim does not own. A restore never changes how a
 share is exposed: it starts a saved share only when the exposure it would get
 now is the kind and the address it was shared under (a proxy link under the
-address proxy exposure serves now, a Funnel link under this node's Funnel host),
-and a saved entry that does not record its address is not restored. Any other
-saved share is marked stopped, with one log line, and `stim share --reuse`
-starts it again under the exposure of that day. The check runs before anything
-opens and never runs `tailscale funnel` or `tailscale serve` for a share saved
-under proxy exposure; while `auto` may still choose the other mode (Tailscale not
-up yet), the restore waits and tries again before it gives up. Marking the entry
-stopped means a later stimd does not start a thread for it. A dead share route
+address proxy exposure serves now, a Funnel link under this node's Funnel host
+and on the Funnel port it was shared on), and a saved entry that does not record
+its address is not restored. The restore start carries the saved address and the
+route checks it against the exposure it chooses to open, in the same step, so a
+login or a setting that changes between the check and the opening refuses the
+start instead of opening another exposure; a Funnel route is opened only on the
+saved port, and the start is refused when that port is not free. No
+`tailscale funnel` or `tailscale serve` command runs for a share saved under
+proxy exposure. A share that cannot come back is not restored: a share-only
+server marks it stopped, with one log line, and `stim share --reuse` starts it
+again under the exposure of that day; a full server leaves its entry as it is.
+While `auto` may still choose the other mode (Tailscale not up yet), the restore
+waits and tries again, and leaves the entry saved when it gives up. Marking the
+entry stopped means a later stimd does not start a thread for it; an entry of a
+workspace that is not registered, which the registry cannot prove stale, is left
+as it is and not counted either. A dead share route
 claim starts a thread only while a tailscale command exists to remove its route.
 In a share-only server a restored share gives way: `stim share --reuse` of its
 link replaces it and takes the passwords and expiry of that command, and a new

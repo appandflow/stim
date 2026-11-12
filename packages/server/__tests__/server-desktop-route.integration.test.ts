@@ -69,13 +69,18 @@ import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
+  async function routeServer(
+    config: unknown = {},
+    env: Record<string, string> = {},
+    options: { shareServer?: { idle: () => void; graceMs?: number } } = {},
+  ) {
     const status = join(root, 'serve.json');
     const commandLog = join(root, 'serve-calls.ndjson');
     writeFileSync(status, typeof config === 'string' ? config : JSON.stringify(config));
     const port = await start({
       tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
       env: { FAKE_SERVE_STATUS: status, FAKE_SERVE_CALLS: commandLog, ...env },
+      ...options,
     });
     return {
       port,
@@ -308,10 +313,11 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
         control: false,
         expiresAt: Date.parse(saved.expiresAt),
       }),
-      { restore: true },
+      { restore: true, origin },
     );
     expect(started).toHaveBeenCalledWith(expect.objectContaining({ slot: 'tablet', token: 'T'.repeat(43) }), {
       restore: true,
+      origin,
     });
 
     expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toEqual(
@@ -418,7 +424,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       }),
     );
     const started = vi.spyOn(ShareHub.prototype, 'start');
-    const fixture = await routeServer();
+    const fixture = await routeServer({}, {}, { shareServer: { idle: () => {}, graceMs: 50 } });
     expect(fixture.port).toBeGreaterThan(0);
     await vi.waitFor(() =>
       expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped'),

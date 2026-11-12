@@ -74,6 +74,7 @@ describe('restoring saved shares', () => {
       refused: async () => refusals.shift() ?? null,
       leave: async ({ key }) => {
         left.push(key);
+        return true;
       },
       start: async (params) => {
         calls.push(params);
@@ -183,7 +184,7 @@ describe('restoring saved shares', () => {
     ]);
   });
 
-  it('waits out an exposure that may still change, restores the share when it matches, and leaves it stopped after five waits', async () => {
+  it('waits out an exposure that may still change, restores the share when it matches, and leaves the entry as it is after five waits', async () => {
     const changes = deps([{ started: true, id: 'w1' }]);
     changes.refusals.push({ why: 'not yet', retry: true }, { why: 'not yet', retry: true });
     await restoreSavedShares(changes.d, [link()]);
@@ -196,7 +197,10 @@ describe('restoring saved shares', () => {
     await restoreSavedShares(never.d, [link()]);
     expect(never.waits).toEqual([5000, 10_000, 20_000, 40_000, 60_000]);
     expect(never.calls).toEqual([]);
-    expect(never.left).toEqual(['ios']);
+    expect(never.left).toEqual([]);
+    expect(never.lines).toEqual([
+      'did not restore the web share of ios of /work/app: not yet. It stays saved for a later start.',
+    ]);
   });
 
   it('stops when the server is closing', async () => {

@@ -116,10 +116,10 @@ export interface ShareDeps {
   subscribeStatus: (listener: StatusListener) => () => void;
   route: {
     /** Chooses how the listener about to open is exposed; returns the loopback port to bind, 0 for any free one. */
-    prepare?: () => Promise<number>;
+    prepare?: (savedOrigin?: string) => Promise<number>;
     /** After `prepare`: whether the choice is a reverse proxy at a public address, whose listener a long-running server keeps bound. */
     standing?: () => boolean;
-    open: (target: number) => Promise<OpenedRoute>;
+    open: (target: number, only?: number) => Promise<OpenedRoute>;
     close: () => Promise<void>;
     /** The loopback port a route that could not be removed still points at, or null. */
     stranded: () => number | null;
@@ -438,10 +438,13 @@ export class ShareHub {
    * Starts a share. With `restore`, a share whose device cannot be found yet starts waiting for it instead of being
    * refused, as a share saved before a stim-server restart does while its device comes back.
    */
-  async start(request: ShareRequest, options: { restore?: boolean } = {}): Promise<StartedShare | Refusal> {
+  async start(
+    request: ShareRequest,
+    options: { restore?: boolean; origin?: string } = {},
+  ): Promise<StartedShare | Refusal> {
     this.starting++;
     try {
-      return await this.begin(request, options.restore === true);
+      return await this.begin(request, options.restore === true, options.origin);
     } finally {
       this.starting--;
       void this.closingRoute.then(() => this.checkIdle());
@@ -523,7 +526,7 @@ export class ShareHub {
     return this.endRestored(request.workspace, (share) => share.id !== keep && shareLinkKey(share.request) === target);
   }
 
-  private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
+  private async begin(request: ShareRequest, restore: boolean, origin?: string): Promise<StartedShare | Refusal> {
     this.idleReported = false;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
@@ -552,13 +555,13 @@ export class ShareHub {
     const held = this.deps.holdWorkspace ? await this.deps.holdWorkspace(request.workspace, () => this.closed) : null;
     if (held && 'code' in held) return held;
     try {
-      return await this.register(request, restore);
+      return await this.register(request, restore, origin);
     } finally {
       held?.release();
     }
   }
 
-  private async register(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
+  private async register(request: ShareRequest, restore: boolean, origin?: string): Promise<StartedShare | Refusal> {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
@@ -573,7 +576,7 @@ export class ShareHub {
     const source = bound ? bound.open(request) : null;
     let base: string;
     try {
-      base = await this.open();
+      base = await this.open(false, origin);
     } catch (cause) {
       return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
     }
@@ -583,6 +586,14 @@ export class ShareHub {
       return {
         code: 'action-failed',
         message: this.closed ? 'stim-server is stopping.' : 'The share listener closed while starting. Try again.',
+      };
+    }
+    if (origin !== undefined && new URL(base).origin !== URL.parse(origin)?.origin) {
+      source?.close();
+      void this.teardown();
+      return {
+        code: 'action-failed',
+        message: `The share listener serves ${base}, not the address ${origin} the saved share was made under.`,
       };
     }
     const late = this.slugTaken(request.slug);
@@ -848,12 +859,12 @@ export class ShareHub {
   }
 
   private open(standby: true): Promise<string | null>;
-  private open(standby?: false): Promise<string>;
-  private async open(standby = false): Promise<string | null> {
+  private open(standby?: false, savedOrigin?: string): Promise<string>;
+  private async open(standby = false, savedOrigin?: string): Promise<string | null> {
     for (;;) {
       if (this.base && this.listener && (standby || !this.kept || this.shares.size)) return this.base;
       this.opening ??= this.closingRoute
-        .then(() => this.bind(standby))
+        .then(() => this.bind(standby, savedOrigin))
         .finally(() => {
           this.opening = null;
         });
@@ -866,8 +877,8 @@ export class ShareHub {
    * Opens the listener the exposure settings choose, or reuses a kept one that sits on the same port. `standby`
    * opens only a listener to keep and returns null when the settings choose anything else.
    */
-  private async bind(standby: boolean): Promise<string | null> {
-    const bindPort = (await this.deps.route.prepare?.()) ?? 0;
+  private async bind(standby: boolean, savedOrigin?: string): Promise<string | null> {
+    const bindPort = (await this.deps.route.prepare?.(savedOrigin)) ?? 0;
     const keep = this.persistent && (this.deps.route.standing?.() ?? false);
     if (standby && !keep) return null;
     if (this.listener && this.kept) {

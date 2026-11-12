@@ -196,6 +196,12 @@ test('a stimd with no saved share and no share route left starts no net thread',
   home = scratch.home;
   scratch.save({ ios: link({ state: 'stopped' }) });
   const stimd = await startStimd(scratch.env);
+  await vi.waitFor(
+    () => expect(readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8')).toContain('daemon_started'),
+    {
+      timeout: 20_000,
+    },
+  );
   await expect(stimdConnect(stimd.socket)).rejects.toThrow(/net-off/);
   stimd.child.kill('SIGTERM');
   await stimd.exited;
