@@ -4,6 +4,7 @@
 
 - `stim plugin list` lists the bundled plugins and the plugin `cache.provider` names, and `stim plugin test <plugin>` runs a transport or agent-driver plugin's contract kit with the module in a worker thread. `stim doctor` and `stim settings set cache.provider` now report a cache provider that does not resolve or declares another integer.
 - `stim remote update <mac>` updates an approved worker to the newest compatible release on its channel. Use `--channel next` to select prereleases for one update.
+- Maintenance and `stim gc` manage checkouts no `stim` command ran in: linked worktrees of known repositories and recognised direct children of the folders that hold them or of the new machine setting `maintenance.discoverRoots` (absolute paths below the home folder; `stim doctor` reports one that is missing or too broad). They follow the registered-workspace rules with extra protection: removal needs full idleness evidence, no process or agent session, no git-ignored file the main checkout lacks, and no tracked-file edit; worktrees outside the folders Stim manages, other tools' homes, the temp directory and home dot-folders are listed and never acted on. A `target/` carrying Cargo's `CACHEDIR.TAG` signature counts as build output. The `gc` payload gains `discovered` and `outside`, and `stim gc --dry-run` lists them.
 
 ## Removed (breaking)
 
