@@ -676,7 +676,6 @@ describe('the ladder stim gc forces', () => {
     );
   };
 
-  // Windows cannot list running processes, so rung 9 keeps every cache there.
   test.skipIf(process.platform === 'win32')(
     'rung 9 plans the other tools cache cleaners only at critical, and never from a scoped home',
     async () => {

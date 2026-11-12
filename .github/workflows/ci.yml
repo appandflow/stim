@@ -212,25 +212,28 @@ jobs:
 
   native-paths:
     name: native paths changed
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 1
       - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          changed=false
-          if [ "$GITHUB_EVENT_NAME" = push ] && ! git diff --quiet HEAD^1 HEAD -- packages/stim-cli/src/daemon packages/stim-cli/src/stimd packages/core; then
-            changed=true
+          changed=true
+          if git fetch --quiet --depth=1 origin "$BEFORE" && git diff --quiet "$BEFORE" HEAD -- packages/stim-cli/src/daemon packages/stim-cli/src/stimd packages/core; then
+            changed=false
           fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
   test-windows:
     name: test (windows)
     needs: native-paths
-    if: always() && (inputs.full || needs.native-paths.outputs.changed == 'true')
+    if: ${{ !cancelled() && (inputs.full || needs.native-paths.outputs.changed == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -283,7 +286,7 @@ jobs:
   test-macos:
     name: test (macos)
     needs: native-paths
-    if: always() && (inputs.full || needs.native-paths.outputs.changed == 'true')
+    if: ${{ !cancelled() && (inputs.full || needs.native-paths.outputs.changed == 'true') }}
     runs-on: macos-15
     timeout-minutes: 30
     steps:
