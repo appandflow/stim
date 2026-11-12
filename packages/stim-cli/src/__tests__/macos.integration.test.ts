@@ -2084,7 +2084,7 @@ describe('macOS build placement and promotion', () => {
         process.execPath,
         [
           '-e',
-          `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(appScript)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); process.stdout.write('app ' + a.pid + '\\n'); a.unref();`,
+          `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(appScript)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); process.stdout.write('app ' + a.pid + '\\n', () => process.exit(0));`,
         ],
         { stdio: ['ignore', 'pipe', 'ignore'] },
       );
