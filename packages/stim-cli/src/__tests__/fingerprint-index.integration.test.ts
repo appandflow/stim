@@ -97,6 +97,38 @@ test('install freshness follows declared custom patches and nested patch-package
   expect(newerThanInstall({ project: root, install: root })).toBe(nested);
 });
 
+test('a newer npm lockfile permits caching when it describes the carried install', () => {
+  const root = join(base, 'warmed-worktree');
+  const lockfile = join(root, 'package-lock.json');
+  const stamp = join(root, 'node_modules', '.package-lock.json');
+  const lock = (packages: Record<string, object>) => JSON.stringify({ lockfileVersion: 3, packages });
+  const name = 'node_modules/fixture';
+  const entry = { version: '1.0.0', resolved: 'https://registry.example/fixture.tgz', integrity: 'sha512-original' };
+  write(stamp, lock({ [name]: entry }));
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(stamp, past, past);
+  const roots = { project: root, install: root };
+
+  write(
+    lockfile,
+    lock({ '': { name: 'app' }, [name]: entry, 'node_modules/optional': { version: '2.0.0', optional: true } }),
+  );
+  expect(newerThanInstall(roots)).toBeNull();
+
+  const patch = join(root, 'patches', 'fixture+1.0.0.patch');
+  write(patch, 'changed after install');
+  expect(newerThanInstall(roots)).toBe(patch);
+
+  write(lockfile, lock({ [name]: { ...entry, integrity: 'sha512-replacement' } }));
+  expect(newerThanInstall(roots)).toBe(lockfile);
+
+  write(lockfile, lock({ '': { name: 'app' } }));
+  expect(newerThanInstall(roots)).toBe(lockfile);
+
+  write(lockfile, lock({ [name]: entry, 'node_modules/missing': { version: '2.0.0' } }));
+  expect(newerThanInstall(roots)).toBe(lockfile);
+});
+
 /** A CNG Expo app installing nothing of its own: its node_modules is apps/mobile's, with this repository's lockfile. */
 function expoApp(dir: string, files: Record<string, string> = {}): string {
   const root = join(base, dir);

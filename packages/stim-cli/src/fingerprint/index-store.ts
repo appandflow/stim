@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
@@ -484,9 +485,36 @@ export const checkoutTag = (project: string): string => sha256(project).slice(0,
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
+function npmLockPackages(path: string): object | null {
+  const lock: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const version = field(lock, 'lockfileVersion');
+  const packages = field(lock, 'packages');
+  return (version === 2 || version === 3) && packages && typeof packages === 'object' && !Array.isArray(packages)
+    ? packages
+    : null;
+}
+
+function npmInstallMatches(lockfile: string, stamp: string): boolean {
+  try {
+    const wanted = npmLockPackages(lockfile);
+    const installed = npmLockPackages(stamp);
+    if (!wanted || !installed) return false;
+    // npm's hidden lockfile omits the root importer and can omit optional packages.
+    return (
+      Object.entries(wanted).every(([path, entry]) => {
+        if (path === '') return true;
+        return Object.hasOwn(installed, path)
+          ? isDeepStrictEqual(field(installed, path), entry)
+          : field(entry, 'optional') === true;
+      }) && Object.keys(installed).every((path) => Object.hasOwn(wanted, path))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * A patch or the lockfile written after the newest install stamp, which an install has not applied yet; null when
- * every one is older, or no package manager wrote a stamp to compare with.
+ * A newer patch or a newer lockfile without a matching installed tree; null if no install stamp can be compared.
  */
 export function newerThanInstall(roots: Roots): string | Uncertain | null {
   try {
@@ -508,12 +536,18 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
       seen.add(real);
       return readdirSync(dir).flatMap((name) => files(join(dir, name)));
     };
-    const inputs = [
-      ...LOCKFILES.map((name) => join(roots.install, name)),
+    const npmStamp = join(roots.install, 'node_modules', '.package-lock.json');
+    for (const name of LOCKFILES) {
+      const path = join(roots.install, name);
+      if ((mtime(path) ?? 0) <= installed) continue;
+      if (name !== 'package-lock.json' || mtime(npmStamp) !== installed || !npmInstallMatches(path, npmStamp))
+        return path;
+    }
+    const patchFiles = [
       ...discovered.files,
       ...[...discovered.dirs, ...dirs.flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name)))].flatMap(files),
     ];
-    return inputs.find((path) => (mtime(path) ?? 0) > installed) ?? null;
+    return patchFiles.find((path) => (mtime(path) ?? 0) > installed) ?? null;
   } catch {
     return { uncertain: 'patch inputs could not be inspected' };
   }
