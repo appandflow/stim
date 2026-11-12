@@ -299,6 +299,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
+        lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure,
@@ -329,6 +330,7 @@ export async function runForcedLadder({
   trigger,
   operation,
   protectedRoot,
+  measured: atMeasuredLevel = false,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
@@ -337,6 +339,8 @@ export async function runForcedLadder({
   operation?: StimContext;
   /** The workspace of the command that runs the ladder, which no rung takes. */
   protectedRoot?: string;
+  /** The level is the one the machine measured, not one the caller chose, so rung 9 measures again before it acts. */
+  measured?: boolean;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
   if (!config) return null;
@@ -387,7 +391,7 @@ export async function runForcedLadder({
           sims: measured.sims,
           simsFailed: measured.sims === null,
           remeasure: async () => pressure,
-          force: { level, why },
+          force: { level, why, measured: atMeasuredLevel },
           measure: !act,
           operation,
           ...(protectedRoot ? { protectedRoot } : {}),

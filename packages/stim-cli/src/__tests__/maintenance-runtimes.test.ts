@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -9,10 +9,11 @@ import { collectsEngineStore } from '../commands/gc.ts';
 import { testContext } from './_context.ts';
 import {
   deleteRuntimeAction,
-  runtimePins,
+  deleteUnavailableSimAction,
+  planRuntimes,
   selectUnusedRuntimes,
-  unavailableSimsToDelete,
 } from '../stimd/passes/runtimes.ts';
+import { saveConfig, upsertProject } from '../workspace/config.ts';
 
 const runtime = (version: string, overrides: Partial<SimRuntimeRecord> = {}): SimRuntimeRecord => ({
   identifier: `IMG-${version}`,
@@ -185,28 +186,93 @@ describe('an owned simulator whose runtime is gone', () => {
   });
 });
 
-test('a project whose settings cannot be read blocks runtime cleanup, and a provably gone one does not', () => {
-  expect(
-    runtimePins([
-      { path: '/a', state: 'resolved', pin: '26.2' },
-      { path: '/gone', state: 'gone' },
-    ]),
-  ).toEqual({ pins: ['26.2'], unresolved: [] });
-  expect(
-    runtimePins([
-      { path: '/a', state: 'resolved', pin: null },
-      { path: '/Volumes/off/app', state: 'unresolved', reason: 'its path cannot be reached' },
-    ]).unresolved,
-  ).toEqual(['/Volumes/off/app: its path cannot be reached']);
+describe.skipIf(process.platform !== 'darwin')('planning runtime cleanup', () => {
+  let home = '';
+  let projects = '';
+  const image = (version: string) => ({
+    identifier: `IMG-${version}`,
+    runtimeIdentifier: `com.apple.CoreSimulator.SimRuntime.iOS-${version.replace('.', '-')}`,
+    version,
+    deletable: true,
+    sizeBytes: 8e9,
+    lastUsedAt: '2020-01-01T00:00:00Z',
+    platformIdentifier: 'com.apple.platform.iphonesimulator',
+  });
+  const plan = () => planRuntimes(testContext({ env: { ...process.env, STIM_HOME: undefined } }));
+  const planned = async () => (await plan()).actions.map((action) => action.target);
+
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-runtime-plan-')));
+    projects = realpathSync(mkdtempSync(join(tmpdir(), 'stim-runtime-projects-')));
+    vi.stubEnv('STIM_HOME', home);
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) =>
+        args[1] === 'list'
+          ? JSON.stringify({ devices: {} })
+          : args[1] === 'runtime'
+            ? JSON.stringify({ 'IMG-26.2': image('26.2'), 'IMG-27.0': image('27.0') })
+            : '',
+      runFileQuietAsync: async (file, args) => (file === 'xcrun' && args[0] === '--sdk' ? '27.1\n' : null),
+    });
+  });
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(projects, { recursive: true, force: true });
+  });
+
+  test('plans the unused runtime of another major version when every project resolves', async () => {
+    upsertProject(join(projects, 'app'), {});
+    mkdirSync(join(projects, 'app'), { recursive: true });
+    expect(await planned()).toEqual(['IMG-26.2']);
+  });
+
+  test.each([
+    {
+      name: 'a project on a volume that is not mounted',
+      setup: () => upsertProject('/Volumes/stim-test-not-mounted/app', {}),
+    },
+    {
+      name: 'a project whose .stim.json cannot be parsed',
+      setup: () => {
+        const app = join(projects, 'broken');
+        mkdirSync(app, { recursive: true });
+        writeFileSync(join(app, '.stim.json'), '{ not json');
+        upsertProject(app, {});
+      },
+    },
+  ])('deletes no runtime while $name could pin one', async ({ setup }) => {
+    setup();
+    const result = await plan();
+    expect(result.actions).toEqual([]);
+    expect(result.blocked).toEqual([expect.stringContaining('settings can be read')]);
+  });
+
+  test('keeps every runtime while maintenance.olderThanDays is 0', async () => {
+    vi.stubEnv('STIM_MAINTENANCE_OLDER_THAN_DAYS', '0');
+    expect(await planned()).toEqual([]);
+  });
 });
 
-test('maintenance deletes only unavailable owned simulators no registered workspace records', () => {
-  const sims = [
-    { udid: 'PARKED', available: false },
-    { udid: 'WORKSPACE', available: false },
-    { udid: 'LIVE', available: true },
-  ];
-  expect(unavailableSimsToDelete(sims, new Set(['WORKSPACE'])).map((entry) => entry.udid)).toEqual(['PARKED']);
+test('an unavailable simulator a registered workspace records is left to that workspace', async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-unavailable-ws-')));
+  vi.stubEnv('STIM_HOME', home);
+  try {
+    upsertProject(join(home, 'app'), { platforms: { ios: { deviceUdid: 'U1', owned: true } } });
+    const outcome = await deleteUnavailableSimAction({
+      kind: 'would-delete-unavailable-sim',
+      target: 'U1',
+      bytes: 0,
+      reason: '',
+    });
+    expect(outcome).toMatchObject({ status: 'kept', detail: 'a registered workspace records it as its simulator' });
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('the shared engine store', () => {

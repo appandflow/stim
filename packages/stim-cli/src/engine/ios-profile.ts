@@ -300,7 +300,7 @@ export function profileGate(input: SigningGateInput): ProfileGateResult {
       ok: false,
       code: SIGNING_CODES.noProfile,
       reason: "`openssl smime` could not decode the app bundle's embedded.mobileprovision.",
-      remedy: `The profile inside the app is corrupt. Empty the shared build cache with \`stim gc --pressure critical\`, then ${XCODE_STEP}`,
+      remedy: `The profile inside the app is corrupt. Build it again with \`stim ios --device --no-build-cache\`, or for an EAS build start a new one with EAS, then ${XCODE_STEP}`,
     };
   }
   const profile = input.profile;

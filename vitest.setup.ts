@@ -28,8 +28,10 @@ process.env.USERPROFILE = home;
 
 // gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
 process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());
-// Simulator runtimes and other tools' caches are never deleted for real from a test.
-process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] = '1';
+// Simulator runtimes and other tools' caches are never deleted for real from a test: machine-wide cleanup acts only
+// inside the run's private TMPDIR, and Gradle's user home resolves there too.
+process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] = realpathSync(tmpdir());
+process.env.GRADLE_USER_HOME = join(home, '.gradle');
 
 // Keep gh from reaching GitHub with the developer's credentials: with an empty
 // config dir and no token it exits 4 (signed out) without a network call.

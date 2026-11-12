@@ -534,22 +534,34 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     hours.
   Clean finished worktrees after gc.worktreeGraceMinutes (H), without it (C);
   clean pushed worktrees idle 7 days (C)
-    rung 7, H and C, only while maintenance.removeFinishedWorktrees is true.
-    Kept: dirty, unpushed, in use, leased, locked, pinned.
+    rung 7, H and C, only while maintenance.removeFinishedWorktrees is true;
+    the idle pushed ones go only while maintenance.removeIdleWorktrees is
+    true. Kept: dirty, unpushed, in use, leased, locked, pinned.
   Every device recording and archived logs, recordings and agent actions
-    rung 8, C. Kept: a live segment; worktree archives and archive records.
+    rung 8, C. Kept: a recording being written, those of a workspace pinned
+    with maintenance.keep or in use (checked again under the workspace's
+    native-run claim); worktree archives and archive records.
   Caches Stim does not own: npm (npm cache clean --force), Yarn (yarn cache
   clean), pnpm (pnpm store prune), CocoaPods (pod cache clean --all), Gradle
   caches/modules-2, caches/transforms-N and caches/build-cache-N
-    rung 9, C only, and only while the rungs above left the disk short. Each through the tool's own command, listed with its size
-    before and after. Kept: the tool is not installed, a process of that tool
-    runs, processes cannot be listed. Gradle has no command, so Stim removes
-    its version-independent caches itself, only while no Gradle or Kotlin
-    daemon process runs (rung 6 stops idle daemons first). Never in a
-    STIM_HOME-scoped home. Yarn and pnpm caches are found by path
-    (YARN_CACHE_FOLDER or the platform default; PNPM_HOME/store or the platform
-    default), so no package manager runs on a dry run; the clean commands run
-    with COREPACK_ENABLE_NETWORK=0.
+    rung 9, C only, never in a STIM_HOME-scoped home or in the in-process
+    ladder a build runs at disk.hardFloorGb; only the stim-daemon (at most
+    hourly, while the disk is still short) and stim gc run it. stim gc with
+    no --pressure that measures critical measures free disk again after the
+    earlier rungs and runs it only if the disk is still under the critical
+    level; stim gc --pressure critical always runs it. Each through the
+    tool's own command, listed with its size before and after. Kept: the tool
+    is not installed, a process of that tool runs, processes cannot be
+    listed. Gradle (modules-2, transforms-N, build-cache-N) and SwiftPM have
+    no command, so Stim renames each directory aside to a .stim-delete-*
+    sibling and deletes it, only while no Stim build lock or build slot is
+    live or unresolved and no matching tool process runs (rung 6 stops idle
+    daemons first); a cache directory that is itself a symbolic link is kept
+    with a remedy to remove its target yourself. npm is found by
+    npm_config_cache (or NPM_CONFIG_CACHE), else ~/.npm; Yarn by
+    YARN_CACHE_FOLDER or the platform default; pnpm by PNPM_HOME/store or the
+    platform default, so no package manager runs on a dry run; only an acting
+    run executes the clean commands, with COREPACK_ENABLE_NETWORK=0.
   Android NDKs (sdkmanager --uninstall "ndk;<version>"), Android system images
   no AVD uses (the sdkmanager command), ~/.cache/exact
     rung 9, reported only, with the command, never deleted.
@@ -653,7 +665,11 @@ or critical finishes any .stim-delete-* left by a failed
 removal, even while the versions are blocked (not while the home is outside
 a scoped STIM_HOME or its layout is unsafe), since nothing uses those
 directories, and reports it again when that fails; automatic maintenance
-never touches them. jdks and the other shared Gradle caches are never
+never touches them. Rung 9 uses the same convention for modules-2,
+transforms-N and build-cache-N in caches/ and for the SwiftPM cache: a later
+gc finds and finishes a leftover in Gradle's caches/ or the SwiftPM cache's
+parent and measures it, and a removal that fails after the rename is reported
+as failed with the bytes still left aside. jdks and the other shared Gradle caches are never
 deleted; modules-2, transforms-N and build-cache-N go only in rung 9 (THE
 PRESSURE LADDER).
 With STIM_HOME set, gc deletes nothing in a Gradle home outside it. Pressure
@@ -960,7 +976,7 @@ SWEEPING FINISHED WORKTREES
   pull request whose head is or contains HEAD.
     stim gc --dry-run    # report merged worktrees from local state
     stim gc              # refresh, then remove them
-    stim gc --pressure critical   # also the clean idle ones and, at high, those still in the grace period
+    stim gc --pressure critical   # also the clean idle ones, and the finished ones without the grace period
   An acting gc runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use and recent activity under the removal locks, and idleness
@@ -1006,29 +1022,41 @@ THE PRESSURE LADDER
     7  worktrees, only while maintenance.removeFinishedWorktrees is true:
        clean finished ones after gc.worktreeGraceMinutes (high) or without it
        (critical); at critical also clean pushed ones no Stim command used for
-       7 days. The daemon's tick uses the pull request lookups the worktree
+       7 days, only while maintenance.removeIdleWorktrees is true (false
+       means never, at any level). The daemon's tick uses the pull request lookups the worktree
        check cached; stim gc looks them up again
-    8  critical only: every device recording not being written, and archived
-       logs, recordings and agent actions; worktree archives and archive
-       records stay
-    9  the last rung, at critical only and only while the rungs above left the
-       disk short, never in a STIM_HOME-scoped home: caches Stim does not own, each
-       through the tool's own command only when that tool is installed and no
-       process of that tool runs, each listed with its size before and after:
-       npm cache clean --force, yarn cache clean, pnpm store prune, pod cache
-       clean --all, and Gradle's version-independent caches (caches/modules-2,
+    8  critical only: every device recording not being written, except those
+       of workspaces pinned with maintenance.keep or in use (checked again
+       under each workspace's native-run claim), and archived logs,
+       recordings and agent actions; worktree archives and archive records
+       stay
+    9  the last rung, at critical only, never in a STIM_HOME-scoped home and
+       never in the in-process ladder a build command runs at
+       disk.hardFloorGb: caches Stim does not own, each through the tool's
+       own command only when that tool is installed and no process of that
+       tool runs, each listed with its size before and after: npm cache clean
+       --force, yarn cache clean, pnpm store prune, pod cache clean --all, and
+       Gradle's version-independent caches (caches/modules-2,
        caches/transforms-N and caches/build-cache-N under GRADLE_USER_HOME,
        which Stim removes itself because Gradle has no command, and SwiftPM's
        cache, both only while no Stim build lock or build slot is live or
        unresolved and no matching tool process runs, by renaming the directory
-       aside on the same volume and deleting the renamed copy; rung 6 stops
-       idle daemons first).
+       aside to a .stim-delete-* sibling on the same volume and deleting it;
+       rung 6 stops idle daemons first; a cache directory that is itself a
+       symbolic link is kept with a remedy to remove its target yourself).
+       npm is found by npm_config_cache (or NPM_CONFIG_CACHE), else ~/.npm,
+       Yarn by YARN_CACHE_FOLDER or the platform default and pnpm by
+       PNPM_HOME/store or the platform default, so no package manager runs on
+       a dry run; only an acting run executes the clean commands.
        Reported only, never deleted, with the command: Android NDKs
        (sdkmanager --uninstall "ndk;<version>"), Android system images no AVD
        uses (the sdkmanager command) and ~/.cache/exact.
-  The stim-daemon runs the same ladder, so it also runs rung 9 at critical, at
-  most hourly; stim gc --pressure critical (or a measured critical) runs it
-  each time.
+  Only the stim-daemon and stim gc run rung 9. The daemon runs it at most
+  hourly, while the disk is still short. stim gc with no --pressure that
+  measures critical measures free disk again after the earlier rungs and runs
+  rung 9 only if it is still under the critical level. An explicit
+  stim gc --pressure critical is the free-everything command and always runs
+  it.
   It runs whatever daemon.mode says and covers every registered workspace,
   the one gc runs in included: its dev server stops and its devices shut
   down after 2 idle minutes, its owned devices are deleted after 10 at high,
@@ -1043,7 +1071,7 @@ THE PRESSURE LADDER
   \`stim ios\` or \`stim android\` creates the devices of a dormant one.
     stim gc --dry-run                 # what a run at the measured level would delete
     stim gc --pressure high           # the ladder at high
-    stim gc --pressure critical       # the ladder at critical
+    stim gc --pressure critical       # the ladder at critical, rung 9 included
 
 ORPHANED WORKSPACE DIRECTORIES
   A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe

@@ -66,7 +66,7 @@ export async function clearCorruptCompilationCache(
       code: COMPILATION_CACHE_CORRUPT,
       message,
       remedy:
-        'Once the reason above is resolved, run `stim gc --pressure critical`, which empties every shared cache Stim registered, then run the same command again.',
+        'Once the reason above is resolved, run the same command again: Stim empties the corrupt compilation cache before it builds.',
     };
   }
   const message = `The shared compilation cache at ${dir} was corrupt (the compiler reported: ${line}). Stim emptied it.`;

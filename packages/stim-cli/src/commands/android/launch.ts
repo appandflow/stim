@@ -687,7 +687,8 @@ async function cleanEmulatorAppState(
     return {
       code: 'STIM_BAD_ARG',
       message: `cleanAppState clears only an emulator Stim owns, and ${avdName ?? serial} is not one.`,
-      remedy: 'Run `stim worktree remove` to clear the assignment so Stim creates an owned emulator.',
+      remedy:
+        'Pass `--slot <name>` to create an owned emulator beside it. `stim worktree remove` clears the assignment too, but at a linked worktree root it also removes the worktree and its branch.',
     };
   const emulator = adopting ? 'adopted emulator' : 'emulator';
   if (!androidPackage || !avdName)

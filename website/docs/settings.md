@@ -779,7 +779,7 @@ shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
 that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
 trash, finished and long-idle worktrees, at critical recordings and archived
-logs, and last, at critical only and only while the disk is still short, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
+logs, and last, at critical only, in the `stim-daemon` (at most hourly, while the disk is still short) and `stim gc` (see [the ladder](./build-caches.md#disk-pressure)), never in a `STIM_HOME`-scoped home or from a build command's own ladder, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
 a build, a driver, a lease, a live [web share](./share.md) or
 `maintenance.keep`, and takes the longest-idle
 workspace first; a level raised by memory alone runs only what frees memory.

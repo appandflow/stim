@@ -34,6 +34,8 @@ import { DEFAULT_WORKTREE_IDLE_DAYS, type WorktreeSweep } from '../commands/gc/w
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
+import { measureDisk } from './measure.ts';
+import { diskPressure, diskThresholds } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import { cleanToolCache, reportedBytes, reportedCaches, surveyToolCaches } from '../stimd/passes/unowned.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
@@ -71,7 +73,9 @@ export interface LadderInput {
    * Runs every rung at this level whatever the machine measures, without stopping once the level clears: what
    * `stim gc` runs at high or critical, and what `stim gc --dry-run` previews.
    */
-  force?: { level: 'high' | 'critical'; why: string };
+  force?: { level: 'high' | 'critical'; why: string; measured?: boolean };
+  /** The last rung to run; an in-process command ladder stops before rung 9, whose Gradle caches its own build reads. */
+  lastRung?: number;
   /** Measures what each action would free when it does not act, for `stim gc --dry-run`. */
   measure?: boolean;
   /** The tick's `simctl list`, whose data path sizes the preview reports for simulators. */
@@ -593,7 +597,7 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
 /**
  * Rung 7, finished worktrees, only while `maintenance.removeFinishedWorktrees` is on: at high, the clean ones whose
  * branch is merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without the grace period,
- * and also clean, pushed ones no Stim command used for 7 days. Every other keep rule of the worktree check holds: in
+ * and, while `maintenance.removeIdleWorktrees` is on, clean, pushed ones no Stim command used for 7 days. Every other keep rule of the worktree check holds: in
  * use, leased, locked, pinned, unpushed, or not provably merged. The stim-daemon's own ladder reads the pull request
  * lookups the worktree check cached; `stim gc` looks them up again.
  */
@@ -611,7 +615,7 @@ async function worktreesRung(context: RungContext): Promise<void> {
     now: Date.now(),
     ...(context.level === 'critical' ? { graceMs: 0 } : {}),
     refresh: context.act && Boolean(context.force),
-    idleDays: context.level === 'critical' ? DEFAULT_WORKTREE_IDLE_DAYS : null,
+    idleDays: context.level === 'critical' && context.settings.removeIdleWorktrees ? DEFAULT_WORKTREE_IDLE_DAYS : null,
     operation: context.operation,
   });
   const clean = planned.sweep.worktrees.filter((worktree) => !worktree.dirty);
@@ -649,14 +653,15 @@ async function historyRung(context: RungContext): Promise<void> {
 /**
  * Rung 9, the last: the caches of tools Stim does not own, each emptied through the tool's own command while no
  * process of that tool runs, with its size before and after; Android NDKs, unused system images and Exact's cache are
- * only reported with the command a person runs. Only at critical, after the rungs above and while still short, and never
- * from a home STIM_HOME scopes, since those caches are machine-wide. The stim-daemon's own ladder runs it at most
- * hourly; `stim gc --pressure critical` runs it every time.
+ * only reported with the command a person runs. Only at critical, after the rungs above, and never from a home STIM_HOME
+ * scopes, since those caches are machine-wide: the stim-daemon's ladder runs it at most hourly while still short, a
+ * `stim gc` at the measured level only while free disk, measured again, is still under the critical level, and
+ * `stim gc --pressure critical` every time.
  */
 async function unownedRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
-  if (!(await context.stillShort())) return;
+  if (context.force ? context.force.measured && !(await diskCritical(context)) : !(await context.stillShort())) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
     const result = await cleanToolCache(plan, context.act, context.operation);
@@ -708,6 +713,15 @@ async function unownedRung(context: RungContext): Promise<void> {
   }
 }
 
+/** Whether free disk on a volume Stim uses is under the critical level, measured now. */
+async function diskCritical(context: RungContext): Promise<boolean> {
+  const pressure = diskPressure(
+    await measureDisk(context.config, context.operation?.signal),
+    diskThresholds(context.config, context.operation?.env).thresholds,
+  );
+  return pressure.level === 'critical';
+}
+
 const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {
   0: bootedParkedRung,
   1: idleOutputsRung,
@@ -753,7 +767,7 @@ export async function runLadder(
     }
   };
   if (force) {
-    for (const { rung } of rungsFrom(input.fromRung)) {
+    for (const { rung } of rungsFrom(input.fromRung).filter((entry) => entry.rung <= (input.lastRung ?? 9))) {
       const context: RungContext = {
         ...input,
         rung,
@@ -770,7 +784,7 @@ export async function runLadder(
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
-  for (const { rung, relieves } of rungsFrom(input.fromRung)) {
+  for (const { rung, relieves } of rungsFrom(input.fromRung).filter((entry) => entry.rung <= (input.lastRung ?? 9))) {
     current = await input.remeasure();
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;

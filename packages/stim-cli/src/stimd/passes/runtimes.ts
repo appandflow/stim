@@ -31,7 +31,7 @@ function pinsVersion(pin: string, version: string | null): boolean {
 }
 
 /** What one registered project says about runtimes: its `ios.runtime` pin, or that its settings cannot be read. */
-export type ProjectPin =
+type ProjectPin =
   | { path: string; state: 'resolved'; pin: string | null }
   | { path: string; state: 'gone' }
   | { path: string; state: 'unresolved'; reason: string };
@@ -40,7 +40,7 @@ export type ProjectPin =
  * The runtime pins of every registered project, or the projects whose settings cannot be read. A project on an
  * unmounted volume, or with a settings file that cannot be parsed, could pin any runtime, so it blocks runtime cleanup.
  */
-export function runtimePins(projects: readonly ProjectPin[]): { pins: string[]; unresolved: string[] } {
+function runtimePins(projects: readonly ProjectPin[]): { pins: string[]; unresolved: string[] } {
   return {
     pins: projects.flatMap((project) => (project.state === 'resolved' && project.pin ? [project.pin] : [])),
     unresolved: projects.flatMap((project) =>
@@ -105,7 +105,7 @@ function workspaceSimulators(): Set<string> {
  * such as parked or orphaned ones. A workspace's own simulator goes only through that workspace's dormant stage or
  * teardown, which apply its pin, lock, lease and activity checks.
  */
-export function unavailableSimsToDelete<T extends Pick<IosSimRecord, 'udid' | 'available'>>(
+function unavailableSimsToDelete<T extends Pick<IosSimRecord, 'udid' | 'available'>>(
   owned: readonly T[],
   inWorkspace: ReadonlySet<string>,
 ): T[] {
@@ -115,8 +115,10 @@ export function unavailableSimsToDelete<T extends Pick<IosSimRecord, 'udid' | 'a
 const majorOf = (version: string | null): string | null => /^\d+/.exec(version ?? '')?.[0] ?? null;
 
 async function simulatorSdk(operation?: StimContext): Promise<string | null> {
+  const env = operation?.env ?? process.env;
   const out = await getExecutor().runFileQuietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'], {
     timeoutMs: SIMCTL_TIMEOUT_MS,
+    env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     signal: operation?.signal,
   });
   const version = out?.trim() ?? '';
@@ -207,8 +209,11 @@ async function listRuntimes(operation?: StimContext): Promise<SimRuntimeRecord[]
   );
 }
 
-const recentSince = (operation?: StimContext): number =>
-  Date.now() - resolveMaintenanceSettings(loadConfig(), operation?.env ?? process.env).olderThanDays * 86_400_000;
+/** The start of the recency window `maintenance.olderThanDays` sets, or null when it is 0, which turns age removals off. */
+function recentSince(operation?: StimContext): number | null {
+  const days = resolveMaintenanceSettings(loadConfig(), operation?.env ?? process.env).olderThanDays;
+  return days > 0 ? Date.now() - days * 86_400_000 : null;
+}
 
 const label = (runtime: SimRuntimeRecord) => `iOS ${runtime.version ?? '?'} simulator runtime (${runtime.identifier})`;
 
@@ -246,10 +251,12 @@ export async function planRuntimes(operation?: StimContext): Promise<Maintenance
     blocked.push(`Simulator runtimes stay until these projects' settings can be read: ${unresolved.join('; ')}`);
   const sdk = await simulatorSdk(operation);
   if (!sdk) blocked.push("Simulator runtimes stay: the active Xcode's simulator SDK version cannot be read");
+  const since = recentSince(operation);
+  if (since === null) skips.push({ target: 'simulator runtimes', reason: 'maintenance.olderThanDays is 0' });
   const { take, kept } =
-    unresolved.length || !sdk
+    unresolved.length || !sdk || since === null
       ? { take: [], kept: [] }
-      : selectUnusedRuntimes(runtimes, sims, pins, { sdk, since: recentSince(operation) });
+      : selectUnusedRuntimes(runtimes, sims, pins, { sdk, since });
   for (const runtime of take)
     actions.push({
       kind: 'would-delete-runtime',
@@ -284,7 +291,9 @@ export async function deleteRuntimeAction(action: MaintenanceAction, operation?:
       return { status: 'kept', bytes: 0, detail: `project settings cannot be read: ${unresolved.join('; ')}` };
     const sdk = await simulatorSdk(operation);
     if (!sdk) return { status: 'kept', bytes: 0, detail: "the active Xcode's simulator SDK version cannot be read" };
-    const { take, kept } = selectUnusedRuntimes(runtimes, sims, pins, { sdk, since: recentSince(operation) });
+    const since = recentSince(operation);
+    if (since === null) return { status: 'kept', bytes: 0, detail: 'maintenance.olderThanDays is 0' };
+    const { take, kept } = selectUnusedRuntimes(runtimes, sims, pins, { sdk, since });
     const runtime = take.find((entry) => entry.identifier === action.target);
     if (!runtime)
       return {

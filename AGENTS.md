@@ -783,8 +783,8 @@ Simulator runtimes are not Stim-owned. Deleting an unused one through
 and automatic maintenance do it at every level, only when simctl marks the image
 deletable and no simulator on the machine, user-created ones included, uses it.
 The only installed runtime stays, and when no runtime is used the newest stays.
-An owned simulator whose runtime is gone is deleted through centralized
-teardown. Stim never deletes a user-created unavailable simulator and never runs
+An owned simulator whose runtime is gone and that no registered workspace
+records is deleted through centralized teardown. Stim never deletes a user-created unavailable simulator and never runs
 `simctl delete unavailable`.
 Park keeps a simulator that is booted when it parks it booted for
 `pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot

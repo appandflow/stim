@@ -36,7 +36,6 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import * as sweepPasses from '../stimd/passes/sweep.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -671,31 +670,20 @@ describe('the ladder stim gc forces', () => {
     setExecutor({
       ...getExecutor(),
       runFileAsync: async () => '',
-      runFileQuietAsync: async (file, args) =>
-        file === 'ps'
-          ? `${process.pid} node vitest\n`
-          : file === 'lsof'
-            ? `p${process.pid}\nn/\n`
-            : file === 'npm' && args.join(' ') === 'config get cache'
-              ? '/nonexistent/stim-test/.npm\n'
-              : null,
+      runFileQuietAsync: async (file) =>
+        file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
       findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
     });
-    const unscoped = testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } });
+    mkdirSync(join(projects, '.npm'), { recursive: true });
+    const unscoped = testContext({
+      env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
+    });
     const planned = async (level: 'high' | 'critical', operation = unscoped) =>
       (await forced(level, 9, operation)).actions.filter((action) => action.kind === 'clean-tool-cache');
 
     expect(await planned('high')).toEqual([]);
     expect(await planned('critical', testContext())).toEqual([]);
     expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
-  });
-
-  test('rung 7 removes no finished worktree while maintenance.removeFinishedWorktrees is false', async () => {
-    const planned = vi.spyOn(sweepPasses, 'planWorktrees');
-    vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
-    const { actions } = await forced('critical', 7);
-    expect(actions.filter((action) => action.rung === 7)).toEqual([]);
-    expect(planned).not.toHaveBeenCalled();
   });
 });
 

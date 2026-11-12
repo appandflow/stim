@@ -72,7 +72,7 @@ stim gc --pressure critical`}
 
 - **Preview.** `stim gc --dry-run` lists what `stim gc` would keep or remove. It uses local refs and cached pull request status. `stim gc` refreshes them.
 - **Clean up finished work.** `stim gc` removes worktrees Stim has used after their branch merges or their pull request merges or closes, once the grace period has passed. It also removes clean, inactive worktrees based on the default branch with no commits of their own. Automatic maintenance does this by default. At `--pressure high` the grace period still applies; at `--pressure critical` it is skipped. With `maintenance.removeFinishedWorktrees` false, no level removes a finished worktree.
-- **Include idle work.** `--pressure critical` also removes clean, pushed worktrees unused by Stim for seven days, even if unmerged. Deleting them drops ignored files such as `.env.local`.
+- **Include idle work.** `--pressure critical` also removes clean, pushed worktrees unused by Stim for seven days, even if unmerged, only while `maintenance.removeIdleWorktrees` is true (false means never, at any level). Deleting them drops ignored files such as `.env.local`.
 
 A worktree whose workspace has had no activity for `idle.dormantDays` (one day by default) is reduced to its minimal size at every level, by `stim gc` and by the daemon: its build outputs, owned devices, `node_modules` and `ios/Pods` go, and the next Stim command in it restores the dependencies with `stim worktree warm`, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions.
 

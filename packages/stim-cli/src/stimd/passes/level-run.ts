@@ -175,6 +175,7 @@ export async function runMaintenanceAtLevel({
       trigger: 'gc',
       operation,
       protectedRoot: context.protectedRoot,
+      measured: chosen === undefined,
     });
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }

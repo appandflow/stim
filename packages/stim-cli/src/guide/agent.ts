@@ -382,9 +382,10 @@ Ask the user before these actions:
   are deleted, shared caches are trimmed, and workspaces idle 10 minutes or
   more go dormant, losing their owned devices, and linked worktrees idle an
   hour lose node_modules and Pods. At critical it also empties every shared
-  cache, removes clean pushed worktrees idle 7 days across projects, and, while
-  the disk is still short, cleans other tools' caches (npm, Yarn, pnpm,
-  CocoaPods, Gradle, SwiftPM). That includes the workspace
+  cache, removes clean pushed worktrees idle 7 days across projects, and, when
+  stim gc --pressure critical names the level or a measured critical still
+  leaves the disk under the critical level after the earlier rungs, cleans
+  other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). That includes the workspace
   you run it from: an app you are not driving right now stops. It never
   touches a workspace that is building, driven, leased, shared with stim
   share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first

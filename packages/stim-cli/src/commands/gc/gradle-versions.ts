@@ -20,7 +20,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const PS_TIMEOUT_MS = 10_000;
 const MAX_WALK_ENTRIES = 500_000;
 const STAGING_PREFIX = '.stim-delete-';
-const STAGING = /^\.stim-delete-.+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const STAGING: RegExp = /^\.stim-delete-.+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const GRADLE_PROCESS =
   /\borg\.gradle\.(?:launcher\.daemon\.bootstrap\.GradleDaemon|wrapper\.GradleWrapperMain|launcher\.GradleMain|launcher\.Main)\b/;
 const GRADLE_JAR = /\/gradle\/wrapper\/gradle-wrapper\.jar\b|\/lib\/gradle-[^\s/]*\.jar\b/;

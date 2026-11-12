@@ -486,7 +486,9 @@ measures. `--pressure <normal|high|critical>` runs at that level instead,
 whatever the machine measures. Every level runs the automatic maintenance plan,
 which trims caches over their caps and removes unused entries. `high` adds the
 [pressure ladder](#disk-pressure) to its end. `critical` also empties every
-shared cache Stim registered, which makes future builds cold. The CLI has no
+shared cache Stim registered, which makes future builds cold, and runs
+[rung 9](#disk-pressure), which cleans other tools' caches. It is the explicit
+free-everything run: use plain `stim gc` for routine cleanup. The CLI has no
 flag that picks one cache; Stim Desktop can empty a single cache.
 
 The one exception to leaving caches alone is the Swift compilation cache. When
@@ -613,7 +615,7 @@ stim gc --pressure critical`}
 `gc --dry-run` lists each workspace's recordings and their size. `stim gc`
 deletes only the recordings of dead or orphaned workspaces, with their
 workspace directory, and keeps them when it cannot prove the project is gone.
-`--pressure critical` also deletes every recording that is not being written.
+`--pressure critical` also deletes every recording that is not being written, except those of workspaces pinned with `maintenance.keep` or in use.
 `stim worktree remove` deletes the workspace's recordings with its
 directory. To stop recording altogether, see
 [Device recordings](./settings.md#device-recordings).
@@ -648,9 +650,9 @@ and above normal runs one ladder top-down until the level clears:
 | 4    | The dormant stage for workspaces idle 10 minutes                                                                   | The dormant stage for workspaces idle 2 minutes                                                                                                                         |
 | 5    | `node_modules` and `ios/Pods` of linked worktrees idle 1 hour that `stim worktree warm` can restore                | Same, for worktrees idle 2 minutes                                                                                                                                      |
 | 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash | Same, with every unpinned Gradle version                                                                                                                                |
-| 7    | Clean finished worktrees after `gc.worktreeGraceMinutes`, if `maintenance.removeFinishedWorktrees`                 | Without the grace period; also clean pushed worktrees no Stim command used for 7 days                                                                                   |
-| 8    | Nothing                                                                                                            | Every device recording and archived logs, recordings and agent actions                                                                                                  |
-| 9    | Nothing                                                                                                            | While the disk is still short after the rungs above: other tools' caches                                                                                                |
+| 7    | Clean finished worktrees after `gc.worktreeGraceMinutes`, if `maintenance.removeFinishedWorktrees`                 | Without the grace period; also clean pushed worktrees no Stim command used for 7 days, if `maintenance.removeIdleWorktrees`                                             |
+| 8    | Nothing                                                                                                            | Every device recording not being written (except pinned or in-use workspaces) and archived logs, recordings and agent actions                                           |
+| 9    | Nothing                                                                                                            | Other tools' caches, subject to the rules below                                                                                                                         |
 
 Rung 9 is the last. It cleans caches Stim does not own, each through the tool's
 own command and only when that tool is installed and no process of that tool
@@ -660,17 +662,22 @@ version-independent caches (`caches/modules-2`, `caches/transforms-N` and
 `caches/build-cache-N` under `GRADLE_USER_HOME`, removed by Stim because Gradle
 has no command), and SwiftPM's cache, those two only while no Stim build lock or
 build slot is live or unresolved and no matching tool process runs, by renaming
-the directory aside on the same volume and deleting the renamed copy; rung 6
-stops idle daemons first. Yarn and pnpm caches are found by path and their clean
-commands run with `COREPACK_ENABLE_NETWORK=0`. Rung 9 never runs at high or in a
-`STIM_HOME`-scoped home. It only reports Android NDKs (`sdkmanager --uninstall
+the directory aside to a `.stim-delete-*` sibling on the same volume and deleting
+it; a later run finishes any leftover. A cache directory that is itself a
+symbolic link is kept, with a remedy to remove its target yourself. rung 6
+stops idle daemons first. Stim finds the npm cache (`npm_config_cache` or
+`NPM_CONFIG_CACHE`, else `~/.npm`), the Yarn cache and the pnpm store by path, so
+no package manager runs on a dry run; only an acting run executes the clean
+commands, with `COREPACK_ENABLE_NETWORK=0`. Rung 9 never runs at high, in a
+`STIM_HOME`-scoped home, or in the in-process ladder a build runs at
+`disk.hardFloorGb`. It only reports Android NDKs (`sdkmanager --uninstall
 "ndk;<version>"`), Android system images no AVD uses and `~/.cache/exact`, with
-the command, and never deletes them. The `stim-daemon` runs the same ladder, rung 9 at most hourly; `stim gc --pressure critical` runs it each time.
+the command, and never deletes them. Only the `stim-daemon` and `stim gc` run rung 9. The daemon runs it at most hourly, while the disk is still short. `stim gc` with no `--pressure` that measures critical measures free disk again after the earlier rungs and runs rung 9 only if the disk is still under the critical level. An explicit `stim gc --pressure critical` is the free-everything run and always runs it.
 
 Cleanup protects active builds, leases, live shares and pinned workspaces. It can remove dependencies from idle linked worktrees: after `idle.dormantDays` (1 day) at every level, and by rung 5 under disk pressure. Run `stim worktree warm` to restore missing copies from the source checkout; the next Stim command in the worktree does it for you, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions. The source checkout's dependencies stay in place.
 
 Run `stim gc --dry-run` to preview cleanup at the measured level, or add `--pressure high` or `--pressure critical` to preview that level. `stim gc` runs the measured level, and `stim gc --pressure high` or `--pressure critical` runs the ladder at that level, regardless of the current pressure. Plain output ends with the path of the full report, `$STIM_HOME/gc/last-report.txt`, and each deleted item is appended to `$STIM_HOME/gc/gc.ndjson`. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
 
-If a run reports `STIM_LOW_DISK`, free disk space and retry. See the installed reference for the full cleanup rules and recovery options.
+If a run reports `STIM_LOW_DISK`, run `stim gc` or free disk space yourself, then retry. See the installed reference for the full cleanup rules and recovery options.
 
 <StimTabs code="stim guide cleanup" />

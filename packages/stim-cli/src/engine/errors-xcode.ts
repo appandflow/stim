@@ -66,7 +66,7 @@ type PodsLocation = { root: string; directory: string } | null;
 
 function remedyFor(message: string, pods: PodsLocation, sdk: string): string | null {
   if (CAS_CORRUPT.test(message)) {
-    return 'The compilation cache holds a damaged object. Run `stim gc --pressure critical` to empty the shared caches, then build again. The next build is a cold one.';
+    return 'The compilation cache holds a damaged object. Run the same command again: Stim empties the shared compilation cache when the compiler reports it corrupt. The next build is a cold one.';
   }
   if (PODS_OUT_OF_SYNC.test(message)) {
     const pod = pods ? podInstallCommand(pods.root, pods.directory) : 'pod install';

@@ -217,7 +217,7 @@ Branch on the code, never on the message.`,
   either from the file's mtime.
   A damaged compilation-cache object stays STIM_BUILD_FAILED when Stim did
   not give the build its shared cache; STIM_COMPILATION_CACHE_CORRUPT lists
-  the messages and the gc remedy.`,
+  the messages and the remedy.`,
     },
     STIM_COMPILATION_CACHE_CORRUPT: {
       summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
@@ -242,9 +242,8 @@ Branch on the code, never on the message.`,
   empties the cache only under that set's exclusive claim, here, in gc and in
   maintenance. When another build holds it or its claim is unresolved, Stim
   leaves the cache alone, because that build may be using it, and the message
-  says so. Once nothing else is building, run
-  \`gc --pressure critical\`, which empties it with the other shared caches, then
-  run the command again.
+  says so. Once nothing else is building, run the same command again: Stim
+  empties the damaged cache itself when the compiler reports it corrupt.
   A build on a build worker gets the same handling on the worker, which
   empties its own cache for that client. With --remote-build <machine> the
   build fails with this code and the worker's message; otherwise it falls
@@ -1085,8 +1084,6 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
 
     stim gc --dry-run                  # what gc would reclaim at the measured level
     stim gc                            # run it: the plan and the ladder, prune dead entries
-    stim gc --pressure critical        # the ladder at critical, empty the caches,
-                                       # remove clean pushed worktrees idle 7 days
 
   Ask before deleting anything outside Stim, such as Xcode DerivedData or
   simulators Stim did not create. Lowering disk.hardFloorGb (0 never

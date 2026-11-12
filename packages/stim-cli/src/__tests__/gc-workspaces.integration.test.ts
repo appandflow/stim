@@ -1737,7 +1737,7 @@ test.each([
   60_000,
 );
 
-test('gc at critical removes only the clean idle linked worktrees', async () => {
+test('gc at critical removes only the clean idle linked worktrees, and only while maintenance.removeIdleWorktrees is on', async () => {
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty']);
   for (const [name, path] of Object.entries(worktrees)) {
     upsertProject(path, { metroPort: null });
@@ -1747,6 +1747,10 @@ test('gc at critical removes only the clean idle linked worktrees', async () => 
   recordWorkspaceUse(repo, new Date(Date.now() - 30 * DAY_MS));
   writeFileSync(join(worktrees.dirty!, 'scratch.txt'), 'wip');
 
+  await gcJson({ pressure: 'critical' });
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES', 'true');
   const { payload } = await gcJson({ pressure: 'critical' });
   expect(payload.actions).toContainEqual(
     expect.objectContaining({ kind: 'remove-worktree', target: worktrees.idle, outcome: 'done' }),
@@ -2323,6 +2327,7 @@ test('worktree remove accepts local-only commits that a merged pull request hold
 }, 60_000);
 
 test('an idle worktree gc at critical keeps because it was used after the plan is not a failure', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES', 'true');
   const { worktrees } = gitRepoWithWorktrees(['reused']);
   const reused = worktrees.reused!;
   upsertProject(reused, { metroPort: null });
@@ -2509,6 +2514,17 @@ test('gc keeps a finished worktree pinned with maintenance.keep', async () => {
   expect(entry).toMatchObject({ willRemove: false, reason: 'pinned', detail: 'pinned by maintenance.keep' });
   expect(existsSync(worktrees.merged ?? '')).toBe(true);
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc at critical keeps finished worktrees while maintenance.removeFinishedWorktrees is false', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'critical' });
+
+  expect(existsSync(worktrees.merged ?? '')).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(true);
 }, 240_000);
 
 test('gc keeps a finished worktree a running agent session works in', async () => {

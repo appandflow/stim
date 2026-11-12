@@ -1,8 +1,8 @@
-import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, renameSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, readdirSync, renameSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { androidHome } from '../../devices/android.ts';
@@ -10,12 +10,12 @@ import { getExecutor, runsRealCommands } from '../../exec.ts';
 import { listBuildLocks } from '../../engine/build-lock.ts';
 import { listBuildSlots } from '../../engine/build-slots.ts';
 import { MACHINE_CLEANUP_TEST_GUARD_ENV } from './machine-cleanup-guard-env.ts';
+import { STAGING as STAGED } from '../../commands/gc/gradle-versions.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { readRunningProcessesAsync } from '../../workspace/running-from.ts';
 
 const SIZE_TIMEOUT_MS = 300_000;
-const LOOKUP_TIMEOUT_MS = 30_000;
 const CLEAN_TIMEOUT_MS = 15 * 60_000;
 
 /** A cache another tool owns, which the last rung empties through that tool's own command. */
@@ -67,19 +67,6 @@ function toolEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   };
 }
 
-async function lookup(argv: readonly string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string | null> {
-  const [file, ...args] = argv;
-  if (!file) return null;
-  const out = await getExecutor().runFileQuietAsync(file, args, {
-    timeoutMs: LOOKUP_TIMEOUT_MS,
-    env: toolEnv(env),
-    cwd: homedir(),
-    signal,
-  });
-  const line = out?.trim().split('\n').at(-1)?.trim();
-  return line && line.startsWith('/') ? line : null;
-}
-
 /** Yarn 1's cache, where Yarn itself would report it; looked up by path so no package manager runs or downloads. */
 function yarnCacheDirs(env: NodeJS.ProcessEnv): string[] {
   if (env.YARN_CACHE_FOLDER) return [env.YARN_CACHE_FOLDER];
@@ -102,6 +89,9 @@ function gradleHome(env: NodeJS.ProcessEnv): string {
   return env.GRADLE_USER_HOME || join(homedir(), '.gradle');
 }
 
+const sharedGradleCache = (name: string): boolean =>
+  name === 'modules-2' || /^transforms-\d+$/.test(name) || /^build-cache-\d+$/.test(name);
+
 /** Gradle's version-independent caches: downloaded dependencies, artifact transforms and the local build cache. */
 function gradleSharedCaches(env: NodeJS.ProcessEnv): string[] {
   const caches = join(gradleHome(env), 'caches');
@@ -111,19 +101,22 @@ function gradleSharedCaches(env: NodeJS.ProcessEnv): string[] {
   } catch {
     return [];
   }
-  return names
-    .filter((name) => name === 'modules-2' || /^transforms-\d+$/.test(name) || /^build-cache-\d+$/.test(name))
-    .map((name) => join(caches, name));
+  return [
+    ...names.filter(sharedGradleCache).map((name) => join(caches, name)),
+    ...names
+      .filter((name) => STAGED.test(name) && sharedGradleCache(name.slice('.stim-delete-'.length, -37)))
+      .map((name) => join(caches, name)),
+  ];
 }
 
 /** The caches of the package managers and build tools installed on this machine, with where each keeps its data. */
-async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<ToolCache[]> {
+function discoverToolCaches(env: NodeJS.ProcessEnv): ToolCache[] {
   const exec = getExecutor();
   const present = (tool: string) => exec.findExecutable(tool, { env }) !== null;
   const found: ToolCache[] = [];
   if (present('npm')) {
-    const dir = await lookup(['npm', 'config', 'get', 'cache'], env, signal);
-    if (dir)
+    const dir = env.npm_config_cache || env.NPM_CONFIG_CACHE || join(homedir(), '.npm');
+    if (existsSync(dir))
       found.push({
         tool: 'npm',
         label: 'npm cache',
@@ -166,11 +159,15 @@ async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal):
     process.platform === 'darwin'
       ? join(homedir(), 'Library', 'Caches', 'org.swift.swiftpm')
       : join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'org.swift.swiftpm');
-  if (existsSync(swiftpm))
+  const swiftpmPaths = [
+    ...(existsSync(swiftpm) ? [swiftpm] : []),
+    ...stagedLeftovers(dirname(swiftpm), [basename(swiftpm)]),
+  ];
+  if (swiftpmPaths.length)
     found.push({
       tool: 'swift',
       label: 'SwiftPM cache',
-      paths: [swiftpm],
+      paths: swiftpmPaths,
       command: null,
       running: /swift-build|swift-package|swift-frontend|xcodebuild|SourceKitService/,
     });
@@ -225,7 +222,7 @@ export function planToolCaches(
 export async function surveyToolCaches(operation?: StimContext): Promise<ToolCachePlan[]> {
   const env = operation?.env ?? process.env;
   const signal = operation?.signal;
-  const caches = await discoverToolCaches(env, signal);
+  const caches = discoverToolCaches(env);
   const sizes = new Map<ToolCache, number | null>();
   for (const cache of caches) sizes.set(cache, await pathsBytes(cache.paths, signal));
   const running = await readRunningProcessesAsync(signal);
@@ -236,16 +233,40 @@ export async function surveyToolCaches(operation?: StimContext): Promise<ToolCac
   );
 }
 
-/** Empties one tool cache through its tool's command, or removes the caches of Gradle and SwiftPM, which have none, measuring before and after. */
 /**
- * Why a machine-wide cleanup must not act from here: a home STIM_HOME scopes, or the test runner with the process
- * executor, which would reach the developer's real tools and caches.
+ * Why a machine-wide cleanup must not act from here: a home STIM_HOME scopes, or the test runner, which acts only on
+ * paths inside its own temporary directory and runs no command through the process executor.
  */
-export function machineCleanupRefusal(env: NodeJS.ProcessEnv): string | null {
+export function machineCleanupRefusal(env: NodeJS.ProcessEnv, paths: readonly string[] = []): string | null {
   if (isScopedHome(env)) return 'STIM_HOME scopes this config, and these caches are machine-wide';
-  if (process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] && runsRealCommands())
-    return 'the test runner never cleans the real machine';
-  return null;
+  const testRoot = process.env[MACHINE_CLEANUP_TEST_GUARD_ENV];
+  if (!testRoot) return null;
+  if (runsRealCommands()) return 'the test runner never cleans the real machine';
+  const outside = paths.find((path) => path !== testRoot && !path.startsWith(`${testRoot}${sep}`));
+  return outside ? `the test runner never deletes ${outside}, outside its temporary directory` : null;
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function stagedName(path: string): string {
+  return join(dirname(path), `.stim-delete-${basename(path)}-${randomUUID()}`);
+}
+
+/** Directories a removal renamed aside and did not finish, under `parent`, of the caches named `names`. */
+function stagedLeftovers(parent: string, names: readonly string[]): string[] {
+  try {
+    return readdirSync(parent)
+      .filter((name) => STAGED.test(name) && names.some((cache) => name.startsWith(`.stim-delete-${cache}-`)))
+      .map((name) => join(parent, name));
+  } catch {
+    return [];
+  }
 }
 
 function stimBuildRunning(): string | null {
@@ -275,8 +296,16 @@ export async function cleanToolCache(
       detail: `stim gc would run ${how}`,
     };
   const signal = operation?.signal;
-  const refusal = machineCleanupRefusal(operation?.env ?? process.env);
+  const refusal = machineCleanupRefusal(operation?.env ?? process.env, cache.paths);
   if (refusal) return { outcome: 'kept', before: plan.bytes, after: plan.bytes, detail: refusal };
+  const linked = cache.command ? undefined : cache.paths.find(isLink);
+  if (linked)
+    return {
+      outcome: 'kept',
+      before: plan.bytes,
+      after: plan.bytes,
+      detail: `${linked} is a link; remove what it points to yourself once no build uses it`,
+    };
   if (!cache.command) {
     const building = stimBuildRunning();
     if (building) return { outcome: 'kept', before: plan.bytes, after: plan.bytes, detail: building };
@@ -294,6 +323,7 @@ export async function cleanToolCache(
       after: plan.bytes,
       detail: again.kept,
     };
+  const asides: string[] = [];
   try {
     if (cache.command) {
       const [file, ...args] = cache.command;
@@ -306,18 +336,20 @@ export async function cleanToolCache(
     } else
       for (const path of cache.paths) {
         if (!existsSync(path)) continue;
-        const aside = join(dirname(path), `.${basename(path)}.stim-delete-${randomBytes(6).toString('hex')}`);
-        renameSync(path, aside);
+        const aside = STAGED.test(basename(path)) ? path : stagedName(path);
+        if (aside !== path) renameSync(path, aside);
+        asides.push(aside);
         await rm(aside, { recursive: true, force: true });
       }
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     signal?.throwIfAborted();
+    const left = await pathsBytes([...cache.paths, ...asides], signal);
     return {
       outcome: 'failed',
       before: plan.bytes,
-      after: await pathsBytes(cache.paths, signal),
-      detail: `${how} failed: ${error instanceof Error ? error.message : String(error)}`,
+      after: left ?? plan.bytes,
+      detail: `${how} failed${asides.length ? `, ${left === null ? 'an unknown size' : formatBytes(left)} left aside in ${asides.join(', ')} for the next run to finish` : ''}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
   const after = await pathsBytes(cache.paths, signal);

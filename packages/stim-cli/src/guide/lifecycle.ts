@@ -2545,12 +2545,15 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     7. worktrees, only while maintenance.removeFinishedWorktrees is true: at
        high clean finished linked worktrees after the gc.worktreeGraceMinutes
        wait; at critical without it, and also clean pushed worktrees no Stim
-       command used for 7 days. The tick uses the pull request lookups the
+       command used for 7 days, only while maintenance.removeIdleWorktrees is
+       true. The tick uses the pull request lookups the
        worktree check cached instead of calling gh; stim gc looks them up again
-    8. critical only: every device recording not being written, and archived
+    8. critical only: every device recording not being written, except those
+       of workspaces pinned with maintenance.keep or in use, and archived
        logs, recordings and agent actions
-    9. last, at critical only and only while the rungs above left the disk
-       short, never in a STIM_HOME-scoped home: caches Stim does not own, each
+    9. last, at critical only, never in a STIM_HOME-scoped home and never in
+       the in-process ladder a build command runs at disk.hardFloorGb: caches
+       Stim does not own, each
        through the tool's own command and only when that tool is installed and
        no process of that tool runs, each listed with its size before and
        after: \`npm cache clean --force\`, \`yarn cache clean\`, \`pnpm store
@@ -2559,13 +2562,19 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        under GRADLE_USER_HOME, which Stim removes itself because Gradle has no
        command) and SwiftPM's cache, those two only while no Stim build lock
        or build slot is live or unresolved and no matching tool process runs,
-       by renaming the directory aside on the same volume and deleting the
-       renamed copy; rung 6 stops the idle daemons first. Yarn and pnpm
-       caches are found by path and the clean commands run with
-       COREPACK_ENABLE_NETWORK=0). Android NDKs, Android system images no
-       AVD uses and ~/.cache/exact are only reported, with the command that
-       removes them, and never deleted. The daemon runs this rung at critical
-       at most hourly; \`stim gc --pressure critical\` runs it each time
+       by renaming the directory aside to a .stim-delete-* sibling on the same
+       volume and deleting it; rung 6 stops the idle daemons first). npm, Yarn
+       and pnpm caches are found by path (npm_config_cache or ~/.npm,
+       YARN_CACHE_FOLDER, PNPM_HOME/store, else the platform default), so no
+       package manager runs on a dry run, and the clean commands run with
+       COREPACK_ENABLE_NETWORK=0. Android NDKs, Android system images no AVD
+       uses and ~/.cache/exact are only reported, with the command that
+       removes them, and never deleted. Only the stim-daemon and \`stim gc\`
+       run this rung. The daemon runs it at most hourly, while the disk is
+       still short. \`stim gc\` with no --pressure that measures critical
+       measures free disk again after the earlier rungs and runs it only if
+       the disk is still under the critical level; an explicit
+       \`stim gc --pressure critical\` always runs it
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of

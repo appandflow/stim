@@ -225,7 +225,7 @@ export async function ensureOwnedAndroidDevice({
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim worktree remove` to clear the assignment so Stim can create an owned AVD.',
+              'Boot it yourself, or pass `--slot <name>` to create an owned AVD beside it. `stim worktree remove` clears the assignment too, but at a linked worktree root it also removes the worktree and its branch.',
             ),
           );
         }
