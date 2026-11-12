@@ -102,6 +102,14 @@ export interface DaemonSnapshot {
   waiting?: DaemonWaiter[];
 }
 
+/** A child whose cleanup the running stimd could not verify, which keeps it up until the child has stopped. */
+export interface UnverifiedCleanup {
+  since: string;
+  message: string;
+  /** How to check the child, and the commands that remove the claims it retained. */
+  remedy: string;
+}
+
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
 export interface DaemonStatus {
   /** The running daemon's mode, else the mode `daemon.mode` resolves to here. */
@@ -118,6 +126,8 @@ export interface DaemonStatus {
   waiting?: DaemonWaiter[];
   /** The last actions a daemon of this home took, oldest first, from its snapshot. */
   recent?: DaemonRecentAction[];
+  /** The children the running daemon stays up for, from its claim. */
+  unverified?: UnverifiedCleanup[];
 }
 
 function isDaemonSnapshot(record: Record<string, unknown> | null): record is Record<string, unknown> & DaemonSnapshot {

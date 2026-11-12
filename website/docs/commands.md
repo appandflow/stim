@@ -132,7 +132,9 @@ what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
 line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
 log with the last pass. It reports a daemon that stopped ticking, a daemon
-claim it cannot resolve, and any [removed setting](./settings.md#stim-daemon)
+that stays up for a child whose cleanup it could not verify, with the commands
+that check the child and remove the claims it holds, a daemon claim it cannot
+resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
@@ -1783,12 +1785,13 @@ Plain `status` prints a `Daemon` line for the
 [`stim-daemon`](./settings.md#stim-daemon): its mode, whether it runs, when it
 last ticked, and the pressure level with its reasons. A `Last daemon action`
 line follows once a daemon of this home has acted, then a line for each run
-waiting for a build slot or a device boot. Each workspace prints a
+waiting for a build slot or a device boot, and one for each child whose cleanup
+the running daemon could not verify, with its remedy. Each workspace prints a
 `stage:` line with where the daemon's idle model has it: `running` with its last
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 

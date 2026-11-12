@@ -5,6 +5,7 @@ import {
   releaseClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
+import type { UnverifiedCleanup } from '@stim-cli/core/state';
 import { reportChildOf, WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
 
 const MAX_CONTAINED_CLEANUPS = 8;
@@ -31,6 +32,8 @@ export interface CleanupWatch {
   errors(): ClaimUnavailableError[];
   /** The keys of the children still watched. */
   keys(): string[];
+  /** Each child still watched: since when, what failed and how a person checks it. */
+  entries(): UnverifiedCleanup[];
 }
 
 /**
@@ -45,6 +48,7 @@ export function createCleanupWatch(log: Log): CleanupWatch {
     error: ClaimUnavailableError;
     settled: () => boolean;
     claims: readonly ClaimHandle[];
+    since: string;
   }[] = [];
   return {
     contain(error: unknown, ending: boolean): boolean {
@@ -58,6 +62,7 @@ export function createCleanupWatch(log: Log): CleanupWatch {
         error,
         settled,
         claims: error instanceof WorkspaceProcessCleanupError ? error.claims : [],
+        since: new Date().toISOString(),
       });
       log(
         'error',
@@ -85,6 +90,12 @@ export function createCleanupWatch(log: Log): CleanupWatch {
     reason: () => (unsettled.length > 0 ? 'a child whose cleanup was not verified may still run' : null),
     errors: () => unsettled.map((entry) => entry.error),
     keys: () => unsettled.flatMap((entry) => childKey(entry.error) ?? []),
+    entries: () =>
+      unsettled.map((entry) => ({
+        since: entry.since,
+        message: entry.error.message,
+        remedy: entry.error.remedy ?? 'Check that the child and its descendants have stopped.',
+      })),
   };
 }
 

@@ -286,6 +286,7 @@
 [*] interface DaemonStatus { | setting?: DaemonMode;
 [*] interface DaemonStatus { | since: string;
 [*] interface DaemonStatus { | unresolved: string;
+[*] interface DaemonStatus { | unverified?: UnverifiedCleanup[];
 [*] interface DaemonStatus { | waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { | } | null;
 [*] interface DaemonWaiter {
@@ -1360,6 +1361,10 @@
 [*] interface TunnelOutcome { | provider?: string;
 [*] interface TunnelOutcome { | reason?: string;
 [*] interface TunnelOutcome { | status: string;
+[*] interface UnverifiedCleanup {
+[*] interface UnverifiedCleanup { | message: string;
+[*] interface UnverifiedCleanup { | remedy: string;
+[*] interface UnverifiedCleanup { | since: string;
 [*] interface WatchmanRoot {
 [*] interface WatchmanRoot { | detail: string | null;
 [*] interface WatchmanRoot { | path: string;

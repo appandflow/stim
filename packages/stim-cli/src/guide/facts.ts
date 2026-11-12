@@ -1987,7 +1987,10 @@ RULES
     actions any daemon of this home took, oldest first, each a ladder action
     with the tick's time { rung, kind, target, workspace?, outcome, bytes,
     detail, restore?, at }; the idle stage at idle.minutes is rung 1 there
-    too. Plain status prints the newest as "Last daemon action" and every
+    too. unverified lists the children whose cleanup the running daemon could
+    not verify and stays up for, { since, message, remedy }, absent when none;
+    plain status prints a line for each and \`stim doctor\` reports each with
+    its remedy. Plain status prints the newest action as "Last daemon action" and every
     workspace's stage line: running with its last activity, idle or dormant
     with the time in it, or stopped.
 

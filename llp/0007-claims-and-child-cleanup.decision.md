@@ -70,6 +70,12 @@ any more. Reason: the checks are functions that cannot be posted between
 threads, and a check rebuilt from the child's pid alone would release a claim
 that another child of the same job may still need (#5510).
 
+While stimd waits, `stim status` (and `daemon.unverified` in its JSON) and
+`stim doctor` list each child with when it started to wait and its remedy,
+which names the commands that remove the claims the child retained. The wait
+has no time limit: no clock proves that a child stopped, and a stimd that ended
+for it would only move the wait to the claims.
+
 This rule was chosen by the coordinator and the lane that implemented #5499,
 not by the maintainer. The maintainer's requirement it serves, from #5499:
 Maintainer decision: "We really need to fix stimd crashing and not being able to restart automatically", 2026-11-11.

@@ -2,8 +2,10 @@ import {
   daemonClaimRoot,
   daemonNdjsonFile,
   daemonSnapshotFile,
+  isJsonObject,
   readDaemonSnapshot,
   type DaemonStatus,
+  type UnverifiedCleanup,
 } from '@stim-cli/core/state';
 import { formatBytes } from '../fs-util.ts';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
@@ -35,6 +37,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const waiting = listWaiting();
   const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
   const mode = runningMode ?? setting;
+  const unverified = unverifiedCleanups(holder?.details.unverified);
   return {
     mode,
     ...(mode === setting ? {} : { setting }),
@@ -44,6 +47,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
     ...(read?.recent?.length ? { recent: read.recent } : {}),
+    ...(unverified.length ? { unverified } : {}),
     ...(unresolved
       ? {
           claim: {
@@ -53,6 +57,27 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
         }
       : {}),
   };
+}
+
+function unverifiedCleanups(value: unknown): UnverifiedCleanup[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
+}
+
+/** One line per child whose cleanup the running daemon could not verify, with how long it has waited for it. */
+export function unverifiedLines(status: DaemonStatus, now: number = Date.now()): string[] {
+  return (status.unverified ?? []).map(
+    (entry) =>
+      `Daemon waits ${formatLongDuration(Math.max(0, now - Date.parse(entry.since)))} for a child whose cleanup was not verified: ${entry.message} ${entry.remedy}`,
+  );
 }
 
 function clock(iso: string): string {
@@ -120,6 +145,13 @@ export function daemonFindings(
       title: 'The stim-daemon claim cannot be resolved',
       detail: `${status.claim.unresolved}. While it stands no daemon decides idle in this Stim home.`,
       fix: `If no stim-daemon process runs, remove it with \`${status.claim.removeCommand}\`.`,
+    });
+  for (const entry of status.unverified ?? [])
+    findings.push({
+      level: 'cost',
+      title: 'The stim-daemon waits for a child whose cleanup was not verified',
+      detail: `Since ${entry.since}: ${entry.message} Until it has stopped, the daemon does not exit when idle or switch engines, and the claims that child holds stay taken.`,
+      fix: entry.remedy,
     });
   if (status.mode === 'off') return findings;
   const tickAt = Date.parse(status.lastTickAt ?? '');

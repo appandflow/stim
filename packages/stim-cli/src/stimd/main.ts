@@ -743,7 +743,7 @@ async function runStimdInner(
     return true;
   }
   startup.signal.throwIfAborted();
-  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
+  let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
   startup.signal.throwIfAborted();
   if (!claim) {
@@ -827,8 +827,19 @@ async function runStimdInner(
   const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
+  const reportUnverified = () => {
+    const unverified = cleanups.entries();
+    if (!claim || JSON.stringify(unverified) === JSON.stringify(claim.details.unverified ?? [])) return;
+    const kept = Object.fromEntries(Object.entries(claim.details).filter(([field]) => field !== 'unverified'));
+    claim = updateClaimDetails(claim, unverified.length ? { ...kept, unverified } : kept) ?? claim;
+  };
+  const contain = (error: unknown): boolean => {
+    if (!cleanups.contain(error, endingNow())) return false;
+    reportUnverified();
+    return true;
+  };
   const lane = createPassesLane(threads, log, (error) => {
-    if (cleanups.contain(error, endingNow())) return true;
+    if (contain(error)) return true;
     failBackground(error, 'background cleanup could not be verified');
     return false;
   });
@@ -1473,7 +1484,7 @@ async function runStimdInner(
     throw lifetime.listenFailed(error);
   }
   openMetroChildren((error) => {
-    if (cleanups.contain(error, endingNow())) return true;
+    if (contain(error)) return true;
     failBackground(error, 'Metro cleanup could not be verified');
     log('error', 'metro_cleanup_unverified', error instanceof Error ? error.message : String(error));
     return false;
@@ -1530,6 +1541,7 @@ async function runStimdInner(
     if (!maintenanceAllowed()) break;
     tickRequested = false;
     cleanups.settle();
+    reportUnverified();
     threads.settle();
     const mode = effectiveMode();
     const retentionError = refreshRetention(retention);
@@ -1579,7 +1591,7 @@ async function runStimdInner(
           .then(() => undefined)
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
-            if (isUnverifiedCleanup(error) && !cleanups.contain(error, endingNow()))
+            if (isUnverifiedCleanup(error) && !contain(error))
               failBackground(error, 'dependency cleanup could not be verified');
             if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
           })
@@ -1662,7 +1674,7 @@ async function runStimdInner(
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
       for (const socket of replying) socket.destroy();
-      if (cleanups.contain(error, endingNow())) {
+      if (contain(error)) {
         interval = tickMs;
         continue;
       }

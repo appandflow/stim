@@ -72,6 +72,7 @@ import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { daemonFindings, daemonStatus } from '../daemon/status.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -929,12 +930,24 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         await vi.waitFor(() => expect(settle).toHaveBeenCalled(), { timeout: 10_000, interval: 20 });
         expect(daemonEvents()).not.toContain('daemon_exited');
         expect(daemonEvents()).not.toContain('daemon_cleanup_settled');
+        const waiting = daemonStatus();
+        expect(waiting.unverified).toEqual([
+          {
+            since: expect.any(String),
+            message: 'Report child 4242 did not close within the cleanup budget.',
+            remedy: 'Inspect fixture child.',
+          },
+        ]);
+        expect(daemonFindings(waiting, { serving: () => [] })).toContainEqual(
+          expect.objectContaining({ fix: 'Inspect fixture child.' }),
+        );
         stopped = true;
         void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
         await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_settled'), {
           timeout: 10_000,
           interval: 20,
         });
+        expect(daemonStatus().unverified).toBeUndefined();
         stopInProcess(before);
         await running;
         expect(readClaimSet(stimdClaimRoot())).toMatchObject({ live: [], unresolved: [] });
