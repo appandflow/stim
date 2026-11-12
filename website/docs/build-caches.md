@@ -536,7 +536,7 @@ code={`stim gc --dry-run
 stim gc`}
 />
 
-Automatic maintenance also bounds the Cargo `target/` of an Exact app that is in use. Above
+Automatic maintenance also bounds a Cargo `target/` that is in use: an Exact app's, or one directly in a checkout that carries Cargo's `CACHEDIR.TAG` and that git ignores whole, in a registered workspace or a discovered checkout (at most 6 discovered ones are measured per scan, the most recently modified first). Only directories with Cargo's profile shape (they hold `.fingerprint/`) are profiles; other directories in `target/` and a nested `target/` inside it are never removed, although they count toward its size. Above
 `maintenance.cargoTargetMaxGb` (25 GiB by default, 0 for no cap) it removes the profiles and target triples that no build wrote in the last day, judged by directory times
 and Exact's own `.exact-sweep.json` ledger. If it is still over the cap it removes the `incremental/` directory of
 each remaining profile, largest first, until it is under. A profile a Cargo build holds open, and any path a running

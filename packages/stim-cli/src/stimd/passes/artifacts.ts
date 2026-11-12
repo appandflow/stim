@@ -121,7 +121,8 @@ export function artifactWorktreesFor(
   return operation ? artifactWorktreesAsync(operation.signal, operation) : artifactWorktrees();
 }
 
-export async function artifactWorktreesAsync(
+/** The worktrees `artifactWorktreesAsync` lists, before it reads which agent sessions work in the linked ones. */
+export async function artifactCheckoutsAsync(
   signal: AbortSignal,
   operation?: StimContext,
 ): Promise<ArtifactWorktree[]> {
@@ -138,6 +139,14 @@ export async function artifactWorktreesAsync(
     const entry = artifactWorktree(root, entries, source);
     if (entry) found.set(entry.path, entry);
   }
+  return [...found.values()];
+}
+
+export async function artifactWorktreesAsync(
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<ArtifactWorktree[]> {
+  const found = new Map((await artifactCheckoutsAsync(signal, operation)).map((entry) => [entry.path, entry]));
   const linked = [...found.values()].filter((entry) => entry.linked);
   if (linked.length) {
     const agents = await agentSessionUse(

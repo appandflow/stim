@@ -13,6 +13,7 @@ import {
   type MaintenancePlanPart,
   type MaintenanceState,
   type MaintenanceRecord,
+  type MaintenanceSize,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
 import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
@@ -28,6 +29,7 @@ import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings
 import { due } from './due.ts';
 import { skipKey } from './plan.ts';
 import { capChildLog } from './attempt.ts';
+import { measureCargoTargets } from './cargo-target.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
@@ -315,6 +317,14 @@ function throwUnverifiedCleanup(error: unknown): void {
   if (error instanceof Error && 'reportCleanup' in error) throw error;
 }
 
+async function measureAllSizes(
+  now: number,
+  failure: Parameters<typeof measureSizes>[1],
+  operation: StimContext | undefined,
+): Promise<MaintenanceSize[]> {
+  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation))];
+}
+
 /**
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
@@ -447,7 +457,7 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureSizes(state.lastAt[check]!, measureFailed, tick?.operation)),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation)),
             ...(deviceSweepIsScoped()
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),

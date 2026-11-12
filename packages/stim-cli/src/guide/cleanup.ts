@@ -122,9 +122,14 @@ In on mode a pass runs, cheapest to rebuild first:
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
-     app, in use or not, over maintenance.cargoTargetMaxGb (default 25, 0 no
-     cap; one du walk per target/; one that times out records no size, only its
-     stale profiles are trimmed, and it is reported as needing a person): first the profiles and target triples no build wrote in the last
+     app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
+     a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
+     (default 25, 0 no cap; one du walk per target/, at most 6 discovered
+     ones per size scan, the most recently modified first; one that times out
+     records no size, only its stale profiles are trimmed, and it is reported
+     as needing a person). Only directories with Cargo's profile shape
+     (.fingerprint) are profiles; other directories in target/, and a nested
+     target/ inside it, are never removed, though they count in its size: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
      remaining profile, largest first, until under the cap. Each is renamed
@@ -1619,7 +1624,7 @@ WORKSPACE BUILD OUTPUTS
   android/.gradle, .build, the CMake directories android/.cxx and
   android/<module>/.cxx, a .dd directory laid out as Xcode DerivedData
   (a Build/ directory beside ModuleCache.noindex or Logs/), and an Exact
-  app's Cargo target/ (beside its exact.mjs; kept while
+  app's Cargo target/ (beside its exact.mjs; or any target/ directly in the checkout with Cargo's CACHEDIR.TAG; kept while
   another process, such as a shell or an exact.mjs command, runs from or
   works in the app, and on Windows, where processes cannot be listed) count
   with them

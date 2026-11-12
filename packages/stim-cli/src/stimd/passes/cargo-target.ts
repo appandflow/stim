@@ -1,9 +1,14 @@
 import { existsSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
+import { loadConfig, type MaintenanceAction, type MaintenanceSize } from '@stim-cli/core/state';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { exactTargetDirAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { listedRoots } from '../../commands/gc/worktrees.ts';
+import { discoverCheckouts } from '../../workspace/discovery.ts';
+import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { cargoProfileDirs, staleCargoTargetPaths, trimCargoTarget } from '../../workspace/cargo-target.ts';
 import type { ActionOutcome } from './act.ts';
 import type { MaintenancePlan } from './plan.ts';
@@ -12,32 +17,102 @@ import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings
 const GIB = 1024 ** 3;
 const CARGO_TARGET_SIZE = 'Cargo target';
 const SIZE_TIMEOUT_MS = 120_000;
+/** The most `target/` directories of discovered checkouts one size scan walks; registered ones are always walked. */
+const MAX_DISCOVERED_TARGETS = 6;
+
+export interface CargoTargetCandidate {
+  /** The checkout or app that holds the `target/`: the workspace its actions are filed under. */
+  root: string;
+  dir: string;
+  /** It lies in a checkout found by discovery, not in a registered or recorded workspace. */
+  discovered: boolean;
+  /** The `target/` directory's own modification time, in ms. */
+  mtimeMs: number;
+}
 
 /**
- * The `target/` directories the last size scan could not measure in time, by app root. They are no size entry: nothing
- * is known of their size, so the plan only trims their stale profiles and reports them as needing a person.
+ * The `target/` directories one size scan walks: each directory once (a registered one wins over a discovered one),
+ * every registered one, and of the discovered ones the `limit` most recently modified; the rest are returned as
+ * `unlisted` so the plan can say so.
  */
-let unmeasured = new Map<string, string>();
+export function selectCargoTargets(
+  candidates: readonly CargoTargetCandidate[],
+  limit: number = MAX_DISCOVERED_TARGETS,
+): { measured: CargoTargetCandidate[]; unlisted: CargoTargetCandidate[] } {
+  const byDir = new Map<string, CargoTargetCandidate>();
+  for (const candidate of candidates) {
+    const seen = byDir.get(candidate.dir);
+    if (!seen || (seen.discovered && !candidate.discovered)) byDir.set(candidate.dir, candidate);
+  }
+  const all = [...byDir.values()];
+  const discovered = all.filter((entry) => entry.discovered).toSorted((a, b) => b.mtimeMs - a.mtimeMs);
+  return {
+    measured: [...all.filter((entry) => !entry.discovered), ...discovered.slice(0, limit)],
+    unlisted: discovered.slice(limit),
+  };
+}
+
+interface ScanState {
+  /** The `target/` directories the last size scan could not measure in time, with their workspace: no size is known. */
+  unmeasured: Map<string, string>;
+  /** The directories the cap must not touch, with their workspace and why. */
+  refused: Map<string, { workspace: string; reason: string }>;
+  /** The discovered directories left out of the last scan by `MAX_DISCOVERED_TARGETS`. */
+  unlisted: string[];
+}
+
+/**
+ * What the last size scan found besides sizes. A `target/` it could not measure is no size entry: nothing is known of
+ * its size, so the plan only trims its stale profiles and reports it as needing a person.
+ */
+let scan: ScanState = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
 
 const kept = (detail: string): ActionOutcome => ({ status: 'kept', bytes: 0, detail });
 
-/** One walk of each Exact app's `target/`; none when the cap is 0. A walk that times out leaves no size and is planned from `unmeasured`. */
-export async function measureCargoTargets(
-  roots: readonly string[],
-  now: number,
+async function cargoTargetCandidates(
+  registered: readonly string[],
   operation?: StimContext,
-): Promise<MaintenanceSize[]> {
+): Promise<CargoTargetCandidate[]> {
+  const signal = operation?.signal ?? new AbortController().signal;
+  const found: CargoTargetCandidate[] = [];
+  const add = async (base: string, discovered: boolean) => {
+    const root = canonicalPath(base);
+    for (const path of await cargoTargetDirsAsync(root)) {
+      try {
+        found.push({ root, dir: path, discovered, mtimeMs: (await lstat(path)).mtimeMs });
+      } catch {}
+    }
+  };
+  for (const root of registered) await add(root, false);
+  const discovered = new Set((await discoverCheckouts(loadConfig(), listedRoots(), operation)).map(({ path }) => path));
+  for (const checkout of await artifactCheckoutsAsync(signal, operation))
+    for (const base of appRoots(checkout, 'build')) await add(base, discovered.has(checkout.path));
+  return found;
+}
+
+/**
+ * One walk of each Cargo `target/` Stim recognises (an Exact app's, or a root `target/` carrying the standard
+ * `CACHEDIR.TAG`) in a registered workspace or an in-scope discovered checkout, and only of directories that exist and
+ * that git ignores whole; none when the cap is 0. A walk that times out leaves no size and is planned from the scan state.
+ */
+export async function measureCargoTargets(now: number, operation?: StimContext): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
-  unmeasured = new Map();
+  scan = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
   if (resolveMaintenanceSettings().cargoTargetMaxGb === 0) return sizes;
-  for (const root of roots) {
-    const dir = await exactTargetDirAsync(root);
-    if (!dir) continue;
+  const registered = Object.keys(loadConfig()?.projects ?? {});
+  const { measured, unlisted } = selectCargoTargets(await cargoTargetCandidates(registered, operation));
+  scan.unlisted = unlisted.map(({ dir }) => dir);
+  for (const { root, dir } of measured) {
+    const problem = await regenerableDirProblem(root, dir, operation?.signal, { processes: false });
+    if (problem) {
+      scan.refused.set(dir, { workspace: root, reason: problem });
+      continue;
+    }
     const bytes = await measuredDirectorySizeAsync(dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
       ...(operation ? { signal: operation.signal, operation } : {}),
     });
-    if (bytes === null) unmeasured.set(root, dir);
+    if (bytes === null) scan.unmeasured.set(dir, root);
     else sizes.push({ name: CARGO_TARGET_SIZE, category: 'other', dir, bytes, measuredAt: now, workspace: root });
   }
   return sizes;
@@ -50,7 +125,7 @@ async function bytesOf(paths: readonly string[]): Promise<number> {
 }
 
 /**
- * One trim per Exact app whose `target/` is over `maintenance.cargoTargetMaxGb`: the bytes planned are the overage or
+ * One trim per Cargo `target/` that is over `maintenance.cargoTargetMaxGb`: the bytes planned are the overage or
  * what the stale profiles and, past them, the `incremental` directories can free, whichever is less.
  */
 export async function planCargoTargets({
@@ -73,8 +148,13 @@ export async function planCargoTargets({
         ? [{ dir: size.dir, workspace: size.workspace, bytes: size.bytes }]
         : [],
     ),
-    ...[...unmeasured].map(([workspace, dir]) => ({ dir, workspace, bytes: null })),
+    ...[...scan.unmeasured].map(([dir, workspace]) => ({ dir, workspace, bytes: null })),
   ];
+  for (const [dir, { workspace, reason }] of scan.refused) plan.skips.push({ target: dir, reason, workspace });
+  if (scan.unlisted.length)
+    plan.blocked.push(
+      `${scan.unlisted.length} Cargo target/ of discovered checkouts were not measured this scan (at most ${MAX_DISCOVERED_TARGETS} are, the most recently modified first): ${scan.unlisted.join(', ')}`,
+    );
   for (const { dir, workspace, bytes } of targets) {
     const over =
       bytes === null
@@ -124,7 +204,7 @@ export async function trimCargoTargetAction(
   operation?: StimContext,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
-  if (!root || !isBuildDirPath(action.target)) return kept('it is no longer an Exact app target/');
+  if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const result = await trimCargoTarget(action.target, {
