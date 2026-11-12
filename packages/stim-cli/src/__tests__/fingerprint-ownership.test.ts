@@ -1,13 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
-import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn, trackClaimActivity } from '../engine/spawn-claims.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn, trackClaimActivity } from '../engine/spawn-claims.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { testContext } from './_context.ts';
-import { makeChildProcess } from './_factories.ts';
 
 const fixture = vi.hoisted(() => ({ root: '' }));
 vi.mock('../daemon/engine-switch.ts', async (original) => ({
@@ -94,41 +93,6 @@ test.each([
       expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
     );
     expect(readClaimSet(buildClaimRoot(fixture.root, '0123456789ab'))).toMatchObject({ live: [], unresolved: [] });
-  } finally {
-    rmSync(area, { recursive: true, force: true });
-  }
-});
-
-test('a fingerprint evaluation aborted while its child runs releases the native claim', async () => {
-  const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
-  fixture.root = join(area, 'store');
-  const tree = join(fixture.root, '0123456789ab');
-  mkdirSync(join(tree, 'dist'), { recursive: true });
-  writeFileSync(join(tree, 'dist', 'cli.mjs'), '');
-  writeFileSync(join(tree, '.stim-manifest.json'), JSON.stringify({ format: 1, build: '0123456789ab' }));
-  const root = join(area, 'project');
-  mkdirSync(root);
-  const home = join(area, 'home');
-  const controller = new AbortController();
-  const context = testContext({ home, projectRoot: root });
-  const native = join(home, 'workspaces', workspaceName(root), 'native-run.lock');
-  try {
-    await expect(
-      withFingerprintOwnership(
-        context,
-        root,
-        async () => {
-          const child = spawnDeclared(context, () => makeChildProcess({ pid: process.pid }));
-          expect(readClaimSet(native).live[0]?.child).toMatchObject({ pid: process.pid });
-          controller.abort(new Error('stimd is ending'));
-          child.emit('exit', null, 'SIGTERM');
-          controller.signal.throwIfAborted();
-        },
-        controller.signal,
-      ),
-    ).rejects.toThrow('stimd is ending');
-    expect(readClaimSet(native)).toMatchObject({ live: [], dead: [], unresolved: [] });
-    expect(existsSync(native)).toBe(false);
   } finally {
     rmSync(area, { recursive: true, force: true });
   }

@@ -78,7 +78,7 @@ async function withWorkspaceOwnership<T>(
   const nativeRoot = workspaceProcessLockPath(workspace, NATIVE_RUN_LOCK, true);
   const run = async (): Promise<T> => {
     signal.throwIfAborted();
-    const fence = fenceDeclaredSpawns(context, { lazy: true });
+    const fence = fenceDeclaredSpawns(context);
     let failure: unknown;
     try {
       return await work(fence.claims);
