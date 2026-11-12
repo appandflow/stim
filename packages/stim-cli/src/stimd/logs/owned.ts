@@ -59,25 +59,18 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
   const streams = new Map<string, Stream>();
   const ended = new Map<string, string>();
   const retries = new Map<string, NodeJS.Timeout>();
-  const failures = new Map<string, string>();
   const draining = new Set<string>();
   const drainEpoch = new Map<string, number>();
   const running = () => streams.size > 0 || retries.size > 0;
   let closed = false;
   const keep = (key: string, stream: Stream, retry?: () => boolean) => {
     streams.set(key, stream);
-    // @ref LLP 0019#owned-web-streams-and-the-worker -- a failed writer is reported once, then dropped
-    failures.delete(key);
     changed(true);
     void stream.ended.then(() => {
       if (streams.get(key) !== stream) return undefined;
-      const failure = stream.failure?.();
+      if (stream.failure?.()) return undefined;
       streams.delete(key);
-      if (failure) {
-        log('error', 'web_observer_failed', `${key.slice('web:'.length)}: ${failure}`);
-        failures.set(key, failure);
-        ended.set(key, stream.token);
-      } else if (!closed && !retry?.()) ended.set(key, stream.token);
+      if (!closed && !retry?.()) ended.set(key, stream.token);
       changed(running());
       return undefined;
     });
@@ -182,11 +175,6 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
       if (closed) return 'stimd is stopping';
       const webKey = `web:${root}`;
       if (draining.has(webKey)) return 'the browser output is already draining';
-      const failed = failures.get(webKey);
-      if (failed) {
-        failures.delete(webKey);
-        return failed;
-      }
       draining.add(webKey);
       drainEpoch.set(webKey, (drainEpoch.get(webKey) ?? 0) + 1);
       try {
@@ -202,13 +190,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
           if (webToken && webToken !== webStream.token)
             return 'the browser record changed before its output was drained';
           const result = await closeStream(webStream);
-          if (result) {
-            failures.delete(webKey);
-            if (streams.get(webKey) === webStream) streams.delete(webKey);
-            ended.set(webKey, webStream.token);
-            changed(running());
-            return result;
-          }
+          if (result) return result;
           const latest = readWebRecord(root)?.chromeProcess?.processToken;
           if (latest && latest !== webToken) return 'the browser record changed while its output was draining';
           clearTimeout(retries.get(webKey));

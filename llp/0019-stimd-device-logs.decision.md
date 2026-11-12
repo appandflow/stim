@@ -108,18 +108,15 @@ overlap the first writer's last buffered writes.
 The remedy for a state that cannot be verified is to stop this stimd: it is
 safe, and the next command starts a new one.
 
-A web stream whose writer failed is reported once and dropped. stimd logs
-`web_observer_failed`; the next drain of that workspace returns the failure once
-(the output was lost, and removal can then proceed), and a new Chrome launch is
-no longer refused. The stream is not re-attached for the same Chrome until
-something asks for it. This replaces the earlier rule that a failed writer kept
-its observer until stimd restarted (#5386).
+A web stream whose writer failed keeps its observer until stimd restarts (#5386):
+drains refuse again on retry, a timed-out drain keeps the stream until its
+transport close is verified, and `running()` holds idle exit. This is audit item
+C4. It is not changed here: `web.integration.test.ts` states those contracts, and
+relaxing them (report once, then drop) needs the maintainer's decision.
 
 ## Provenance
 
-Maintainer decision: "Bring back helper for both and fix 3 to 6 in stimd", 2026-11-12 ([#5572](https://github.com/appandflow/stim/issues/5572#issuecomment-6834812204)). Items 3, 5 and 6 of the regression audit are this decision. How they are fixed (the claim proof, the owned and booted check, `warn` and the record's shape, backfill from the last written line, per-root unverified state, restart once per stream) was chosen by the coordinating session and the implementing lane. Dropping a failed web writer after one report
-is audit item C4, not part of the maintainer's "3 to 6"; it was chosen by the
-coordinating session and the lane, and it needs the maintainer's explicit OK.
+Maintainer decision: "Bring back helper for both and fix 3 to 6 in stimd", 2026-11-12 ([#5572](https://github.com/appandflow/stim/issues/5572#issuecomment-6834812204)). Items 3, 5 and 6 of the regression audit are this decision. How they are fixed (the claim proof, the owned and booted check, `warn` and the record's shape, backfill from the last written line, per-root unverified state, restart once per stream) was chosen by the coordinating session and the implementing lane. A failed web writer (audit item C4) is not part of the maintainer's "3 to 6" and is left as #5386 decided.
 
 Related: #5572, #5462, #5465, #5386.
 
@@ -128,4 +125,3 @@ Related: #5572, #5462, #5465, #5386.
 - `packages/stim-cli/src/stimd/logs/streams.ts`: `resumeIn`, the worker failure recovery, `ownedDrain`.
 - `packages/stim-cli/src/stimd/logs/claim.ts`: `streamOwnerGone`.
 - `packages/stim-cli/src/stimd/logs/interruption.ts`: the record, the last-written scan, the device check.
-- `packages/stim-cli/src/stimd/logs/owned.ts`: report-once for a failed web writer.
