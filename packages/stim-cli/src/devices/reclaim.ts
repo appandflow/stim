@@ -19,6 +19,7 @@ import {
   stopDeviceLogStream,
   stopMetroTree,
   stopTunnelThroughStimd,
+  workspaceManagedTunnel,
   type TunnelStop,
 } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
@@ -39,7 +40,6 @@ import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import {
   MODE_COMMAND,
   clearRemoteSession,
-  readMetroTunnel,
   readRemoteSessionId,
   type ManagedTunnelRecord,
 } from '../stimd/metro/state.ts';
@@ -210,7 +210,11 @@ async function defaultStopSession(root: string, sessionId: string, operation?: S
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-type StopMetroTunnelFn = (root: string, record: ManagedTunnelRecord, operation?: StimContext) => Promise<TunnelStop>;
+type StopMetroTunnelFn = (
+  root: string,
+  record: ManagedTunnelRecord | null,
+  operation?: StimContext,
+) => Promise<TunnelStop>;
 
 const defaultStopMetroTunnel: StopMetroTunnelFn = (root, record, operation) =>
   stopTunnelThroughStimd(root, record, operation?.signal);
@@ -222,8 +226,9 @@ async function reclaimMetroTunnel(
     operation,
   }: { stopMetroTunnel?: StopMetroTunnelFn; operation?: StimContext } = {},
 ): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
-  const record = readMetroTunnel(root);
-  if (record?.kind !== 'managed') return { stopped: null, failed: null };
+  const held = workspaceManagedTunnel(root);
+  if (!held) return { stopped: null, failed: null };
+  const { record, provider } = held;
   let result: TunnelStop;
   try {
     result = await stopMetroTunnel(root, record, operation);
@@ -237,14 +242,14 @@ async function reclaimMetroTunnel(
       stopped: null,
       failed: {
         platform: 'ios',
-        name: `${record.provider} tunnel (pid ${record.pid})`,
+        name: record ? `${provider} tunnel (pid ${record.pid})` : `${provider} tunnel`,
         reason:
           `${result.reason || 'stop failed'} The process identity could not be verified or the stop could not be confirmed. ` +
           'The ownership record is kept. Inspect the process and retry `stim worktree remove`.',
       },
     };
   }
-  return { stopped: record.provider, failed: null };
+  return { stopped: provider, failed: null };
 }
 
 interface SkippedDevice {

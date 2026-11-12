@@ -26,7 +26,7 @@
       "mechanism": "a Metro claim records the injected bundle digest; another digest is foreign until restart"
     },
     "C7": {
-      "loc": 70,
+      "loc": 60,
       "end": "permanent",
       "mechanism": "Stim Desktop's API integer in hello, each way"
     },
@@ -89,6 +89,11 @@
       "loc": 6,
       "end": "2.1.0",
       "mechanism": "a home with any registry record and no tailnet marker writes the marker at start, so it loads the Tailscale transport"
+    },
+    "C29": {
+      "loc": 60,
+      "end": "2.1.0",
+      "mechanism": "stimd adopts or stops, by its verified process identity, a managed tunnel an earlier CLI recorded without a claim"
     }
   },
   "words": {

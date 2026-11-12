@@ -137,6 +137,16 @@ function ask(op: string, params: Record<string, unknown>, opToken?: string): Pro
   });
 }
 
+function cliRun(cwd: string, args: string[]): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.stderr.on('data', (chunk) => (out += chunk));
+    child.once('exit', (code) => resolve({ code, out }));
+  });
+}
+
 function alive(pid: unknown): boolean {
   try {
     process.kill(Number(pid), 0);
@@ -883,10 +893,12 @@ require('node:http')
       pid: first.pid,
       processToken: first.processToken,
     });
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://other' } }));
     await expect(ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false })).resolves.toMatchObject({
       reused: true,
       pid: first.pid,
     });
+    expect(stateOf().metroTunnel).toMatchObject({ kind: 'managed', pid: first.pid });
     await expect(
       ask('tunnel.ensure', { root, mode: 'auto', port: port + 1, requireReachable: false }),
     ).resolves.toMatchObject({ op: 'error', code: 'STIM_REMOTE_START_REQUIRED' });
@@ -898,20 +910,12 @@ require('node:http')
     expect(stateOf().metroTunnel).toBeUndefined();
   }, 30_000);
 
-  test('stim start --remote runs the tunnel in stimd, Metro serves its origin, and stim stop ends both', async () => {
+  test('stim start --remote runs the tunnel in stimd and stim stop ends it and releases its claim', async () => {
     const root = bareProject();
     const port = await freePort();
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'cloudflared' } } });
-    const cliRun = (args: string[]) =>
-      new Promise<{ code: number | null; out: string }>((resolve) => {
-        const child = spawn(process.execPath, [cli, ...args], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
-        let out = '';
-        child.stdout.on('data', (chunk) => (out += chunk));
-        child.stderr.on('data', (chunk) => (out += chunk));
-        child.once('exit', (code) => resolve({ code, out }));
-      });
     try {
-      const started = await cliRun(['start', '--remote', '--json', '--wait', '40']);
+      const started = await cliRun(root, ['start', '--remote', '--json', '--wait', '40']);
       expect(started.code).toBe(0);
       const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel;
       expect(recorded).toMatchObject({ kind: 'managed', provider: 'cloudflared', port });
@@ -919,7 +923,7 @@ require('node:http')
       expect(claim?.child?.pid).toBe(recorded.pid);
       expect(alive(recorded.pid)).toBe(true);
 
-      const stopped = await cliRun(['stop']);
+      const stopped = await cliRun(root, ['stop']);
       expect(stopped.code).toBe(0);
       expect(alive(recorded.pid)).toBe(false);
       expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
@@ -932,6 +936,84 @@ require('node:http')
       }
     }
   }, 90_000);
+
+  test('a stimd that ends during the tunnel URL wait leaves a tunnel that stim stop ends and start --remote can replace', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'cloudflared' } } });
+    write(
+      join(dir, 'bin', 'cloudflared'),
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done\nsleep 4\n' +
+        'echo "https://slow.trycloudflare.com" >> "$log"\nexec sleep 600\n',
+      0o755,
+    );
+    const claimRoot = join(workspaceDir(root), 'tunnel.claim');
+    const daemon = await startStimd();
+    const crashed = stimd ? once(stimd, 'exit') : Promise.resolve();
+    const pending = ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false }).catch(
+      () => null,
+    );
+    await vi.waitFor(() => expect(readClaimSet(claimRoot).live[0]?.child).toBeTruthy(), { timeout: 10_000 });
+    const held = readClaimSet(claimRoot).live[0];
+    expect(held?.details).toMatchObject({ port, provider: 'cloudflared' });
+    const providerPid = held?.child?.pid;
+    process.kill(daemon, 'SIGKILL');
+    await crashed;
+    void pending;
+    stimd = null;
+    expect(alive(providerPid)).toBe(true);
+    expect(existsSync(workspaceStateFile(root)) && readFileSync(workspaceStateFile(root), 'utf8')).not.toContain(
+      'metroTunnel',
+    );
+
+    await startStimd();
+    const stopped = await cliRun(root, ['stop']);
+    expect(stopped.code).toBe(0);
+    expect(alive(providerPid)).toBe(false);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+
+    const restarted = await cliRun(root, ['start', '--remote', '--json', '--wait', '40']);
+    expect(restarted.code).toBe(0);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel).toMatchObject({
+      kind: 'managed',
+      url: 'https://slow.trycloudflare.com',
+    });
+    expect((await cliRun(root, ['stop'])).code).toBe(0);
+  }, 90_000);
+
+  test("starting Expo's own tunnel first stops the workspace's managed tunnel", async () => {
+    const root = join(dir, 'expo-managed');
+    write(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^50.0.0' } }));
+    write(join(root, 'app.json'), JSON.stringify({ name: 'app', platforms: ['ios', 'android'] }));
+    write(
+      join(root, 'node_modules', 'expo', 'package.json'),
+      JSON.stringify({ name: 'expo', version: '50.0.0', bin: { expo: 'bin/cli' } }),
+    );
+    write(
+      join(root, 'node_modules', 'expo', 'bin', 'cli'),
+      `#!/usr/bin/env node
+const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
+require('node:http')
+  .createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''))
+  .listen(port, () => console.log('Waiting on exp://fixture-tunnel.exp.direct'));
+`,
+      0o755,
+    );
+    const workspace = realpathSync(root);
+    const port = await freePort();
+    await startStimd();
+    const managed = await ask('tunnel.ensure', { root: workspace, mode: 'cloudflared', port, requireReachable: false });
+    expect(managed).toMatchObject({ op: 'tunnel' });
+    await expect(ask('metro.ensure', { root: workspace, port, tunnel: true })).resolves.toMatchObject({ op: 'metro' });
+    expect(alive(managed.pid)).toBe(false);
+    expect(readClaimSet(join(workspaceDir(workspace), 'tunnel.claim')).live).toEqual([]);
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')).metroTunnel).toEqual({
+        kind: 'expo',
+        url: 'https://fixture-tunnel.exp.direct',
+      }),
+    );
+  }, 30_000);
 
   test('a named provider that fails is refused with its reason and no other provider runs', async () => {
     const root = bareProject();

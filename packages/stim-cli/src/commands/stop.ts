@@ -61,6 +61,7 @@ import {
   MODE_COMMAND,
   clearRemoteSession,
   readMetroTunnel,
+  type ManagedTunnelRecord,
   readRemoteSession,
   clearWorkspaceLaunches,
   clearWorkspaceSupervisor,
@@ -83,6 +84,7 @@ import {
   stopDeviceLogStream,
   stopMetroTree,
   stopTunnelThroughStimd,
+  workspaceManagedTunnel,
   type MetroTreeStop,
   type TunnelStop,
 } from '../daemon/client.ts';
@@ -606,11 +608,7 @@ async function stopWorkspace({
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
-  stopMetroTunnel?: (
-    root: string,
-    record: { pid: number; processToken: string | null },
-    signal?: AbortSignal,
-  ) => Promise<TunnelStop>;
+  stopMetroTunnel?: (root: string, record: ManagedTunnelRecord | null, signal?: AbortSignal) => Promise<TunnelStop>;
   releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
   teardownRemoteSession?: (
     root: string,
@@ -904,28 +902,22 @@ async function stopWorkspace({
 
   const tunnel = metroTunnel === undefined ? readMetroTunnel(root) : metroTunnel;
   let tunnelHolding: string | null = null;
-  if (tunnel?.kind === 'managed') {
-    const result = await stopMetroTunnel(root, tunnel, operation?.signal);
-    const reason = result.status === 'failed' ? result.reason : undefined;
+  const heldTunnel = heldManagedTunnel(root, tunnel);
+  if (heldTunnel) {
+    const result = await stopMetroTunnel(root, heldTunnel.record, operation?.signal);
+    const reason = tunnelStopReason(result);
     outcomes.metroTunnel = {
       status: result.status,
-      provider: tunnel.provider,
+      provider: heldTunnel.provider,
       reason,
     };
     if (result.status === 'failed') {
       ok = false;
-      tunnelHolding = reason ?? `could not stop the ${tunnel.provider} tunnel`;
+      tunnelHolding = reason ?? `could not stop the ${heldTunnel.provider} tunnel`;
       if (!stillHolding) stillHolding = tunnelHolding;
       report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
-      report(
-        chalk.dim(
-          phaseLine(
-            'lan',
-            result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`,
-          ),
-        ),
-      );
+      report(chalk.dim(phaseLine('lan', tunnelStoppedLine(result, heldTunnel.provider))));
     }
   } else if (tunnel?.kind === 'expo') {
     outcomes.metroTunnel = { status: 'not-managed' };
@@ -955,6 +947,18 @@ async function stopWorkspace({
   }
 
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
+}
+
+function heldManagedTunnel(root: string, tunnel: ReturnType<typeof readMetroTunnel> | undefined) {
+  return tunnel?.kind === 'managed' ? { provider: tunnel.provider, record: tunnel } : workspaceManagedTunnel(root);
+}
+
+function tunnelStopReason(result: TunnelStop): string | undefined {
+  return result.status === 'failed' ? result.reason : undefined;
+}
+
+function tunnelStoppedLine(result: TunnelStop, provider: string): string {
+  return result.status === 'missing' ? 'tunnel already gone' : `stopped the ${provider} tunnel`;
 }
 
 async function reapCollectors(

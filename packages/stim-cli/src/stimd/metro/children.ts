@@ -16,6 +16,7 @@ import {
 import {
   markClaimChildPending,
   claimRemoveCommand,
+  describeClaimProblem,
   processGroupAlive,
   readClaimSet,
   releaseClaim,
@@ -554,6 +555,15 @@ async function start(
   resetCache: boolean,
   signal: AbortSignal | undefined,
 ): Promise<Answer> {
+  if (launch.tunnel) {
+    const stopped = await serialize(`tunnel:${root}`, () => stopTunnelFor(root, log));
+    if (stopped.op === 'error' || stopped.state === 'failed')
+      return {
+        op: 'error',
+        code: 'metro-start',
+        message: `the managed tunnel could not be stopped before Expo's own tunnel: ${String(stopped.reason ?? stopped.message)}`,
+      };
+  }
   ensureWorkspaceStorage(root);
   const logsDir = workspaceLogsDir(root);
   mkdirSync(logsDir, { recursive: true });
@@ -1007,12 +1017,18 @@ function adoptAt(path: string, log: Log): void {
   }
   for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
     const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
-    if (claim && holder.child)
-      tunnels.set(path, {
-        claim,
-        ...holder.child,
-        url: String(holder.details.url),
-        startedAt: typeof holder.details.startedAt === 'string' ? holder.details.startedAt : holder.startedAt,
+    if (!claim || !holder.child) continue;
+    const tunnel: TunnelChild = {
+      claim,
+      ...holder.child,
+      url: typeof holder.details.url === 'string' ? holder.details.url : '',
+      startedAt: typeof holder.details.startedAt === 'string' ? holder.details.startedAt : holder.startedAt,
+    };
+    tunnels.set(path, tunnel);
+    if (!tunnel.url)
+      void serialize(`tunnel:${path}`, async () => {
+        if (tunnels.get(path) === tunnel) await stopTunnel(path, tunnel);
+        return {};
       });
   }
 }
@@ -1203,6 +1219,7 @@ const unreachable = (message: string, remedy: string): Answer => ({
   remedy,
 });
 
+// compat C29 until 2.1.0
 const refuseTunnel = (message: string, remedy: string) => ({
   refusal: { op: 'error', code: 'STIM_REMOTE_START_REQUIRED', message, remedy },
 });
@@ -1241,6 +1258,7 @@ function adoptRecordedTunnel(root: string): { tunnel: TunnelChild } | { refusal:
   tunnels.set(root, tunnel);
   return { tunnel };
 }
+// compat end
 
 function recordTunnel(root: string, tunnel: TunnelChild): void {
   const recorded = recordOf(tunnel);
@@ -1296,7 +1314,9 @@ export function ensureTunnel(
   return serialize(`tunnel:${root}`, async () => {
     adoptAt(root, log);
     const owned = tunnels.get(root);
+    // compat C29 until 2.1.0
     const adopted = owned ? { tunnel: owned } : adoptRecordedTunnel(root);
+    // compat end
     if (adopted && 'refusal' in adopted) return adopted.refusal;
     const known = adopted?.tunnel;
     if (known && inspectProcessIdentity(known) === 'same') {
@@ -1311,6 +1331,9 @@ export function ensureTunnel(
           message: 'A different managed Metro tunnel is already running for this workspace.',
           remedy: 'Run `stim stop`, then `stim start --remote`.',
         };
+      const stored = readMetroTunnel(root);
+      if (stored?.kind !== 'managed' || stored.pid !== known.pid || stored.processToken !== known.processToken)
+        recordTunnel(root, known);
       return tunnelAnswer(known, true);
     }
     if (known) forgetTunnel(root, known);
@@ -1337,7 +1360,8 @@ async function startTunnelChild(
   if (!attempt.acquired)
     return { op: 'error', code: 'tunnel-claimed', message: `another process holds ${claimRoot(root, 'tunnel')}` };
   const claim = attempt.acquired;
-  const { startTunnelSequence } = await import('../../engine/tunnel.ts');
+  const { startTunnel, startTunnelSequence } = await import('../../engine/tunnel.ts');
+  const startedAt = new Date().toISOString();
   const started = await startTunnelSequence({
     env,
     claims: [claim],
@@ -1346,13 +1370,16 @@ async function startTunnelChild(
     port,
     ngrokUrl,
     requireReachable,
+    start: (options) => {
+      updateClaimDetails(claim, { port, provider: options.provider, startedAt });
+      return startTunnel(options);
+    },
   });
   if ('failed' in started) {
     if (started.cleanupFailed) throw unverifiedChild(claim, { pid: 0 }, started.reason);
     releaseClaim(claim);
     return unreachable(`Could not start a managed Metro tunnel for port ${port}.`, started.reason);
   }
-  const startedAt = new Date().toISOString();
   const tunnel: TunnelChild = {
     claim:
       updateClaimDetails(claim, {
@@ -1385,9 +1412,12 @@ async function startTunnelChild(
 }
 
 /**
- * `tunnel.stop {root, pid, processToken}`: stops the workspace's managed tunnel, one this stimd runs or one an earlier
- * CLI recorded without a claim, by its verified identity, and clears its record. Answers `{op: 'tunnel.stopped', state}`
- * with `state` `stopped`, `missing` (it already ran no more) or `failed` and a `reason`.
+ * `tunnel.stop {root, pid?, processToken?}`: stops the workspace's managed tunnel by its claim, one this stimd runs or
+ * one an earlier stimd left, whether or not the workspace records it, and clears its record. With `pid` and
+ * `processToken` it stops only that tunnel. A tunnel an earlier CLI recorded without a claim is stopped by the
+ * record's verified identity. Answers `{op: 'tunnel.stopped', state}` with `state` `stopped`, `missing` (nothing
+ * runs) or `failed` and a `reason`.
+ * @ref LLP 0016#stimd-runs-the-managed-tunnel -- the claim, not the record, says what runs
  */
 export function stopManagedTunnel(params: unknown, log: Log): Promise<Answer> {
   const fields = isJsonObject(params) ? params : {};
@@ -1397,28 +1427,39 @@ export function stopManagedTunnel(params: unknown, log: Log): Promise<Answer> {
   } catch {
     return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
   }
-  return serialize(`tunnel:${root}`, async () => {
-    adoptAt(root, log);
-    const owned = tunnels.get(root);
-    if (owned) {
-      if (owned.pid !== fields.pid || owned.processToken !== fields.processToken)
-        return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
-      await stopTunnel(root, owned);
-      return { op: 'tunnel.stopped', state: 'stopped' };
-    }
-    const recorded = readMetroTunnel(root);
-    if (recorded?.kind !== 'managed') return { op: 'tunnel.stopped', state: 'missing' };
-    if (recorded.pid !== fields.pid || (recorded.processToken ?? undefined) !== fields.processToken)
-      return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
-    const { stopTunnel: stopRecorded } = await import('../../engine/tunnel.ts');
-    const result = await stopRecorded(recorded);
-    if (result.status !== 'failed') withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, recorded));
+  return serialize(`tunnel:${root}`, () => stopTunnelFor(root, log, fields.pid, fields.processToken));
+}
+
+async function stopTunnelFor(root: string, log: Log, pid?: unknown, processToken?: unknown): Promise<Answer> {
+  const changed = { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
+  adoptAt(root, log);
+  const owned = tunnels.get(root);
+  if (owned) {
+    if (pid !== undefined && (owned.pid !== pid || owned.processToken !== processToken)) return changed;
+    await stopTunnel(root, owned);
+    return { op: 'tunnel.stopped', state: 'stopped' };
+  }
+  const unresolved = readClaimSet(claimRoot(root, 'tunnel')).unresolved[0];
+  if (unresolved)
     return {
       op: 'tunnel.stopped',
-      state: result.status,
-      ...(result.reason ? { reason: result.reason } : {}),
+      state: 'failed',
+      reason: describeClaimProblem(unresolved),
     };
-  });
+  const recorded = readMetroTunnel(root);
+  if (recorded?.kind !== 'managed') return { op: 'tunnel.stopped', state: 'missing' };
+  if (pid !== undefined && (recorded.pid !== pid || (recorded.processToken ?? undefined) !== processToken))
+    return changed;
+  // compat C29 until 2.1.0
+  const { stopTunnel: stopRecorded } = await import('../../engine/tunnel.ts');
+  const result = await stopRecorded(recorded);
+  if (result.status !== 'failed') withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, recorded));
+  return {
+    op: 'tunnel.stopped',
+    state: result.status,
+    ...(result.reason ? { reason: result.reason } : {}),
+  };
+  // compat end
 }
 
 async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {

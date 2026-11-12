@@ -625,7 +625,7 @@ test.each(['ngrok', 'tailscale'] as const)('reclaim ends the recorded %s tunnel'
   const stopped: number[] = [];
   const r = await reclaimProject(root, {
     stopMetroTunnel: async (_root, record) => {
-      stopped.push(record.pid);
+      stopped.push(record?.pid ?? 0);
       return { status: 'stopped' };
     },
   });

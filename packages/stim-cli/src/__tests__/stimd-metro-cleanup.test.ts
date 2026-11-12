@@ -65,6 +65,7 @@ vi.mock('../stimd/metro/server-command.ts', () => ({
   },
 }));
 vi.mock('../engine/tunnel.ts', () => ({
+  startTunnel: async () => ({ failed: true, reason: 'unused' }),
   startTunnelSequence: async () => ({ failed: true, cleanupFailed: true, reason: 'tunnel child remains alive' }),
 }));
 

@@ -34,7 +34,7 @@ import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLock } from '../workspace/workspace-state.ts';
-import { clearManagedMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
+import { clearManagedMetroTunnel, readMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
 import { checkRecordedTunnel, removeRecordedTunnelLogFile } from '../engine/tunnel.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
@@ -431,35 +431,60 @@ export async function ensureTunnelThroughStimd(
 export type TunnelStop = { status: 'stopped' | 'missing' } | { status: 'failed'; reason: string };
 
 /**
- * Stops a workspace's managed tunnel through this home's stimd (`tunnel.stop`), starting a stimd when a tunnel claim
- * or a recorded tunnel shows one may be left, since only stimd stops tunnels. A stimd of another build that holds the
- * home refuses with what to do.
+ * The managed tunnel a workspace has: its record, its `tunnel.claim`, or both. The claim is what says a tunnel runs;
+ * the record can be missing (a stimd that ended before the tunnel printed its URL) or replaced (Expo's own tunnel).
+ */
+export function workspaceManagedTunnel(root: string): { provider: string; record: ManagedTunnelRecord | null } | null {
+  const recorded = readMetroTunnel(root);
+  const record = recorded?.kind === 'managed' ? recorded : null;
+  let holder: { details?: Record<string, unknown> } | undefined;
+  try {
+    const claims = readClaimSet(join(workspaceDir(root), 'tunnel.claim'));
+    holder = claims.live[0];
+    if (!holder && claims.unresolved[0]) holder = {};
+  } catch {
+    holder = undefined;
+  }
+  if (!record && !holder) return null;
+  const provider = record?.provider ?? holder?.details?.provider;
+  return { provider: typeof provider === 'string' ? provider : 'managed', record };
+}
+
+/**
+ * Stops a workspace's managed tunnel through this home's stimd (`tunnel.stop`), by its claim whether or not the
+ * workspace records it, starting a stimd when a claim or a record shows one may be left, since only stimd stops
+ * tunnels. A stimd of another build that holds the home refuses with what to do.
  */
 export async function stopTunnelThroughStimd(
   root: string,
-  record: Pick<ManagedTunnelRecord, 'pid' | 'processToken' | 'logFile'>,
+  record: Pick<ManagedTunnelRecord, 'pid' | 'processToken' | 'logFile'> | null,
   signal?: AbortSignal,
 ): Promise<TunnelStop> {
-  const unowned = (() => {
+  const claims = (() => {
     try {
-      const claims = readClaimSet(join(workspaceDir(root), 'tunnel.claim'));
-      return claims.live.length === 0 && claims.unresolved.length === 0;
+      return readClaimSet(join(workspaceDir(root), 'tunnel.claim'));
     } catch {
-      return false;
+      return null;
     }
   })();
-  const checked = unowned ? checkRecordedTunnel(record) : 'same';
-  if (checked !== 'same') {
+  const unowned = claims !== null && claims.live.length === 0 && claims.unresolved.length === 0;
+  if (!record && unowned) return { status: 'missing' };
+  // compat C29 until 2.1.0
+  const checked = record && unowned ? checkRecordedTunnel(record) : 'same';
+  if (record && checked !== 'same') {
     if (checked.status === 'failed') return checked;
     removeRecordedTunnelLogFile(record.logFile);
     withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, record));
     return { status: 'missing' };
   }
+  // compat end
   const ask = () =>
     askStimd(
       'tunnel.stop',
       40_000,
-      { params: { root, pid: record.pid, processToken: record.processToken ?? undefined } },
+      record && !claims?.live.length && !claims?.unresolved.length
+        ? { params: { root, pid: record.pid, processToken: record.processToken ?? undefined } }
+        : { params: { root } },
       signal,
     );
   const daemon = readClaimSet(stimdClaimRoot());
@@ -492,7 +517,7 @@ export async function stopTunnelThroughStimd(
     status: 'failed',
     reason: refused
       ? `${refused.message} ${refused.remedy}`
-      : `stimd did not answer; tunnel pid ${record.pid} still runs.`,
+      : `stimd did not answer; ${record ? `tunnel pid ${record.pid}` : 'a tunnel'} still runs.`,
   };
 }
 

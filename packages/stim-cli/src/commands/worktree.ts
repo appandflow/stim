@@ -60,7 +60,8 @@ import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../eng
 import { trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
-import { readMetroTunnel, readRemoteSession } from '../stimd/metro/state.ts';
+import { readRemoteSession } from '../stimd/metro/state.ts';
+import { workspaceManagedTunnel } from '../daemon/client.ts';
 import {
   branchExistsAsync,
   depsOutOfSync,
@@ -933,8 +934,7 @@ async function reclaimAll(
     poolNotes.push(`disk pressure ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
-    const tunnel = readMetroTunnel(key);
-    const managedTunnel = tunnel?.kind === 'managed' ? tunnel : null;
+    const managedTunnel = workspaceManagedTunnel(key);
     const remote = readRemoteSession(key);
     if (!managedTunnel && !remote) continue;
     keptEntries.push(key);
