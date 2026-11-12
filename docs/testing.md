@@ -17,9 +17,17 @@ same setup and fake-clock rules. CI runs them when the harness or its inputs
 change, and always on manual and full-suite runs.
 
 `pnpm test` remains the complete unit and integration run, excluding benchmarks. It needs Node and
-Git, but no Xcode, Android SDK, signing identity, or connected phone. Vitest's
-worker count and test deadlines are unchanged. The native compatibility stage
-keeps its real clocks.
+Git, but no Xcode, Android SDK, signing identity, or connected phone. Test
+deadlines are unchanged. The native compatibility stage keeps its real clocks.
+
+Outside CI, the Vitest configs cap the worker count so runs that share a
+machine do not starve each other's deadlines. The count is the cores minus one,
+minus the current 1-minute load average, never above half the cores rounded up
+and never below 2 (`scripts/test-max-workers.mjs`). The ceiling exists because
+the load average lags: several runs started together all see an idle machine.
+On a 14-core Mac an idle machine gets 7 workers (Vitest's default is 13) and a
+machine at load 178 gets 2. CI keeps Vitest's default, and
+`VITEST_MAX_WORKERS=<n>` set by the caller overrides the formula.
 
 Linux PR jobs run the unit stage on each push. Integration runs remain required
 in the merge candidate's complete `pnpm test`; main and manual CI runs also run
