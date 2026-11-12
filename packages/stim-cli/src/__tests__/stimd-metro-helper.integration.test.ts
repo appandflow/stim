@@ -7,11 +7,19 @@ import { pathToFileURL } from 'node:url';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { metroExitFile, readNdjsonGenerations } from '@stim-cli/core/state';
 import { inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { adoptMetroChildren, closeMetroChildren, metroTick, openMetroChildren } from '../stimd/metro/children.ts';
+import {
+  adoptMetroChildren,
+  closeMetroChildren,
+  ensureMetro,
+  metroTick,
+  openMetroChildren,
+  stopManagedMetro,
+} from '../stimd/metro/children.ts';
+import { requestDevServerStop } from '../stimd/metro/stop-cause.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const SERVER = `
@@ -71,6 +79,22 @@ async function startThenCrashStimd(port: number): Promise<{ pid: number }> {
   return answer;
 }
 
+const claims = () => readClaimSet(join(workspaceDir(root), 'metro.claim'));
+
+/** Stops the workspace's dev server the way `stim stop` asks stimd to, and checks that nothing of it is left. */
+async function stopLikeStimStop(): Promise<void> {
+  const supervisor = readWorkspaceState(root)?.supervisor as { pid: number; processToken: string };
+  const helper = claims().live[0]?.details.helper as { pid: number; processToken: string };
+  expect(inspectProcessIdentity(helper)).toBe('same');
+  requestDevServerStop(root, supervisor.processToken, { by: 'stim stop' });
+  expect(await stopManagedMetro({ root, ...supervisor }, () => {})).toMatchObject({ state: 'stopped' });
+  expect(inspectProcessIdentity(helper)).toBe('gone');
+  expect(processGroupAlive(supervisor.pid)).toBe(false);
+  expect(readWorkspaceState(root)?.devServerStop).toMatchObject({ reason: 'requested', by: 'stim stop' });
+  expect(claims().live).toEqual([]);
+  expect(existsSync(metroExitFile(root))).toBe(false);
+}
+
 const records = () =>
   readNdjsonGenerations(join(workspaceLogsDir(root), 'metro.ndjson')).filter((record) => record.src === 'metro');
 
@@ -121,6 +145,62 @@ describe.skipIf(process.platform === 'win32')('the dev-server helper', () => {
       ]);
       expect(readWorkspaceState(root)?.supervisor).toBeUndefined();
       expect(existsSync(metroExitFile(root))).toBe(false);
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 30_000);
+
+  test('stim stop ends a dev server through the helper this stimd started', async () => {
+    upsertProject(root, { metroPort: 8294 });
+    openMetroChildren();
+    try {
+      expect(await ensureMetro({ root, port: 8294 }, () => {})).toMatchObject({ op: 'metro', state: 'started' });
+      await stopLikeStimStop();
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 30_000);
+
+  test('stim stop ends a dev server through a helper an earlier stimd started', async () => {
+    await startThenCrashStimd(8295);
+    openMetroChildren();
+    try {
+      adoptMetroChildren(() => {});
+      expect(claims().live).toMatchObject([{ owner: { pid: process.pid } }]);
+      await stopLikeStimStop();
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 30_000);
+
+  test('a start right after a crash records the exit before it starts the dev server again', async () => {
+    const { pid } = await startThenCrashStimd(8296);
+    openMetroChildren();
+    try {
+      adoptMetroChildren(() => {});
+      process.kill(pid, 'SIGUSR2');
+      await vi.waitFor(() => expect(existsSync(metroExitFile(root))).toBe(true), { timeout: 10_000 });
+      expect(await ensureMetro({ root, port: 8296 }, () => {})).toMatchObject({ op: 'metro', state: 'started' });
+      expect(records().filter((record) => record.event === 'supervisor_stopped')).toMatchObject([
+        { stop: { reason: 'server-exited', code: 7 } },
+      ]);
+      await stopLikeStimStop();
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 30_000);
+
+  test('a command that cannot start frees the claim', async () => {
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: ['stim-missing-5571', '{port}'] } }));
+    upsertProject(root, { metroPort: 8297 });
+    openMetroChildren();
+    try {
+      expect(await ensureMetro({ root, port: 8297 }, () => {})).toMatchObject({
+        op: 'error',
+        code: 'metro-start',
+        message: expect.stringContaining('ENOENT'),
+      });
+      expect(claims().live).toEqual([]);
     } finally {
       await closeMetroChildren();
     }

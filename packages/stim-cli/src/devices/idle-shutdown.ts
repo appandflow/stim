@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
+import { type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
@@ -133,7 +133,7 @@ export interface IdleShutdownEvent {
 
 /** Appends an idle shutdown record to the workspace's metro.ndjson, where the supervisor writes its own. */
 export function writeIdleShutdownEvent(root: string, event: IdleShutdownEvent): void {
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'));
   writer.write({ src: 'metro', ...event });
   writer.close();
 }

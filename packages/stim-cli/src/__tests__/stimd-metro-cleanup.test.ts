@@ -201,27 +201,30 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('a helper killed before it reports leaves the claim pending, and start and stop name the port and the claim', async () => {
-  fixtures.report = 'killed';
-  const claimPath = () => claims().live[0]?.path;
-  const refusal = {
-    op: 'error',
-    code: 'STIM_CLAIM_UNAVAILABLE',
-    message: expect.stringContaining(`helper pid ${HELPER} ended before it reported`),
-    remedy: expect.stringMatching(/lsof -nP -iTCP:8183 -sTCP:LISTEN.*rm -f /),
-  };
-  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
-  expect(claims().live).toMatchObject([{ childDeclared: true, child: null }]);
-  const path = claimPath();
-  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
-  expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject(refusal);
-  fixtures.report = 'registered';
-  rmSync(String(path), { force: true });
-  rmSync(`${String(path).replace(/\.claim$/, '')}.child`, { force: true });
-  expect(existsSync(String(path))).toBe(false);
-  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'metro', state: 'started' });
-  await closeMetroChildren();
-});
+test.skipIf(process.platform === 'win32')(
+  'a helper killed before it reports leaves the claim pending, and start and stop name the port and the claim',
+  async () => {
+    fixtures.report = 'killed';
+    const claimPath = () => claims().live[0]?.path;
+    const refusal = {
+      op: 'error',
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      message: expect.stringContaining(`helper pid ${HELPER} ended before it reported`),
+      remedy: expect.stringMatching(/lsof -nP -iTCP:8183 -sTCP:LISTEN.*rm -f /),
+    };
+    expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
+    expect(claims().live).toMatchObject([{ childDeclared: true, child: null }]);
+    const path = claimPath();
+    expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
+    expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject(refusal);
+    fixtures.report = 'registered';
+    rmSync(String(path), { force: true });
+    rmSync(`${String(path).replace(/\.claim$/, '')}.child`, { force: true });
+    expect(existsSync(String(path))).toBe(false);
+    expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'metro', state: 'started' });
+    await closeMetroChildren();
+  },
+);
 
 test('a helper that reports no dev server releases its claim', async () => {
   fixtures.report = 'failed';

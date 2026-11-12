@@ -79,16 +79,18 @@ and the claim's remove command. The helper holds no claim of its own.
 is pending (`{"record":null}`, never recovered, LLP 0007). The window lasts one
 Node start and one spawn. In these cases the claim is released:
 
-- the helper reports `failed`, meaning it started no dev server or stopped the
-  one whose identity it could not read;
+- the helper reports `failed`, meaning it could not open its output files or
+  start the dev server, or it stopped a dev server whose identity it could not
+  read;
 - the helper ended after writing an exit file with its own pid.
 
-When a helper ends any other way, or is still silent after 20 s, the claim stays
-pending, and `start` and `stop` refuse with `STIM_CLAIM_UNAVAILABLE`. The refusal
+A helper killed before it reports (for example during its module load) or still
+silent after 20 s leaves the claim pending, and `start` and `stop` refuse with
+`STIM_CLAIM_UNAVAILABLE`. The refusal
 names the helper pid and the claim path, and its remedy reads: "Stop the helper
 with `kill <pid>`" when it still runs, then "Check whether a dev server still
-listens on port <port> with `lsof -nP -iTCP:<port> -sTCP:LISTEN` and stop it,
-then run `rm -f <claim> <child>`". Once a person removes the claim, the next
+listens on port <port> with `lsof -nP -iTCP:<port> -sTCP:LISTEN` (on Windows
+`netstat -ano | findstr :<port>`) and stop it, then run `rm -f <claim> <child>`". Once a person removes the claim, the next
 `start` proceeds. After a stimd restart the same claim reads as unresolved;
 `start` then refuses with `STIM_CLAIM_REFUSED` and `stop` with the claim
 description, each with the same port check.
@@ -106,12 +108,14 @@ description, each with the same port check.
   included. It also writes the Expo tunnel URL, once, into workspace state while
   the recorded supervisor token is its dev server's. That is its only state write.
 - Rotation: every writer appends each record in one `write` on an `O_APPEND`
-  descriptor, so lines never interleave. While a helper runs, it alone rotates
-  `metro.ndjson`, at `LOG_ROTATE_BYTES`, under the `metro.ndjson.lock` rename.
-  stimd's writer for that workspace opens the file for each record, so it follows
-  a rotation and never rotates. The injected Metro writers append through
-  `appendFileSync` and never rotate. No one rotates the raw files; the helper
-  empties them per dev server, as stimd did.
+  descriptor, so lines never interleave. Only the helper rotates `metro.ndjson`
+  (at `LOG_ROTATE_BYTES`, by renaming it under `metro.ndjson.lock`), and, for a
+  dev server without a helper, stimd's C30 tail writer. Every other writer opens
+  the file for each record and never rotates: stimd's writer for a helper's
+  workspace, the one-record writers of idle stop, idle device shutdown and
+  `stop`'s vanished line, and the injected Metro writers (`appendFileSync`). `gc`
+  trims the log only while no dev server runs. No one rotates the raw files;
+  the helper empties them per dev server, as stimd did.
 - Exit: at the leader's `exit` the helper keeps the code or signal and reads on
   until both pipes close. While the group lives, that is the dev server still
   running, and a stop ends it. Once the group is gone, the helper waits at most
@@ -125,15 +129,18 @@ description, each with the same port check.
   registered projects' workspace directories. A file matching the recorded
   `supervisor` gets the one `supervisor_stopped` line and stop record. Any other
   file gets a `dev_server_exit_unclaimed` warn line with the code. Either way
-  stimd deletes it. `status` (`metroLastStop`) reads a matching file before it
-  calls a supervisor vanished. stimd stays the only writer of
-  `supervisor_stopped` and of the stop cause.
+  stimd deletes it. An ensure or a stop settles an ended helper first, so a
+  start right after a crash records the crash rather than a stop; otherwise an
+  adopted helper's exit waits for the tick, which took 42 to 45 s in the
+  real-tool check. `status` (`metroLastStop`) reads a matching file before it
+  calls a supervisor vanished, so it shows the code during that wait. stimd
+  stays the only writer of `supervisor_stopped` and of the stop cause.
 - Readiness and heartbeat are unchanged: the heartbeat carries the dev server's
   pid, and stimd probes the port.
 - Stop: stimd checks the helper's identity and sends SIGTERM to that pid in one
-  synchronous function. The helper stops its group (identity check, SIGTERM, 5 s,
-  SIGKILL, 1 s), records the exit and ends. If the helper has not ended within
-  8 s, stimd stops the group by the claim child, then sends SIGKILL to a helper
+  synchronous function. The helper stops its group (identity check, SIGTERM,
+  up to 5 s, identity check, SIGKILL, up to 5 s), records the exit and ends. If
+  the helper has not ended within 13 s, stimd stops the group by the claim child, then sends SIGKILL to a helper
   that still runs, again after an identity check. An unproven end is the
   `STIM_CLAIM_UNAVAILABLE` refusal. `metro.stop` answers only after the helper is
   gone, so `reclaim`, which stops through it, removes no directory the helper

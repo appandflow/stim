@@ -9,7 +9,6 @@ import {
   readMetroExit,
 } from '@stim-cli/core/state';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
@@ -117,7 +116,7 @@ export function logVanishedSupervisor(
 ): void {
   const msg = vanishedSupervisorMessage(root, record);
   if (!msg) return;
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'));
   writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg });
   writer.close();
 }

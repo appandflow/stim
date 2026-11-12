@@ -1,7 +1,6 @@
 import { devNull } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { type RepackConfig, detectRepackConfig, resolvePackageJson } from '../../workspace/project-files.ts';
 import type { ServerLaunch } from './child-server.ts';
@@ -35,7 +34,7 @@ export function repackServerLaunch({
     const refusal = repackBinRefusal(root, config);
     throw supervisorError('STIM_REPACK_BIN', refusal.message, refusal.remedy);
   }
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const args = [
     'start',
     '--port',

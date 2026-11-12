@@ -404,6 +404,20 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
 }
 
 /**
+ * Settles the workspace's dev server first when its helper has ended, so a start or stop that comes before the next
+ * tick records the exit the helper wrote instead of a stop. Returns whether it did.
+ * @ref LLP 0018#the-dev-servers-helper -- a recorded exit is settled before an ensure or a stop
+ */
+async function settleIfHelperEnded(root: string): Promise<boolean> {
+  const child = children.get(root);
+  if (!child?.helper || child.stopping || child.gone) return false;
+  const status = inspectProcessIdentity(child.helper);
+  if (status !== 'gone' && status !== 'different') return false;
+  await settleHelperEnded(child);
+  return true;
+}
+
+/**
  * Settles a dev server whose helper ended: with the exit the helper recorded, else, since the helper ended without
  * recording one, by stopping what is left of its process group and logging the end as unknown.
  */
@@ -499,7 +513,7 @@ async function stopHelper(child: MetroChild, helper: { pid: number; processToken
     return true;
   };
   const alive = () => inspectProcessIdentity(helper) === 'same';
-  if (signal('SIGTERM') && (await gone(alive, STOP_MS + 3000))) return;
+  if (signal('SIGTERM') && (await gone(alive, 2 * STOP_MS + 3000))) return;
   await stopGroup(child);
   if (signal('SIGKILL') && !(await gone(alive, 1000)))
     throw new Error(`Could not confirm shutdown of the dev-server helper pid ${helper.pid}.`);
@@ -538,7 +552,8 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
 
 /** How a person checks that no dev server Stim lost track of still listens on `port`, then removes its claim. */
 function portCheck(port: number | null | undefined, removeCommand: string): string {
-  return `${port ? `Check whether a dev server still listens on port ${port} with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\` and stop it` : 'Check that no dev server of this workspace still runs'}, then run ${removeCommand}.`;
+  const listening = GROUPS ? `lsof -nP -iTCP:${port} -sTCP:LISTEN` : `netstat -ano | findstr :${port}`;
+  return `${port ? `Check whether a dev server still listens on port ${port} with \`${listening}\` and stop it` : 'Check that no dev server of this workspace still runs'}, then run ${removeCommand}.`;
 }
 
 /** The refusal for a claim a helper left pending in this stimd, until a person removes the claim. */
@@ -965,6 +980,7 @@ async function ensure(
   const pending = pendingRefusal(root);
   if (pending) return pending;
   await adoptFromPredecessor(root, log);
+  await settleIfHelperEnded(root);
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
   const child = children.get(root);
   if (child?.stopping && cleanupFailure) throw cleanupFailure;
@@ -1060,6 +1076,9 @@ export function stopManagedMetro(params: unknown, log: Log): Promise<Answer> {
     const pending = pendingRefusal(root);
     if (pending) return pending;
     await adoptFromPredecessor(root, log);
+    const ended = children.get(root);
+    if ((await settleIfHelperEnded(root)) && ended?.pid === fields.pid && ended?.processToken === fields.processToken)
+      return { op: 'metro.stopped', state: 'stopped' };
     const child = children.get(root);
     if (!child) {
       const unresolved = readClaimSet(claimRoot(root, 'metro')).unresolved[0];

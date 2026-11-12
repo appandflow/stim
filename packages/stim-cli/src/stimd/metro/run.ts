@@ -19,7 +19,8 @@ const DRAIN_MS = 1000;
 const STREAMS = ['stdout', 'stderr'] as const;
 
 const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms).unref());
-const send = (message: MetroRunMessage) => process.send?.(message, () => {});
+const send = (message: MetroRunMessage) =>
+  new Promise<void>((done) => (process.send ? process.send(message, () => done()) : done()));
 
 /**
  * Waits until the dev server's stdout and stderr close. Once its process group is gone (at once on Windows, which has
@@ -58,21 +59,29 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
     maxBytes: LOG_ROTATE_BYTES,
     fields: digest ? { inj: digest } : {},
   });
-  const raw = {
-    stdout: openSync(join(logsDir, 'metro.stdout.log'), 'w', 0o600),
-    stderr: openSync(join(logsDir, 'metro.stderr.log'), 'w', 0o600),
-  };
-  let server: { pid: number; processToken: string } | null = null;
-  let accepted = false;
-  let unverified = false;
-  let stopping: Promise<void> | null = null;
+  const raw = { stdout: -1, stderr: -1 };
+  let child: ChildProcess;
   try {
-    const child = getExecutor().spawn(command, args, {
+    raw.stdout = openSync(join(logsDir, 'metro.stdout.log'), 'w', 0o600);
+    raw.stderr = openSync(join(logsDir, 'metro.stderr.log'), 'w', 0o600);
+    child = getExecutor().spawn(command, args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: GROUPS,
       env: process.env,
     });
+  } catch (error) {
+    await send({ type: 'failed', message: error instanceof Error ? error.message : String(error) });
+    writer.close();
+    for (const stream of STREAMS) if (raw[stream] >= 0) closeSync(raw[stream]);
+    process.exitCode = 1;
+    return;
+  }
+  let server: { pid: number; processToken: string } | null = null;
+  let accepted = false;
+  let unverified = false;
+  let stopping: Promise<void> | null = null;
+  try {
     const closed = new Promise<void>((done) => child.once('close', () => done()));
     let tunnelSeen = false;
     const onTunnel = (record: NdjsonRecord) => {
@@ -118,7 +127,7 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
       if (child.pid !== undefined) child.kill('SIGKILL');
       const ended = await exited;
       await drain(child, closed, () => false);
-      send({
+      await send({
         type: 'failed',
         message: ended?.error?.message ?? 'the dev server started but its process identity could not be read',
       });
@@ -153,7 +162,7 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
     process.on('disconnect', onDisconnect);
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
-    send({ type: 'registered', ...server });
+    void send({ type: 'registered', ...server });
     const ended = await Promise.race([exited, stopFailed]);
     await drain(child, closed, () => unverified);
     await stopping;

@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { METRO_COMMAND_PORT } from '../../workspace/settings.ts';
 import type { ServerLaunch } from './child-server.ts';
@@ -28,7 +27,7 @@ export function commandServerLaunch({
   baseEnv?: NodeJS.ProcessEnv;
   writer?: NdjsonWriter | null;
 }): ServerLaunch {
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const [program, ...args] = commandArgv(command, port);
   log.write({
     src: 'metro',

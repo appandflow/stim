@@ -2,7 +2,6 @@ import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:
 import { dirname, join } from 'node:path';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../../workspace/settings.ts';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { stripAnsi } from '../../process-output.ts';
 import type { ServerLaunch } from './child-server.ts';
@@ -296,7 +295,7 @@ export async function expoServerLaunch({
   }
   const bin = resolved.path;
 
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
   const storeEnv = resolveMetroStoreInjection(root, {
