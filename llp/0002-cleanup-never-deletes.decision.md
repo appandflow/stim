@@ -17,12 +17,14 @@ At every level, maintenance, the pressure ladder and `stim gc` never delete:
   discovered one is kept instead (LLP 0004);
 - anything building, driven, leased, hosted, or pinned with `maintenance.keep`;
 - simulators and emulators a person created (`AGENTS.md`, invariant 2);
-- the dependencies (`node_modules` and Pods) of a source (main) checkout. #5540
-  changes this (LLP 0001, Planned).
+- the dependencies (`node_modules` and Pods) of a source (main) checkout,
+  except after `idle.sourceDormantDays` without activity or at critical after
+  2 idle minutes, and always after every linked worktree's (LLP 0001, the main
+  checkout goes last).
 
 Only git-ignored regenerable directories go: a real directory inside the
 checkout whose files git ignores, with no tracked or unignored file, not reached
-through a link.
+through a link, and not a mount point.
 
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.
@@ -63,7 +65,8 @@ created nor caches. A runtime stays when any simulator on the machine uses it,
 when simctl does not mark it deletable, when it is the only runtime or the
 newest one with none in use, when a project's `ios.runtime` pins it, when it
 has the major version of the active Xcode's simulator SDK, or when simctl
-recorded a use within `maintenance.olderThanDays` or none at all.
+recorded a use within `maintenance.olderThanDays`, but never less than 7 days,
+or none at all.
 
 Maintainer decision: "Yes delete old runtimes", 2026-11-11.
 

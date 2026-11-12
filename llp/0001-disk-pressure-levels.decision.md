@@ -89,18 +89,42 @@ reduced to minimal size", 2026-11-11.
 Maintainer decision: "Need to be more aggressive in our resources reclaim, i
 dont want to have computers in this situation again", 2026-11-11.
 
-## Planned
+## The main checkout goes last
 
-Pull request #5540, for #5524:
+Every stage and rung that reduces checkouts takes linked worktrees before the
+source (main) checkout, longest idle first within each. After a main
+checkout's dependencies are deleted, `stim worktree warm` in a linked worktree
+says on stderr that the source has no installed dependencies to copy, and
+`stim status` shows the same, until they are installed again.
 
-- `maintenance.olderThanDays` defaults to 3 days.
-- Every stage and rung takes linked worktrees before the main checkout, since
-  new worktrees are warmed from it; `stim worktree warm` and `stim status` say
-  when the main checkout was reduced and should be rebuilt first.
-- A main checkout loses `node_modules` and Pods at critical, at the start of
-  rung 8, once idle 2 minutes and after every linked worktree's dependencies,
-  or at any level after `idle.sourceDormantDays` (default 7, 0 for never). A
-  `stim worktree warm` that copies from it counts as activity.
+A main checkout's `node_modules` and Pods go in two cases only, after those of
+every linked worktree:
+
+- no activity for `idle.sourceDormantDays` (default 7, 0 for never), at any
+  level;
+- at critical, at the start of rung 8, once it is idle 2 minutes and its volume
+  is still under the critical level.
+
+Activity is the newest of a Stim command, a source file write, a git index,
+HEAD or reflog write and the last commit, in the checkout and in every Stim
+workspace in it, and a `stim worktree warm` that copied from it when the warmed
+app has a Stim workspace there. Reading files in an editor, with no process
+working there and no write, is not activity.
+
+It is kept while a process works in it or names a path in it, an agent session
+works in it, an app in it is in use or pinned with `maintenance.keep`, a warm is
+copying from it, or a linked worktree of the same repository links into the
+tree or cannot be fully checked for links. The tree must be a real git-ignored
+directory that is not a mount point, and at the 7-day rule it must have been
+measured. The deletion holds the warm claim of the checkout exclusively, and the
+native-run claims of the root and of every workspace in it.
+
+Reason: new worktrees are warmed from the main checkout, so keeping it installed
+is worth more than keeping any one worktree installed, and a warm must never
+copy from a tree that is being deleted.
+
+`maintenance.olderThanDays`, the age of the age sweep, defaults to 3 days. The
+simulator runtime keep (LLP 0002) still uses at least 7 days.
 
 Maintainer decision: "Is 7 days for age sweep a bit much, maybe 3", 2026-11-12.
 
@@ -117,12 +141,18 @@ with maybe like 7 d", 2026-11-12. Maintainer decision: "I meant deps yes",
 2026-11-12: the 7 days apply to dependencies, not build output.
 
 Maintainer decision: "2 min is good, yes to rest", 2026-11-12, for the idle
-window at critical. The setting name, the placement in rung 8 and what counts
-as activity were chosen by the coordinator and the reviews.
+window at critical and the editor-reading rule.
+
+The setting name, the placement at the start of rung 8, the definition of
+activity, the 7-day floor on the runtime keep and the mount-point rule were
+chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 ## Links
 
 - Issues: #5492, #5512, #5524. Pull requests: #5514, #5540.
-- Code: `packages/core/state/settings-registry.ts` (defaults),
+- Code: `packages/stim-cli/src/policy/checkout-order.ts`,
+  `packages/stim-cli/src/workspace/source-dependencies.ts`,
+  `packages/stim-cli/src/stimd/passes/artifacts.ts`,
+  `packages/core/state/settings-registry.ts` (defaults),
   `packages/stim-cli/src/daemon/ladder.ts` (rungs),
   `packages/stim-cli/src/commands/gc.ts`.
