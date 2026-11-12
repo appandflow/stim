@@ -738,8 +738,10 @@ run waiting to boot, and automatic maintenance.
           stimd keeps serving until nothing runs in the home, and the next
           command starts its own build's stimd. stimd does not
           start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon
-          claim exclusively: daemon.ndjson names its pid; stop it with
-          kill <pid>, or update the stim that project pins.
+          claim exclusively. If it blocks Metro or a managed tunnel,
+          the command names the PID and gives the stop command. Stop its
+          workspaces with the older Stim and wait for it to exit, or use
+          the printed stop command. Update projects that pin the older Stim.
   report  the same passes log what they would do and act on nothing.
   off     no pass. stimd still starts when a command needs it, because it
           runs each workspace's Metro and tunnel and collects device logs;

@@ -225,6 +225,18 @@ function waitingChildren(): number[] {
   }
 }
 
+// @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
+export function legacyDaemonRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+  const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
+  if (pid === undefined) return null;
+  const stop = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+  return {
+    code: 'STIM_DAEMON_UNAVAILABLE',
+    message: `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start.`,
+    remedy: `Stop its workspaces with the older Stim and wait for it to exit, or stop it with \`${stop}\`. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later (\`npm i -D stim@next\` or \`npx stim@next\` until 2.0.0 is released).`,
+  };
+}
+
 /**
  * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
  * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
@@ -396,10 +408,12 @@ async function admitOperation(
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
+  const legacy = legacyDaemonRefusal();
+  if (legacy) return { answer: { op: 'error', ...legacy } };
   await ensureStimd(env, process.platform, true, held, 'stim start', true, { ...context, workspace: root }, true);
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
-  const refused = otherBuildRefusal();
+  const refused = otherBuildRefusal() ?? legacyDaemonRefusal();
   return { answer: refused ? { op: 'error', ...refused } : null };
 }
 

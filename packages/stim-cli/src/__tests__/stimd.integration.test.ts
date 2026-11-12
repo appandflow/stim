@@ -49,6 +49,7 @@ import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts'
 import { takeWaitTicket } from '../engine/wait-queue.ts';
 import {
   backgroundPassesAvailable,
+  ensureMetroThroughStimd,
   ensurePersistentStimd,
   ensureStimd,
   observeOwnedWeb,
@@ -1766,6 +1767,12 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const successor = startDaemonProcess();
     expect(await successor.exited).toBe(0);
 
+    await expect(ensureMetroThroughStimd({ root: home, port: 8082 }, 500)).resolves.toMatchObject({
+      op: 'error',
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      message: expect.stringContaining(`stim-daemon pid ${legacy.pid}`),
+      remedy: expect.stringContaining(`kill ${legacy.pid}`),
+    });
     expect(readFileSync(record, 'utf8').trim().split('\n')).toEqual(['listening']);
     expect(readClaimSet(daemonClaimRoot()).live.map((claim) => [claim.owner.pid, claim.mode])).toEqual([
       [legacy.pid, 'exclusive'],
