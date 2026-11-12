@@ -245,10 +245,12 @@ end the job with \`stim stop\`.
   workspace is in progress, while a stim ios, android, share or stop run holds the
   workspace's native-run lock, while the workspace holds an unexpired device
   lease (\`stim device lock\` or a --device run, physical devices included),
-  while one of its devices is driven, a live agent-device session included,
-  or its activity is unknown (\`guide facts status\`; on Windows, which has
+  while one of its devices is driven by a tool other than agent-device, or by
+  an agent-device session whose last command cannot be dated (a dated session
+  is activity, so one idle past the threshold, runner alive or not, no longer
+  keeps the workspace; under disk pressure its window is 10 minutes, not 2), or its activity is unknown (\`guide facts status\`; on Windows, which has
   no ps, the host driver-process probe is skipped), while simctl or adb cannot
-  list its devices, while its owned Chrome or a hosted device runs, while a
+  list its devices (a timed-out simctl list is retried once with a longer timeout first), while its owned Chrome or a hosted device runs, while a
   web share of it exists, live or stopped for now (\`guide share\`; stim share stop or its
   expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
   holds its metro-start lock. A dev server whose requests Stim cannot see

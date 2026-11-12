@@ -19,6 +19,7 @@ import { planCacheEmptying } from '../../commands/gc/caches.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../../commands/gc/workspaces.ts';
 import { cacheUser } from '../../cache/cache-claim.ts';
+import { measureCargoTargets } from './cargo-target.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
@@ -132,6 +133,9 @@ export async function measureSizes(
       ...(!entry.willClear ? { blocked: entry.keptReason ?? 'workspace ownership is unresolved' } : {}),
     });
   }
+  sizes.push(
+    ...(await measureCargoTargets(Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath), now, operation)),
+  );
   const known: {
     name: string;
     dir: string;

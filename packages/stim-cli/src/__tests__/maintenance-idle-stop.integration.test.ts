@@ -306,11 +306,21 @@ test.each(['darwin', 'win32'] as const)(
 
     const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
     const unseen = await plan(device(claimed), platform);
-    expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
+    expect(unseen.skips).toEqual([
+      expect.objectContaining({
+        reason: expect.stringMatching(/agent-device claim whose last command cannot be dated/),
+      }),
+    ]);
 
     const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
     const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }), platform);
     expect(agent.actions.map((action) => action.target)).toEqual([root]);
+
+    const masked = await plan(
+      device({ ...claimed, recent: { 'agent-action': old }, unknown: ['agent-device-undated'] }),
+      platform,
+    );
+    expect(masked.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/cannot be dated/) })]);
 
     const unprobed = await plan(
       device({ ...claimed, recent: { 'agent-action': old }, unknown: ['driver-process'] }),

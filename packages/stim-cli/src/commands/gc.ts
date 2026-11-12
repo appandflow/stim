@@ -222,6 +222,7 @@ const RESULT_KINDS: Record<string, GcResult['kind']> = {
   'clear-outputs': 'workspaceOutputs',
   'delete-build-outputs': 'workspaceOutputs',
   'clear-build-dirs': 'workspaceOutputs',
+  'trim-cargo': 'workspaceOutputs',
   'idle-stage': 'devServer',
   'trim-cache': 'cache',
   'empty-cache': 'cache',

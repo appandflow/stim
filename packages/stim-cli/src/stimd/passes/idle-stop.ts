@@ -28,6 +28,7 @@ import {
   listAdbDevicesAsync,
 } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { drivenOnlyByAgentDevice, driversKeepDevice } from '../../devices/activity.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
 import {
@@ -36,7 +37,7 @@ import {
   workspaceProcessLockError,
 } from '../../engine/workspace-process-lock.ts';
 import { pidExists } from '../../metro.ts';
-import { decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
+import { activityWindowMs, decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { METRO_REQUEST_EVENTS } from '../../stimd/metro/idle-stop.ts';
 import { resolveSupervisorTarget } from '../../stimd/metro/ownership.ts';
@@ -54,7 +55,6 @@ export { decideIdleStop, type IdleStopDecision, type IdleStopEvidence } from '..
 const HOUR_MS = 3_600_000;
 const SETTING = 'maintenance.idleStopHours';
 const STIM_SESSION = 'stim-teardown-inventory';
-const AGENT_DEVICE_DRIVERS = new Set(['agent-device-claim', 'agent-device-lease']);
 
 async function idleStopHours(
   root: string,
@@ -125,20 +125,18 @@ async function hostedKeepReasons(facts: ReturnType<typeof hostedFacts>): Promise
   return keep;
 }
 
-function deviceKeepReason(
-  device: OwnedDeviceActivity,
-  platform: NodeJS.Platform,
-  driversBlock: boolean,
-): string | null {
+function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform): string | null {
   const { activity } = device;
   const what = `its ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
-  if (
-    activity.state === 'driven' &&
-    (driversBlock || !activity.basis.every((basis) => AGENT_DEVICE_DRIVERS.has(basis)))
-  )
-    return `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
-  if (activity.basis.includes('agent-device-claim') && !activity.recent?.['agent-action'])
-    return `${what} has a live agent-device claim whose session activity cannot be found`;
+  if (driversKeepDevice(activity)) {
+    if (!drivenOnlyByAgentDevice(activity)) return `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
+    const kind = activity.basis.includes('agent-device-runner')
+      ? 'runner'
+      : activity.basis.includes('agent-device-claim')
+        ? 'claim'
+        : 'lease';
+    return `${what} has a live agent-device ${kind} whose last command cannot be dated`;
+  }
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
   const probed =
@@ -228,9 +226,8 @@ async function keepReasons(
     now,
     platform,
     locked,
-    driversBlock,
     operation,
-  }: { now: number; platform: NodeJS.Platform; locked: boolean; driversBlock: boolean; operation?: StimContext },
+  }: { now: number; platform: NodeJS.Platform; locked: boolean; operation?: StimContext },
 ) {
   const checks = { devServer: false, nativeRun: !locked, hosted: false, hostedMacos: false };
   const keep = operation
@@ -247,7 +244,7 @@ async function keepReasons(
   const browser = webFacts(readWebRecord(root));
   if (browser && browser.status !== 'stopped') keep.push(`its owned Chrome is ${browser.status}`);
   for (const device of devices) {
-    const reason = deviceKeepReason(device, platform, driversBlock);
+    const reason = deviceKeepReason(device, platform);
     if (reason) keep.push(reason);
   }
   const viewers = devices.length ? unreadableViewers() : null;
@@ -259,8 +256,8 @@ async function keepReasons(
 
 /**
  * The workspace's activity and what keeps it running regardless. `locked` says the caller holds its native-run lock;
- * `serving` that its dev server runs, so a missing Metro log is unreadable evidence. `driversBlock` keeps a device an
- * agent-device claim or lease holds even when its session's actions are readable activity.
+ * `serving` that its dev server runs, so a missing Metro log is unreadable evidence. An agent-device claim, lease or
+ * runner counts as activity through its session's last command and keeps the workspace only while that cannot be read.
  */
 export async function idleStopEvidence(
   root: string,
@@ -271,7 +268,7 @@ export async function idleStopEvidence(
     platform = process.platform,
     locked = false,
     serving = false,
-    driversBlock = false,
+    pressured = false,
     operation,
   }: {
     now: number;
@@ -279,7 +276,8 @@ export async function idleStopEvidence(
     platform?: NodeJS.Platform;
     locked?: boolean;
     serving?: boolean;
-    driversBlock?: boolean;
+    /** Disk pressure shortened the threshold: an agent-device command then still holds for 10 minutes. */
+    pressured?: boolean;
     operation?: StimContext;
   },
 ): Promise<IdleStopEvidence> {
@@ -303,13 +301,15 @@ export async function idleStopEvidence(
       at: Date.parse(at),
     })),
   ].filter(({ at }) => Number.isFinite(at));
-  if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep: [] };
-  const keep = await keepReasons(root, devices, { now, platform, locked, driversBlock, operation });
+  if (activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs, pressured)))
+    return { activity, keep: [] };
+  const keep = await keepReasons(root, devices, { now, platform, locked, operation });
   if (keep.length) return { activity, keep };
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
-  if (!activity.some(({ at }) => now - at < idleMs)) keep.push(...(await hostedKeepReasons(hostedFacts(root))));
+  if (!activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs, pressured)))
+    keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return { activity, keep };
 }
 

@@ -6,6 +6,20 @@ export const IDLE_SETTING = 'idle.minutes';
 export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 
 /**
+ * How long after its last command an agent-device session still counts as activity under pressure: an agent that waits
+ * on a test run or thinks between commands is not idle after the 2 minutes of a plain workspace.
+ */
+const AGENT_DEVICE_IDLE_MS: number = 10 * MINUTE_MS;
+
+/**
+ * The window within which an activity of `basis` keeps a workspace running under an `idleMs` threshold. Only under
+ * disk pressure does an agent-device command hold longer than `idleMs`.
+ */
+export function activityWindowMs(basis: string, idleMs: number, pressured: boolean): number {
+  return pressured && basis === 'agent-device command' ? Math.max(idleMs, AGENT_DEVICE_IDLE_MS) : idleMs;
+}
+
+/**
  * The activity signals: a Stim command or the native run it started, a Metro bundle, manifest or HMR request, an
  * agent-device action, an input stim-server forwarded, and a person using the focused Simulator or emulator window.
  * Device logs, in-app logs, dev server output and log modification times are not activity.
@@ -29,7 +43,7 @@ export type IdleStopDecision =
 
 export function decideIdleStop(
   evidence: IdleStopEvidence,
-  { idleMs, now, setting }: { idleMs: number; now: number; setting: string },
+  { idleMs, now, setting, pressured = false }: { idleMs: number; now: number; setting: string; pressured?: boolean },
 ): IdleStopDecision {
   if (!(idleMs > 0)) return { stop: false, reason: `${setting} is 0` };
   const last = evidence.activity
@@ -39,12 +53,18 @@ export function decideIdleStop(
       null,
     );
   const idle = last ? now - last.at : NaN;
-  if (last && idle < idleMs)
+  const holding = evidence.activity
+    .filter(({ at, basis }) => Number.isFinite(at) && now - at < activityWindowMs(basis, idleMs, pressured))
+    .reduce<IdleStopEvidence['activity'][number] | null>(
+      (best, entry) => (!best || entry.at > best.at ? entry : best),
+      null,
+    );
+  if (last && holding)
     return {
       stop: false,
       active: true,
-      last,
-      reason: `its last ${last.basis} was ${formatLongDuration(Math.max(0, idle))} ago, within ${setting}`,
+      last: holding,
+      reason: `its last ${holding.basis} was ${formatLongDuration(Math.max(0, now - holding.at))} ago, within ${setting}`,
     };
   if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; '), ...(last ? { last } : {}) };
   if (!last) return { stop: false, reason: 'its last activity is unknown' };

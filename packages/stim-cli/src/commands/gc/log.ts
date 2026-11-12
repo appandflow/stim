@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { executedActionName } from '../../maintenance-kind.ts';
 import {
   gcLogFile,
   runId,
@@ -109,6 +110,7 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'stop-watchman': 'watchman',
   'delete-gradle-version': 'gradleVersion',
   'clear-build-dirs': 'buildDirectory',
+  'trim-cargo': 'buildDirectory',
   'delete-dependencies': 'dependencies',
   'prune-project': 'project',
   'delete-orphaned-devices': 'device',
@@ -128,7 +130,7 @@ const MAINTENANCE_KINDS: Record<string, string> = {
 };
 
 export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcome): GcLogItem {
-  const name = action.kind.replace(/^would-/, '');
+  const name = executedActionName(action);
   const done = outcome.status === 'done';
   return {
     kind: MAINTENANCE_KINDS[name] ?? name,

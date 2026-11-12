@@ -1,0 +1,388 @@
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
+import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { getExecutor } from '../exec.ts';
+import { measuredDirectorySizeAsync } from '../fs-util.ts';
+
+const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
+const ASIDE = '.stim-trimmed';
+const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
+const NOT_PROFILES = new Set(['.exact-swept']);
+const OWN_PREFIX = '.stim-';
+const STRANDED = 'NOT-RESTORED';
+const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
+const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
+
+export interface CargoProfile {
+  /** The profile directory relative to `target/`: `debug` or `<triple>/<profile>`. */
+  path: string;
+  /** When a build last wrote it or Exact's ledger last stamped it, in ms, or null when that cannot be read. */
+  lastUsedMs: number | null;
+}
+
+/**
+ * The profile directories no build has written or read for `idleMs`, as the paths to remove: a profile alone, or a
+ * target triple whole once every profile in it qualifies and the triple holds nothing else (`extras` names the
+ * triples that do). A profile whose last use is unknown stays.
+ */
+export function staleCargoPaths(
+  profiles: readonly CargoProfile[],
+  extras: ReadonlySet<string>,
+  now: number,
+  idleMs: number = CARGO_PROFILE_IDLE_MS,
+): string[] {
+  const stale = (profile: CargoProfile) => profile.lastUsedMs !== null && now - profile.lastUsedMs > idleMs;
+  const triples = new Map<string, CargoProfile[]>();
+  for (const profile of profiles) {
+    const slash = profile.path.indexOf('/');
+    if (slash > 0)
+      triples.set(profile.path.slice(0, slash), [...(triples.get(profile.path.slice(0, slash)) ?? []), profile]);
+  }
+  const paths: string[] = [];
+  for (const profile of profiles) {
+    if (!stale(profile)) continue;
+    const triple = profile.path.includes('/') ? profile.path.slice(0, profile.path.indexOf('/')) : null;
+    if (triple === null) paths.push(profile.path);
+    else if (!(triples.get(triple) ?? []).every(stale) || extras.has(triple)) paths.push(profile.path);
+    else if (!paths.includes(triple)) paths.push(triple);
+  }
+  return paths.filter((path) => !paths.some((other) => path.startsWith(`${other}/`)));
+}
+
+/**
+ * The newest unit time per profile in Exact's `.exact-sweep.json` ledger (`{ units: { "<profile>#<hash>": ms } }`),
+ * which Exact refreshes from the fingerprint files a build read. Null when the text is not that shape.
+ */
+function parseSweepLedger(text: string): Map<string, number> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const units = isRecord(parsed) ? parsed.units : undefined;
+  if (!isRecord(units)) return null;
+  const newest = new Map<string, number>();
+  for (const [key, at] of Object.entries(units)) {
+    const profile = key.split('#')[0];
+    if (!profile || typeof at !== 'number' || !Number.isFinite(at)) return null;
+    newest.set(profile, Math.max(newest.get(profile) ?? 0, at));
+  }
+  return newest;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function errorCode(error: unknown): unknown {
+  return isRecord(error) ? error.code : undefined;
+}
+
+function subdirectories(path: string): Dirent[] | null {
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  } catch {
+    return null;
+  }
+}
+
+function profilePaths(target: string): { profiles: string[]; extras: Set<string> } | null {
+  const profiles: string[] = [];
+  const extras = new Set<string>();
+  const top = subdirectories(target);
+  if (!top) return null;
+  for (const first of top) {
+    if (NOT_PROFILES.has(first.name) || first.name.startsWith(OWN_PREFIX)) continue;
+    if (existsSync(join(target, first.name, '.fingerprint'))) {
+      profiles.push(first.name);
+      continue;
+    }
+    const inner = subdirectories(join(target, first.name));
+    if (!inner) return null;
+    for (const second of inner) {
+      if (existsSync(join(target, first.name, second.name, '.fingerprint')))
+        profiles.push(`${first.name}/${second.name}`);
+      else extras.add(first.name);
+    }
+  }
+  return { profiles, extras };
+}
+
+function newestMtime(profile: string): number | null {
+  let newest = -Infinity;
+  for (const path of [profile, ...PROFILE_PARTS.map((part) => join(profile, part))]) {
+    try {
+      newest = Math.max(newest, statSync(path).mtimeMs);
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT' || path === profile) return null;
+    }
+  }
+  return newest;
+}
+
+/**
+ * What of an Exact app's Cargo `target/` no build used for a day, as paths relative to it, or why that cannot be told.
+ * A profile is in use when a build wrote its directories or Exact's ledger stamps one of its units that recently; reads
+ * leave no trace here, since APFS records an access time only for the first read after a write. Anything unreadable is
+ * in use.
+ */
+export function staleCargoTargetPaths(
+  target: string,
+  now: number,
+  idleMs: number = CARGO_PROFILE_IDLE_MS,
+): { paths: string[] } | { refusal: string } {
+  const listed = profilePaths(target);
+  if (!listed) return { refusal: `${target} cannot be listed` };
+  let ledger = new Map<string, number>();
+  const ledgerPath = join(target, '.exact-sweep.json');
+  if (existsSync(ledgerPath)) {
+    let text: string;
+    try {
+      text = readFileSync(ledgerPath, 'utf8');
+    } catch {
+      return { refusal: `Exact's ${ledgerPath} cannot be read` };
+    }
+    const parsed = parseSweepLedger(text);
+    if (!parsed) return { refusal: `Exact's ${ledgerPath} is not a unit ledger` };
+    ledger = parsed;
+  }
+  const profiles: CargoProfile[] = listed.profiles.map((path) => {
+    const written = newestMtime(join(target, path));
+    return { path, lastUsedMs: written === null ? null : Math.max(written, ledger.get(path) ?? 0) };
+  });
+  return { paths: staleCargoPaths(profiles, listed.extras, now, idleMs) };
+}
+
+/** The profile directories of `target/` as absolute paths, or null when it cannot be listed. */
+export function cargoProfileDirs(target: string): string[] | null {
+  return profilePaths(target)?.profiles.map((path) => join(target, path)) ?? null;
+}
+
+type LsofOutcome = { stdout: string } | { status: unknown; stdout: unknown };
+
+/** Whether a process holds a file open, from an lsof run: output names a holder, and anything but a clean no-match holds. */
+function lockHeld(outcome: LsofOutcome): boolean {
+  if ('status' in outcome) return !(outcome.status === 1 && (outcome.stdout === '' || outcome.stdout === undefined));
+  return outcome.stdout.trim().length > 0;
+}
+
+/**
+ * Whether a rename of a profile that passed the lock check stands: it is rolled back when a Cargo build holds the
+ * profile's `.cargo-lock` after the move, or when that cannot be told.
+ */
+function renameStands(afterMove: LsofOutcome): boolean {
+  return !lockHeld(afterMove);
+}
+
+/**
+ * The `<profile>/incremental` directories to remove, largest first, until `needBytes` are covered; all of them when
+ * they cannot cover it.
+ */
+function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
+  const chosen: string[] = [];
+  let covered = 0;
+  for (const { path, bytes } of candidates.toSorted((a, b) => b.bytes - a.bytes)) {
+    if (covered >= needBytes) break;
+    chosen.push(path);
+    covered += bytes;
+  }
+  return chosen;
+}
+
+async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofOutcome> {
+  const lock = join(profile, '.cargo-lock');
+  if (!existsSync(lock)) return { stdout: '' };
+  try {
+    return { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal }) };
+  } catch (error) {
+    return isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
+  }
+}
+
+const folded = (path: string): string => (FOLD_CASE ? path.toLowerCase() : path);
+
+/**
+ * The absolute paths under `target` that `lsof -Fn` lists as open, a working directory or an executable, and `ps`
+ * lists in a command line. On a case-insensitive volume the comparison ignores case, since lsof reports the on-disk
+ * case and a command line the case the caller typed.
+ */
+function targetPathsInUse(target: string, lsofNames: string, commandLines: string): string[] {
+  const prefix = `${folded(target)}/`;
+  const found = new Set<string>();
+  for (const line of lsofNames.split('\n')) {
+    const name = folded(line.slice(1));
+    if (line.startsWith('n') && (name === folded(target) || name.startsWith(prefix))) found.add(name);
+  }
+  for (const line of commandLines.split('\n')) {
+    const text = folded(line);
+    for (let at = text.indexOf(prefix); at !== -1; at = text.indexOf(prefix, at + 1)) {
+      const end = text.slice(at).search(/\s/);
+      found.add(end === -1 ? text.slice(at) : text.slice(at, at + end));
+    }
+  }
+  return [...found];
+}
+
+/** Whether a path in `used` is `dir` or inside it. */
+function inUse(used: readonly string[], dir: string): boolean {
+  const name = folded(dir);
+  return used.some((path) => path === name || path.startsWith(`${name}/`));
+}
+
+/**
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; null when
+ * either cannot be read, which keeps everything.
+ */
+async function readTargetUse(target: string, signal?: AbortSignal): Promise<string[] | null> {
+  const exec = getExecutor();
+  try {
+    const lsof = await exec.runFileAsync('lsof', ['-nP', '-w', '-Fn'], { timeoutMs: 60_000, signal });
+    const ps = await exec.runFileAsync('ps', ['-axww', '-o', 'args='], { timeoutMs: 30_000, signal });
+    return targetPathsInUse(target, lsof, ps);
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+export interface CargoTrimResult {
+  /** Bytes moved aside, which are freed once the delete at the end succeeds. */
+  bytes: number;
+  removed: string[];
+  kept: string[];
+  /** Why the final delete failed; what was moved aside stays under `target/.stim-trimmed` for the next pass. */
+  deleteError?: string;
+}
+
+async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
+  return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal })) ?? 0;
+}
+
+/**
+ * Removes the stale profiles of `target`, then, while `needBytes` are not covered, the `incremental` directory of each
+ * remaining profile, largest first. A directory is renamed into `target/.stim-trimmed` after its lock check, so a build
+ * that starts meanwhile makes a fresh one, and the lock is read again at the new path: a build that took it in between
+ * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
+ * open, and a profile whose `.cargo-lock` a build holds, stays.
+ */
+export async function trimCargoTarget(
+  registeredTarget: string,
+  { needBytes, now = Date.now(), signal }: { needBytes: number; now?: number; signal?: AbortSignal },
+): Promise<CargoTrimResult> {
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  let target: string;
+  try {
+    target = realpathSync.native(registeredTarget);
+  } catch {
+    return { ...result, kept: [`${registeredTarget} cannot be resolved to its on-disk path`] };
+  }
+  const aside = join(target, ASIDE);
+  let keepAside = false;
+  if (existsSync(join(aside, STRANDED)))
+    return {
+      ...result,
+      kept: [`${aside} holds a directory that could not be put back; a person must merge or delete it`],
+    };
+  try {
+    await rm(aside, { recursive: true, force: true });
+  } catch (error) {
+    return {
+      ...result,
+      kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
+    };
+  }
+  const used = await readTargetUse(target, signal);
+  if (used === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
+  const stale = staleCargoTargetPaths(target, now);
+  if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
+  let moved = 0;
+  const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));
+  const move = async (
+    dir: string,
+    label: string,
+    bytes: number | null,
+    locks: (where: string) => Promise<string[]>,
+  ): Promise<boolean> => {
+    signal?.throwIfAborted();
+    const profiles = await locks(dir);
+    if (inUse(used, dir)) {
+      result.kept.push(`${label}: a process uses it`);
+      return false;
+    }
+    for (const profile of profiles)
+      if (lockHeld(await lockOutcome(profile, signal))) {
+        result.kept.push(`${label}: a build holds its .cargo-lock`);
+        return false;
+      }
+    await mkdir(aside, { recursive: true });
+    const there = join(aside, String(moved++));
+    try {
+      await rename(dir, there);
+    } catch (error) {
+      result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+      return false;
+    }
+    for (const profile of await locks(there))
+      if (!renameStands(await lockOutcome(profile))) {
+        try {
+          await rename(there, dir);
+          result.kept.push(`${label}: a build took its .cargo-lock during the move`);
+        } catch {
+          const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
+          const home = await rename(there, stranded).then(
+            () => stranded,
+            async () => {
+              keepAside = true;
+              try {
+                await writeFile(join(aside, STRANDED), '');
+              } catch (error) {
+                throw new Error(
+                  `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
+                  { cause: error },
+                );
+              }
+              return there;
+            },
+          );
+          result.kept.push(
+            `${label}: a build took its .cargo-lock during the move and the directory could not be put back; it stays in ${home} for a person to merge or delete`,
+          );
+        }
+        return false;
+      }
+    result.bytes += bytes ?? (await sizeOf(there, signal));
+    result.removed.push(label);
+    return true;
+  };
+  for (const path of stale.paths) await move(join(target, path), path, null, profilesAt);
+  if (result.bytes < needBytes) {
+    const removedStale = new Set(stale.paths.map((path) => join(target, path)));
+    const candidates: { path: string; bytes: number }[] = [];
+    for (const profile of cargoProfileDirs(target) ?? [])
+      if (
+        ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)) &&
+        !inUse(used, profile)
+      ) {
+        const incremental = join(profile, 'incremental');
+        if (existsSync(incremental)) candidates.push({ path: incremental, bytes: await sizeOf(incremental, signal) });
+      }
+    for (const path of selectIncremental(candidates, needBytes - result.bytes)) {
+      const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
+      const parent = dirname(path);
+      await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
+    }
+  }
+  if (keepAside) return result;
+  try {
+    await rm(aside, { recursive: true, force: true });
+  } catch (error) {
+    result.deleteError = `${aside} could not be deleted: ${error instanceof Error ? error.message : error}`;
+  }
+  return result;
+}
+
+async function childProfiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => join(dir, entry.name));
+}

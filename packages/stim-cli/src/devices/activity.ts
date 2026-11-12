@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFileQuiet } from '../engine/operation-exec.ts';
@@ -90,6 +90,8 @@ export interface AgentDeviceRecord {
    * device, so without a claim the runner is one agent-device kept warm after `close` or handed off at daemon exit.
    */
   claimProtocol: boolean;
+  /** The directory of the agent-device session the runner serves, from the lease's `runnerLogPath`. */
+  sessionDir: string | null;
   createdAtMs: number | null;
   xctestrunPath: string | null;
 }
@@ -134,6 +136,10 @@ export function parseAgentDeviceRecord(
     owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,
     runner: entry && kind === 'runner-lease' ? field(entry, 'runnerPid', 'runnerStartTime') : null,
     claimProtocol: kind === 'runner-lease' && entry?.deviceClaimProtocol === 1,
+    sessionDir:
+      kind === 'runner-lease' && typeof entry?.runnerLogPath === 'string' && entry.runnerLogPath
+        ? dirname(entry.runnerLogPath)
+        : null,
     createdAtMs,
     xctestrunPath: typeof entry?.xctestrunPath === 'string' ? entry.xctestrunPath : null,
   };
@@ -312,6 +318,53 @@ function agentSessionActedAt(
     } catch {}
   }
   return latest;
+}
+
+/**
+ * When an agent-device session recorded its last command: the modification time of the `events.ndjson` in its
+ * directory, or null when it cannot be read. The runner's own `runner.log` is not activity: an idle runner writes
+ * `AGENT_DEVICE_RUNNER_IDLE_KEEPALIVE` to it every minute.
+ */
+function sessionDirActedAt(dir: string): number | null {
+  try {
+    return statSync(join(dir, 'events.ndjson')).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `unknown` entry for a live agent-device claim, lease or runner whose last command cannot be dated. Another
+ * record's dated session never masks it: the newest `agent-action` of the device is not its evidence.
+ */
+export const AGENT_DEVICE_UNDATED = 'agent-device-undated';
+
+/** The bases of the evidence that an agent-device session, rather than another tool, drives a device. */
+const AGENT_DEVICE_BASES: ReadonlySet<string> = new Set([
+  'agent-device-claim',
+  'agent-device-lease',
+  'agent-device-runner',
+]);
+
+/** Whether only agent-device drives the device: its claim, lease or runner, and nothing else. */
+export function drivenOnlyByAgentDevice(activity: DeviceActivity): boolean {
+  return activity.state === 'driven' && activity.basis.every((basis) => AGENT_DEVICE_BASES.has(basis));
+}
+
+/**
+ * Whether the drivers of a device keep it running regardless of idle time: any driver but agent-device, and an
+ * agent-device session whose last command cannot be dated. An agent-device session that is dated is activity, so
+ * once it is older than the idle threshold it does not keep the device.
+ */
+export function driversKeepDevice(activity: DeviceActivity): boolean {
+  return (
+    activity.state === 'driven' &&
+    !(
+      drivenOnlyByAgentDevice(activity) &&
+      activity.recent?.['agent-action'] &&
+      !activity.unknown?.includes(AGENT_DEVICE_UNDATED)
+    )
+  );
 }
 
 export function readAgentDeviceRecords(home: string, env: NodeJS.ProcessEnv = process.env): AgentDeviceRecord[] {
@@ -546,8 +599,13 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
-        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir, env) : null;
+        const actedAt = record.session
+          ? agentSessionActedAt(home, record.session, record.stateDir, env)
+          : record.sessionDir
+            ? sessionDirActedAt(record.sessionDir)
+            : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
+        else evidence.unknown.push(AGENT_DEVICE_UNDATED);
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);
       }
@@ -582,7 +640,15 @@ export function createActivityReader({
     for (const row of processes ?? []) {
       if (agentDevice.some(({ record }) => isClaimProtocolRunner(record, row))) continue;
       const tool = hostDriverTool(row.command, target.platform, target.id);
-      if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
+      if (tool === 'agent-device') {
+        evidence.drivers.push({ basis: 'agent-device-runner', tool, pid: row.pid, since: row.startedAt });
+        const lease = agentDevice.find(
+          ({ record }) => record.kind === 'runner-lease' && record.runner?.pid === row.pid,
+        );
+        const actedAt = lease?.record.sessionDir ? sessionDirActedAt(lease.record.sessionDir) : null;
+        if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
+        else evidence.unknown.push(AGENT_DEVICE_UNDATED);
+      } else if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
     }
 
     if (target.platform === 'android') {

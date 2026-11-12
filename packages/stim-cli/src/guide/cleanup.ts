@@ -76,7 +76,7 @@ server stops, the owned devices shut down through centralized teardown
 held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a remote (EAS) session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a live web share (guide share), a
-device driver other than agent-device, a live agent-device claim with no session activity to judge,
+device driver other than agent-device, a live agent-device claim, lease or runner whose last command cannot be dated (one dated and older than 10 minutes under pressure, or the idle threshold otherwise, does not keep it; a runner lease with no runnerLogPath or no events.ndjson cannot be dated, and the keep reason says so),
 device activity, an emulator list or an emulator's AVD name that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
@@ -121,7 +121,19 @@ In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
-     or unused for maintenance.olderThanDays
+     or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
+     app, in use or not, over maintenance.cargoTargetMaxGb (default 25, 0 no
+     cap; one du walk per target/; one that times out records no size, only its
+     stale profiles are trimmed, and it is reported as needing a person): first the profiles and target triples no build wrote in the last
+     day (directory times and Exact's own .exact-sweep.json ledger; reads leave
+     no trace on APFS), then, if still over, the incremental/ directory of each
+     remaining profile, largest first, until under the cap. Each is renamed
+     into target/.stim-trimmed after a check, checked again at its new path,
+     moved back if a build took its .cargo-lock meanwhile, then deleted; a
+     leftover .stim-trimmed is deleted first. A profile whose .cargo-lock a
+     build holds, and any path a process executes from or holds open (one lsof
+     and one ps read; unreadable keeps everything), stay, so a server running
+     from target/exact-filesystem-tool does not protect the rest
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays

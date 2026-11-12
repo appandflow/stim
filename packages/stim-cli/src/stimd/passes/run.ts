@@ -32,6 +32,7 @@ import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferre
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
+import { executedActionName } from '../../maintenance-kind.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -141,6 +142,8 @@ function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome
       size.workspace === action.workspace
     )
       return [];
+    if (action.kind === 'would-clear-build-dirs' && action.workspace && size.dir === action.target)
+      return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
     if (action.kind === 'would-trim-cache' && action.dir && size.dir === action.dir)
       return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
     if (action.kind === 'would-empty-cache' && size.dir === action.target) return [];
@@ -154,8 +157,6 @@ function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome
     return [size];
   });
 }
-
-const executedKind = (action: MaintenanceAction) => action.kind.replace(/^would-/, '');
 
 function describeDone(action: MaintenanceAction): string {
   const name = basename(action.workspace ?? action.target);
@@ -187,7 +188,7 @@ function describeDone(action: MaintenanceAction): string {
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
-      return `Cleared the build directory ${action.target}`;
+      return `Trimmed the Cargo target ${action.target}`;
     case 'would-delete-dependencies':
       return `Deleted the installed dependencies ${action.target}`;
     case 'would-stop-gradle-daemons':
@@ -528,7 +529,7 @@ export async function runMaintenance(
         if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));
         const fields = {
           action: {
-            kind: executedKind(action),
+            kind: executedActionName(action),
             target: action.target,
             bytes: outcome.bytes,
             durationMs: Date.now() - began,

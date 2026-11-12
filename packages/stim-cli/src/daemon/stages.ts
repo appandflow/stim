@@ -121,6 +121,8 @@ async function runsSomething(path: string, project: ProjectRecord, reading: Devi
  * How long a workspace with nothing running has had no activity, when that is at least `thresholdMs` and nothing
  * keeps it: a blocker, unreadable evidence, `maintenance.keep`, or `idle.minutes` 0.
  */
+const PRESSURE_THRESHOLD = 'the pressure idle threshold';
+
 async function idleFor(
   path: string,
   thresholdMs: number,
@@ -128,8 +130,9 @@ async function idleFor(
   { locked = false, operation }: { locked?: boolean; operation?: StimContext } = {},
 ): Promise<number | null> {
   const now = Date.now();
-  const evidence = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, operation });
-  const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting });
+  const pressured = setting === PRESSURE_THRESHOLD;
+  const evidence = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
+  const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return null;
   try {
     const { settings } = await projectSettings(path, operation);
@@ -177,7 +180,7 @@ async function hasOutputs(path: string): Promise<boolean> {
 
 /** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
 export async function stillIdle(path: string, thresholdMs: number, operation?: StimContext): Promise<boolean> {
-  return (await idleFor(path, thresholdMs, 'the pressure idle threshold', { locked: true, operation })) !== null;
+  return (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked: true, operation })) !== null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition, longest-idle first. */
@@ -186,7 +189,7 @@ export function idleStageCandidates(
   reading: DeviceReading,
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, 'the pressure idle threshold', () => true);
+  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true);
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */
@@ -195,7 +198,7 @@ export function stoppedOutputCandidates(
   reading: DeviceReading,
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, 'the pressure idle threshold', hasOutputs);
+  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs);
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
@@ -219,7 +222,7 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
-            if ((await idleFor(path, thresholdMs, 'the pressure idle threshold', { locked: true, operation })) === null)
+            if ((await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked: true, operation })) === null)
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await idleOutputs(path, config);
             if (!outputs.paths.length) return null;

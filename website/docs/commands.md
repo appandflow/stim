@@ -2131,6 +2131,7 @@ reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
 `simctl io|spawn`, except the screenshots stim-server itself takes of the device), and on Android a `uiautomator`, `androidx.test` or Argent
 helper process.
+An agent-device session whose last command is dated no longer keeps its device once it is idle: under disk pressure and when the daemon reclaims a device for a waiting run, it holds for 10 minutes after that command instead of the 2 minutes of other workspaces, and a session whose last command cannot be dated keeps it.
 `lastActivityAt` is the newest of the device's app log records, changes to the
 workspace's `client.ndjson` and `device.ndjson` logs, the platform's Metro
 bundle requests, the workspace's last Stim run, and, while agent-device

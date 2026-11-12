@@ -170,12 +170,17 @@ async function decide(
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
-    driversBlock: true,
+    pressured: Boolean(input.pressure),
     operation: input.operation,
   });
   return {
     candidate: found,
-    decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input) }),
+    decision: decideIdleStop(evidence, {
+      idleMs: found.idleMs,
+      now,
+      setting: thresholdName(input),
+      pressured: Boolean(input.pressure),
+    }),
   };
 }
 

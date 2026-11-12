@@ -864,6 +864,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Workspace build-output cap in GiB; 0 means no cap',
   },
   {
+    key: 'maintenance.cargoTargetMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 25,
+    env: 'STIM_MAINTENANCE_CARGO_TARGET_MAX_GB',
+    description:
+      "Cap in GiB for one Exact app's Cargo target/, in use or not: above it, automatic maintenance removes the profiles and target triples no build wrote or read in the last day, and stops there; 0 means no cap",
+  },
+  {
     key: 'caches.buildCacheMaxGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
