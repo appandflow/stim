@@ -1101,18 +1101,11 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
       process.chdir(nestedDir);
       try {
         const runStart = captureStartAction({
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({
-            provider: 'ngrok',
-            url: 'https://replacement.ngrok.app',
-            pid: 5252,
-            processToken: 'linux:200',
-            cleanup: async () => ({ status: 'stopped' }),
+          ensureTunnel: async () => ({
+            op: 'error',
+            code: 'STIM_REMOTE_METRO_UNREACHABLE',
+            message: 'a start that bypassed the removal lock asked stimd for a tunnel',
           }),
-          writeTunnelRecord: (projectRoot, patch) => {
-            writeFileSync(workspaceStateFile(projectRoot), JSON.stringify(patch));
-            throw new Error('stop after attempted publication');
-          },
         });
         nestedStart = Promise.resolve(runStart({ remote: true, wait: '1', json: true })).catch(() => {});
       } finally {

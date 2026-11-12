@@ -14,7 +14,7 @@ import {
   adoptMetroChildren,
   closeMetroChildren,
   ensureMetro,
-  ensureTunnel,
+  stopManagedTunnel,
   metroTick,
   openMetroChildren,
 } from '../stimd/metro/children.ts';
@@ -120,7 +120,7 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
         const signal = vi.spyOn(metro, 'signalProcessTree').mockReturnValue(true);
         vi.useFakeTimers();
         try {
-          const stopping = ensureTunnel({ root, port: 8182, provider: 'cloudflared' });
+          const stopping = stopManagedTunnel({ root, pid, processToken: token }, () => {});
           await vi.advanceTimersByTimeAsync(5100);
           await expect(stopping).resolves.toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
           expect(signal).toHaveBeenCalledTimes(when === 'before TERM' ? 0 : 1);

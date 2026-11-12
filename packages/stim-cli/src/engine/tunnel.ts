@@ -388,7 +388,7 @@ function removeTunnelLogFile(path: string | null | undefined): void {
   } catch {}
 }
 
-function removeRecordedTunnelLogFile(path: string | null | undefined): void {
+export function removeRecordedTunnelLogFile(path: string | null | undefined): void {
   if (!path) return;
   const dir = resolvePath(join(getConfigDir(), 'tunnel-logs'));
   const resolved = resolvePath(path);
@@ -811,6 +811,34 @@ function isEsrch(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
 }
 
+/** What a recorded tunnel's process is: `same` as recorded, gone (`missing`), or one that cannot be verified (`failed`). */
+export function checkRecordedTunnel(
+  record: Pick<TunnelRecord, 'pid' | 'processToken'> | null | undefined,
+  {
+    isAlive = pidExists,
+    inspectIdentity = inspectProcessIdentity,
+  }: { isAlive?: (pid: number) => boolean; inspectIdentity?: typeof inspectProcessIdentity } = {},
+): 'same' | { status: 'missing' } | { status: 'failed'; reason: string } {
+  const pid = record?.pid;
+  if (!record || !pid || !isAlive(pid)) return { status: 'missing' };
+  if (!record.processToken) {
+    return {
+      status: 'failed',
+      reason:
+        `tunnel pid ${pid} has no process identity token, so Stim cannot verify ownership. ` +
+        'Keep the record. Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+    };
+  }
+  const identity = inspectIdentity({ pid, processToken: record.processToken });
+  if (identity === 'gone' || identity === 'different') return { status: 'missing' };
+  if (identity !== 'same')
+    return {
+      status: 'failed',
+      reason: `could not verify the process identity for tunnel pid ${pid}; refusing to signal it.`,
+    };
+  return 'same';
+}
+
 export async function stopTunnel(
   record: TunnelRecord | null | undefined,
   {
@@ -831,26 +859,9 @@ export async function stopTunnel(
     removeRecordedTunnelLogFile(record?.logFile);
     return { status: 'missing' };
   };
-  const pid = record?.pid;
-  if (!pid || !isAlive(pid)) return missing();
-  if (!record.processToken) {
-    return {
-      status: 'failed',
-      reason:
-        `tunnel pid ${pid} has no process identity token, so Stim cannot verify ownership. ` +
-        'Keep the record. Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
-    };
-  }
-
-  const identity = inspectIdentity(record);
-  if (identity === 'gone' || identity === 'different') return missing();
-  if (identity !== 'same') {
-    return {
-      status: 'failed',
-      reason: `could not verify the process identity for tunnel pid ${pid}; refusing to signal it.`,
-    };
-  }
-
+  const checked = checkRecordedTunnel(record, { isAlive, inspectIdentity });
+  if (checked !== 'same' || !record) return checked !== 'same' && checked.status === 'failed' ? checked : missing();
+  const pid = record.pid;
   try {
     await kill(pid);
   } catch (err) {
@@ -862,7 +873,7 @@ export async function stopTunnel(
   const deadline = now() + timeoutMs;
   const exited = () => {
     if (!isAlive(pid)) return true;
-    const current = inspectIdentity(record);
+    const current = inspectIdentity({ pid, processToken: record.processToken });
     return current === 'gone' || current === 'different';
   };
   while (now() < deadline && !exited()) {

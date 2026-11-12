@@ -25,6 +25,13 @@ Plain \`stim start\` is local and does not create a tunnel. Remote intent
 comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\`. The
 \`metro.tunnel\` setting selects the provider after remote intent exists.
 
+The managed tunnel (ngrok, cloudflared or tailscale) is a child of this home's
+stimd, started and supervised there, not by the command that asked for it: it
+keeps running after \`start\` returns and a stimd restart takes it over. stimd
+chooses the provider, "auto" trying ngrok and then cloudflared. \`stop\` and
+\`worktree remove\` end it through stimd. A tunnel an older Stim recorded in
+workspace state is reused or stopped by its recorded process identity.
+
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
   stimd watches hosted Metro requests in workspace state and keeps a

@@ -210,11 +210,7 @@ async function defaultStopSession(root: string, sessionId: string, operation?: S
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-type StopMetroTunnelFn = (
-  root: string,
-  record: ManagedTunnelRecord,
-  operation?: StimContext,
-) => Promise<TunnelStop>;
+type StopMetroTunnelFn = (root: string, record: ManagedTunnelRecord, operation?: StimContext) => Promise<TunnelStop>;
 
 const defaultStopMetroTunnel: StopMetroTunnelFn = (root, record, operation) =>
   stopTunnelThroughStimd(root, record, operation?.signal);

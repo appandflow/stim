@@ -1020,7 +1020,8 @@ function adoptAt(path: string, log: Log): void {
   }
   for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
     const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
-    if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url), startedAt: holder.startedAt });
+    if (claim && holder.child)
+      tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url), startedAt: holder.startedAt });
   }
 }
 
@@ -1185,9 +1186,11 @@ function restartAt(
 
 const normalizeUrl = (url: string): string => url.trim().replace(/\/+$/, '');
 
+const providerOf = (tunnel: TunnelChild): ManagedProvider => tunnel.claim.details.provider as ManagedProvider;
+
 const recordOf = (tunnel: TunnelChild): ManagedTunnelRecord => ({
   kind: 'managed',
-  provider: tunnel.claim.details.provider as ManagedProvider,
+  provider: providerOf(tunnel),
   pid: tunnel.pid,
   url: tunnel.url,
   port: Number(tunnel.claim.details.port),
@@ -1197,8 +1200,8 @@ const recordOf = (tunnel: TunnelChild): ManagedTunnelRecord => ({
 });
 
 const tunnelAnswer = (tunnel: TunnelChild, reused: boolean): Answer => {
-  const { kind: _kind, ...record } = recordOf(tunnel);
-  return { op: 'tunnel', reused, ...record };
+  const { kind: _kind, ...fields } = recordOf(tunnel);
+  return { op: 'tunnel', reused, ...fields };
 };
 
 const unreachable = (message: string, remedy: string): Answer => ({
@@ -1208,21 +1211,22 @@ const unreachable = (message: string, remedy: string): Answer => ({
   remedy,
 });
 
+const refuseTunnel = (message: string, remedy: string) => ({
+  refusal: { op: 'error', code: 'STIM_REMOTE_START_REQUIRED', message, remedy },
+});
+
 /** Takes over a tunnel an earlier CLI recorded in the workspace state without a claim, by its verified identity. */
 function adoptRecordedTunnel(root: string): { tunnel: TunnelChild } | { refusal: Answer } | null {
   const recorded = readMetroTunnel(root);
   if (recorded?.kind !== 'managed' || !pidExists(recorded.pid)) return null;
-  const refuse = (message: string, remedy: string) => ({
-    refusal: { op: 'error', code: 'STIM_REMOTE_START_REQUIRED', message, remedy },
-  });
   if (!recorded.processToken)
-    return refuse(
+    return refuseTunnel(
       'The recorded managed Metro tunnel has no process identity token.',
       'Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
     );
   const identity = { pid: recorded.pid, processToken: recorded.processToken };
   if (inspectProcessIdentity(identity) !== 'same')
-    return refuse(
+    return refuseTunnel(
       `The recorded ${recorded.provider} tunnel pid ${recorded.pid} no longer has its recorded process identity.`,
       'Run `stim stop`, resolve any ownership refusal, then retry `stim start --remote`.',
     );
@@ -1241,10 +1245,10 @@ function adoptRecordedTunnel(root: string): { tunnel: TunnelChild } | { refusal:
 }
 
 function recordTunnel(root: string, tunnel: TunnelChild): void {
-  const record = recordOf(tunnel);
-  withWorkspaceStateLock(root, () => writeWorkspaceState(root, { metroTunnel: { ...record } }));
+  const recorded = recordOf(tunnel);
+  withWorkspaceStateLock(root, () => writeWorkspaceState(root, { metroTunnel: { ...recorded } }));
   const stored = readMetroTunnel(root);
-  if (stored?.kind !== 'managed' || stored.pid !== record.pid || stored.processToken !== record.processToken)
+  if (stored?.kind !== 'managed' || stored.pid !== recorded.pid || stored.processToken !== recorded.processToken)
     throw new Error('The workspace did not retain this tunnel ownership record.');
 }
 
@@ -1254,7 +1258,7 @@ function recordTunnel(root: string, tunnel: TunnelChild): void {
  * `metroTunnel`, answering `{op: 'tunnel', url, pid, provider, reused}`. Which providers run and in what order is decided
  * here: with `auto`, ngrok then cloudflared, each tried until one prints a URL; a named provider alone. A running
  * tunnel of the same port and a provider this call would try is reused; another one refuses.
- * @ref LLP 0008#stimd-runs-the-managed-tunnel -- one owner for the tunnel, its provider order and its record
+ * @ref LLP 0016#stimd-runs-the-managed-tunnel -- one owner for the tunnel, its provider order and its record
  */
 export function ensureTunnel(
   params: unknown,
@@ -1300,7 +1304,7 @@ export function ensureTunnel(
     if (known && inspectProcessIdentity(known) === 'same') {
       const reusable =
         known.claim.details.port === port &&
-        candidates.includes(known.claim.details.provider as ManagedProvider) &&
+        candidates.includes(providerOf(known)) &&
         (!ngrokUrl || normalizeUrl(known.url) === normalizeUrl(ngrokUrl));
       if (!reusable)
         return {
@@ -1336,7 +1340,15 @@ async function startTunnelChild(
     return { op: 'error', code: 'tunnel-claimed', message: `another process holds ${claimRoot(root, 'tunnel')}` };
   const claim = attempt.acquired;
   const { startTunnelSequence } = await import('../../engine/tunnel.ts');
-  const started = await startTunnelSequence({ env, claims: [claim], signal, providers, port, ngrokUrl, requireReachable });
+  const started = await startTunnelSequence({
+    env,
+    claims: [claim],
+    signal,
+    providers,
+    port,
+    ngrokUrl,
+    requireReachable,
+  });
   if ('failed' in started) {
     if (started.cleanupFailed) throw unverifiedChild(claim, { pid: 0 }, started.reason);
     releaseClaim(claim);
@@ -1391,16 +1403,7 @@ export function stopManagedTunnel(params: unknown, log: Log): Promise<Answer> {
     if (owned) {
       if (owned.pid !== fields.pid || owned.processToken !== fields.processToken)
         return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
-      try {
-        await stopTunnel(root, owned);
-      } catch (error) {
-        if (error instanceof Error && 'reportCleanup' in error) failedCleanup(error);
-        return {
-          op: 'tunnel.stopped',
-          state: 'failed',
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
+      await stopTunnel(root, owned);
       return { op: 'tunnel.stopped', state: 'stopped' };
     }
     const recorded = readMetroTunnel(root);
@@ -1409,8 +1412,7 @@ export function stopManagedTunnel(params: unknown, log: Log): Promise<Answer> {
       return { op: 'error', code: 'tunnel-changed', message: 'The managed tunnel changed before it could stop.' };
     const { stopTunnel: stopRecorded } = await import('../../engine/tunnel.ts');
     const result = await stopRecorded(recorded);
-    if (result.status !== 'failed')
-      withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, recorded));
+    if (result.status !== 'failed') withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, recorded));
     return {
       op: 'tunnel.stopped',
       state: result.status,

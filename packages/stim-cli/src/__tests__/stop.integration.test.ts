@@ -1537,7 +1537,7 @@ test.each(['ngrok', 'tailscale'] as const)('stopping reaps a %s tunnel this work
     isAlive: () => false,
     resolveMetro: async () => ({ missing: true }),
     clearRegistration: async () => {},
-    stopMetroTunnel: async (record) => {
+    stopMetroTunnel: async (_root, record) => {
       stopped.push(record);
       return { status: 'stopped' };
     },
@@ -1557,39 +1557,6 @@ test.each(['ngrok', 'tailscale'] as const)('stopping reaps a %s tunnel this work
     },
   ]);
   expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider, reason: undefined });
-  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
-  expect(state.metroTunnel).toBeUndefined();
-  expect(state.lastBuild.hash).toBe('keepme');
-});
-
-test('stopping clears only the tunnel record that it verified', async () => {
-  withManagedTunnel();
-  const replacement = {
-    kind: 'managed',
-    provider: 'ngrok',
-    pid: 4242,
-    url: 'https://abc.ngrok.app',
-    port: 8083,
-    startedAt: 'T',
-    processToken: 'linux:200',
-  } as const;
-  const result = await runStop({
-    root: tmpRoot,
-    isAlive: () => false,
-    resolveMetro: async () => ({ missing: true }),
-    clearRegistration: async () => {},
-    stopMetroTunnel: async () => {
-      writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ metroTunnel: replacement }));
-      return { status: 'stopped' };
-    },
-    report: () => {},
-  });
-
-  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
-  expect(state.metroTunnel).toEqual(replacement);
-  expect(result.ok).toBe(false);
-  expect(result.outcomes.port.status).toBe('kept');
-  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
 });
 
 test('a tunnel that fails to stop fails the command and keeps its record', async () => {
@@ -1647,7 +1614,7 @@ test('the tunnel is stopped even when something still holds the port', async () 
       port: 8083,
       startedAt: 'T',
     },
-    stopMetroTunnel: async (record: { pid: number }) => {
+    stopMetroTunnel: async (_root: string, record: { pid: number }) => {
       stopped.push(record.pid);
       return { status: 'stopped' };
     },

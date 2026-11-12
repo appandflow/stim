@@ -606,7 +606,11 @@ async function stopWorkspace({
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
-  stopMetroTunnel?: (root: string, record: { pid: number; processToken: string | null }, signal?: AbortSignal) => Promise<TunnelStop>;
+  stopMetroTunnel?: (
+    root: string,
+    record: { pid: number; processToken: string | null },
+    signal?: AbortSignal,
+  ) => Promise<TunnelStop>;
   releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
   teardownRemoteSession?: (
     root: string,
@@ -916,7 +920,10 @@ async function stopWorkspace({
     } else {
       report(
         chalk.dim(
-          phaseLine('lan', result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`),
+          phaseLine(
+            'lan',
+            result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`,
+          ),
         ),
       );
     }

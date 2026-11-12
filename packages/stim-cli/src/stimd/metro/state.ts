@@ -214,7 +214,10 @@ export function clearExpoMetroTunnel(root: string): void {
   });
 }
 
-export function clearManagedMetroTunnel(root: string, expected: Pick<ManagedTunnelRecord, 'pid' | 'processToken'>): boolean {
+export function clearManagedMetroTunnel(
+  root: string,
+  expected: Pick<ManagedTunnelRecord, 'pid' | 'processToken'>,
+): boolean {
   if (!existsSync(workspaceStateFile(root))) return true;
   return clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
     if (typeof value !== 'object' || value === null) return false;

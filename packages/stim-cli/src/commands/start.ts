@@ -763,14 +763,21 @@ export async function startDevServer(
             });
           }
           if (answer.op === 'error') return fail(tunnelRefusal(answer));
-          const record = answer as unknown as TunnelRecord;
+          const record = readMetroTunnel(root);
+          if (record?.kind !== 'managed' || record.pid !== answer.pid) {
+            return fail({
+              code: 'STIM_REMOTE_METRO_UNREACHABLE',
+              message: 'The managed Metro tunnel was started, but its record is missing from the workspace.',
+              remedy: 'Run `stim stop`, then `stim start --remote`.',
+            });
+          }
           const tracking: ManagedTunnelTracking = { record, startedHere: answer.reused !== true };
           const stopStarted = async (): Promise<TunnelStop> =>
             tracking.startedHere ? d.stopTunnel(root, record, operationSignal) : { status: 'missing' };
           const metroNowRuns = async (): Promise<boolean> =>
             Boolean(
               (await resolveStartupMetro(port, root)).metro ||
-                liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+              liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
             );
           if (await metroNowRuns()) {
             if (tracking.startedHere) {

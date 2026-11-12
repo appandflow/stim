@@ -33,6 +33,9 @@ import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { withWorkspaceStateLock } from '../workspace/workspace-state.ts';
+import { clearManagedMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
+import { checkRecordedTunnel, removeRecordedTunnelLogFile } from '../engine/tunnel.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
@@ -434,9 +437,24 @@ export type TunnelStop = { status: 'stopped' | 'missing' } | { status: 'failed';
  */
 export async function stopTunnelThroughStimd(
   root: string,
-  record: { pid: number; processToken: string | null },
+  record: Pick<ManagedTunnelRecord, 'pid' | 'processToken' | 'logFile'>,
   signal?: AbortSignal,
 ): Promise<TunnelStop> {
+  const unowned = (() => {
+    try {
+      const claims = readClaimSet(join(workspaceDir(root), 'tunnel.claim'));
+      return claims.live.length === 0 && claims.unresolved.length === 0;
+    } catch {
+      return false;
+    }
+  })();
+  const checked = unowned ? checkRecordedTunnel(record) : 'same';
+  if (checked !== 'same') {
+    if (checked.status === 'failed') return checked;
+    removeRecordedTunnelLogFile(record.logFile);
+    withWorkspaceStateLock(root, () => clearManagedMetroTunnel(root, record));
+    return { status: 'missing' };
+  }
   const ask = () =>
     askStimd(
       'tunnel.stop',
@@ -465,11 +483,16 @@ export async function stopTunnelThroughStimd(
     return { status: answer.state };
   if (answer?.op === 'tunnel.stopped')
     return { status: 'failed', reason: typeof answer.reason === 'string' ? answer.reason : 'stimd could not stop it' };
-  if (answer) return { status: 'failed', reason: typeof answer.message === 'string' ? answer.message : 'stimd refused' };
+  if (answer) {
+    const message = typeof answer.message === 'string' ? answer.message : 'stimd refused';
+    return { status: 'failed', reason: typeof answer.remedy === 'string' ? `${message} ${answer.remedy}` : message };
+  }
   const refused = otherBuildRefusal();
   return {
     status: 'failed',
-    reason: refused ? `${refused.message} ${refused.remedy}` : `stimd did not answer; tunnel pid ${record.pid} still runs.`,
+    reason: refused
+      ? `${refused.message} ${refused.remedy}`
+      : `stimd did not answer; tunnel pid ${record.pid} still runs.`,
   };
 }
 

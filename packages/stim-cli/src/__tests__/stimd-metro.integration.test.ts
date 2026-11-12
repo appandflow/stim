@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
-import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -265,7 +265,7 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     await expect(
-      ask('tunnel.ensure', { root, provider: 'cloudflared', port: await freePort(), requireReachable: false }),
+      ask('tunnel.ensure', { root, mode: 'cloudflared', port: await freePort(), requireReachable: false }),
     ).resolves.toMatchObject({ op: 'tunnel' });
     const exited = once(child, 'exit');
     child.stdin?.end();
@@ -298,7 +298,7 @@ exec sleep 600
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     const pending = ask('tunnel.ensure', {
       root,
-      provider: 'cloudflared',
+      mode: 'cloudflared',
       port: await freePort(),
       requireReachable: false,
     });
@@ -332,7 +332,7 @@ exec sleep 600
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     void ask('tunnel.ensure', {
       root,
-      provider: 'cloudflared',
+      mode: 'cloudflared',
       port: await freePort(),
       requireReachable: false,
     }).catch(() => {});
@@ -468,7 +468,7 @@ exports.runServer = (config) => new Promise((resolve) => {
       });
       expect(readFileSync(join(dir, 'metro-env'), 'utf8').trim()).toBe('first');
       first.socket.write(
-        `${JSON.stringify({ op: 'tunnel.ensure', params: { root, port, provider: 'cloudflared', requireReachable: false } })}\n`,
+        `${JSON.stringify({ op: 'tunnel.ensure', params: { root, port, mode: 'cloudflared', requireReachable: false } })}\n`,
       );
       await vi.waitFor(() => expect(first.lines[3]).toMatchObject({ op: 'tunnel' }), { timeout: 15_000 });
       expect(readFileSync(join(dir, 'tunnel-env'), 'utf8').trim()).toBe('first');
@@ -861,12 +861,103 @@ require('node:http')
     expect(alive(first.pid)).toBe(false);
   }, 30_000);
 
+  test('tunnel.ensure tries ngrok, then cloudflared, records the tunnel, reuses it, refuses another port, and tunnel.stop ends it', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
+    await startStimd();
+    const port = await freePort();
+    const stateOf = () => JSON.parse(readFileSync(workspaceStateFile(root), 'utf8'));
+
+    const first = await ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false });
+    expect(first).toMatchObject({
+      op: 'tunnel',
+      reused: false,
+      provider: 'cloudflared',
+      url: 'https://fixture-words.trycloudflare.com',
+      port,
+    });
+    expect(stateOf().metroTunnel).toMatchObject({
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: first.pid,
+      processToken: first.processToken,
+    });
+    await expect(ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false })).resolves.toMatchObject({
+      reused: true,
+      pid: first.pid,
+    });
+    await expect(
+      ask('tunnel.ensure', { root, mode: 'auto', port: port + 1, requireReachable: false }),
+    ).resolves.toMatchObject({ op: 'error', code: 'STIM_REMOTE_START_REQUIRED' });
+
+    await expect(ask('tunnel.stop', { root, pid: first.pid, processToken: first.processToken })).resolves.toMatchObject(
+      { op: 'tunnel.stopped', state: 'stopped' },
+    );
+    expect(alive(first.pid)).toBe(false);
+    expect(stateOf().metroTunnel).toBeUndefined();
+  }, 30_000);
+
+  test('a named provider that fails is refused with its reason and no other provider runs', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
+    await startStimd();
+    const answer = await ask('tunnel.ensure', { root, mode: 'ngrok', port: await freePort(), requireReachable: false });
+    expect(answer).toMatchObject({
+      op: 'error',
+      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+      remedy: expect.stringContaining('ngrok: ngrok exited before printing a tunnel URL.'),
+    });
+    expect(answer.remedy).not.toContain('cloudflared');
+    expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
+  }, 30_000);
+
+  test('a tunnel an earlier CLI recorded without a claim is reused or stopped by its verified identity, never another', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    const old = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    old.unref();
+    const oldPid = old.pid;
+    if (!oldPid) throw new Error('fixture did not start');
+    const token = captureProcessToken(oldPid);
+    const recordedTunnel = {
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: old.pid,
+      url: 'https://old.trycloudflare.com',
+      port,
+      startedAt: 'T',
+      processToken: token,
+    };
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: recordedTunnel }));
+    try {
+      await startStimd();
+      await expect(ask('tunnel.stop', { root, pid: old.pid, processToken: 'someone-else' })).resolves.toMatchObject({
+        op: 'error',
+        code: 'tunnel-changed',
+      });
+      await expect(
+        ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false }),
+      ).resolves.toMatchObject({
+        reused: true,
+        pid: old.pid,
+        url: 'https://old.trycloudflare.com',
+      });
+      await expect(ask('tunnel.stop', { root, pid: old.pid, processToken: token })).resolves.toMatchObject({
+        state: 'stopped',
+      });
+      expect(alive(old.pid)).toBe(false);
+      expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel).toBeUndefined();
+    } finally {
+      if (alive(old.pid)) process.kill(-oldPid, 'SIGKILL');
+    }
+  }, 30_000);
+
   test('a restarted stimd re-adopts its Metro and tunnel by claim and reads the output it missed; a Metro of other injected files is foreign until a launch restarts it', async () => {
     const root = bareProject();
     const port = await freePort();
     await startStimd();
     const metro = await ask('metro.ensure', { root, port });
-    const tunnel = await ask('tunnel.ensure', { root, provider: 'cloudflared', port, requireReachable: false });
+    const tunnel = await ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false });
     expect(tunnel).toMatchObject({ op: 'tunnel', url: 'https://fixture-words.trycloudflare.com' });
 
     await stopStimd();
@@ -890,7 +981,10 @@ require('node:http')
       { timeout: 5000, interval: 100 },
     );
     await expect(ask('metro.ensure', { root, port })).resolves.toEqual({ ...metro, state: 'running' });
-    await expect(ask('tunnel.ensure', { root, provider: 'cloudflared', port })).resolves.toEqual(tunnel);
+    await expect(ask('tunnel.ensure', { root, mode: 'cloudflared', port })).resolves.toEqual({
+      ...tunnel,
+      reused: true,
+    });
 
     await stopStimd();
     const claim = claimFile(root, 'metro');

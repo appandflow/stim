@@ -624,47 +624,13 @@ test.each(['ngrok', 'tailscale'] as const)('reclaim ends the recorded %s tunnel'
   const root = workspaceWithManagedTunnel(4242, provider);
   const stopped: number[] = [];
   const r = await reclaimProject(root, {
-    stopMetroTunnel: async (record) => {
+    stopMetroTunnel: async (_root, record) => {
       stopped.push(record.pid);
       return { status: 'stopped' };
     },
   });
   expect(stopped).toEqual([4242]);
   expect(r.stoppedTunnel).toBe(provider);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('reclaim clears the exact managed tunnel record after a successful stop', async () => {
-  const root = workspaceWithManagedTunnel(4242);
-  await reclaimProject(root, {
-    stopMetroTunnel: async () => ({ status: 'stopped' }),
-  });
-  expect(existsSync(workspaceStateFile(root))).toBe(false);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('reclaim preserves a replacement managed tunnel record', async () => {
-  const root = workspaceWithManagedTunnel(4242);
-  const replacement = {
-    kind: 'managed',
-    provider: 'ngrok',
-    pid: 4242,
-    url: 'https://abc.ngrok.app',
-    port: 8082,
-    startedAt: 'T',
-    processToken: 'linux:200',
-  } as const;
-  const result = await reclaimProject(root, {
-    stopMetroTunnel: async () => {
-      writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: replacement }));
-      return { status: 'stopped' };
-    },
-  });
-  const state = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
-  expect(state.metroTunnel).toEqual(replacement);
-  expect(result.keptEntry).toBe(true);
-  expect(result.stoppedTunnel).toBeNull();
-  expect(result.failedDevices[0]?.reason).toMatch(/replacement.*retained/i);
   rmSync(root, { recursive: true, force: true });
 });
 

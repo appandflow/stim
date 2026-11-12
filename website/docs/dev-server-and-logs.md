@@ -648,6 +648,15 @@ reachable from the app on this workspace's device at localhost:<port> with
 stim ports reverse, and confirm from the app that it connects.
 ```
 
+## Managed tunnel for remote devices
+
+`stim start --remote` (or an `ios.remote` or `android.remote` backend) gives a remote device a
+public URL for Metro. With `metro.tunnel` set to `auto`, `ngrok`, `cloudflared` or `tailscale`,
+stimd starts and supervises the tunnel as one of its children, so it keeps running after `stim start`
+returns and a restarted stimd takes it over. In `auto` stimd tries ngrok and then cloudflared. `stim stop` and
+`stim worktree remove` end the tunnel through stimd, and `stim status --json` keeps reporting its provider and URL.
+A tunnel an older Stim started is reused or stopped by its recorded process identity.
+
 ## Metro for hosted iOS
 
 `stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.
