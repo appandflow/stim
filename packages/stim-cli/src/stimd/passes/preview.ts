@@ -8,6 +8,7 @@ import { cacheBlocked } from './measure.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
 import { candidateRootsAsync, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import { listWorktreesAsync } from '../../workspace/worktree.ts';
+import { planCargoTargets } from './cargo-target.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
@@ -149,17 +150,21 @@ export async function plannedMaintenance(
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
-  if (caps)
-    merge(
-      'caps',
-      plan({
-        sizes: currentSizes,
-        settings,
-        protectedRoot: root,
-        pinned,
-        recentlyUsed: (workspace) => recentUse(workspace, settings),
-      }),
-    );
+  if (caps) {
+    const capped = plan({
+      sizes: currentSizes,
+      settings,
+      protectedRoot: root,
+      pinned,
+      recentlyUsed: (workspace) => recentUse(workspace, settings),
+    });
+    const cargo = await planCargoTargets({ sizes: currentSizes, settings, pinned, now: Date.now() });
+    merge('caps', {
+      actions: [...capped.actions, ...cargo.actions],
+      blocked: [...capped.blocked, ...cargo.blocked],
+      skips: [...capped.skips, ...cargo.skips],
+    });
+  }
   if (sweep)
     merge(
       'sweep',

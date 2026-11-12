@@ -141,6 +141,8 @@ function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome
       size.workspace === action.workspace
     )
       return [];
+    if (action.kind === 'would-clear-build-dirs' && action.workspace && size.dir === action.target)
+      return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
     if (action.kind === 'would-trim-cache' && action.dir && size.dir === action.dir)
       return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
     if (action.kind === 'would-empty-cache' && size.dir === action.target) return [];
@@ -187,7 +189,9 @@ function describeDone(action: MaintenanceAction): string {
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
-      return `Cleared the build directory ${action.target}`;
+      return action.workspace
+        ? `Trimmed the Cargo target ${action.target}`
+        : `Cleared the build directory ${action.target}`;
     case 'would-delete-dependencies':
       return `Deleted the installed dependencies ${action.target}`;
     case 'would-stop-gradle-daemons':

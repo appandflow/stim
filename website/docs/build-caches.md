@@ -536,6 +536,13 @@ code={`stim gc --dry-run
 stim gc`}
 />
 
+Automatic maintenance also bounds the Cargo `target/` of an Exact app that is in use. Above
+`maintenance.cargoTargetMaxGb` (25 GiB by default, 0 for no cap) it removes the profiles and
+target triples that no build wrote or read in the last day, judged by directory times, Exact's own
+`.exact-sweep.json` ledger and fingerprint access times, and stops there. A profile a Cargo build
+holds open, and a `target/` that a process works in, stay. Exact's own sweep removes units unused
+for a week; the cap works at profile level and does not write its ledger.
+
 `stim gc` clears the outputs of a workspace over `maintenance.workspaceOutputsMaxGb`
 or unused for `maintenance.olderThanDays`, as long as it is not building and did
 not run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and

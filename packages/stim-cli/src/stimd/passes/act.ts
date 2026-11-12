@@ -59,6 +59,7 @@ import {
   workspaceActiveReason,
   workspaceActiveReasonAsync,
 } from './activity.ts';
+import { trimCargoTargetAction } from './cargo-target.ts';
 import { stopIdleWorkspace } from './idle-stop.ts';
 import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
@@ -542,6 +543,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
+      return action.workspace ? trimCargoTargetAction(action, context.operation) : clearArtifacts(action, context);
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':

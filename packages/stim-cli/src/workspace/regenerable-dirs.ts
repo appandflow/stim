@@ -124,6 +124,11 @@ function* exactTargetDirs(root: string): DirReads<string[]> {
   return (yield* realDirectory(path)) ? [path] : [];
 }
 
+/** The Cargo `target/` of the Exact app at `root` (beside its `exact.mjs`), or null. */
+export async function exactTargetDirAsync(root: string): Promise<string | null> {
+  return (await readAsync(exactTargetDirs(root)))[0] ?? null;
+}
+
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);

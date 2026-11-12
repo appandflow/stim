@@ -76,7 +76,7 @@ server stops, the owned devices shut down through centralized teardown
 held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a remote (EAS) session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a live web share (guide share), a
-device driver other than agent-device, a live agent-device claim with no session activity to judge,
+device driver other than agent-device, a live agent-device claim, lease or runner with no session activity to judge (one whose last command is older than the idle window does not keep it),
 device activity, an emulator list or an emulator's AVD name that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
@@ -121,7 +121,13 @@ In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
-     or unused for maintenance.olderThanDays
+     or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
+     app, in use or not, over maintenance.cargoTargetMaxGb (default 25, 0 no
+     cap): the profiles and target triples no build wrote or read in the last
+     day (directory times, Exact's own .exact-sweep.json ledger, fingerprint
+     access times) are renamed aside and deleted, then it stops; a profile
+     whose .cargo-lock a build holds open, or any target/ a process works in,
+     stays
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
