@@ -192,12 +192,12 @@ export async function runMaintenanceAtLevel({
   const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
   const processes = processReader(operation?.signal);
   const discovered: LevelRun['discovered'] = [];
+  const ownerOf = (path: string) =>
+    found
+      .filter((entry) => path === entry.path || path.startsWith(`${entry.path}/`))
+      .toSorted((a, b) => b.path.length - a.path.length)[0]?.path;
   for (const checkout of found) {
-    const mine = actions.filter((action) =>
-      [action.target, action.workspace].some(
-        (path) => path !== undefined && (path === checkout.path || path.startsWith(`${checkout.path}/`)),
-      ),
-    );
+    const mine = actions.filter((action) => ownerOf(action.target) === checkout.path);
     const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
     const kept =
       taken || idleMs <= 0 || !existsSync(checkout.path)
