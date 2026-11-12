@@ -494,7 +494,7 @@ function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly A
     }
   };
   for (const other of worktrees) {
-    if (!other.linked || other.source !== candidate.worktree) continue;
+    if (!other.linked || (other.source !== undefined && other.source !== candidate.worktree)) continue;
     const direct = join(other.path, rel);
     if (isSymlink(direct) && into(direct)) return `the worktree ${other.path} links ${rel} to it`;
     let seen = 0;
@@ -732,6 +732,7 @@ export async function clearSourceTrees(
     );
   };
   let selected: string[] = [];
+  let recordFailure: string | null = null;
   for (const path of targets) {
     const problem = await checkTree(path);
     if (problem) keepAll([path], problem);
@@ -753,6 +754,7 @@ export async function clearSourceTrees(
     }
     selected = stillSelected;
     const begun: string[] = [];
+    recordFailure = null;
     for (const path of selected) {
       begun.push(path);
       try {
@@ -766,7 +768,12 @@ export async function clearSourceTrees(
         });
       }
     }
-    if (begun.length) recordSourceDependencies(worktree.keys, begun);
+    if (begun.length)
+      try {
+        recordSourceDependencies(worktree.keys, begun);
+      } catch (error) {
+        recordFailure = error instanceof Error ? error.message : String(error);
+      }
   };
   const hold = async (keys: readonly string[]): Promise<void> => {
     const [head, ...rest] = keys;
@@ -791,5 +798,12 @@ export async function clearSourceTrees(
   const bytes = Number.isFinite(freed) ? Math.round(freed * 1024 * 1024) : 0;
   const firstDone = [...results].find(([, outcome]) => outcome.status === 'done');
   if (firstDone) results.set(firstDone[0], { ...firstDone[1], bytes });
+  if (recordFailure)
+    for (const [path, outcome] of results)
+      if (outcome.status === 'done')
+        results.set(path, {
+          ...outcome,
+          detail: `${outcome.detail}; the record of the deletion could not be written: ${recordFailure}`,
+        });
   return results;
 }

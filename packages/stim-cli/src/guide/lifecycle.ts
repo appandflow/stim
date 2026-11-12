@@ -2672,10 +2672,13 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   its top two directory levels (up to 2000 entries, not entering node_modules or
   .git), that resolves into the tree keeps it; past 2000 entries or at a
   directory it cannot read, the worktree could not be fully checked and the tree
-  is kept; a worktree git does not list is not scanned. A checkout's trees go as
-  one unit: one recheck under the claims (the native-run claim of every workspace
-  in it and of its root, and its warm claim taken exclusively without waiting),
-  then every selected tree deleted, then the record; its build outputs follow the one-day rule like any
+  is kept; a worktree git does not list is not scanned. A checkout's trees are
+  deleted in one hold, not all or nothing: each tree is checked on its own and a
+  tree that fails a guard is kept while the others go; the survivors get one
+  recheck under the claims (the native-run claim of every workspace in it and of
+  its root, and its warm claim taken exclusively without waiting), are deleted,
+  and the record is written. Afterwards the checkout shows a recent write, so a
+  tree left behind waits for its next window; its build outputs follow the one-day rule like any
   workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
   in a linked worktree then adds to its carry line that the source has no
   installed node_modules or ios/Pods to copy and since when, with the

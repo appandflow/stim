@@ -2427,7 +2427,7 @@ install. A source (main) checkout's `node_modules` and `ios/Pods` are deleted on
 after every linked worktree's: once it has had no activity for
 `idle.sourceDormantDays` (7 by default; `0` never; activity is a Stim command, a source file write, a
 git write or a commit in the checkout or any workspace in it, registered or not,
-and a `worktree warm` copying from it, which also keeps it while it runs) at any level, or at critical when the disk is still
+and a `worktree warm` copying from it, which also keeps it while it runs, when the warmed app has a Stim workspace in the source) at any level, or at critical when the disk is still
 under the critical level, which `stim gc --pressure critical` always does. Then
 `stim worktree warm` and `stim status` say the source has no installed
 dependencies to copy, and since when, until you install them there. `gc` deletes
