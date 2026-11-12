@@ -833,7 +833,7 @@ export function protocolJsonSchema(): JsonSchema {
               desktopApi: { type: 'integer' },
             },
           },
-          access: { enum: ['build', 'device-host'] },
+          access: { enum: ['build', 'device-host', 'test'] },
           desktopBootstrap: { const: true },
         },
       },
@@ -1833,9 +1833,9 @@ export function protocolJsonSchema(): JsonSchema {
               capabilities: {
                 type: 'array',
                 minItems: 1,
-                maxItems: 2,
+                maxItems: 3,
                 uniqueItems: true,
-                items: { enum: ['build', 'device-host'] },
+                items: { enum: ['build', 'device-host', 'test'] },
               },
             },
           }),
@@ -1848,7 +1848,7 @@ export function protocolJsonSchema(): JsonSchema {
                 properties: {
                   journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
                   answer: { enum: ['approve', 'refuse'] },
-                  capability: { enum: ['build', 'device-host'] },
+                  capability: { enum: ['build', 'device-host', 'test'] },
                 },
               },
               {
@@ -2683,7 +2683,7 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'desktop-setup-progress' },
               subscription: { type: 'string' },
               journal: { type: 'object' },
-              asking: { enum: ['build', 'device-host', null] },
+              asking: { enum: ['build', 'device-host', 'test', null] },
             },
           },
           {

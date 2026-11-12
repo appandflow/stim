@@ -193,9 +193,10 @@ interface ServerHealth {
   /**
    * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
    * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
-   * running for the next server, which `resumes` says this one does.
+   * running for the next server, which `resumes` says this one does. `tests` counts the commands test clients run here;
+   * a server without it takes no `test` approval.
    */
-  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
+  busy: { builds: number; hostedSessions: number; hostedWork: number; tests: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -602,7 +603,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return null;
     }
   };
-  const approved = (): Registries => readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [] };
+  const approved = (): Registries =>
+    readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [], test: [] };
   const buildAllowed = (session: Pick<PairedDevice, 'id'>) =>
     approved().build.some((entry) => entry.id === session.id && entry.capabilities.includes('build'));
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
@@ -1061,7 +1063,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       watchServerDir();
       console.error('stim-server: the Stim home answers again; serving clients.');
     }
-    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost];
+    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost, ...registries.test];
     const registry = JSON.stringify(devices);
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
@@ -1896,12 +1898,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return refuse('home-unavailable');
       }
       if (!records) return refuse('unknown-secret');
-      if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
+      if (!records.device && !records.build && !records['device-host'] && !records.test) return refuse('unauthorized');
     } else {
       const registries = readApprovals();
       if (!registries) return refuse('home-unavailable');
       records = recordsForKey(publicKey, registries);
-      if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
+      if (!records.device && !records.build && !records['device-host'] && !records.test) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
     pendingPools.get(request.socket)?.settle(request.socket);
@@ -1957,6 +1959,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         builds: jobs.running(),
         hostedSessions: hostedDevices.active(),
         hostedWork: hostedDevices.working(),
+        tests: 0,
         resumes: true,
       },
       tailscale: healthTailscale(state),

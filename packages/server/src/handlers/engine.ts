@@ -13,12 +13,13 @@ export async function updateMethod(
   const machine =
     !ctx.local &&
     (registries.build.some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
-      registries.deviceHost.some((entry) => entry.id === session.id && entry.capabilities.includes('device-host')));
+      registries.deviceHost.some((entry) => entry.id === session.id && entry.capabilities.includes('device-host')) ||
+      registries.test.some((entry) => entry.id === session.id && entry.capabilities.includes('test')));
   if (!machine) {
     return ctx.error(
       id,
       'forbidden',
-      `${method} needs this machine's build or device-host approval of the requesting machine.`,
+      `${method} needs this machine's build, device-host or test approval of the requesting machine.`,
     );
   }
   if (method === 'engine.update.status') return send(ctx.socket, { id, result: await ctx.updates.status() });

@@ -932,11 +932,11 @@ The host's own owned devices count toward concurrency.maxDevices and its per-pla
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
 Each record in stim pairings --json carries kind (phone or desktop for
-a pairing from stim pair, build-client or device-host-client), access
-(view, control, build or run-devices), owner (this-machine for a phone or
-desktop, theirs-running-here for a build or device-host client) and
-keyFingerprint, the client key one machine's build and device-host records
-share. clientApp and clientVersion are the app and version the client named in
+a pairing from stim pair, build-client, device-host-client or test-client),
+access (view, control, build, run-devices or test), owner (this-machine for a
+phone or desktop, theirs-running-here for a build, device-host or test client)
+and keyFingerprint, the client key one machine's build, device-host and test
+records share. clientApp and clientVersion are the app and version the client named in
 its last hello, shown once it has connected; a pairing is desktop when
 clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
 only and never change access. A person on the host renames a record

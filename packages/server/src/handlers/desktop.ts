@@ -405,12 +405,13 @@ function subscribeDesktopSetup(ctx: ConnectionContext, id: RequestId, params: un
     !params.capabilities.length ||
     new Set(params.capabilities).size !== params.capabilities.length
   )
-    return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+    return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build, device-host or test.');
   const capabilities = params.capabilities.filter(
-    (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
+    (capability): capability is SetupCapability =>
+      capability === 'build' || capability === 'device-host' || capability === 'test',
   );
   if (capabilities.length !== params.capabilities.length)
-    return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+    return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build, device-host or test.');
   const port = ctx.addresses[0]?.port;
   if (port === undefined) return ctx.error(id, 'bad-request', 'This server has no port for setup to use.');
   const ticket = decodeSecret(params.ticket);
@@ -451,7 +452,7 @@ function answerDesktopSetup(ctx: ConnectionContext, id: RequestId, params: unkno
   const given: DesktopSetupAnswer | null = !isJsonObject(params)
     ? null
     : (params.answer === 'approve' || params.answer === 'refuse') &&
-        (params.capability === 'build' || params.capability === 'device-host') &&
+        (params.capability === 'build' || params.capability === 'device-host' || params.capability === 'test') &&
         Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'capability')
       ? { answer: params.answer, capability: params.capability }
       : params.answer === 'skip' &&

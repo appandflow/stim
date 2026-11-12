@@ -181,7 +181,7 @@ interface Health {
   protocol?: number;
   stim: string;
   stimBuild?: string | null;
-  busy?: { builds: number; hostedSessions: number; hostedWork?: number; resumes?: boolean };
+  busy?: { builds: number; hostedSessions: number; hostedWork?: number; tests?: number; resumes?: boolean };
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };

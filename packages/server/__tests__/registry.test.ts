@@ -22,6 +22,7 @@ import {
   PAIRING_TTL_MS,
   readBuildClients,
   readDeviceHostClients,
+  readTestClients,
   readDevices,
   readRegistries,
   readUnreadable,
@@ -59,7 +60,7 @@ function pair(name = 'Phone', key = newKey(), capabilities = capabilitiesFor(fal
   return records.device;
 }
 
-function setup(capabilities: ('build' | 'device-host')[], key = newKey(), now = Date.now()) {
+function setup(capabilities: ('build' | 'device-host' | 'test')[], key = newKey(), now = Date.now()) {
   const ticket = newSecret();
   storeSetupSecret(Buffer.from(ticket, 'base64url'), capabilities, new Date(now + 60_000).toISOString(), now);
   return { ticket, key, journal: secretValues(Buffer.from(ticket, 'base64url')).journal };
@@ -146,17 +147,21 @@ describe('setup tickets', () => {
 describe('registries', () => {
   it('sets read and control only on paired devices', () => {
     const phone = pair();
-    const { ticket, key } = setup(['build', 'device-host']);
+    const { ticket, key } = setup(['build', 'device-host', 'test']);
     const machine = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')!;
     expect(grantDevice(phone.id, ['build'])).toBe('build-mismatch');
     expect(grantDevice(phone.id, ['read', 'device-host'])).toBe('device-host-mismatch');
+    expect(grantDevice(phone.id, ['read', 'test'])).toBe('test-mismatch');
     expect(grantDevice(machine.build!.id, capabilitiesFor(true))).toBe('build-mismatch');
     expect(grantDevice(machine['device-host']!.id, ['device-host'])).toBe('device-host-mismatch');
+    assert(machine.test);
+    expect(grantDevice(machine.test.id, capabilitiesFor(true))).toBe('test-mismatch');
     expect(grantDevice('missing', ['read'])).toBe('unknown');
     expect(grantDevice(phone.id, capabilitiesFor(true))).toBe('granted');
     expect(readDevices()[0]!.capabilities).toEqual(['read', 'control']);
     expect(readBuildClients()[0]!.capabilities).toEqual(['build']);
     expect(readDeviceHostClients()[0]!.capabilities).toEqual(['device-host']);
+    expect(readTestClients().map((client) => client.capabilities)).toEqual([['test']]);
   });
 
   it('revokes a record from whichever registry holds it and leaves the others', () => {
@@ -185,6 +190,7 @@ describe('registries', () => {
       devices: before.devices.map((record) => ({ ...record, name: emoji })),
       build: before.build.map((record) => ({ ...record, name: 'Studio build box' })),
       deviceHost: before.deviceHost,
+      test: before.test,
     });
   });
 
@@ -266,7 +272,7 @@ describe('the client app a hello names', () => {
 describe('a Stim home that does not answer', () => {
   it('reads a server directory without registry files as no clients', () => {
     mkdirSync(join(home, 'server'));
-    expect(readRegistries()).toEqual({ devices: [], build: [], deviceHost: [] });
+    expect(readRegistries()).toEqual({ devices: [], build: [], deviceHost: [], test: [] });
   });
 
   it('refuses to read the registries or a secret through a home symlink whose target moved away', () => {

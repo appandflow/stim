@@ -295,7 +295,7 @@
     "exitCode": 0
   },
   "[\"setup\",\"--help\"]": {
-    "out": "Usage: stim setup [options]\n\nApprove the machine holding STIM_SETUP_TICKET on this worker\n\nOptions:\n  --expires <iso>       approval expiry\n  --build               approve builds\n  --device-host         approve hosted devices\n  --port <n>            server port\n  --label <name>        service label\n  --env <KEY=VALUE>     set a server environment variable\n  --path-prepend <dir>  prepend a server tool directory\n  --yes                 approve without a terminal prompt\n  --json                print the result as JSON\n  --verbose             print setup details\n  --no-wait             interrupt active builds and hosted installs\n  -h, --help            display help for command\n",
+    "out": "Usage: stim setup [options]\n\nApprove the machine holding STIM_SETUP_TICKET on this worker\n\nOptions:\n  --expires <iso>       approval expiry\n  --build               approve builds\n  --device-host         approve hosted devices\n  --test                approve running any command it sends, no sandbox\n  --port <n>            server port\n  --label <name>        service label\n  --env <KEY=VALUE>     set a server environment variable\n  --path-prepend <dir>  prepend a server tool directory\n  --yes                 approve without a terminal prompt\n  --json                print the result as JSON\n  --verbose             print setup details\n  --no-wait             interrupt active builds and hosted installs\n  -h, --help            display help for command\n",
     "err": "",
     "exitCode": 0
   },

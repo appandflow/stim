@@ -31,6 +31,7 @@ import {
   isDesktopClient,
   readBuildClients,
   readDeviceHostClients,
+  readTestClients,
   readDevices,
   readUnreadable,
   watchClientRegistries,
@@ -295,7 +296,7 @@ const RECONCILE_MS = 60_000;
 
 /**
  * Loads the Tailscale transport once this machine uses the tailnet: while the tailnet marker exists, when the running
- * service recorded a `tailscale serve` route, and when a build or device-host client is approved while the tailscale
+ * service recorded a `tailscale serve` route, and when a build, device-host or test client is approved while the tailscale
  * command is installed. File events are hints; a check every minute repairs a missed one and retries a failed load.
  */
 async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Promise<() => void> {
@@ -320,7 +321,10 @@ async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Pro
     // compat end
     if (hasTailnetMarker()) return void (await tailnet.load('tailnet marker'));
     if ((served ??= await servedRoute())) return void (await tailnet.load('service serve route'));
-    if (readBuildClients().length + readDeviceHostClients().length && (await tailnet.binary()))
+    if (
+      readBuildClients().length + readDeviceHostClients().length + readTestClients().length &&
+      (await tailnet.binary())
+    )
       await tailnet.load('approved clients');
   };
   const checked = async () => {
@@ -353,13 +357,14 @@ function reportShutdownFailure(failure: unknown): void {
   }
 }
 
-type Scope = 'read' | 'control' | 'build' | 'device-host';
+type Scope = Capability;
 
 const SCOPE_TEXT: Record<Scope, string> = {
   read: 'only read',
   control: 'run actions',
   build: 'run its project code on this machine to build',
   'device-host': 'request session-owned device hosting on this machine',
+  test: 'run any command it sends on this machine, as this user, with no sandbox',
 };
 
 export async function pair(port: number, json: boolean, control: boolean): Promise<void> {
@@ -391,13 +396,15 @@ export async function pair(port: number, json: boolean, control: boolean): Promi
 
 function describe(device: PairedDevice): string {
   const from = `${device.from ?? 'unknown'}, key ${keyFingerprint(Buffer.from(device.publicKey, 'base64url')).slice(0, 12)}`;
-  const scope = device.capabilities.includes('device-host')
-    ? 'device-host'
-    : device.capabilities.includes('build')
-      ? 'build'
-      : device.capabilities.includes('control')
-        ? 'control'
-        : 'read';
+  const scope = device.capabilities.includes('test')
+    ? 'test'
+    : device.capabilities.includes('device-host')
+      ? 'device-host'
+      : device.capabilities.includes('build')
+        ? 'build'
+        : device.capabilities.includes('control')
+          ? 'control'
+          : 'read';
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
@@ -407,13 +414,19 @@ function describeUnreadable({ file, index, id, version }: UnreadableRecord): str
   return `unreadable  ${file} entry ${index}${id ? `  ${id}` : ''}  left as it is`;
 }
 
-const KINDS = { device: 'phone', build: 'build-client', 'device-host': 'device-host-client' } as const;
+const KINDS = {
+  device: 'phone',
+  build: 'build-client',
+  'device-host': 'device-host-client',
+  test: 'test-client',
+} as const;
 
 const ACCESS: Record<Capability, string> = {
   read: 'view',
   control: 'control',
   build: 'build',
   'device-host': 'run-devices',
+  test: 'test',
 };
 
 function listed(device: PairedDevice, registry: keyof typeof KINDS) {
@@ -540,9 +553,11 @@ export function grant(id: string, values: { read?: boolean; control?: boolean })
     refuseUnreadable(id);
     fail(`no paired device or approved client ${id}. Run \`stim pairings\` to list them.`);
   }
-  if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
-    const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
-    fail(`${id} is a ${requested} client, approved by setup; revoke it with \`stim pairings revoke ${id}\`.`);
+  if (outcome !== 'granted') {
+    const requested = outcome.slice(0, -'-mismatch'.length);
+    fail(
+      `${id} is a ${requested} client, approved by \`stim setup --${requested}\`; revoke it with \`stim pairings revoke ${id}\`.`,
+    );
   }
   console.log(`${id} can now ${SCOPE_TEXT[scope]}.`);
 }
@@ -566,6 +581,7 @@ export function listPairings(json: boolean): void {
     ...readDevices().map((device) => [device, 'device'] as const),
     ...readBuildClients().map((device) => [device, 'build'] as const),
     ...clients.map((device) => [device, 'device-host'] as const),
+    ...readTestClients().map((device) => [device, 'test'] as const),
   ];
   const devices = sources.map(([device]) => device);
   let hostedSessions: ReturnType<typeof readHostedSessionRows> = [];

@@ -20,6 +20,7 @@ import {
   dropSetupSecret,
   readBuildClients,
   readDeviceHostClients,
+  readTestClients,
   serverDir,
   serverIdentity,
   storeSetupSecret,
@@ -96,6 +97,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
       expires: { type: 'string' },
       build: { type: 'boolean' },
       'device-host': { type: 'boolean' },
+      test: { type: 'boolean' },
       port: { type: 'string' },
       label: { type: 'string' },
       env: { type: 'string', multiple: true },
@@ -108,8 +110,8 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   });
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
-  const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
-  if (!capabilities.length) throw new SetupRefusal('setup needs --build or --device-host.');
+  const capabilities = (['build', 'device-host', 'test'] as const).filter((cap) => values[cap]);
+  if (!capabilities.length) throw new SetupRefusal('setup needs --build, --device-host or --test.');
   const expires = values.expires;
   const until = Date.parse(expires ?? '');
   if (
@@ -157,16 +159,20 @@ function selectGrants(
 
 /**
  * Whether setup installs, updates or reuses the server. `protocol` comes from a running server's `/health`; a server
- * that reports none, or one below protocol 2, cannot take a setup ticket.
+ * that reports none, or one below protocol 2, cannot take a setup ticket. `tests` says whether that `/health` counts
+ * test commands: a running server that does not would never turn a `test` ticket into a record, so setup that asks
+ * for `test` refuses to reuse it.
  */
 export function setupVersionDecision(
-  current: { version: string; protocol?: number; running: boolean } | null,
+  current: { version: string; protocol?: number; running: boolean; tests?: boolean } | null,
   desired: string,
   managed: boolean,
-): 'install' | 'update' | 'reuse' | 'too-old' {
+  test = false,
+): 'install' | 'update' | 'reuse' | 'too-old' | 'no-test' {
   if (current === null) return 'install';
   if (managed && compareVersions(current.version, desired) < 0) return 'update';
-  return current.running && (current.protocol ?? 0) < SETUP_PROTOCOL ? 'too-old' : 'reuse';
+  if (current.running && (current.protocol ?? 0) < SETUP_PROTOCOL) return 'too-old';
+  return test && current.running && !current.tests ? 'no-test' : 'reuse';
 }
 
 function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platform']): string {
@@ -440,7 +446,7 @@ export function defaultSetupDeps(): SetupDeps {
       const result = await run((await binary()) ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
-    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    records: () => [...readBuildClients(), ...readDeviceHostClients(), ...readTestClients()],
     watchRecords: watchClientRegistries,
     storeSecret: storeSetupSecret,
     dropSecret: dropSetupSecret,
@@ -642,9 +648,21 @@ function reportTools(
   }
 }
 
-const capabilityNoun = (capability: SetupCapability) => (capability === 'build' ? 'builds' : 'hosted simulators');
+const CAPABILITY_NOUNS: Record<SetupCapability, string> = {
+  build: 'builds',
+  'device-host': 'hosted simulators',
+  test: 'tests',
+};
+
+const capabilityNoun = (capability: SetupCapability) => CAPABILITY_NOUNS[capability];
+
+const nounList = (capabilities: SetupCapability[]) => capabilities.map(capabilityNoun).join(' or ');
 
 function approvalQuestion(concise: boolean, capability: SetupCapability, here: string): string {
+  if (capability === 'test')
+    return concise
+      ? `Approve the machine holding this ticket to run any command it sends on ${here}, as this user, with no sandbox? [Y/n] `
+      : `Let the machine holding this setup ticket run any command it sends on ${here}, as this user, with no sandbox? [Y/n] `;
   if (!concise) {
     const verb = capability === 'build' ? `build on ${here}` : `host simulators on ${here}`;
     return `Let the machine holding this setup ticket ${verb}? [Y/n] `;
@@ -654,15 +672,21 @@ function approvalQuestion(concise: boolean, capability: SetupCapability, here: s
   return `Approve the machine holding this ticket to ${action} on ${here})? [Y/n] `;
 }
 
+function approvalExplanation(capability: SetupCapability, here: string): string {
+  if (capability === 'build') return `This runs its project code on ${here} to build.`;
+  if (capability === 'device-host') return 'This runs its native app code in session-owned simulators on this Mac.';
+  return `This runs any command that machine sends, such as its tests, on ${here} as this user, with no sandbox: it can read and change this user's files.`;
+}
+
 function serverText(desktop: boolean, decision: string, version: string): string {
   if (desktop) return `using the app's stim-server ${version}`;
   return `stim-server ${version} ${decision === 'reuse' ? 'already installed' : 'installed'}`;
 }
 
-function approvalView(complete: boolean): StepView {
+function approvalView(complete: boolean, capabilities: SetupCapability[]): StepView {
   return complete
     ? { hidden: true }
-    : { text: 'no approval before the ticket expired: builds or hosted simulators will not work' };
+    : { text: `no approval before the ticket expired: ${nounList(capabilities)} will not work` };
 }
 
 function printSuccess(
@@ -673,7 +697,7 @@ function printSuccess(
   const { printer, gaps, exit } = concise;
   const machine = output.route.dnsName?.split('.')[0] ?? output.label;
   const client = output.granted[0]?.client.name ?? 'the requesting machine';
-  const names = { build: 'build', 'device-host': 'host simulators' };
+  const names = { build: 'build', 'device-host': 'host simulators', test: 'run tests' };
   const what = options.capabilities.map((c) => names[c]).join(' and ');
   if (exit === 0) printer.headline('ok', `${machine} is ready to ${what} for ${client}`);
   else if (exit === 1) printer.headline('failed', 'Setup did not finish');
@@ -703,7 +727,9 @@ function summarizeSetup(
   if (concise) return printSuccess(output, options, concise);
   for (const capability of options.capabilities) {
     if (!output.granted.some((g) => g.capability === capability))
-      output.warnings.push(`${capability === 'build' ? 'Builds' : 'Hosted simulators'} have no approval.`);
+      output.warnings.push(
+        `${capability === 'build' ? 'Builds' : capability === 'test' ? 'Tests' : 'Hosted simulators'} have no approval.`,
+      );
   }
   if (options.capabilities.includes('device-host')) {
     for (const [key, feature] of [
@@ -845,8 +871,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     Object.assign(output, { label: options.label, port: options.port });
     if (androidOnly && options.capabilities.includes('device-host'))
       throw new SetupRefusal(
-        `Hosting simulators needs a Mac. On ${deps.platform === 'win32' ? 'Windows' : 'Linux'}, run setup with --build only.`,
+        `Hosting simulators needs a Mac. On ${deps.platform === 'win32' ? 'Windows' : 'Linux'}, run setup with --build${deps.platform === 'linux' ? ' or --test' : ''} only.`,
       );
+    if (deps.platform === 'win32' && options.capabilities.includes('test'))
+      throw new SetupRefusal('A Windows machine does not take test approval yet. Run setup with --build only.');
     if (options.capabilities.includes('device-host'))
       output.permissions = { screenRecording: 'denied', deviceControl: 'denied' };
     journal = {
@@ -889,9 +917,15 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       output.managed = !desktop;
       const current = health ?? (installed?.script ? deps.build(installed.script) : null);
       const decision = setupVersionDecision(
-        current && { version: current.version, protocol: health?.protocol, running: health !== null },
+        current && {
+          version: current.version,
+          protocol: health?.protocol,
+          running: health !== null,
+          tests: health?.busy?.tests !== undefined,
+        },
         version,
         !desktop,
+        opts.capabilities.includes('test'),
       );
       const fix = desktop
         ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global stim@${version} and restart the server.`
@@ -899,6 +933,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       if (decision === 'too-old')
         throw new SetupRefusal(
           `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
+          false,
+          fix,
+        );
+      if (decision === 'no-test')
+        throw new SetupRefusal(
+          `This server (stim-server ${current?.version}) predates test approval and would never record it. ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
           false,
           fix,
         );
@@ -1046,7 +1086,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       step(
         `approve.${grant.capability}`,
         'ok',
-        `${already ? 'Already approved' : 'Approved'} ${grant.record.name} for ${grant.capability === 'build' ? 'builds' : 'hosted simulators'}`,
+        `${already ? 'Already approved' : 'Approved'} ${grant.record.name} for ${capabilityNoun(grant.capability)}`,
         `request ${grant.record.id}`,
         undefined,
         {
@@ -1060,12 +1100,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       if (journal.granted.some((g) => g.capability === capability)) continue;
       if (!opts.yes) {
         printer.clear();
-        if (!concise)
-          log(
-            capability === 'build'
-              ? `This runs its project code on ${here} to build.`
-              : 'This runs its native app code in session-owned simulators on this Mac.',
-          );
+        if (!concise) log(approvalExplanation(capability, here));
         const yes = await wait(
           deps.confirm(
             approvalQuestion(concise, capability, here),
@@ -1120,20 +1155,22 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       'Access approval',
       journal.granted.length === opts.capabilities.length
         ? 'Chosen capabilities approved.'
-        : 'Missing approval: builds or hosted simulators will not work. Generate a new command after expiry.',
+        : `Missing approval: ${nounList(opts.capabilities)} will not work. Generate a new command after expiry.`,
       undefined,
-      approvalView(journal.granted.length === opts.capabilities.length),
+      approvalView(journal.granted.length === opts.capabilities.length, opts.capabilities),
     );
     if (journal.granted.length) {
       if (opts.capabilities.includes('device-host')) await checkPermissions(deps, opts, host, desktop, output, step);
-      step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
-      const tools = await wait(deps.toolchain(opts));
-      if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
-      reportTools(tools, opts, output, step, deps.platform);
-      step('tools', 'ok', 'Tools', 'Checked; installs nothing.', undefined, {
-        text: 'build tools ready',
-        hidden: output.tools.some((t) => t.state === 'missing'),
-      });
+      if (opts.capabilities.some((capability) => capability !== 'test')) {
+        step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
+        const tools = await wait(deps.toolchain(opts));
+        if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
+        reportTools(tools, opts, output, step, deps.platform);
+        step('tools', 'ok', 'Tools', 'Checked; installs nothing.', undefined, {
+          text: 'build tools ready',
+          hidden: output.tools.some((t) => t.state === 'missing'),
+        });
+      }
     }
   } catch (error) {
     const message = deps.signal?.aborted ? 'interrupted' : error instanceof Error ? error.message : String(error);
