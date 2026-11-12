@@ -186,3 +186,22 @@ test('a directory that cannot be put back after a build took its lock is never d
     resetExecutor();
   }
 });
+
+test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock files the build holds', async () => {
+  try {
+    makeProfile('debug', 3 * DAY);
+    writeFileSync(join(target, 'debug', '.cargo-build-lock'), '');
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(join(target, 'debug'), old, old);
+    stubProcesses({
+      lsof: (args) => (args.includes('-t') && args.some((arg) => arg.endsWith('.cargo-build-lock')) ? '4242\n' : ''),
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual(['debug: a build holds its .cargo-lock']);
+  } finally {
+    resetExecutor();
+  }
+});

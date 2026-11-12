@@ -125,11 +125,16 @@ In on mode a pass runs, cheapest to rebuild first:
      app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
      a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
-     ones per size scan, the most recently modified first; one that times out
+     ones per size scan, the least recently measured first, so every one is
+     reached within a few scans; one that times out
      records no size, only its stale profiles are trimmed, and it is reported
      as needing a person). Only directories with Cargo's profile shape
      (.fingerprint) are profiles; other directories in target/, and a nested
-     target/ inside it, are never removed, though they count in its size: first the profiles and target triples no build wrote in the last
+     target/ inside it, are never removed, though they count in its size. A
+     target triple directory holding anything besides Cargo's CACHEDIR.TAG and
+     .rustc_info.json and its profiles keeps those files and loses only its
+     stale profiles. Without Exact's ledger, a build that changes nothing
+     leaves no trace in a profile's directory times: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
      remaining profile, largest first, until under the cap. Each is renamed

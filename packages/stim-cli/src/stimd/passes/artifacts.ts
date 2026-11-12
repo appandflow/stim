@@ -121,7 +121,6 @@ export function artifactWorktreesFor(
   return operation ? artifactWorktreesAsync(operation.signal, operation) : artifactWorktrees();
 }
 
-/** The worktrees `artifactWorktreesAsync` lists, before it reads which agent sessions work in the linked ones. */
 export async function artifactCheckoutsAsync(
   signal: AbortSignal,
   operation?: StimContext,

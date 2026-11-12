@@ -9,6 +9,8 @@ const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
 const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
+/** The lock files Cargo 1.97 writes in a profile; a running build holds all three. */
+const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
@@ -197,10 +199,10 @@ function selectIncremental(candidates: readonly { path: string; bytes: number }[
 }
 
 async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofOutcome> {
-  const lock = join(profile, '.cargo-lock');
-  if (!existsSync(lock)) return { stdout: '' };
+  const locks = PROFILE_LOCKS.map((name) => join(profile, name)).filter((lock) => existsSync(lock));
+  if (!locks.length) return { stdout: '' };
   try {
-    return { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal }) };
+    return { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', ...locks], { timeoutMs: 5000, signal }) };
   } catch (error) {
     return isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
   }

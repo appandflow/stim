@@ -321,8 +321,9 @@ async function measureAllSizes(
   now: number,
   failure: Parameters<typeof measureSizes>[1],
   operation: StimContext | undefined,
+  recorded: readonly MaintenanceSize[],
 ): Promise<MaintenanceSize[]> {
-  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation))];
+  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
 }
 
 /**
@@ -457,7 +458,7 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation)),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
             ...(deviceSweepIsScoped()
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),

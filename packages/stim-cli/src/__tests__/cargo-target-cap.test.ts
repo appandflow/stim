@@ -14,30 +14,39 @@ import {
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+const protectedRoots = vi.hoisted((): { home: string; temps: string[] } => ({ home: '/nonexistent-home', temps: [] }));
+vi.mock('../workspace/protected-locations.ts', async (original) => {
+  const real = await original<typeof import('../workspace/protected-locations.ts')>();
+  return { isProtectedLocation: (path: string) => real.isProtectedLocation(path, protectedRoots) };
+});
 
 const DAY = 24 * 3_600_000;
-const candidate = (dir: string, discovered: boolean, mtimeMs: number): CargoTargetCandidate => ({
+const candidate = (dir: string, discovered: boolean, measuredAt: number | null): CargoTargetCandidate => ({
   root: dir.replace(/\/target$/, ''),
   dir,
   discovered,
-  mtimeMs,
+  measuredAt,
 });
 
 describe('selectCargoTargets', () => {
-  it('walks a directory once, prefers the registered owner, and bounds the discovered ones by recency', () => {
-    const picked = selectCargoTargets(
-      [
-        candidate('/a/target', true, 1),
-        candidate('/a/target', false, 1),
-        candidate('/b/target', true, 5),
-        candidate('/c/target', true, 9),
-        candidate('/d/target', true, 7),
-      ],
+  it('walks a directory once, prefers the registered owner, and rotates the discovered ones by last measurement', () => {
+    const targets = [
+      candidate('/a/target', true, 1),
+      candidate('/a/target', false, 1),
+      candidate('/b/target', true, 5),
+      candidate('/c/target', true, null),
+      candidate('/d/target', true, 3),
+    ];
+    const first = selectCargoTargets(targets, 2);
+    expect(first.measured.map(({ dir }) => dir)).toEqual(['/a/target', '/c/target', '/d/target']);
+    expect(first.unlisted.map(({ dir }) => dir)).toEqual(['/b/target']);
+
+    const measured = new Set(first.measured.map(({ dir }) => dir));
+    const next = selectCargoTargets(
+      targets.map((entry) => candidate(entry.dir, entry.discovered, measured.has(entry.dir) ? 9 : entry.measuredAt)),
       2,
     );
-    expect(picked.measured.map(({ dir }) => dir)).toEqual(['/a/target', '/c/target', '/d/target']);
-    expect(picked.unlisted.map(({ dir }) => dir)).toEqual(['/b/target']);
+    expect(next.measured.map(({ dir }) => dir)).toContain('/b/target');
   });
 });
 
@@ -100,6 +109,8 @@ describe('the Cargo target cap over a root target/', () => {
   });
 
   afterEach(() => {
+    protectedRoots.home = '/nonexistent-home';
+    protectedRoots.temps = [];
     resetExecutor();
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
@@ -152,6 +163,60 @@ describe('the Cargo target cap over a root target/', () => {
     const sizes = await measureCargoTargets(Date.now());
 
     expect(sizes.map(({ dir }) => dir)).toEqual([join(main, 'target')]);
+  });
+
+  it('does not trim a target whose checkout left discovery scope after the plan was made', async () => {
+    const wt = linked('wt', join(base, 'roots'));
+    monorepoTarget(wt);
+    noProcesses();
+    const sizes = await measureCargoTargets(Date.now());
+    const [action] = (await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now() })).actions;
+    if (!action) throw new Error('no trim was planned');
+
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [] } });
+    const outcome = await trimCargoTargetAction(action);
+
+    expect(outcome.status).toBe('kept');
+    expect(existsSync(join(wt, 'target', 'debug'))).toBe(true);
+  });
+
+  it('ends planning at once when the pass is aborted', async () => {
+    const wt = linked('wt', join(base, 'roots'));
+    monorepoTarget(wt);
+    const sizes = await measureCargoTargets(Date.now());
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now(), signal: controller.signal }),
+    ).rejects.toThrow(/abort/i);
+  });
+
+  it('never measures a checkout under a home dot-folder or the temp directory, though discovery lists its folder', async () => {
+    const dotfolder = join(base, 'home', '.tools');
+    const scratch = join(base, 'scratch');
+    const ok = join(base, 'home', 'Developer');
+    protectedRoots.home = join(base, 'home');
+    protectedRoots.temps = [scratch];
+    saveConfig({
+      version: 2,
+      projects: {},
+      repos: {},
+      maintenance: { discoverRoots: [dotfolder, scratch, ok] },
+    });
+    for (const folder of [dotfolder, scratch, ok]) {
+      const app = join(folder, 'app');
+      mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+      writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      writeFileSync(join(app, '.gitignore'), 'target/\n');
+      git(app, 'init', '-q', '-b', 'main');
+      git(app, 'add', '-A');
+      git(app, 'commit', '-q', '-m', 'init');
+      monorepoTarget(app);
+    }
+
+    const sizes = await measureCargoTargets(Date.now());
+
+    expect(sizes.map(({ dir }) => dir)).toEqual([join(ok, 'app', 'target')]);
   });
 
   it('skips a root target whose files git does not ignore, and one without the Cargo tag', async () => {
