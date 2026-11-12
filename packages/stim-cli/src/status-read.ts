@@ -441,7 +441,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
             logs: logs[i],
             remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
             idleStop: readIdleStop(saved),
-            lastStop: metroLastStop(saved, supervisor),
+            lastStop: metroLastStop(saved, supervisor, path),
             idleShutdowns: readDeviceIdleShutdowns(saved),
             launches,
             leasedIds: new Set(

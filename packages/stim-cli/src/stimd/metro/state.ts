@@ -13,7 +13,7 @@ import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { sameProcessRecord } from '../../process-identity.ts';
 import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
-export const MODE_BARE = 'bare-inproc';
+const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
 export const MODE_COMMAND = 'command-child';
 export const MODE_REPACK = 'repack-child';

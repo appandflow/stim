@@ -1,20 +1,24 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { requestDevServerStop } from '../stimd/metro/stop-cause.ts';
 
+const HELPER = 515151;
+const SERVER = 424242;
+
 const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
-  failAfterSpawn: false,
   groupAlive: true,
   answers: true,
+  helper: 'same' as 'same' | 'gone' | 'unknown',
+  report: 'registered' as 'registered' | 'failed' | 'killed',
   extraEnv: new Array<Record<string, string>>(),
-  close: vi.fn<() => Promise<void>>(async () => {
-    throw new Error('Could not confirm shutdown of dev-server pid 424242.');
-  }),
+  kills: new Array<string>(),
+  onTerm: () => {},
 }));
 
 vi.mock('@stim-cli/core/ownership-claim', async (original) => {
@@ -25,10 +29,15 @@ vi.mock('@stim-cli/core/ownership-claim', async (original) => {
   };
 });
 
-vi.mock('../process-identity.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../process-identity.ts')>()),
-  captureProcessToken: () => fixtures.token(),
-}));
+vi.mock('../process-identity.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../process-identity.ts')>();
+  return {
+    ...real,
+    captureProcessToken: () => fixtures.token(),
+    inspectProcessIdentity: (record: Parameters<typeof real.inspectProcessIdentity>[0]) =>
+      record?.pid === 515151 ? fixtures.helper : record?.pid === 424242 ? 'same' : real.inspectProcessIdentity(record),
+  };
+});
 vi.mock('../workspace/settings.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../workspace/settings.ts')>()),
   runnableMetroCommand: () => ['node', 'metro.js'],
@@ -36,32 +45,16 @@ vi.mock('../workspace/settings.ts', async (importOriginal) => ({
 vi.mock('../metro.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../metro.ts')>()),
   resolveProjectMetro: async () => ({}),
+  signalProcessTree: () => true,
 }));
 vi.mock('../ports.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../ports.ts')>()),
   isMetroRunning: async () => fixtures.answers,
 }));
 vi.mock('../stimd/metro/server-command.ts', () => ({
-  startCommandServer: async ({
-    spawnFn,
-    extraEnv,
-  }: {
-    spawnFn: (cmd: string, args: string[], options: object) => unknown;
-    extraEnv: Record<string, string>;
-  }) => {
+  commandServerLaunch: ({ extraEnv }: { extraEnv: Record<string, string> }) => {
     fixtures.extraEnv.push(extraEnv);
-    if (fixtures.failAfterSpawn) {
-      spawnFn('fixture', [], {});
-      throw new Error('startup failed after spawn');
-    }
-    return {
-      serverPid: 424242,
-      processToken: fixtures.token(),
-      child: { exitCode: null, signalCode: null, unref() {} },
-      tail: null,
-      onExit() {},
-      close: fixtures.close,
-    };
+    return { command: 'node', args: ['metro.js'], env: {}, observesRequests: false };
   },
 }));
 vi.mock('../engine/tunnel.ts', () => ({
@@ -80,6 +73,24 @@ import {
 import { getExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
+/** A helper that reports its dev server, reports that none runs, or is killed before it reports. */
+function fakeHelper(): ChildProcess {
+  const child = makeChildProcess({ pid: HELPER });
+  const end = (code: number | null, signal: NodeJS.Signals | null) => {
+    Object.assign(child, { exitCode: code, signalCode: signal });
+    child.emit('exit', code, signal);
+  };
+  queueMicrotask(() => {
+    if (fixtures.report === 'registered')
+      child.emit('message', { type: 'registered', pid: SERVER, processToken: 'test-token' });
+    else if (fixtures.report === 'failed') {
+      child.emit('message', { type: 'failed', message: 'spawn metro.js ENOENT' });
+      end(1, null);
+    } else end(null, 'SIGKILL');
+  });
+  return child;
+}
+
 let dir: string;
 let root: string;
 let previousHome: string | undefined;
@@ -92,32 +103,52 @@ beforeEach(() => {
   previousHome = process.env.STIM_HOME;
   process.env.STIM_HOME = join(dir, 'home');
   fixtures.token.mockReturnValue('test-token');
-  fixtures.failAfterSpawn = false;
   fixtures.groupAlive = true;
   fixtures.answers = true;
-  fixtures.close.mockClear();
+  fixtures.helper = 'same';
+  fixtures.report = 'registered';
   fixtures.extraEnv = [];
+  fixtures.kills = [];
+  fixtures.onTerm = () => {
+    fixtures.helper = 'gone';
+    fixtures.groupAlive = false;
+  };
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid !== HELPER) return kill(pid, signal);
+    fixtures.kills.push(String(signal));
+    if (signal === 'SIGTERM') fixtures.onTerm();
+    return true;
+  });
+  vi.spyOn(getExecutor(), 'spawn').mockImplementation(fakeHelper);
   openMetroChildren();
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (previousHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = previousHome;
   rmSync(dir, { recursive: true, force: true });
 });
 
+const claims = () => readClaimSet(join(workspaceDir(root), 'metro.claim'));
+
 test.skipIf(process.platform === 'win32')(
   'failed Metro stop retains its record and claim through the barrier',
   async () => {
+    fixtures.onTerm = () => {};
     expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
     const record = readFileSync(workspaceStateFile(root), 'utf8');
-    const failure = await ensureMetro({ root, port: 8182 }, log);
-    expect(failure).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
-    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toMatchObject([{ childDeclared: true }]);
+    const failing = ensureMetro({ root, port: 8182 }, log);
+    const progress = { settled: false };
+    void failing.finally(() => (progress.settled = true));
+    for (let step = 0; step < 300 && !progress.settled; step++) await vi.advanceTimersByTimeAsync(100);
+    expect(await failing).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(claims().live).toMatchObject([{ childDeclared: true, child: { pid: SERVER } }]);
     expect(readFileSync(workspaceStateFile(root), 'utf8')).toBe(record);
     await metroTick('on', log);
     await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-    expect(fixtures.close).toHaveBeenCalledOnce();
+    expect(fixtures.kills).toEqual(['SIGTERM']);
   },
 );
 
@@ -125,77 +156,82 @@ test.skipIf(process.platform === 'win32')(
   'an operation that ends after the readiness deadline still stops a Metro that never answered',
   async () => {
     fixtures.answers = false;
-    fixtures.close.mockResolvedValueOnce();
     const operation = new AbortController();
     const started = ensureMetro({ root, port: 8181 }, log, undefined, operation.signal);
     await vi.advanceTimersByTimeAsync(121_000);
     await expect(started).resolves.toMatchObject({ op: 'metro', state: 'starting' });
-    expect(fixtures.close).not.toHaveBeenCalled();
-    fixtures.groupAlive = false;
+    expect(fixtures.kills).toEqual([]);
     operation.abort();
-    await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fixtures.kills).toEqual(['SIGTERM']);
+    });
     await closeMetroChildren();
   },
 );
 
 test.skipIf(process.platform === 'win32')(
-  'managed stop checks the child identity and waits for verified close',
+  'managed stop checks the child identity and waits for the helper to end',
   async () => {
     let finish = () => {};
-    fixtures.close.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    );
+    fixtures.onTerm = () => {
+      finish = () => {
+        fixtures.helper = 'gone';
+        fixtures.groupAlive = false;
+      };
+    };
     expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
     expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' }, log)).toMatchObject({
       op: 'error',
       code: 'metro-changed',
     });
-    expect(fixtures.close).not.toHaveBeenCalled();
-    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log);
-    await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
-    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toHaveLength(1);
+    expect(fixtures.kills).toEqual([]);
+    const stopping = stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log);
+    await vi.waitFor(() => expect(fixtures.kills).toEqual(['SIGTERM']));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(claims().live).toHaveLength(1);
     finish();
+    await vi.advanceTimersByTimeAsync(100);
     await expect(stopping).resolves.toMatchObject({ op: 'metro.stopped', state: 'stopped' });
-    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
-    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log)).resolves.toMatchObject({
+    expect(claims().live).toEqual([]);
+    await expect(stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).resolves.toMatchObject({
       op: 'metro.stopped',
       state: 'not-owned',
     });
   },
 );
 
-test('failed startup with unreadable identity retains the pending claim', async () => {
-  fixtures.token.mockReturnValue(null);
-  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
-  expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toMatchObject([{ childDeclared: true }]);
-  await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+test('a helper killed before it reports leaves the claim pending, and start and stop name the port and the claim', async () => {
+  fixtures.report = 'killed';
+  const claimPath = () => claims().live[0]?.path;
+  const refusal = {
+    op: 'error',
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    message: expect.stringContaining(`helper pid ${HELPER} ended before it reported`),
+    remedy: expect.stringMatching(/lsof -nP -iTCP:8183 -sTCP:LISTEN.*rm -f /),
+  };
+  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
+  expect(claims().live).toMatchObject([{ childDeclared: true, child: null }]);
+  const path = claimPath();
+  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject(refusal);
+  expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject(refusal);
+  fixtures.report = 'registered';
+  rmSync(String(path), { force: true });
+  rmSync(`${String(path).replace(/\.claim$/, '')}.child`, { force: true });
+  expect(existsSync(String(path))).toBe(false);
+  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'metro', state: 'started' });
+  await closeMetroChildren();
 });
 
-test.skipIf(process.platform === 'win32')(
-  'a missing-token startup with no remaining group releases its claim',
-  async () => {
-    fixtures.token.mockReturnValue(null);
-    fixtures.groupAlive = false;
-    fixtures.close.mockResolvedValueOnce();
-    expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'error', code: 'metro-start' });
-    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
-    await expect(closeMetroChildren()).resolves.toBeUndefined();
-  },
-);
-
-test('startup failure after spawning retains the pending claim', async () => {
-  fixtures.failAfterSpawn = true;
-  const spawn = vi.spyOn(getExecutor(), 'spawn').mockReturnValue(makeChildProcess({ pid: 424242 }));
-  try {
-    expect(await ensureMetro({ root, port: 8185 }, log)).toMatchObject({ op: 'error', code: 'STIM_CLAIM_UNAVAILABLE' });
-    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toMatchObject([{ childDeclared: true }]);
-    await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-  } finally {
-    spawn.mockRestore();
-  }
+test('a helper that reports no dev server releases its claim', async () => {
+  fixtures.report = 'failed';
+  expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({
+    op: 'error',
+    code: 'metro-start',
+    message: expect.stringContaining('ENOENT'),
+  });
+  expect(claims().live).toEqual([]);
+  await expect(closeMetroChildren()).resolves.toBeUndefined();
 });
 
 test('failed tunnel startup keeps the unverified claim', async () => {
@@ -227,10 +263,9 @@ test.skipIf(process.platform === 'win32')(
 test.skipIf(process.platform === 'win32')(
   "a command's stop request becomes the recorded stop cause and is cleared with the dev server",
   async () => {
-    fixtures.close.mockResolvedValueOnce();
     expect(await ensureMetro({ root, port: 8187 }, log)).toMatchObject({ op: 'metro' });
     requestDevServerStop(root, 'test-token', { by: 'stim stop' });
-    expect(await stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log)).toMatchObject({
+    expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject({
       state: 'stopped',
     });
     const state = readWorkspaceState(root);

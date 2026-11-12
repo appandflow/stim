@@ -1,40 +1,22 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { getExecutor } from '../../exec.ts';
-import { signalProcessTree } from '../../metro.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { METRO_COMMAND_PORT } from '../../workspace/settings.ts';
-import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
-import { recordFromLine, repositoryRoot } from './server-expo.ts';
-import { MODE_COMMAND } from './state.ts';
+import type { ServerLaunch } from './child-server.ts';
+import { repositoryRoot } from './server-expo.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
-
-function processGroupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
 
 function commandArgv(command: readonly string[], port: number): string[] {
   return command.map((arg) => arg.replaceAll(METRO_COMMAND_PORT, String(port)));
 }
 
-export async function startCommandServer({
+/** The `metro.command` argv with `{port}` replaced, run from the app directory with the project's Node. */
+export function commandServerLaunch({
   root,
   port,
   logsDir,
   command,
   writer = null,
-  spawnFn = null,
-  signalTree = signalProcessTree,
-  groupAlive = processGroupAlive,
-  killTimeoutMs = 5000,
-  platform = process.platform,
-  output = null,
   extraEnv = {},
   baseEnv = process.env,
 }: {
@@ -42,19 +24,11 @@ export async function startCommandServer({
   port: number;
   logsDir: string;
   command: readonly string[];
-  /** File stdio for a child that outlives its parent, instead of pipes. */
-  output?: { files: ChildOutput; fds: [number, number] } | null;
   extraEnv?: Record<string, string>;
   baseEnv?: NodeJS.ProcessEnv;
   writer?: NdjsonWriter | null;
-  spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
-  signalTree?: typeof signalProcessTree;
-  groupAlive?: (pgid: number) => boolean;
-  killTimeoutMs?: number;
-  platform?: NodeJS.Platform;
-}): Promise<ChildServerHandle> {
+}): ServerLaunch {
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
-  const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
   const [program, ...args] = commandArgv(command, port);
   log.write({
     src: 'metro',
@@ -62,8 +36,6 @@ export async function startCommandServer({
     event: 'cache_store_skipped',
     msg: 'metro.command starts the dev server, so Stim does not add its shared Metro transform store',
   });
-  // A wrapper such as yarn runs Metro in a grandchild, so the command gets its own process group to stop as one.
-  const group = platform !== 'win32';
   const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
@@ -73,28 +45,10 @@ export async function startCommandServer({
       msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
-  const child = spawn(program as string, args, {
-    cwd: root,
-    stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
-    detached: group,
+  return {
+    command: program as string,
+    args,
     env: { ...node.env, FORCE_COLOR: '0', ...extraEnv },
-  });
-
-  return superviseChildServer({
-    mode: MODE_COMMAND,
-    child,
-    log,
-    toRecord: (chunk, stream) => recordFromLine(chunk, { stream, source: 'command' }),
-    signal: (sig) => {
-      if (!child.pid) return false;
-      try {
-        return signalTree(child.pid, sig, { group, platform });
-      } catch {
-        return false;
-      }
-    },
-    alive: group ? () => Boolean(child.pid) && groupAlive(child.pid as number) : null,
-    killTimeoutMs,
-    output: output?.files,
-  });
+    observesRequests: false,
+  };
 }

@@ -6,7 +6,7 @@ export default {
   stim start --remote   # prepare Metro for a remote device
 
 Reserves (or reuses) this workspace's Metro port, has this home's stimd start
-the dev server as its own child, and waits until it both answers AND verifies as this
+the dev server under its own helper process, and waits until it both answers AND verifies as this
 project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
@@ -163,15 +163,19 @@ IDEMPOTENT
   pin still refuses with STIM_BAD_ARG. Release builds still skip Metro.
 
 WHO RUNS IT
-  This home's stimd (\`guide settings\`, THE STIM DAEMON) runs each workspace's
-  dev server as its own child, in its own process group, and \`start\` starts
-  stimd when none runs, whatever daemon.mode says. stimd writes the dev
-  server's output as NDJSON into the global workspace logs directory
-  ($STIM_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
-  records it in that workspace's state.json before it answers; the recorded
-  pid (supervisorPid, status's supervisor.pid) is the dev server's own. On
-  macOS and Linux the dev server outlives a stimd restart and the next stimd
-  takes it over through its metro.claim; on Windows it stops with stimd. Four
+  This home's stimd (\`guide settings\`, THE STIM DAEMON) starts, stops and
+  watches each workspace's dev server, and \`start\` starts stimd when none
+  runs, whatever daemon.mode says. The dev server's parent is a small helper
+  process (metro-run) that stimd starts for it, in its own process group. The
+  helper writes the dev server's output as NDJSON into the global workspace
+  logs directory ($STIM_HOME/workspaces/<project>--<digest>/logs; see
+  \`guide logs\`) and records how it ended, exit code or signal, whether or
+  not a stimd runs. stimd records the dev server in that workspace's
+  state.json before it answers; the recorded pid (supervisorPid, status's
+  supervisor.pid) is the dev server's own, not the helper's. On macOS and
+  Linux the dev server and its helper outlive a stimd restart and the next
+  stimd takes them over through the metro.claim; on Windows they stop with
+  stimd. Four
   modes. Stim never prompts and never runs a package.json script to choose;
   it takes the first that applies:
 
@@ -357,9 +361,12 @@ end the job with \`stim stop\`.
                    no request usually means something outside Stim signalled
                    the Expo process
     idle           idle.minutes, above
-  A dev server that dies while no stimd runs, or whose state file was not
-  writable, records nothing: \`stop\` logs supervisor_vanished (level warn)
-  for it, and until then \`status\` reports metro.lastStop.reason "vanished".
+  A dev server that dies while no stimd runs keeps its cause: its helper
+  records the exit, \`status\` reports it as metro.lastStop, and the next
+  stimd writes the supervisor_stopped line. One whose helper was killed too,
+  or whose state file was not writable, records nothing: \`stop\` logs
+  supervisor_vanished (level warn) for it, and until then \`status\` reports
+  metro.lastStop.reason "vanished".
 
   WATCHMAN ROOTS: a Metro that uses watchman registers a watch root in the
   shared watchman daemon and never removes it. Bare React Native Metro uses
@@ -385,8 +392,8 @@ end the job with \`stim stop\`.
   \`stop\` first, then \`start\` with it set.
 
   The dev server's own output goes to the global workspace
-  logs/metro.stdout.log and logs/metro.stderr.log, and stimd parses it into the
-  NDJSON TIMELINE (metro.ndjson). A failed \`start\` quotes the metro.stderr.log
+  logs/metro.stdout.log and logs/metro.stderr.log, and its helper parses it into
+  the NDJSON TIMELINE (metro.ndjson), until the output ends. A failed \`start\` quotes the metro.stderr.log
   tail and this attempt's error records from the timeline.
 
 STARTING YOUR OWN BUNDLER STILL WORKS

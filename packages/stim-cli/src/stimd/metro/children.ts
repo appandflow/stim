@@ -1,5 +1,6 @@
 import { withInvocation, type Invocation } from '../forwarded.ts';
-import { closeSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -7,7 +8,9 @@ import {
   DEVICE_METRO_IDLE_STOP_REASON,
   IDLE_STOP_KEY,
   isJsonObject,
+  metroExitFile,
   readDevServerStopRequest,
+  readMetroExit,
   TUNNEL_MODES,
   type DaemonMode,
   readJsonObject,
@@ -15,8 +18,10 @@ import {
 } from '@stim-cli/core/state';
 import {
   markClaimChildPending,
+  claimFilesRemoveCommand,
   claimRemoveCommand,
   describeClaimProblem,
+  isClaimRefusal,
   processGroupAlive,
   readClaimSet,
   releaseClaim,
@@ -34,9 +39,10 @@ import {
   signalProcessTree,
   signalProcessTreeAsync,
 } from '../../metro.ts';
-import { createNdjsonWriter, type NdjsonRecord, type NdjsonWriter } from '../../ndjson.ts';
+import { createNdjsonWriter, type NdjsonWriter } from '../../ndjson.ts';
 import { isMetroRunning } from '../../ports.ts';
-import { inspectProcessIdentity } from '../../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
+import { spawnEntry } from '../../spawn-entry.ts';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
@@ -62,12 +68,12 @@ import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { metroRequestAt } from '../passes/idle-stop.ts';
 import {
   childRecords,
-  openChildOutput,
-  superviseChildServer,
+  METRO_RUN_ACCEPT,
   tailChildOutput,
   type ChildOutput,
-  type ChildServerHandle,
+  type MetroRunMessage,
   type OutputTail,
+  type ServerLaunch,
 } from './child-server.ts';
 import { workspaceIdleProbe } from './idle-stop.ts';
 import { watchHostedMetro } from './hosted-metro.ts';
@@ -76,21 +82,21 @@ import { trackMetroWatchRoots, type MetroWatchRoots, type MetroWatchState } from
 import { injectedDigest, injectedDir } from './injected.ts';
 import { metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
-import { startCommandServer } from './server-command.ts';
-import { recordFromLine, repositoryRoot, startExpoServer } from './server-expo.ts';
+import { outputRecord } from './output-records.ts';
+import { commandServerLaunch } from './server-command.ts';
+import { expoServerLaunch, repositoryRoot } from './server-expo.ts';
 import {
   clearExpoMetroTunnel,
   clearManagedMetroTunnel,
   clearWorkspaceSupervisor,
   detectDevServer,
-  MODE_BARE,
   MODE_COMMAND,
   MODE_EXPO,
   MODE_REPACK,
   readMetroTunnel,
   type ManagedTunnelRecord,
 } from './state.ts';
-import { repackRecords, startRepackServer } from './server-repack.ts';
+import { repackServerLaunch } from './server-repack.ts';
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 type Answer = Record<string, unknown>;
@@ -100,6 +106,8 @@ const PROBE_MS = 500;
 const READY_MS = 120_000;
 const STOP_MS = 5000;
 const SUCCESSOR_WAIT_MS = 10_000;
+const HANDSHAKE_MS = 20_000;
+const HELPER_PROTOCOL = 1;
 const IDLE_POINT_MS = 2 * 60_000;
 const GROUPS = process.platform !== 'win32';
 
@@ -122,8 +130,11 @@ interface MetroChild {
   startedAt: string;
   claim: ClaimHandle;
   writer: NdjsonWriter;
-  /** The handle of a child this stimd spawned; null for one it adopted from an earlier stimd. */
-  handle: ChildServerHandle | null;
+  /** The helper that is the dev server's parent; null for a dev server a stimd without helpers started. */
+  helper: { pid: number; processToken: string } | null;
+  /** The helper process when this stimd spawned it, whose exit it hears at once. */
+  helperProcess: ChildProcess | null;
+  /** The follower of the output files of a dev server without a helper. */
   tail: OutputTail | null;
   /** Whether it answered once, after which a fresh heartbeat alone proves it runs. */
   ready: boolean;
@@ -160,6 +171,8 @@ export function setMetroInvocation(root: string, context: Invocation & { workspa
 
 const children = new Map<string, MetroChild>();
 const tunnels = new Map<string, TunnelChild>();
+/** Claims left pending by a helper that ended before it reported its dev server, with the refusal that names them. */
+const pendingClaims = new Map<string, { path: string; refusal: Answer }>();
 const busy = new Map<string, Promise<Answer>>();
 const queued = new Map<string, number>();
 let backgroundStopped = false;
@@ -208,12 +221,41 @@ const outputFiles = (root: string): ChildOutput => ({
   stderr: join(workspaceLogsDir(root), 'metro.stderr.log'),
 });
 
-/** The child's `metro.ndjson` writer, which stamps its records with the child's injected digest. */
-function metroWriter(root: string, digest: string | null): NdjsonWriter {
+/**
+ * The child's `metro.ndjson` writer, which stamps its records with the child's injected digest. While a helper runs,
+ * the helper alone rotates the file: this writer then opens it for each record, so it follows a rotation and never
+ * rotates.
+ * @ref LLP 0018#the-dev-servers-helper -- one owner rotates metro.ndjson
+ */
+function metroWriter(root: string, digest: string | null, rotate: boolean): NdjsonWriter {
+  const file = join(workspaceLogsDir(root), 'metro.ndjson');
   // compat C6 permanent
   const fields = digest ? { inj: digest } : {};
   // compat end
-  return createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES, fields });
+  if (rotate) return createNdjsonWriter(file, { maxBytes: LOG_ROTATE_BYTES, fields });
+  const totals = { written: 0, dropped: 0, lastError: null as Error | null };
+  return {
+    file,
+    write(entry) {
+      const once = createNdjsonWriter(file, { fields });
+      const ok = once.write(entry);
+      const result = once.close();
+      totals.written += result.written;
+      totals.dropped += result.dropped;
+      totals.lastError = result.lastError ?? totals.lastError;
+      return ok;
+    },
+    close: () => ({ file, ...totals }),
+    get written() {
+      return totals.written;
+    },
+    get dropped() {
+      return totals.dropped;
+    },
+    get lastError() {
+      return totals.lastError;
+    },
+  };
 }
 
 function heartbeatFresh(child: MetroChild, now = Date.now()): boolean {
@@ -228,11 +270,10 @@ function heartbeatFresh(child: MetroChild, now = Date.now()): boolean {
   );
 }
 
-/** Whether the child still runs: its handle's exit state when this stimd spawned it, its identity when adopted. */
+/** Whether the child still runs: its helper's identity, or for a dev server without a helper its own. */
 function running(child: MetroChild): boolean {
   if (child.gone) return false;
-  if (child.handle) return child.handle.child.exitCode === null && child.handle.child.signalCode === null;
-  return inspectProcessIdentity(child) === 'same';
+  return inspectProcessIdentity(child.helper ?? child) === 'same';
 }
 
 function answer(child: MetroChild, state = 'running'): Answer {
@@ -266,14 +307,53 @@ function launchOf(details: Record<string, unknown>): Launch {
 
 /** The stop a command asked for with `requestDevServerStop`, else what `trigger` says, or null for neither. */
 function stopRecord(
-  child: MetroChild,
+  root: string,
+  processToken: string,
   trigger: Parameters<typeof devServerStopRecord>[0] | null,
+  at = new Date().toISOString(),
 ): DevServerStopRecord | null {
-  const request = readDevServerStopRequest(readWorkspaceState(child.root));
-  const own = request?.processToken === child.processToken ? request : null;
-  return own || trigger
-    ? devServerStopRecord(trigger ?? { kind: 'signal', signal: 'SIGTERM' }, own, new Date().toISOString())
-    : null;
+  const request = readDevServerStopRequest(readWorkspaceState(root));
+  const own = request?.processToken === processToken ? request : null;
+  return own || trigger ? devServerStopRecord(trigger ?? { kind: 'signal', signal: 'SIGTERM' }, own, at) : null;
+}
+
+/** The exit the dev server's helper recorded, when it is this dev server's. */
+function exitOf(root: string, server: { pid: number; processToken: string }) {
+  const exit = readMetroExit(root);
+  return exit?.pid === server.pid && exit.processToken === server.processToken ? exit : null;
+}
+
+/** Records in workspace state and `metro.ndjson` that a dev server ended, and drops its heartbeat and exit file. */
+function recordEnded(
+  root: string,
+  server: { pid: number; processToken: string },
+  writer: NdjsonWriter,
+  release: () => void,
+  msg: string,
+  level: 'info' | 'warn' | 'error',
+  stop: DevServerStopRecord | null,
+): void {
+  try {
+    withWorkspaceStateLock(root, () => {
+      if (stop) writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
+      clearWorkspaceStateKeys(root, [DEV_SERVER_STOP_REQUEST_KEY]);
+    });
+  } catch {}
+  try {
+    clearWorkspaceSupervisor(root, server);
+    clearSupervisor(root, server);
+  } catch {}
+  rmSync(heartbeatFile(root), { force: true });
+  if (exitOf(root, server)) rmSync(metroExitFile(root), { force: true });
+  release();
+  writer.write({ src: 'metro', level, event: 'supervisor_stopped', msg, ...(stop ? { stop } : {}) });
+}
+
+/** How a dev server's end reads in `metro.ndjson`, from its stop record. */
+function endedMessage(mode: string, pid: number, stop: DevServerStopRecord | null): string {
+  return stop?.reason === 'requested'
+    ? `the ${mode} dev server exited; ${describeDevServerStop(stop)}`
+    : `${stop ? describeDevServerStop(stop) : `the ${mode} dev server exited`} (pid ${pid})`;
 }
 
 /** Forgets a child that exited or was stopped: its record, its claim, its tail and its hosted links. */
@@ -289,20 +369,7 @@ function forget(
   child.tail?.stop();
   void child.closeLinks?.();
   if (children.get(child.root) === child) children.delete(child.root);
-  const identity = { pid: child.pid, processToken: child.processToken };
-  try {
-    withWorkspaceStateLock(child.root, () => {
-      if (stop) writeWorkspaceState(child.root, { [IDLE_STOP_KEY]: stop });
-      clearWorkspaceStateKeys(child.root, [DEV_SERVER_STOP_REQUEST_KEY]);
-    });
-  } catch {}
-  try {
-    clearWorkspaceSupervisor(child.root, identity);
-    clearSupervisor(child.root, identity);
-  } catch {}
-  rmSync(heartbeatFile(child.root), { force: true });
-  releaseClaim(child.claim);
-  child.writer.write({ src: 'metro', level, event: 'supervisor_stopped', msg, ...(stop ? { stop } : {}) });
+  recordEnded(child.root, child, child.writer, () => releaseClaim(child.claim), msg, level, stop);
   if (!roots) {
     child.writer.close();
     return;
@@ -332,16 +399,33 @@ function watchOf(value: unknown): MetroWatchState {
 
 /** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
 function forgetExited(child: MetroChild, code: number | null, signal: string | null): void {
-  const stop = stopRecord(child, { kind: 'server-exit', mode: child.mode, code, signal });
-  forget(
-    child,
-    stop?.reason === 'requested'
-      ? `the ${child.mode} dev server exited; ${describeDevServerStop(stop)}`
-      : `${stop ? describeDevServerStop(stop) : `the ${child.mode} dev server exited`} (pid ${child.pid})`,
-    stop ? devServerStopLevel(stop) : 'warn',
-    stop,
-    child.roots,
-  );
+  const stop = stopRecord(child.root, child.processToken, { kind: 'server-exit', mode: child.mode, code, signal });
+  forget(child, endedMessage(child.mode, child.pid, stop), stop ? devServerStopLevel(stop) : 'warn', stop, child.roots);
+}
+
+/**
+ * Settles a dev server whose helper ended: with the exit the helper recorded, else, since the helper ended without
+ * recording one, by stopping what is left of its process group and logging the end as unknown.
+ */
+async function settleHelperEnded(child: MetroChild): Promise<void> {
+  if (child.gone || !child.helper) return;
+  const exit = exitOf(child.root, child);
+  if (exit) return settleExited(child, exit.code, exit.signal);
+  const why = `the dev-server helper pid ${child.helper.pid} ended without recording how dev server pid ${child.pid} ended`;
+  child.stopping = true;
+  try {
+    await stopGroup(child);
+  } catch (error) {
+    child.unverified = true;
+    throw unverifiedChild(child.claim, child, `${why}. ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const stop = stopRecord(child.root, child.processToken, {
+    kind: 'server-exit',
+    mode: child.mode,
+    code: null,
+    signal: null,
+  });
+  forget(child, `${why}; its exit code is unknown`, 'error', stop, child.roots);
 }
 
 /**
@@ -382,6 +466,45 @@ function unverifiedChild(
   });
 }
 
+/** Stops what runs of the dev server's process group, checking the leader's identity before each signal. */
+async function stopGroup(child: MetroChild): Promise<void> {
+  if (!processGroupAlive(child.pid)) return;
+  const signal = (sig: NodeJS.Signals) => {
+    if (inspectProcessIdentity(child) !== 'same')
+      throw new Error(`Could not verify the dev-server process group for pid ${child.pid}.`);
+    try {
+      signalProcessTree(child.pid, sig, { group: true });
+    } catch {}
+  };
+  signal('SIGTERM');
+  if (!(await gone(() => processGroupAlive(child.pid), STOP_MS))) {
+    signal('SIGKILL');
+    if (!(await gone(() => processGroupAlive(child.pid), 1000)))
+      throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+  }
+}
+
+/**
+ * Asks the helper to stop its dev server and waits for it to record the exit and end; a helper that does not end in
+ * time is killed once its dev server's group is stopped.
+ */
+async function stopHelper(child: MetroChild, helper: { pid: number; processToken: string }): Promise<void> {
+  const signal = (sig: NodeJS.Signals): boolean => {
+    const status = inspectProcessIdentity(helper);
+    if (status === 'unknown') throw new Error(`Could not verify the dev-server helper pid ${helper.pid}.`);
+    if (status !== 'same') return false;
+    try {
+      process.kill(helper.pid, sig);
+    } catch {}
+    return true;
+  };
+  const alive = () => inspectProcessIdentity(helper) === 'same';
+  if (signal('SIGTERM') && (await gone(alive, STOP_MS + 3000))) return;
+  await stopGroup(child);
+  if (signal('SIGKILL') && !(await gone(alive, 1000)))
+    throw new Error(`Could not confirm shutdown of the dev-server helper pid ${helper.pid}.`);
+}
+
 async function stopChild(child: MetroChild, why: string): Promise<void> {
   if (child.stopping && cleanupFailure) throw cleanupFailure;
   child.stopping = true;
@@ -395,34 +518,35 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
         throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
       if (!(await gone(() => running(child), STOP_MS)))
         throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
-    } else if (child.handle) await child.handle.close();
-    else if (processGroupAlive(child.pid)) {
-      const signal = (sig: NodeJS.Signals) => {
-        if (inspectProcessIdentity(child) !== 'same')
-          throw new Error(`Could not verify the dev-server process group for pid ${child.pid}.`);
-        try {
-          signalProcessTree(child.pid, sig, { group: true });
-        } catch {}
-      };
-      signal('SIGTERM');
-      if (!(await gone(() => processGroupAlive(child.pid), STOP_MS))) {
-        signal('SIGKILL');
-        if (!(await gone(() => processGroupAlive(child.pid), 1000)))
-          throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
-      }
+    } else {
+      if (child.helper) await stopHelper(child, child.helper);
+      await stopGroup(child);
     }
   } catch (error) {
     child.unverified = true;
     throw unverifiedChild(child.claim, child, error instanceof Error ? error.message : String(error));
   }
   await child.roots?.afterClose();
-  const stop = stopRecord(child, null);
+  const stop = stopRecord(child.root, child.processToken, null);
   forget(
     child,
     `stimd stopped the ${child.mode} dev server: ${stop ? describeDevServerStop(stop) : why}`,
     'info',
     stop,
   );
+}
+
+/** How a person checks that no dev server Stim lost track of still listens on `port`, then removes its claim. */
+function portCheck(port: number | null | undefined, removeCommand: string): string {
+  return `${port ? `Check whether a dev server still listens on port ${port} with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\` and stop it` : 'Check that no dev server of this workspace still runs'}, then run ${removeCommand}.`;
+}
+
+/** The refusal for a claim a helper left pending in this stimd, until a person removes the claim. */
+function pendingRefusal(root: string): Answer | null {
+  const held = pendingClaims.get(root);
+  if (held && existsSync(held.path)) return held.refusal;
+  pendingClaims.delete(root);
+  return null;
 }
 
 /** Runs `work` after every earlier piece of work on `key`, so no two ensure, restart or stop of one child overlap. */
@@ -469,27 +593,15 @@ function record(child: MetroChild, hmrUpdates: boolean): void {
   setSupervisor(child.root, entry);
 }
 
-/** How a child's output lines become records: as the dev server of its mode writes them. */
-function outputRecord(mode: string): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
-  if (mode === MODE_COMMAND) return (chunk, stream) => recordFromLine(chunk, { stream, source: 'command' });
-  if (mode === MODE_EXPO) return (chunk, stream) => recordFromLine(chunk, { stream });
-  if (mode === MODE_REPACK) return repackRecords();
-  return (chunk, stream) => {
-    const entry = recordFromLine(chunk, { stream });
-    return entry?.raw ? { ...entry, event: `host_${stream}` } : entry;
-  };
-}
-
-function spawnHost(
+/** The bare React Native host, `metro-host.cjs` from this build's injected files, run with the project's Node. */
+function hostLaunch(
   root: string,
   port: number,
-  output: { files: ChildOutput; fds: [number, number] },
   env: Record<string, string>,
   writer: NdjsonWriter,
   baseEnv: NodeJS.ProcessEnv,
-  spawn: ReturnType<typeof getExecutor>['spawn'],
   resetCache: boolean,
-): ChildServerHandle {
+): ServerLaunch {
   const settings = resolveProjectSettings(root).settings;
   const storeRoot = resolveMetroSharedCache(settings) ? metroStoreRoot(root) : null;
   if (storeRoot) registerMetroStore(storeRoot);
@@ -501,41 +613,24 @@ function spawnHost(
       event: 'project_node',
       msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
-  const args = [
-    join(injectedDir() ?? '', 'metro-host.cjs'),
-    '--root',
-    root,
-    '--port',
-    String(port),
-    '--logs-dir',
-    workspaceLogsDir(root),
-    '--heartbeat',
-    heartbeatFile(root),
-    ...(storeRoot ? ['--store-root', storeRoot] : []),
-    ...(resetCache ? ['--reset-cache'] : []),
-  ];
-  const child = spawn('node', args, {
-    cwd: root,
-    stdio: ['ignore', ...output.fds],
-    detached: GROUPS,
+  return {
+    command: 'node',
+    args: [
+      join(injectedDir() ?? '', 'metro-host.cjs'),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--logs-dir',
+      workspaceLogsDir(root),
+      '--heartbeat',
+      heartbeatFile(root),
+      ...(storeRoot ? ['--store-root', storeRoot] : []),
+      ...(resetCache ? ['--reset-cache'] : []),
+    ],
     env: { ...node.env, FORCE_COLOR: '0', ...env },
-  });
-  return superviseChildServer({
-    mode: MODE_BARE,
-    child,
-    log: writer,
-    toRecord: outputRecord(MODE_BARE),
-    signal: (sig) => {
-      try {
-        return child.pid !== undefined && signalProcessTree(child.pid, sig, { group: GROUPS });
-      } catch {
-        return false;
-      }
-    },
-    alive: GROUPS ? () => child.pid !== undefined && processGroupAlive(child.pid) : null,
-    killTimeoutMs: STOP_MS,
-    output: output.files,
-  });
+    observesRequests: true,
+  };
 }
 
 /** Opens the hosted Metro links (`device-host.metro.link`, reverse ports, agent relay) this workspace's sessions ask for. */
@@ -575,13 +670,20 @@ async function start(
   const { mode } = detectDevServer(root, command);
   const digest = injectedDigest();
   const details = { port, mode, digest, engineDir: ownStoreEngine()?.build ?? null, ...launch };
-  const attempt = tryAcquireClaim({ root: claimRoot(root, 'metro'), mode: 'exclusive', label: 'Metro', details });
+  let attempt: ReturnType<typeof tryAcquireClaim>;
+  try {
+    attempt = tryAcquireClaim({ root: claimRoot(root, 'metro'), mode: 'exclusive', label: 'Metro', details });
+  } catch (error) {
+    if (!isClaimRefusal(error)) throw error;
+    return { op: 'error', code: error.code, message: error.message, remedy: portCheck(port, error.removeCommand) };
+  }
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired)
     return { op: 'error', code: 'metro-claimed', message: `another process holds ${claimRoot(root, 'metro')}` };
   const claim = attempt.acquired;
   rmSync(heartbeatFile(root), { force: true });
-  const writer = metroWriter(root, digest);
+  settleUnclaimedExit(root, log);
+  const writer = metroWriter(root, digest, false);
   const baseEnv = operationEnv ?? invocations.get(root)?.forwarded.env ?? process.env;
   const env = {
     STIM_METRO_HEARTBEAT: heartbeatFile(root),
@@ -592,18 +694,6 @@ async function start(
       : {}),
   };
   clearExpoMetroTunnel(root);
-  let token: string | undefined;
-  const onTunnelUrl = (url: string) => {
-    try {
-      withWorkspaceStateLock(root, () => {
-        if (token && readWorkspaceState(root)?.supervisor?.processToken === token)
-          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
-      });
-    } catch (error) {
-      log('warn', 'expo_tunnel_unrecorded', `${root}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
-  };
   let created: MetroChild | undefined;
   let watched: MetroWatchState | undefined;
   const roots = trackMetroWatchRoots({
@@ -611,60 +701,26 @@ async function start(
     writer,
     onChange: (watch) => (created ? saveWatch(created, watch) : (watched = watch)),
   });
-  const output = openChildOutput(logsDir);
-  let handle: ChildServerHandle;
-  let spawned: ReturnType<ReturnType<typeof getExecutor>['spawn']> | undefined;
-  const spawn: ReturnType<typeof getExecutor>['spawn'] = (...args) => {
-    spawned = getExecutor().spawn(...args);
-    return spawned;
-  };
+  let server: ServerLaunch;
   try {
-    markClaimChildPending(claim);
-    handle = command
-      ? await startCommandServer({
-          root,
-          port,
-          logsDir,
-          command,
-          writer: writer,
-          output,
-          spawnFn: spawn,
-          extraEnv: env,
-          baseEnv,
-        })
+    server = command
+      ? commandServerLaunch({ root, port, logsDir, command, writer, extraEnv: env, baseEnv })
       : mode === MODE_EXPO
-        ? await startExpoServer({
+        ? await expoServerLaunch({
             root,
             port,
             logsDir,
-            writer: writer,
+            writer,
             settings,
-            output,
             extraEnv: env,
-            spawnFn: spawn,
             baseEnv,
             tunnel: launch.tunnel,
             resetCache,
-            onTunnelUrl,
           })
         : mode === MODE_REPACK
-          ? await startRepackServer({
-              root,
-              port,
-              logsDir,
-              writer: writer,
-              output,
-              extraEnv: env,
-              spawnFn: spawn,
-              baseEnv,
-              resetCache,
-            })
-          : spawnHost(root, port, output, env, writer, baseEnv, spawn, resetCache);
+          ? repackServerLaunch({ root, port, logsDir, writer, extraEnv: env, baseEnv, resetCache })
+          : hostLaunch(root, port, env, writer, baseEnv, resetCache);
   } catch (error) {
-    if (spawned?.pid) {
-      writer.close();
-      throw unverifiedChild(claim, { pid: spawned.pid }, error instanceof Error ? error.message : String(error));
-    }
     releaseClaim(claim);
     writer.close();
     const message = error instanceof Error ? error.message : String(error);
@@ -676,35 +732,25 @@ async function start(
           }
         : { code: 'metro-start' };
     return { op: 'error', ...refusal, message };
-  } finally {
-    for (const fd of output.fds) closeSync(fd);
   }
-  const pid = handle.serverPid;
-  const processToken = handle.processToken;
-  if (!pid || !processToken) {
-    try {
-      if (pid && (!GROUPS || processGroupAlive(pid)))
-        throw new Error('the dev server process identity could not be verified');
-      await handle.close();
-    } catch (error) {
-      writer.close();
-      throw unverifiedChild(claim, { pid: pid ?? 0 }, error instanceof Error ? error.message : String(error));
-    }
-    releaseClaim(claim);
+  const spawned = await spawnHelper(root, port, mode, server, launch.tunnel, claim);
+  if ('refusal' in spawned) {
     writer.close();
-    return {
-      op: 'error',
-      code: 'metro-start',
-      message: 'the dev server started but its process identity could not be read',
-    };
+    return spawned.refusal;
   }
-  setClaimChild(claim, { pid, processToken });
-  if (GROUPS) handle.child.unref();
-  const observesRequests = handle.observesRequests === true || mode === MODE_BARE;
+  const { helper, helperProcess, pid, processToken } = spawned;
+  const observesRequests = server.observesRequests;
   let observed = claim;
   try {
-    observed = updateClaimDetails(claim, { ...claim.details, observesRequests }) ?? claim;
+    observed =
+      updateClaimDetails(claim, {
+        ...claim.details,
+        observesRequests,
+        helper: { ...helper, protocol: HELPER_PROTOCOL },
+      }) ?? claim;
   } catch {}
+  helperProcess.send(METRO_RUN_ACCEPT, () => {});
+  if (GROUPS) helperProcess.unref();
   const child: MetroChild = {
     root,
     launch,
@@ -715,9 +761,10 @@ async function start(
     processToken,
     claim: observed,
     writer,
-    handle,
+    helper,
+    helperProcess,
     startedAt: new Date().toISOString(),
-    tail: handle.tail ?? null,
+    tail: null,
     ready: false,
     ensuredAt: Date.now(),
     gone: false,
@@ -728,23 +775,129 @@ async function start(
   children.set(root, child);
   created = child;
   if (watched) saveWatch(child, watched);
-  token = processToken;
   record(child, observesRequests);
   recordForeignMetro(root, port, {});
   roots.started(pid);
   serveLinks(child, log);
-  handle.onExit((info) => {
-    if (child.stopping || (GROUPS && processGroupAlive(child.pid))) return;
-    settleExited(child, info?.code ?? null, info?.signal ?? null);
+  helperProcess.once('exit', () => {
+    if (child.stopping || child.gone) return;
+    void serialize(root, async () => {
+      if (children.get(root) === child && !child.stopping) await settleHelperEnded(child);
+      return {};
+    });
   });
   writer.write({
     src: 'metro',
     level: 'info',
     event: 'supervisor_started',
-    msg: `stimd started the ${mode} dev server pid ${pid} on port ${port} for ${root}`,
+    msg: `stimd started the ${mode} dev server pid ${pid} on port ${port} for ${root}, with helper pid ${helper.pid}`,
   });
   log('info', 'metro_started', `${root}: the ${mode} dev server pid ${pid} on port ${port}`);
-  return awaitReady(child, output.files.stderr, signal);
+  return awaitReady(child, outputFiles(root).stderr, signal);
+}
+
+/**
+ * Starts the dev server's helper and waits for it to report the dev server it started, which then becomes the claim's
+ * child. Until then the claim's child is pending. A helper that ends without reporting leaves it pending, since Stim
+ * cannot tell whether a dev server it started still runs, and the refusal says how to check the port and remove the claim.
+ * @ref LLP 0018#the-dev-servers-helper -- the claim child stays pending until the helper reports
+ */
+async function spawnHelper(
+  root: string,
+  port: number,
+  mode: string,
+  server: ServerLaunch,
+  tunnel: boolean,
+  claim: ClaimHandle,
+): Promise<
+  | { helper: { pid: number; processToken: string }; helperProcess: ChildProcess; pid: number; processToken: string }
+  | { refusal: Answer }
+> {
+  markClaimChildPending(claim);
+  const logFd = openSync(join(workspaceLogsDir(root), 'metro-run.log'), 'a', 0o600);
+  let helperProcess: ChildProcess;
+  try {
+    helperProcess = getExecutor().spawn(
+      process.execPath,
+      [spawnEntry('metro-run'), root, mode, ...(tunnel ? ['--tunnel'] : []), '--', server.command, ...server.args],
+      { cwd: root, env: server.env, detached: GROUPS, stdio: ['ignore', logFd, logFd, 'ipc'] },
+    );
+  } catch (error) {
+    releaseClaim(claim);
+    return {
+      refusal: {
+        op: 'error',
+        code: 'metro-start',
+        message: `the dev-server helper did not start: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    };
+  } finally {
+    closeSync(logFd);
+  }
+  const helperPid = helperProcess.pid;
+  const helperToken = helperPid === undefined ? null : captureProcessToken(helperPid);
+  const ended = new Promise<void>((done) => {
+    if (helperProcess.exitCode !== null || helperProcess.signalCode !== null) done();
+    helperProcess.once('exit', () => done());
+    helperProcess.once('error', () => done());
+  });
+  const outcome = await new Promise<MetroRunMessage | 'ended' | 'timeout'>((done) => {
+    const timer = setTimeout(() => done('timeout'), HANDSHAKE_MS);
+    helperProcess.on('message', (message: unknown) => {
+      if (isJsonObject(message) && (message.type === 'registered' || message.type === 'failed')) {
+        clearTimeout(timer);
+        done(message as MetroRunMessage);
+      }
+    });
+    const onEnd = () => {
+      clearTimeout(timer);
+      done('ended');
+    };
+    if (helperProcess.exitCode !== null || helperProcess.signalCode !== null) onEnd();
+    helperProcess.once('exit', onEnd);
+    helperProcess.once('error', onEnd);
+  });
+  if (typeof outcome === 'object' && outcome.type === 'registered' && helperPid !== undefined && helperToken) {
+    setClaimChild(claim, { pid: outcome.pid, processToken: outcome.processToken });
+    return {
+      helper: { pid: helperPid, processToken: helperToken },
+      helperProcess,
+      pid: outcome.pid,
+      processToken: outcome.processToken,
+    };
+  }
+  if (outcome === 'timeout' || (typeof outcome === 'object' && outcome.type === 'registered')) {
+    if (
+      helperPid !== undefined &&
+      helperToken &&
+      inspectProcessIdentity({ pid: helperPid, processToken: helperToken }) === 'same'
+    )
+      helperProcess.kill('SIGTERM');
+    await Promise.race([ended, new Promise((done) => setTimeout(done, STOP_MS + 3000))]);
+  } else await ended;
+  const exit = readMetroExit(root);
+  const proven =
+    (typeof outcome === 'object' && outcome.type === 'failed') || (exit !== null && exit.helperPid === helperPid);
+  const still = helperProcess.exitCode === null && helperProcess.signalCode === null;
+  if (proven && !still) {
+    if (exit?.helperPid === helperPid) rmSync(metroExitFile(root), { force: true });
+    releaseClaim(claim);
+    return {
+      refusal: {
+        op: 'error',
+        code: 'metro-start',
+        message: `the dev server did not start: ${typeof outcome === 'object' && outcome.type === 'failed' ? outcome.message : 'its helper stopped it before reporting it'}`,
+      },
+    };
+  }
+  const refusal = {
+    op: 'error',
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    message: `The dev-server helper pid ${helperPid ?? 'unknown'} ${still ? 'did not report the dev server it started and still runs' : 'ended before it reported the dev server it started'}, so Stim cannot tell whether a dev server it started still runs. ${claim.path} stays held.`,
+    remedy: `${still && helperPid !== undefined ? `Stop the helper with \`kill ${helperPid}\`. ` : ''}${portCheck(port, claimFilesRemoveCommand(claim.path))}`,
+  };
+  pendingClaims.set(root, { path: claim.path, refusal });
+  return { refusal };
 }
 
 /**
@@ -809,6 +962,8 @@ async function ensure(
   signal?: AbortSignal,
   options: Launch & { resetCache?: boolean } = { tunnel: false, publicOrigin: null },
 ): Promise<Answer> {
+  const pending = pendingRefusal(root);
+  if (pending) return pending;
   await adoptFromPredecessor(root, log);
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
   const child = children.get(root);
@@ -874,7 +1029,7 @@ export function ensureMetro(
   const child = children.get(root);
   if (
     !busy.has(root) &&
-    child?.handle &&
+    child?.helperProcess &&
     !child.stopping &&
     child.port === port &&
     fields.launch !== true &&
@@ -902,9 +1057,21 @@ export function stopManagedMetro(params: unknown, log: Log): Promise<Answer> {
   }
   children.get(root)?.readiness?.abort();
   return serialize(root, async () => {
+    const pending = pendingRefusal(root);
+    if (pending) return pending;
     await adoptFromPredecessor(root, log);
     const child = children.get(root);
-    if (!child) return { op: 'metro.stopped', state: 'not-owned' };
+    if (!child) {
+      const unresolved = readClaimSet(claimRoot(root, 'metro')).unresolved[0];
+      if (!unresolved) return { op: 'metro.stopped', state: 'not-owned' };
+      const port = loadConfig()?.projects?.[root]?.metroPort;
+      return {
+        op: 'error',
+        code: 'STIM_CLAIM_REFUSED',
+        message: describeClaimProblem(unresolved),
+        remedy: portCheck(port, claimFilesRemoveCommand(unresolved.path)),
+      };
+    }
     if (child.pid !== fields.pid || child.processToken !== fields.processToken)
       return { op: 'error', code: 'metro-changed', message: 'The managed dev server changed before it could stop.' };
     await stopChild(child, 'requested by a command');
@@ -988,7 +1155,64 @@ export function adoptMetroChildren(log: Log): void {
     );
     return;
   }
-  for (const path of paths) adoptAt(path, log);
+  for (const path of paths) {
+    adoptAt(path, log);
+    settleUnclaimedExit(path, log);
+  }
+}
+
+function helperOf(value: unknown): { pid: number; processToken: string } | null {
+  return isJsonObject(value) && typeof value.pid === 'number' && typeof value.processToken === 'string'
+    ? { pid: value.pid, processToken: value.processToken }
+    : null;
+}
+
+/**
+ * Settles the exit a helper recorded when no claim of this home still holds its dev server: the stimd that ran it
+ * ended before it. The stop goes to workspace state when the recorded dev server is the workspace's; any other exit
+ * file is logged and removed.
+ * @ref LLP 0018#the-dev-servers-helper -- an exit recorded while no stimd ran is settled by the next one
+ */
+function settleUnclaimedExit(root: string, log: Log): void {
+  if (children.has(root)) return;
+  const exit = readMetroExit(root);
+  if (!exit) return;
+  try {
+    if (readClaimSet(claimRoot(root, 'metro')).live.some((holder) => holder.child?.pid === exit.pid)) return;
+  } catch {
+    return;
+  }
+  const supervisor = readWorkspaceState(root)?.supervisor;
+  const writer = metroWriter(root, null, true);
+  const ended = exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code ?? 'unknown'}`;
+  if (isJsonObject(supervisor) && supervisor.pid === exit.pid && supervisor.processToken === exit.processToken) {
+    const mode = String(supervisor.mode);
+    const stop = stopRecord(
+      root,
+      exit.processToken,
+      { kind: 'server-exit', mode, code: exit.code, signal: exit.signal },
+      exit.exitedAt,
+    );
+    recordEnded(
+      root,
+      exit,
+      writer,
+      () => {},
+      endedMessage(mode, exit.pid, stop),
+      stop ? devServerStopLevel(stop) : 'warn',
+      stop,
+    );
+  } else {
+    writer.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'dev_server_exit_unclaimed',
+      msg: `dev server pid ${exit.pid} ended (${ended}) at ${exit.exitedAt}, after Stim stopped tracking it`,
+    });
+    rmSync(metroExitFile(root), { force: true });
+  }
+  writer.close();
+  log('info', 'metro_exit_settled', `${root}: dev server pid ${exit.pid} ended (${ended}) while no stimd ran it`);
 }
 
 function adoptAt(path: string, log: Log): void {
@@ -998,8 +1222,8 @@ function adoptAt(path: string, log: Log): void {
     if (!claim || !holder.child) continue;
     const digest = typeof holder.details.digest === 'string' ? holder.details.digest : null;
     const mode = String(holder.details.mode);
-    const writer = metroWriter(path, digest);
-    const records = childRecords({ log: writer, toRecord: outputRecord(mode) });
+    const helper = helperOf(holder.details.helper);
+    const writer = metroWriter(path, digest, helper === null);
     const child: MetroChild = {
       root: path,
       launch: launchOf(holder.details),
@@ -1010,8 +1234,17 @@ function adoptAt(path: string, log: Log): void {
       startedAt: holder.startedAt,
       claim,
       writer,
-      handle: null,
-      tail: tailChildOutput(outputFiles(path), records.push, offsetsOf(holder.details.offsets)),
+      helper,
+      helperProcess: null,
+      // compat C30 until 2.1.0
+      tail: helper
+        ? null
+        : tailChildOutput(
+            outputFiles(path),
+            childRecords({ log: writer, toRecord: outputRecord(mode) }).push,
+            offsetsOf(holder.details.offsets),
+          ),
+      // compat end
       ready: true,
       ensuredAt: 0,
       gone: false,
@@ -1097,7 +1330,17 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
         continue;
       }
       const decidedAt = Date.now();
-      if (!running(child)) {
+      if (child.helper) {
+        const status = inspectProcessIdentity(child.helper);
+        if (status === 'unknown') continue;
+        if (status !== 'same') {
+          await serialize(child.root, async () => {
+            if (children.get(child.root) === child && !child.stopping) await settleHelperEnded(child);
+            return {};
+          });
+          continue;
+        }
+      } else if (!running(child)) {
         if (GROUPS && processGroupAlive(child.pid)) continue;
         settleExited(child, null, null);
         continue;
@@ -1106,6 +1349,13 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
       if (child.digest !== injectedDigest() && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
         if (backgroundStopped) break;
         await restartAt(child, decidedAt, 'it loaded other injected files; restarting it at an idle point', log, true);
+        continue;
+      }
+      // compat end
+      // compat C30 until 2.1.0
+      if (!child.helper && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
+        if (backgroundStopped) break;
+        await restartAt(child, decidedAt, 'it runs without a helper; restarting it at an idle point', log, true);
         continue;
       }
       // compat end
@@ -1558,11 +1808,13 @@ export function closeMetroChildren(): Promise<void> {
     if (cleanupFailure) throw cleanupFailure;
     for (const child of children.values()) {
       if (!GROUPS) await stopChild(child, 'stimd exits');
+      // compat C30 until 2.1.0
       else if (child.tail) {
         child.tail.stop();
         child.claim =
           updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() }) ?? child.claim;
       }
+      // compat end
     }
     if (!GROUPS) for (const [root, tunnel] of tunnels) await stopTunnel(root, tunnel);
   })().catch((error: unknown) => {

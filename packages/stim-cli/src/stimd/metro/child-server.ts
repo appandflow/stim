@@ -1,6 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import type { NdjsonRecord, NdjsonWriter } from '../../ndjson.ts';
 import { createLineReader } from '../../process-output.ts';
 import { cancellableSleep } from '../../cancellation.ts';
@@ -16,19 +15,30 @@ export interface ChildServerHandle {
   mode: string;
   serverPid: number | null;
   processToken: string | null;
-  observesRequests?: boolean;
   child: ChildProcess;
-  /** The follower of the child's output files, when it writes files instead of pipes. */
-  tail?: OutputTail | null;
   onExit(cb: (info: ChildExitInfo | null) => void): void;
   close(): Promise<void>;
 }
 
-/** Where a child that outlives its parent writes: one file per stream in its workspace's logs directory. */
+/** Where a dev server's raw output goes: one file per stream in its workspace's logs directory. */
 export interface ChildOutput {
   stdout: string;
   stderr: string;
 }
+
+/** The fixed invocation stimd builds for a dev server, which the helper runs as its child. */
+export interface ServerLaunch {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  observesRequests: boolean;
+}
+
+/** What the helper tells stimd over the IPC channel stimd opens, before stimd accepts its dev server. */
+export type MetroRunMessage =
+  | { type: 'registered'; pid: number; processToken: string }
+  | { type: 'failed'; message: string };
+export const METRO_RUN_ACCEPT = 'metro-run-accept';
 
 const TAIL_MS = 200;
 const STREAMS: ('stdout' | 'stderr')[] = ['stdout', 'stderr'];
@@ -39,15 +49,6 @@ function size(file: string): number {
   } catch {
     return 0;
   }
-}
-
-/**
- * Opens `metro.<stream>.log` in `logsDir`, emptied, for a new child's stdio, so they hold one child's output. The caller
- * closes the descriptors once spawned.
- */
-export function openChildOutput(logsDir: string): { files: ChildOutput; fds: [number, number] } {
-  const files = { stdout: join(logsDir, 'metro.stdout.log'), stderr: join(logsDir, 'metro.stderr.log') };
-  return { files, fds: [openSync(files.stdout, 'w', 0o600), openSync(files.stderr, 'w', 0o600)] };
 }
 
 export interface OutputTail {
@@ -139,7 +140,6 @@ export function superviseChildServer({
   alive = null,
   killTimeoutMs,
   onRecord = null,
-  output = null,
 }: {
   mode: string;
   child: ChildProcess;
@@ -149,8 +149,6 @@ export function superviseChildServer({
   alive?: (() => boolean) | null;
   killTimeoutMs: number;
   onRecord?: ((record: NdjsonRecord) => void) | null;
-  /** The files, emptied by `openChildOutput`, the child writes instead of pipes, which are followed instead. */
-  output?: ChildOutput | null;
 }): ChildServerHandle {
   const records = childRecords({ log, toRecord, onRecord });
   const processToken = child.pid ? captureProcessToken(child.pid) : null;
@@ -158,7 +156,7 @@ export function superviseChildServer({
   child.stderr?.setEncoding?.('utf-8');
   child.stdout?.on('data', (chunk) => records.push(chunk, 'stdout'));
   child.stderr?.on('data', (chunk) => records.push(chunk, 'stderr'));
-  const tail = output ? tailChildOutput(output, records.push, { stdout: 0, stderr: 0 }) : null;
+  child.on('close', () => records.flush());
 
   let exited = false;
   let exitInfo: ChildExitInfo | null = null;
@@ -166,7 +164,6 @@ export function superviseChildServer({
   child.on('exit', (code, sig) => {
     exited = true;
     exitInfo = { code, signal: sig };
-    tail?.stop();
     records.flush();
     for (const cb of listeners) cb(exitInfo);
   });
@@ -182,7 +179,6 @@ export function superviseChildServer({
     serverPid: child.pid ?? null,
     processToken,
     child,
-    tail,
     onExit(cb) {
       if (exited) {
         cb(exitInfo);

@@ -33,6 +33,7 @@ export default defineConfig({
     'net-thread': '../server/src/net-thread.ts',
     'kit-worker': 'src/kit-worker.ts',
     'macos-run': 'src/macos/run.ts',
+    'metro-run': 'src/stimd/metro/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
     'status-worker': 'src/status-worker.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',

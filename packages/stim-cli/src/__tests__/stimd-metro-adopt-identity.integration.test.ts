@@ -176,6 +176,7 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
           port: 8183,
           mode: 'expo-child',
           digest: injectedDigest(),
+          helper: { pid, processToken: token, protocol: 1 },
           ...(observesRequests ? { observesRequests } : {}),
         },
         startedAt: new Date(longAgo).toISOString(),

@@ -2,15 +2,17 @@ import assert from 'node:assert';
 import { once } from 'node:events';
 import { getExecutor } from '../exec.ts';
 import { processGroupAlive } from '../ownership-claim.ts';
-import type { SpawnOptions } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseNdjsonText } from '../ndjson.ts';
-import { startCommandServer } from '../stimd/metro/server-command.ts';
-import { openChildOutput } from '../stimd/metro/child-server.ts';
+import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
+import { commandServerLaunch } from '../stimd/metro/server-command.ts';
+import { superviseChildServer } from '../stimd/metro/child-server.ts';
+import { outputRecord } from '../stimd/metro/output-records.ts';
+import { MODE_COMMAND } from '../stimd/metro/state.ts';
 import { makeChildProcess } from './_factories.ts';
 import * as identity from '../process-identity.ts';
+import type { ChildProcess } from 'node:child_process';
 
 let root: string;
 beforeEach(() => {
@@ -22,64 +24,65 @@ afterEach(() => {
 
 const command = ['node', '../react-native/cli.js', 'start', '--port', '{port}'];
 
-describe('startCommandServer', () => {
-  test('runs the argv from the app directory with {port} replaced, as its own process group writing files off Windows', async () => {
-    const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
-    const spawnFn = (cmd: string, args: string[], opts: SpawnOptions) => {
-      calls.push({ cmd, args, opts });
-      return makeChildProcess({ pid: 4242 });
-    };
-    const logsDir = join(root, 'logs');
-    mkdirSync(logsDir);
-    const output = openChildOutput(logsDir);
-    try {
-      await startCommandServer({
-        root,
-        port: 8095,
-        logsDir,
-        command,
-        spawnFn,
-        platform: 'darwin',
-        output,
-        baseEnv: { PATH: process.env.PATH, APP_ENV: 'staging' },
-      });
-      await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'win32', output });
-    } finally {
-      for (const fd of output.fds) closeSync(fd);
-    }
+function supervise(
+  child: ChildProcess,
+  {
+    killTimeoutMs = 1,
+    groupAlive = () => true,
+    signal = () => true,
+  }: { killTimeoutMs?: number; groupAlive?: () => boolean; signal?: (sig: NodeJS.Signals) => boolean } = {},
+) {
+  const logsDir = join(root, 'logs');
+  mkdirSync(logsDir, { recursive: true });
+  return superviseChildServer({
+    mode: MODE_COMMAND,
+    child,
+    log: createNdjsonWriter(join(logsDir, 'metro.ndjson')),
+    toRecord: outputRecord(MODE_COMMAND),
+    signal,
+    alive: groupAlive,
+    killTimeoutMs,
+  });
+}
 
-    expect(calls[0]?.cmd).toBe('node');
-    expect(calls[0]?.args).toEqual(['../react-native/cli.js', 'start', '--port', '8095']);
-    expect(calls[0]?.opts).toMatchObject({
-      cwd: root,
-      detached: true,
-      stdio: ['ignore', ...output.fds],
-      env: { APP_ENV: 'staging' },
-    });
-    expect(calls[1]?.opts.detached).toBe(false);
+test('metro.command runs its argv from the app directory with {port} replaced and the caller environment', () => {
+  const launch = commandServerLaunch({
+    root,
+    port: 8095,
+    logsDir: join(root, 'logs'),
+    command,
+    baseEnv: { PATH: process.env.PATH, APP_ENV: 'staging' },
+  });
+  expect(launch).toMatchObject({
+    command: 'node',
+    args: ['../react-native/cli.js', 'start', '--port', '8095'],
+    env: { APP_ENV: 'staging' },
+  });
+});
+
+describe('a supervised dev server', () => {
+  test('what it writes to its pipes becomes raw command records with inferred levels and bundle markers', async () => {
+    const child = makeChildProcess({ pid: 4242 });
+    supervise(child);
+    child.stdout?.emit('data', 'iOS Bundled 812ms js/RNTesterApp.ios.js (1204 modules)\n');
+    child.stderr?.emit('data', 'error: Unable to resolve module ./Missing\n');
+
+    const records = parseNdjsonText(readFileSync(join(root, 'logs', 'metro.ndjson'), 'utf-8'));
+    expect(records).toMatchObject([
+      { src: 'metro', level: 'info', raw: true, event: 'command_stdout', marker: true },
+      { src: 'metro', level: 'error', raw: true, event: 'command_stderr' },
+    ]);
   });
 
-  test('what it writes to its output files becomes raw command records with inferred levels and bundle markers', async () => {
+  test('a line written after the leader exits is recorded once the pipes close', () => {
     const child = makeChildProcess({ pid: 4242 });
-    const logsDir = join(root, 'logs');
-    mkdirSync(logsDir);
-    const output = openChildOutput(logsDir);
-    for (const fd of output.fds) closeSync(fd);
-    await startCommandServer({ root, port: 8096, logsDir, command, spawnFn: () => child, output });
-    appendFileSync(output.files.stdout, 'iOS Bundled 812ms js/RNTesterApp.ios.js (1204 modules)\n');
-    appendFileSync(output.files.stderr, 'error: Unable to resolve module ./Missing\n');
-
-    const records = () =>
-      parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
-        (r) => !String(r.event).startsWith('cache_store_'),
-      );
-    await vi.waitFor(() =>
-      expect(records()).toMatchObject([
-        { src: 'metro', level: 'info', raw: true, event: 'command_stdout', marker: true },
-        { src: 'metro', level: 'error', raw: true, event: 'command_stderr' },
-      ]),
-    );
+    supervise(child);
     child.emit('exit', 0, null);
+    child.stdout?.emit('data', 'written by a group member after the leader exited');
+    child.emit('close', 0, null);
+
+    const records = parseNdjsonText(readFileSync(join(root, 'logs', 'metro.ndjson'), 'utf-8'));
+    expect(records).toMatchObject([{ msg: 'written by a group member after the leader exited' }]);
   });
 
   test('close refuses unconfirmed shutdown after signalling the group with SIGTERM and SIGKILL', async () => {
@@ -88,28 +91,15 @@ describe('startCommandServer', () => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
-    const child = makeChildProcess({ pid: 4242 });
-    const signals: [number, NodeJS.Signals, unknown][] = [];
-    const server = await startCommandServer({
-      root,
-      port: 8097,
-      logsDir: join(root, 'logs'),
-      command,
-      spawnFn: () => child,
-      platform: 'darwin',
-      killTimeoutMs: 1,
-      groupAlive: () => true,
-      signalTree: (pid, sig, opts) => {
-        signals.push([pid, sig as NodeJS.Signals, opts]);
+    const signals: NodeJS.Signals[] = [];
+    const server = supervise(makeChildProcess({ pid: 4242 }), {
+      signal: (sig) => {
+        signals.push(sig);
         return true;
       },
     });
     await expect(server.close()).rejects.toThrow(/4242/);
-
-    expect(signals).toEqual([
-      [4242, 'SIGTERM', { group: true, platform: 'darwin' }],
-      [4242, 'SIGKILL', { group: true, platform: 'darwin' }],
-    ]);
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
   });
 
   describe.skipIf(process.platform === 'win32')('owned POSIX process', () => {
@@ -124,15 +114,10 @@ describe('startCommandServer', () => {
         assert(pid);
         let retry = false;
         try {
-          const server = await startCommandServer({
-            root,
-            port: 8099,
-            logsDir: join(root, 'logs'),
-            command,
-            spawnFn: () => child,
+          const server = supervise(child, {
             killTimeoutMs: 25,
             groupAlive: () => processGroupAlive(pid),
-            signalTree: (_pid, signal) => (retry ? child.kill(signal) : failure !== 'signal refused'),
+            signal: (sig) => (retry ? child.kill(sig) : failure !== 'signal refused'),
           });
           await expect(server.close()).rejects.toThrow(new RegExp(String(child.pid)));
           expect(child.exitCode === null && child.signalCode === null).toBe(true);
@@ -150,33 +135,23 @@ describe('startCommandServer', () => {
     );
   });
 
-  test('close refuses to signal a group after the wrapper identity is gone', async () => {
+  test('close refuses to signal a group after the leader identity is gone', async () => {
     vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
     vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('gone');
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
     const child = makeChildProcess({ pid: 4242 });
-    let groupRunning = true;
     const signals: NodeJS.Signals[] = [];
-    const server = await startCommandServer({
-      root,
-      port: 8098,
-      logsDir: join(root, 'logs'),
-      command,
-      spawnFn: () => child,
-      platform: 'darwin',
+    const server = supervise(child, {
       killTimeoutMs: 1000,
-      groupAlive: () => groupRunning,
-      signalTree: (_pid, sig) => {
-        signals.push(sig as NodeJS.Signals);
-        groupRunning = false;
+      signal: (sig) => {
+        signals.push(sig);
         return true;
       },
     });
     child.emit('exit', 0, null);
     await expect(server.close()).rejects.toThrow('Could not verify the dev-server process group');
-
     expect(signals).toEqual([]);
   });
 
@@ -187,17 +162,9 @@ describe('startCommandServer', () => {
       vi.restoreAllMocks();
     });
     const signals: NodeJS.Signals[] = [];
-    const server = await startCommandServer({
-      root,
-      port: 8098,
-      logsDir: join(root, 'logs'),
-      command,
-      spawnFn: () => makeChildProcess({ pid: 4242 }),
-      platform: 'darwin',
-      killTimeoutMs: 1,
-      groupAlive: () => true,
-      signalTree: (_pid, sig) => {
-        if (sig) signals.push(sig);
+    const server = supervise(makeChildProcess({ pid: 4242 }), {
+      signal: (sig) => {
+        signals.push(sig);
         return true;
       },
     });

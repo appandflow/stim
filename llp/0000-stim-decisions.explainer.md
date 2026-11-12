@@ -99,3 +99,4 @@ the workflow.
 - [LLP 0013](./0013-owned-devices.decision.md) covers owned devices, pools, and leases.
 - [LLP 0014](./0014-native-builds.decision.md) covers native build invocations, artifacts, and signing.
 - [LLP 0015](./0015-compatibility-removals.decision.md) covers the compatibility mechanisms that ended in 2.0.
+- [LLP 0018](./0018-children-that-outlive-stimd.decision.md) covers which children stimd may own, and the dev server's helper.
