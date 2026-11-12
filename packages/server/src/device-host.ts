@@ -105,12 +105,7 @@ interface OwnedSession {
   reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
-  logs?: {
-    started: number;
-    more: boolean;
-    run?: WorkerRun;
-    pending?: Promise<void>;
-  };
+  logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
   stopping?: Promise<void>;
   stopGeneration?: number;
   installing?: { attempt: string; done: Promise<void> };
@@ -155,14 +150,8 @@ export interface DeviceHostOptions {
 const HOSTED_HOME_GRACE_MS = 3_600_000;
 
 type HostedViewTarget = { home: string; claim: ClaimHandle } & (
-  | {
-      platform: 'ios';
-      session: HostedDeviceSession & { device: HostedIosDevice };
-    }
-  | {
-      platform: 'android';
-      session: HostedDeviceSession & { device: HostedAndroidDevice };
-    }
+  | { platform: 'ios'; session: HostedDeviceSession & { device: HostedIosDevice } }
+  | { platform: 'android'; session: HostedDeviceSession & { device: HostedAndroidDevice } }
   | {
       platform: 'macos';
       session: HostedDeviceSession & { device: HostedMacosDevice };
@@ -220,14 +209,8 @@ function hostedCapacity(
   const macos = platform === 'macos';
   const localTotal = local ? local.ios + local.android : 0;
   const pool = occupiedBy(records, platform);
-  const limits: {
-    setting: string;
-    label: string;
-    noun: string;
-    hosted: number;
-    local: number | null;
-    max: number;
-  }[] = [];
+  const limits: { setting: string; label: string; noun: string; hosted: number; local: number | null; max: number }[] =
+    [];
   if (cap > 0)
     limits.push({
       ...HOSTED_PLATFORM_CAPS[platform],
@@ -2861,11 +2844,7 @@ export class DeviceHost {
     let finishTimer: NodeJS.Timeout | undefined;
     let groupTimer: NodeJS.Timeout | undefined;
     let settle!: (result: { value: unknown; settled: boolean; notice?: string }) => void;
-    const done = new Promise<{
-      value: unknown;
-      settled: boolean;
-      notice?: string;
-    }>((resolve) => {
+    const done = new Promise<{ value: unknown; settled: boolean; notice?: string }>((resolve) => {
       settle = resolve;
     });
     const finish = () => {

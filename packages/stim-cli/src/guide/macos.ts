@@ -65,11 +65,13 @@ open). stim macos, stim stop, stim worktree remove and stim gc stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
 STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. If the
-app leader has exited but the process group Stim created for the launch remains,
+app leader has exited, no process has its pid, and the process group Stim
+created for the launch remains with only members that started after the app,
 stop, relaunch and removal end that group too: SIGTERM, up to 5 s, then SIGKILL.
-Once the run's end is recorded, a group with that id may be another one, so Stim
-refuses and sends no signal; inspect it with ps -A -o pid,pgid,command and stop
-only verified owned members before retrying.
+Otherwise (the pid names another process, a member is older than the app, or the
+run's end was already recorded) Stim refuses and sends no signal; inspect the
+group with ps -A -o pid,pgid,command and stop only verified owned members before
+retrying.
 A reused PID can also leave the runtime claim unresolved after its group is gone;
 inspect that claim and remove it only after verifying no owned process remains.
 If a launch cannot publish its runtime claim, Stim retains the launch claim even
@@ -158,12 +160,14 @@ workspace logs, which stimd copies into logs/macos-app.ndjson as client records
 (stdout at info, stderr at warn), each line once even when stimd restarts or is
 updated. Build output becomes build records in logs/macos.ndjson, all with
 platform "macos". No process waits on the app, so its exit status is unknown.
-An end Stim requested (stop, relaunch, hosted stop or replacement, removal)
-records "Exited <product>." at info. Any other end records an error, "<product>
-ended without being stopped by Stim; its exit status is unknown.", followed by
-"Crash report: <path>" when a macOS crash report under
-~/Library/Logs/DiagnosticReports names the app's pid, so a crash shows in
-stim logs --errors.
+An end Stim requested of a running app (stop, relaunch, hosted stop or
+replacement, removal) records "Exited <product>." at info. Any other end records
+an error, "<product> ended without being stopped by Stim; its exit status is
+unknown.". That includes quitting the app yourself (Cmd-Q) or the app exiting
+normally: Stim cannot tell those from a failure, so each writes one error record.
+When a macOS crash report under ~/Library/Logs/DiagnosticReports names the
+app's pid, the record is "<product> exited with a crash report. Crash report:
+<path>" at error, whoever ended it. So a crash shows in stim logs --errors.
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
 line instead of when the app exits. While stimd runs, each raw output file is
 reset after reaching 8 MiB; it warns that output written during the reset may

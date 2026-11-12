@@ -14,31 +14,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, parseNdjsonText } from '@stim-cli/core/state';
 import { macosAppLogName, macosProcess } from '../macos/state.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { MACOS_APP_SINK, drained, tailMacosApp } from '../stimd/logs/macos-tail.ts';
 
-const messages = (dir: string): unknown[] =>
-  existsSync(join(dir, MACOS_APP_SINK))
-    ? readFileSync(join(dir, MACOS_APP_SINK), 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => {
-          const record: unknown = JSON.parse(line);
-          return isJsonObject(record) ? record.msg : undefined;
-        })
-    : [];
-
 const records = (dir: string): Record<string, unknown>[] =>
-  readFileSync(join(dir, MACOS_APP_SINK), 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const value: unknown = JSON.parse(line);
-      if (!isJsonObject(value)) throw new Error('a sink line is not a record');
-      return value;
-    });
+  existsSync(join(dir, MACOS_APP_SINK)) ? parseNdjsonText(readFileSync(join(dir, MACOS_APP_SINK), 'utf8')) : [];
+
+const messages = (dir: string): unknown[] => records(dir).map((record) => record.msg);
 
 const readMark = (file: string): Record<string, unknown> => {
   const mark: unknown = JSON.parse(readFileSync(file, 'utf8'));
@@ -159,12 +143,22 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three']);
     appendFileSync(out, 'four\n');
     inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('four'), line('four').slice(0, 20));
+    const grown = readFileSync(sink).length;
     resume();
+    expect(readFileSync(sink).length).toBeGreaterThan(grown);
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four']);
     appendFileSync(out, 'five\n');
     inFlight({ ...readMark(mark), out: Number(readMark(mark).out) + 5 }, line('five'), '');
     resume();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four', 'five']);
+    appendFileSync(out, 'six\nseven\n');
+    inFlight(
+      { ...readMark(mark), out: Number(readMark(mark).out) + 10 },
+      line('six') + line('seven'),
+      line('six') + line('seven').slice(0, 10),
+    );
+    resume();
+    expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four', 'five', 'six', 'seven']);
     process.kill(record.pid, 'SIGKILL');
     await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
     inFlight({ ...readMark(mark), exited: true }, line('Exited Fixture.'), line('Exited Fixture.'));

@@ -19,7 +19,6 @@ import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android
 import { loadConfig } from '../workspace/config.ts';
 import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
-/** The app a macOS `stop-current` request names, validated; undefined for every other mode. */
 function expectedMacosApp(
   input: Record<string, unknown>,
 ): { pid: number; token: string; launchId: string } | undefined {

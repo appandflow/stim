@@ -475,7 +475,7 @@ async function cleanupFailedMacosLaunch(
 ): Promise<void> {
   try {
     if (owned) {
-      requestMacosStop(root, record.launchId);
+      if (inspectProcessIdentity(owned) === 'same') requestMacosStop(root, record.launchId);
       for (const claim of operationState(context).declaring) markClaimChildPending(claim);
       if (inspectProcessIdentity(owned) !== 'same') {
         const recorded = requiredMacosRecord(root);

@@ -27,6 +27,7 @@ import { basename, dirname, join } from 'node:path';
 import {
   macosAppState,
   deviceHostArea,
+  isJsonObject,
   parseMacosRecord,
   readMacosRecord,
   readBuildHistory,
@@ -460,7 +461,7 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
 });
 
 test.skipIf(process.platform === 'win32')(
-  'a group member keeps the run open until a requested end stops the launch group',
+  'an app that dies with a group member left keeps the run open; a requested end stops the group and records the death as an error',
   async () => {
     const declaration = tryAcquireClaim({
       root: join(dir, 'launch.lock'),
@@ -475,7 +476,7 @@ test.skipIf(process.platform === 'win32')(
       file: process.execPath,
       args: [
         '-e',
-        `const { spawn } = require('node:child_process'); const child = spawn('/bin/sleep', ['60'], { stdio: 'ignore' }); child.on('spawn', () => { console.log('member ' + child.pid); setTimeout(() => process.exit(0), 300); });`,
+        `const { spawn } = require('node:child_process'); const child = spawn('/bin/sleep', ['60'], { stdio: 'ignore' }); child.on('spawn', () => { console.log('member ' + child.pid); setTimeout(() => process.kill(process.pid, 'SIGKILL'), 300); });`,
       ],
       cwd: root,
       env: process.env,
@@ -509,7 +510,7 @@ test.skipIf(process.platform === 'win32')(
         .trim()
         .split('\n')
         .map((line): Record<string, unknown> => JSON.parse(line));
-      expect(records.at(-1)).toMatchObject({ level: 'info', msg: 'Exited Sample.' });
+      expect(records.at(-1)).toMatchObject({ level: 'error', msg: NATURAL_END });
       expect(readClaimSet(claimRoot).live).toHaveLength(0);
     } finally {
       drain.mockRestore();
@@ -522,6 +523,33 @@ test.skipIf(process.platform === 'win32')(
     }
   },
   20_000,
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'a recorded app pid that now names another process is never signalled as the launch group',
+  async () => {
+    const stranger = getExecutor().spawn('/bin/sleep', ['60'], { detached: true, stdio: 'ignore' });
+    children.push(stranger);
+    await once(stranger, 'spawn');
+    if (stranger.pid === undefined) throw new Error('the stand-in did not start');
+    const real = macosProcess(stranger.pid);
+    const [scheme, body] = real.processToken.split('.');
+    const decoded: unknown = JSON.parse(Buffer.from(body ?? '', 'base64url').toString('utf8'));
+    assert(isJsonObject(decoded));
+    const reused = {
+      ...real,
+      processToken: `${scheme}.${Buffer.from(JSON.stringify({ ...decoded, startTime: '1:0' })).toString('base64url')}`,
+    };
+    expect(inspectProcessIdentity(reused)).toBe('different');
+    writeWorkspaceState(root, { macos: record({ app: reused, supervisor: reused }) });
+    const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+    try {
+      await expect(stopMacosApp(root)).rejects.toMatchObject({ code: 'STIM_MACOS_OWNER_UNVERIFIED' });
+      expect(inspectProcessIdentity(real)).toBe('same');
+    } finally {
+      drain.mockRestore();
+    }
+  },
 );
 
 test('an unresolved app-spawn claim blocks cleanup and refuses a successful stop', async () => {

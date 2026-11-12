@@ -40,13 +40,12 @@ interface TailState {
   errPending: string;
   observed: boolean;
   exited: boolean;
-  /** Raw output was cut while the sink could not take it; the next append warns. */
   dropped: boolean;
+  skip: number;
 }
 
 interface Mark extends TailState {
   processToken: string;
-  /** A sink append in flight: the sink's identity, its size before and after the append, and the state once it landed. */
   pending?: { ino: string | null; size: number; end: number; next: TailState };
 }
 
@@ -58,6 +57,7 @@ const EMPTY: TailState = {
   observed: false,
   exited: false,
   dropped: false,
+  skip: 0,
 };
 
 function readMark(dir: string): Record<string, unknown> | null {
@@ -84,6 +84,7 @@ function tailState(value: unknown): TailState {
     observed: value.observed === true,
     exited: value.exited === true,
     dropped: value.dropped === true,
+    skip: offset(value.skip),
   };
 }
 
@@ -101,6 +102,17 @@ export function removeRawOutput(dir: string, launchId: string): void {
     } catch {}
 }
 
+function endsWithNewline(sink: string, size: number): boolean {
+  const last = Buffer.alloc(1);
+  const fd = openSync(sink, 'r');
+  try {
+    readSync(fd, last, 0, 1, size - 1);
+  } finally {
+    closeSync(fd);
+  }
+  return last[0] === 10;
+}
+
 function sinkIdentity(sink: string): { ino: string; size: number } | null {
   try {
     const stat = statSync(sink, { bigint: true });
@@ -111,12 +123,6 @@ function sinkIdentity(sink: string): { ino: string; size: number } | null {
   }
 }
 
-/**
- * The state a tail resumes from: the committed one, or the one after an append the sink holds exactly. Only this tail
- * appends to its sink and rotates it, so the sink holds the append when it has the recorded identity and end size. A
- * sink that grew short of that end holds part of the append; it is cut back to its size before the append, which the
- * resumed tail then appends again.
- */
 function resumeState(mark: Record<string, unknown> | null, token: string, sink: string): TailState {
   if (mark?.processToken !== token) return EMPTY;
   const pending = mark.pending;
@@ -125,11 +131,17 @@ function resumeState(mark: Record<string, unknown> | null, token: string, sink: 
   const before = offset(pending.size);
   const same = now !== null && (pending.ino === null || now.ino === pending.ino);
   if (same && now.size === offset(pending.end) && now.size > before) return tailState(pending.next);
-  if (same && now.size > before) truncateSync(sink, before);
-  return tailState(mark);
+  if (!same || now.size <= before) return tailState(mark);
+  const landed = Buffer.alloc(now.size - before);
+  const fd = openSync(sink, 'r');
+  try {
+    readSync(fd, landed, 0, landed.length, before);
+  } finally {
+    closeSync(fd);
+  }
+  return { ...tailState(mark), skip: landed.reduce((lines, byte) => lines + (byte === 10 ? 1 : 0), 0) };
 }
 
-/** The macOS crash report of `executable` that names `pid`, written since `since` (ms), or null. Read-only. */
 function crashReport(executable: string, pid: number, since: number): string | null {
   try {
     const dir = join(userInfo().homedir, 'Library', 'Logs', 'DiagnosticReports');
@@ -152,7 +164,6 @@ function crashReport(executable: string, pid: number, since: number): string | n
   return null;
 }
 
-/** Complete lines of `pending` + `chunk`, each at most LINE_BYTES, and the rest; `final` also ends the rest. */
 function splitLines(pending: Buffer, chunk: Buffer, final: boolean): { lines: string[]; rest: Buffer } {
   let rest = pending.length ? Buffer.concat([pending, chunk]) : chunk;
   const lines: string[] = [];
@@ -176,10 +187,7 @@ function splitLines(pending: Buffer, chunk: Buffer, final: boolean): { lines: st
   return { lines, rest: Buffer.from(rest) };
 }
 
-/**
- * The tail claim of a directory, for this process. A claim this process already holds was left by a logs worker of
- * this stimd that exited, since stimd starts the next worker only after the previous one exited.
- */
+// @ref LLP 0017#each-line-once -- a claim this stimd holds was left by a logs worker that exited
 function takeTailClaim(root: string): ClaimHandle | null {
   for (let attempt = 0; attempt < 2; attempt++) {
     const taken = tryAcquireClaim({
@@ -258,13 +266,16 @@ export function tailMacosApp(
     writeMark({ processToken: app.processToken, ...state });
     unsettled = false;
   };
-  const commit = (lines: string[], next: TailState) => {
+  const commit = (batch: string[], target: TailState) => {
+    const skipped = Math.min(state.skip, batch.length);
+    const lines = batch.slice(skipped);
+    const next = { ...target, skip: state.skip - skipped };
     if (lines.length) {
       try {
         rotateLog(sink, LOG_ROTATE_BYTES);
       } catch {}
       const before = sinkIdentity(sink);
-      const text = lines.join('');
+      const text = (before && before.size > 0 && !endsWithNewline(sink, before.size) ? '\n' : '') + lines.join('');
       const size = before?.size ?? 0;
       unsettled = true;
       writeMark({
@@ -373,13 +384,13 @@ export function tailMacosApp(
     return true;
   };
   const exitRecord = async (): Promise<string> => {
-    if (existsSync(join(dir, macosAppLogName(launchId, 'stop')))) return record('info', `Exited ${product}.`);
-    await new Promise((resolve) => setTimeout(resolve, CRASH_REPORT_WAIT_MS));
+    const requested = existsSync(join(dir, macosAppLogName(launchId, 'stop')));
+    if (!requested) await new Promise((resolve) => setTimeout(resolve, CRASH_REPORT_WAIT_MS));
     const report = crashReport(product, app.pid, app.startedAtMicros / 1000);
-    return record(
-      'error',
-      `${product} ended without being stopped by Stim; its exit status is unknown.${report ? ` Crash report: ${report}` : ''}`,
-    );
+    if (report) return record('error', `${product} exited with a crash report. Crash report: ${report}`);
+    return requested
+      ? record('info', `Exited ${product}.`)
+      : record('error', `${product} ended without being stopped by Stim; its exit status is unknown.`);
   };
   const finish = (force: boolean): Promise<boolean> => {
     if (done) return Promise.resolve(state.exited);
