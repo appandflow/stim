@@ -3,7 +3,6 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FINGERPRINT_SCHEMA } from '../fingerprint/key.ts';
 import { BuildHost } from '../job/offload/host.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 
@@ -64,7 +63,7 @@ test.skipIf(process.platform === 'win32')(
           compat: 6,
           fingerprint: 'a'.repeat(64),
           fingerprintSources: [],
-          fingerprintSchema: FINGERPRINT_SCHEMA,
+          fingerprintSchema: 2,
           fingerprintEnv: { set: { ASSET_DIR: { path: 'assets' }, LITERAL: 'npm:literal' }, absent: [] },
           fingerprintNative: 'tracked',
           fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },

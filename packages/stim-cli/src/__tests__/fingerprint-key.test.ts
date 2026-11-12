@@ -32,12 +32,6 @@ const GOLDEN: Record<number, Record<'preimage' | 'cng' | 'bare' | 'monorepo', st
     bare: 'dc67d949fa858c081d157332fd7c9ce98751962baa909231bb2b4b30c81e3105',
     monorepo: '9ffaf874910d7278ad17ec3edeec429d4e78a3d1f5db2b9235cc5a059c65c477',
   },
-  3: {
-    preimage: '2b2a001dce1e1312d994039301df296f1793f884864bab973c24b6441d0b9b0e',
-    cng: '27c79c91684e9de01acd3e04b3eb29f1d1a8ce7861c4e5e4c5d2dead268f1ffc',
-    bare: '7f8dd29221e7a5f28f1e9d8ac391713b8b8bbc44c6d47f5082759cce8613fb77',
-    monorepo: 'bbd47b37ce4d3b1378a57d9bb8b715d37f528b46cf7a1e7077eceefefa1e30d7',
-  },
 };
 
 const temps: string[] = [];
@@ -241,6 +235,13 @@ describe('fingerprint key', () => {
     expect(shared[1]?.[1]).not.toBe(names([v5, v7, v7])[1]?.[1]);
     const pkg: Input = { name: 'package:color', kind: 'package', hash: 'a'.repeat(64), version: '7.2.0' };
     expect(() => mergeInputs([pkg, { ...pkg, hash: 'b'.repeat(64) }])).toThrow(/disagree/);
+    const unversioned = copy('npm:@scope/color/index.js', '', 'f'.repeat(64));
+    expect(names([unversioned, v7])).toEqual([
+      ['npm:@scope/color@/index.js', 'f'.repeat(64)],
+      ['npm:@scope/color@7.2.0/index.js', 'b'.repeat(64)],
+    ]);
+    const walked: Input = { name: 'npm:@scope/color/index.js', kind: 'file', hash: 'c'.repeat(64) };
+    expect(() => mergeInputs([walked, v7])).toThrow(/disagree/);
   });
 
   test('diffInputs reports added, removed and changed rows in name order whatever the input order', () => {

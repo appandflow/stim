@@ -28,7 +28,7 @@ import { field, within, type Roots } from './walk.ts';
 const RECORDS_PER_DIR = 8;
 const DIRS_PER_PLATFORM = 256;
 /** Bumped when the record shape or what a part record derives from its trace changes. */
-const INDEX_FORMAT = 3;
+const INDEX_FORMAT = 4;
 const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity', '.yarn-state.yml'];
 /** Where `patch-package` and the yarn and pnpm patch commands keep patches, which change installed files. */
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];

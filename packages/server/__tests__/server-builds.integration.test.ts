@@ -28,7 +28,6 @@ import {
   tryAcquireBuildSlotClaim,
   isJsonObject,
   stimBuildId,
-  FINGERPRINT_SCHEMA,
 } from '@stim-cli/core/state';
 import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { protocolJsonSchema } from '../src/protocol.ts';
@@ -774,7 +773,7 @@ describe('offloaded builds', () => {
     scheme: null,
     runtime: 'iOS-27-0',
     fingerprint: 'f00d',
-    fingerprintSchema: FINGERPRINT_SCHEMA,
+    fingerprintSchema: 2,
     fingerprintSources: [],
     fingerprintEnv: { set: {}, absent: [] },
     fingerprintNative: 'tracked',
@@ -920,7 +919,7 @@ describe('offloaded builds', () => {
         project: 'apps/mobile',
         expectedFingerprint: 'f00d',
         expectedSources: fingerprintSources,
-        fingerprintSchema: FINGERPRINT_SCHEMA,
+        fingerprintSchema: 2,
         fingerprintEnv: START.fingerprintEnv,
         fingerprintNative: 'tracked',
         fingerprintLayout: START.fingerprintLayout,

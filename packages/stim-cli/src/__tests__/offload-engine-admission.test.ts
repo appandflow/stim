@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildHost } from '../job/offload/host.ts';
-import { FINGERPRINT_SCHEMA, fingerprintInputsRow } from '../fingerprint/key.ts';
+import { fingerprintInputsRow } from '../fingerprint/key.ts';
 
 const fixture = vi.hoisted((): { root: string; release: (() => void) | undefined } => ({
   root: '',
@@ -57,7 +57,7 @@ test('build.start refuses a drive path in tagged fingerprint environment before 
       compat: 6,
       fingerprint: 'a'.repeat(64),
       fingerprintSources: [],
-      fingerprintSchema: FINGERPRINT_SCHEMA,
+      fingerprintSchema: 2,
       fingerprintNative: 'tracked',
       fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },
       fingerprintRuntime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
@@ -95,7 +95,7 @@ test('build.start admits declared fingerprint inputs only when they match the ke
       compat: 6,
       fingerprint: 'a'.repeat(64),
       fingerprintSources: [{ id: row.name, kind: row.kind, hash: row.hash }],
-      fingerprintSchema: FINGERPRINT_SCHEMA,
+      fingerprintSchema: 2,
       fingerprintEnv: { set: {}, absent: [] },
       fingerprintNative: 'tracked',
       fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },

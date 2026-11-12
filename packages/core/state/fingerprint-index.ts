@@ -3,7 +3,7 @@ import { configDir, workspaceStateDir } from '../index.ts';
 import { readJsonObject } from './json-file.ts';
 
 /** Changes whenever fingerprint input rows or their bytes change. */
-export const FINGERPRINT_SCHEMA = 3;
+export const FINGERPRINT_SCHEMA = 2;
 
 /** The lockfiles that mark an install root, in the order a directory's lockfile is chosen. */
 export const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'] as const;
