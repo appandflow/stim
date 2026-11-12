@@ -3,6 +3,9 @@ import type { RunOp } from './api/engine-route.ts';
 import type { StimClient, StimFailure, StimOptions } from './api/types.ts';
 
 export { StimError };
+
+/** The integer of the `stim` API. It goes up only when an export is removed, renamed or changes meaning. */
+export const STIM_API_VERSION = 1 as const;
 export type {
   StimBuildOptions,
   StimBuildResult,

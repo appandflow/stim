@@ -2,6 +2,7 @@
 
 ## Added
 
+- `stim` exports `STIM_API_VERSION` (1), the integer of the `createStim` API. It goes up only when an export of `stim` is removed, renamed or changes meaning, and such a release names it under Removed (breaking).
 - `stim plugin list` lists the bundled plugins and the plugin `cache.provider` names, and `stim plugin test <plugin>` runs a transport or agent-driver plugin's contract kit with the module in a worker thread. `stim doctor` and `stim settings set cache.provider` now report a cache provider that does not resolve or declares another integer.
 - Before a local native compile, Stim estimates the bytes it will write and, when free disk on the project's volume is under that plus `disk.criticalFreeGb`, runs the pressure ladder once (rungs 2 to 8, for at most 60 seconds) and builds regardless, with one stderr warning if the space is still short. The estimate is the median of the project's recent recorded builds, or a default per project type. `stim logs --source builds` records `bytesWritten` and `projectKey` for each build.
 - `stim remote update <mac>` updates an approved worker to the newest compatible release on its channel. Use `--channel next` to select prereleases for one update.

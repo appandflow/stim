@@ -1,7 +1,17 @@
 // The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+[*] declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
+[*] export runContract
 [*] export type HostedAgentGrant
 [*] export type HostedAgentIssuedGrant
 [*] export type HostedAgentLease
+[*] interface ContractOptions {
+[*] interface ContractOptions { | "agent-driver": AgentDriverContractOptions;
+[*] interface ContractOptions { | "cache-provider": CacheContractModuleOptions;
+[*] interface ContractOptions { | transport: TransportContractOptions;
+[*] interface ContractResults {
+[*] interface ContractResults { | "agent-driver": AgentDriverContractResult[];
+[*] interface ContractResults { | "cache-provider": CacheContractResult[];
+[*] interface ContractResults { | transport: TransportContractResult[];
 [*] interface HostedAgentIssuedGrant {
 [*] interface HostedAgentIssuedGrant { | driver: string;
 [*] interface HostedAgentIssuedGrant { | lease?: HostedAgentLease;
@@ -106,23 +116,23 @@
 [agent-driver] interface AgentDriverContractResult { | name: string;
 [agent-driver] interface AgentDriverContractResult { | passed: boolean;
 [agent-driver] interface AgentDriverHost {
-[agent-driver] interface AgentDriverHost { | capture(pid: number): Promise<AgentDriverProcess | null>;
-[agent-driver] interface AgentDriverHost { | childPending(claim: string): Promise<void>;
 [agent-driver] interface AgentDriverHost { | claims: {
-[agent-driver] interface AgentDriverHost { | clearChild(claim: string): Promise<void>;
-[agent-driver] interface AgentDriverHost { | group: boolean;
-[agent-driver] interface AgentDriverHost { | inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
-[agent-driver] interface AgentDriverHost { | own?: string;
 [agent-driver] interface AgentDriverHost { | processes: {
-[agent-driver] interface AgentDriverHost { | release(claim: string): Promise<boolean>;
-[agent-driver] interface AgentDriverHost { | removeCommand(path: string): Promise<string>;
-[agent-driver] interface AgentDriverHost { | setChild(claim: string, child: AgentDriverProcess): Promise<void>;
-[agent-driver] interface AgentDriverHost { | steps: AgentDriverStopStep[];
-[agent-driver] interface AgentDriverHost { | stop(process: AgentDriverProcess, options: {
-[agent-driver] interface AgentDriverHost { | stopStale(root: string, label: string, options: {
-[agent-driver] interface AgentDriverHost { | take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
-[agent-driver] interface AgentDriverHost { | }): Promise<boolean>;
-[agent-driver] interface AgentDriverHost { | }): Promise<void>;
+[agent-driver] interface AgentDriverHost { || capture(pid: number): Promise<AgentDriverProcess | null>;
+[agent-driver] interface AgentDriverHost { || childPending(claim: string): Promise<void>;
+[agent-driver] interface AgentDriverHost { || clearChild(claim: string): Promise<void>;
+[agent-driver] interface AgentDriverHost { || inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
+[agent-driver] interface AgentDriverHost { || release(claim: string): Promise<boolean>;
+[agent-driver] interface AgentDriverHost { || removeCommand(path: string): Promise<string>;
+[agent-driver] interface AgentDriverHost { || setChild(claim: string, child: AgentDriverProcess): Promise<void>;
+[agent-driver] interface AgentDriverHost { || stop(process: AgentDriverProcess, options: {
+[agent-driver] interface AgentDriverHost { || stopStale(root: string, label: string, options: {
+[agent-driver] interface AgentDriverHost { || take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
+[agent-driver] interface AgentDriverHost { || }): Promise<boolean>;
+[agent-driver] interface AgentDriverHost { || }): Promise<void>;
+[agent-driver] interface AgentDriverHost { ||| group: boolean;
+[agent-driver] interface AgentDriverHost { ||| own?: string;
+[agent-driver] interface AgentDriverHost { ||| steps: AgentDriverStopStep[];
 [agent-driver] interface AgentDriverInput {
 [agent-driver] interface AgentDriverInput { | claimRoot: string;
 [agent-driver] interface AgentDriverInput { | device?: HostedAgentDevice;
@@ -291,16 +301,16 @@
 [cache-provider] interface CacheProviderModule {
 [cache-provider] interface CacheProviderModule { | apiVersion: typeof CACHE_PROVIDER_API_VERSION;
 [cache-provider] interface CacheProviderModule { | createCacheProvider(input: {
-[cache-provider] interface CacheProviderModule { | env?: NodeJS.ProcessEnv;
-[cache-provider] interface CacheProviderModule { | options: Record<string, unknown>;
-[cache-provider] interface CacheProviderModule { | projectRoot: string;
 [cache-provider] interface CacheProviderModule { | }): CacheProvider | Promise<CacheProvider>;
+[cache-provider] interface CacheProviderModule { || env?: NodeJS.ProcessEnv;
+[cache-provider] interface CacheProviderModule { || options: Record<string, unknown>;
+[cache-provider] interface CacheProviderModule { || projectRoot: string;
 [cache-provider] interface FileCacheCapability {
 [cache-provider] interface FileCacheCapability { | resolve(input: FileCacheResolveInput): Promise<string | null>;
-[cache-provider] interface FileCacheCapability { | size: number;
 [cache-provider] interface FileCacheCapability { | stat?(input: Pick<FileCacheResolveInput, "key" | "signal">): Promise<{
 [cache-provider] interface FileCacheCapability { | store(input: FileCacheStoreInput): Promise<void>;
 [cache-provider] interface FileCacheCapability { | } | null>;
+[cache-provider] interface FileCacheCapability { || size: number;
 [cache-provider] interface FileCacheResolveInput {
 [cache-provider] interface FileCacheResolveInput { | destinationDir: string;
 [cache-provider] interface FileCacheResolveInput { | key: string;
@@ -367,11 +377,9 @@
 [transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | input: TransportInput;
 [transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | reference: string;
 [transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | timeoutMs?: number;
-[transport] declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
 [transport] declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
 [transport] export TransportContractOptions
 [transport] export TransportContractResult
-[transport] export runContract
 [transport] export runTransportContract
 [transport] export type LoadTransportResult
 [transport] export type TRANSPORT_API_VERSION
@@ -387,14 +395,6 @@
 [transport] export type TransportResolveInput
 [transport] export type TransportWatchEvent
 [transport] export type loadTransport
-[transport] interface ContractOptions {
-[transport] interface ContractOptions { | "agent-driver": AgentDriverContractOptions;
-[transport] interface ContractOptions { | "cache-provider": CacheContractModuleOptions;
-[transport] interface ContractOptions { | transport: TransportContractOptions;
-[transport] interface ContractResults {
-[transport] interface ContractResults { | "agent-driver": AgentDriverContractResult[];
-[transport] interface ContractResults { | "cache-provider": CacheContractResult[];
-[transport] interface ContractResults { | transport: TransportContractResult[];
 [transport] interface Transport {
 [transport] interface Transport { | bindAddresses?(): string[];
 [transport] interface Transport { | close?(): void | Promise<void>;
@@ -403,16 +403,16 @@
 [transport] interface Transport { | identify?(peer: TransportPeer): Promise<TransportIdentity | null>;
 [transport] interface Transport { | resolve?(input: TransportResolveInput): Promise<TransportEndpoint | {
 [transport] interface Transport { | unexpose?(input: TransportExposeInput): Promise<void>;
-[transport] interface Transport { | unresolved: string;
 [transport] interface Transport { | watch?(listener: (event: TransportWatchEvent) => void): () => void;
+[transport] interface Transport { || unresolved: string;
 [transport] interface TransportContractOptions {
 [transport] interface TransportContractOptions { | baseDir: string;
 [transport] interface TransportContractOptions { | checkTimeoutMs?: number;
 [transport] interface TransportContractOptions { | env: NodeJS.ProcessEnv;
 [transport] interface TransportContractOptions { | expose?: {
 [transport] interface TransportContractOptions { | options?: Record<string, unknown>;
-[transport] interface TransportContractOptions { | port: number;
 [transport] interface TransportContractOptions { | reference: string;
+[transport] interface TransportContractOptions { || port: number;
 [transport] interface TransportContractResult {
 [transport] interface TransportContractResult { | error?: string;
 [transport] interface TransportContractResult { | name: string;
@@ -437,13 +437,14 @@
 [transport] interface TransportPeer { | address: string;
 [transport] interface TransportPeer { | headers: TransportHeaders;
 [transport] interface TransportResolveInput {
-[transport] interface TransportResolveInput { | address?: string;
 [transport] interface TransportResolveInput { | credential: {
-[transport] interface TransportResolveInput { | id?: string;
-[transport] interface TransportResolveInput { | machine: string;
 [transport] interface TransportResolveInput { | name: string;
-[transport] interface TransportResolveInput { | suffix?: string;
-[transport] interface TransportResolveInput { | tailnet?: {
+[transport] interface TransportResolveInput { || address?: string;
+[transport] interface TransportResolveInput { || machine: string;
+[transport] interface TransportResolveInput { || tailnet?: {
+[transport] interface TransportResolveInput { ||| id?: string;
+[transport] interface TransportResolveInput { ||| name: string;
+[transport] interface TransportResolveInput { ||| suffix?: string;
 [transport] interface TransportWatchEvent {
 [transport] interface TransportWatchEvent { | addresses: string[];
 [transport] type LoadTransportResult = {
