@@ -52,7 +52,7 @@ export function selectDiscovered({
 
 function recognises(path: string): boolean {
   try {
-    return projectRegistry.keepsWorkspace(path);
+    return projectRegistry.selectDoctor(path).problem === null;
   } catch {
     return false;
   }

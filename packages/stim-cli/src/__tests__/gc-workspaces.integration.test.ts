@@ -2384,7 +2384,7 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
     git('config user.name test', cwd);
   };
   const commit = (cwd: string, file: string) => {
-    writeFileSync(join(cwd, file), file);
+    writeFileSync(join(cwd, file), file === 'package.json' ? JSON.stringify({ dependencies: { expo: '*' } }) : file);
     git(`add ${file}`, cwd);
     git(`commit -q -m ${file}`, cwd);
   };

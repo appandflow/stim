@@ -168,12 +168,16 @@ async function idleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
+  { discover = false }: { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs'> & { idleMs: number | null })[] = [];
   const processes = processReader(reading.operation?.signal);
-  const discovered = (await discoverCheckouts(config, listedRoots(), reading.operation)).map(
-    ({ path }): [string, ProjectRecord] => [path, {}],
-  );
+  const discovered = discover
+    ? (await discoverCheckouts(config, listedRoots(), reading.operation)).map(({ path }): [string, ProjectRecord] => [
+        path,
+        {},
+      ])
+    : [];
   for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
@@ -219,7 +223,7 @@ export function stoppedOutputCandidates(
   reading: DeviceReading,
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs);
+  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs, { discover: true });
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
