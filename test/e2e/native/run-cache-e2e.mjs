@@ -165,7 +165,7 @@ const CHECK_TITLES = {
   'fingerprint-cache': 'the fingerprint build cache stores a complete entry under the post-mutation key',
   'pods-reuse': 'a worktree with carried, matching Pods skips pod install entirely',
   'single-flight': 'two workspaces racing one uncached fingerprint compile exactly once',
-  'gc-view': 'gc reports every cache above, with a size, and calls none of them garbage',
+  'gc-view': 'gc reports measured storage for populated caches and workspace build outputs',
 };
 
 const ledger = new Map();
@@ -540,7 +540,7 @@ async function main() {
 
     const outputNames = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
     const expected = [
-      { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
+      { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT, requiresBytes: true },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
     ];
     if (PLATFORM === 'ios') expected.push({ name: "Xcode's compilation cache (CAS)", dir: CAS_DIR });
@@ -565,8 +565,10 @@ async function main() {
         continue;
       }
       const path = realpathSync(e.dir);
+      const minimumBytes = e.requiresBytes && stats.bytes > 0 ? 1 : 0;
       const entry = (e.entries ?? sections.caches).find(
-        ({ dir, bytes }) => Number.isFinite(bytes) && bytes >= 0 && existsSync(dir) && realpathSync(dir) === path,
+        ({ dir, bytes }) =>
+          Number.isFinite(bytes) && bytes >= minimumBytes && existsSync(dir) && realpathSync(dir) === path,
       );
       if (entry) {
         reported += 1;
