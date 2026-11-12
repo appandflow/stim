@@ -96,7 +96,7 @@ function npmPackage(name: string): { name: string; subpath: string } | null {
   return { name: packageName, subpath: parts.slice(size).join('/') };
 }
 
-// @ref LLP 0022#each-installed-version-of-a-package-is-its-own-input -- version-qualify only when versions differ
+// @ref LLP 0024#each-installed-version-of-a-package-is-its-own-input -- version-qualify only when versions differ
 function qualifyCopies(inputs: readonly Input[]): readonly Input[] {
   const versions = new Map<string, Set<string>>();
   for (const input of inputs) {
@@ -114,7 +114,7 @@ function qualifyCopies(inputs: readonly Input[]): readonly Input[] {
 
 const npmCopy = (a: Input, b: Input) => a.name.startsWith('npm:') && a.version !== undefined && a.version === b.version;
 
-// @ref LLP 0022#copies-at-one-version-share-a-row -- an install path would make the name depend on the layout
+// @ref LLP 0024#copies-at-one-version-share-a-row -- an install path would make the name depend on the layout
 /**
  * The rows sorted by name, with rows two stages both produced merged. Installed copies of one package at one version
  * whose file differs share a row hashing their sorted distinct hashes. Any other two rows of one name that disagree are

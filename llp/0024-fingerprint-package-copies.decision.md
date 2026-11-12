@@ -1,4 +1,4 @@
-# LLP 0022: Installed package copies in the fingerprint
+# LLP 0024: Installed package copies in the fingerprint
 
 **Type:** Decision
 **Status:** Active
@@ -7,9 +7,10 @@
 **Date:** 2026-11-12
 **Related:** LLP 0014
 
-An agent chose these rules while fixing
-[#5508](https://github.com/appandflow/stim/issues/5508); the maintainer has not
-stated them.
+Agents chose these rules while fixing
+[#5508](https://github.com/appandflow/stim/issues/5508): the implementing agent
+chose the naming, and the coordinating session chose to keep the fingerprint
+schema. The maintainer has not stated them.
 
 ## Packages the config evaluation loads are inputs
 
@@ -34,7 +35,8 @@ those copies are hashed by content.
 When the loaded rows of one package come from copies at two or more versions,
 every row of that package is named `npm:<name>@<version>/<subpath>`. A package
 loaded from copies at a single version keeps the bare name. The version comes
-from the copy's own `package.json`.
+from the copy's own `package.json`; a copy whose `package.json` names no
+version is `npm:<name>@/<subpath>`, apart from a versioned copy.
 
 Two versions are two different inputs: a change to either copy must change the
 key, and a miss report must say which copy changed. Merging them under one name
@@ -50,7 +52,8 @@ Two copies of one package at the same version whose loaded file differs, such
 as a nested copy patched and a hoisted one not, share the row of that name. Its
 hash is the hash of their sorted distinct file hashes, so a change to either
 copy changes the key. Two copies with identical bytes collapse into one row as
-before.
+before. The row covers the set of contents, not which copy holds which, so
+which consumer resolves to which copy is not part of the key.
 
 The only thing that tells such copies apart is where they are installed, and a
 name built from the install path would differ between package managers and
@@ -61,6 +64,19 @@ Only rows of the files the evaluation loaded carry the copy's version. An
 `npm:` row from a walked tree or an environment path carries none, so if one
 ever meets a loaded row of another copy under one name, the key is still
 refused rather than guessed.
+
+## The fingerprint schema stays
+
+These rules change no row of a project that had a key before them. The key
+hashes each row's name, kind and hash, never its version. A project that loads
+a single version of each package gets the same rows. A project whose two
+loaded versions disagreed had no key, since the merge threw. A project whose
+two loaded versions had identical bytes gets renamed rows and so a new key:
+one miss, never a stale hit. `FINGERPRINT_SCHEMA` therefore stays, and the
+index record format moves instead, because stored records lack the version the
+rows now carry. Moving the schema would also have made every key miss once and
+refused each generated Expo native directory whose prebuild record names the
+older schema.
 
 ## Code
 
