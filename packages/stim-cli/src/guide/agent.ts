@@ -36,7 +36,9 @@ directories (android/app/build, android/build, android/.gradle, .build,
 android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
 and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
 workspace's build outputs when it goes idle, and node_modules and Pods of
-linked worktrees idle for idle.dormantDays (1 day) or under disk pressure; the
+linked worktrees idle for idle.dormantDays (1 day) or under disk pressure, and
+those of a source (main) checkout idle for idle.sourceDormantDays (7 days) or,
+last, at critical; the
 next start, ios or android
 restores them from the build cache or with worktree warm, except an Exact
 app's target/, which its next build recompiles in full. Never fix a

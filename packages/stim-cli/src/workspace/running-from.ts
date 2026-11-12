@@ -141,6 +141,22 @@ function stimOnPath(): string | null {
   }
 }
 
+const PATH_CHARACTER = /[\w.\-/]/;
+
+/** Whether a command line names `root` itself or a path under it, matching whole path segments only. */
+function namesPath(line: string, root: string): boolean {
+  for (let at = line.indexOf(root); at !== -1; at = line.indexOf(root, at + 1)) {
+    const before = line[at - 1];
+    const after = line[at + root.length];
+    if (
+      (before === undefined || !PATH_CHARACTER.test(before)) &&
+      (after === undefined || after === sep || !PATH_CHARACTER.test(after))
+    )
+      return true;
+  }
+  return false;
+}
+
 /**
  * Why something installed in or running from `folder` still needs it, or null: an installed stim service, the
  * `stim` on PATH, or a live process whose command line or working directory is inside it.
@@ -153,7 +169,7 @@ export function runningFromReason(folder: string, running: RunningProcesses | nu
   const stim = stimOnPath();
   if (stim && inside(stim)) return `the stim on PATH runs from it (${stim})`;
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';
-  const command = running.commands.find(({ line }) => line.includes(`${root}${sep}`));
+  const command = running.commands.find(({ line }) => namesPath(line, root));
   if (command) return `process ${command.pid} runs from it`;
   const cwd = running.cwds.find(({ path }) => inside(canonicalPath(path)));
   if (cwd) return `process ${cwd.pid} works in it`;

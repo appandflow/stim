@@ -27,6 +27,8 @@ import { runCli } from '../cli/define-op.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { recordSourceDependencies, warmedFromAt } from '../workspace/source-dependencies.ts';
 import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
@@ -348,6 +350,43 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
   expect(readFileSync(join(target, 'ios/Pods/Manifest.lock'), 'utf-8')).toBe('main pods');
   expect(readFileSync(join(root, 'ios/Podfile.lock'), 'utf-8')).toBe('main pods');
+}, 30_000);
+
+test('warm says on stderr that the source checkout has no installed dependencies, since when maintenance deleted them, and notes the use of a registered source', async () => {
+  write(root, 'pnpm-lock.yaml', 'lockfileVersion: 9\n');
+  write(root, 'ios/Podfile', 'platform :ios\n');
+  write(root, '.env', 'x');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'lock');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(root, {});
+  ensureWorkspaceStorage(root);
+  const clearedAt = '2026-01-02T03:04:05.000Z';
+  recordSourceDependencies([root], join(root, 'node_modules'), new Date(clearedAt));
+  const lastUsedBefore = readWorkspaceState(root)?.lastUsedAt;
+
+  const result = await runWarm(target);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(
+    new RegExp(
+      `carry\\s+complete: 1 ignored entries copied.*has no installed node_modules \\(maintenance deleted it at ${clearedAt}\\) or ios/Pods to copy.*pnpm install.*cd '.*ios' && pod install.*stim worktree warm --refresh`,
+    ),
+  );
+  expect(Number.isFinite(warmedFromAt([root]))).toBe(true);
+  expect(readWorkspaceState(root)?.lastUsedAt).toEqual(lastUsedBefore);
+}, 30_000);
+
+test('warm does not mention the source checkout dependencies when it has them', async () => {
+  write(root, 'pnpm-lock.yaml', 'lockfileVersion: 9\n');
+  write(root, 'node_modules/pkg/index.js', 'x');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'lock');
+  git(target, 'merge', '-q', 'main');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stderr).not.toMatch(/no installed/);
 }, 30_000);
 
 test.each([

@@ -275,7 +275,7 @@ test('the age sweep removes only what is provably stale', async () => {
   process.env.STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES = '1000000';
   process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
   const idle = workspace('idle-ten', { usedDaysAgo: 10 });
-  const young = workspace('young-three', { usedDaysAgo: 3 });
+  const young = workspace('young-one', { usedDaysAgo: 1 });
   const lockedOld = workspace('old-locked', { usedDaysAgo: 40 });
   plantClaim(join(workspaceDir(lockedOld.root), 'native-run.lock'), 'exclusive', liveClaimOwner());
   const orphan = join(projects, 'deleted-worktree');

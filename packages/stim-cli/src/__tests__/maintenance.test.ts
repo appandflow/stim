@@ -130,6 +130,24 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
   expect(result.blocked).toContainEqual(expect.stringContaining('eligible targets cannot reach'));
 });
 
+test('a workspace outputs cap trims linked worktrees first and a source checkout only while still over', () => {
+  const GB = 1024 ** 3;
+  const outputs = [
+    size('workspace-outputs', 10 * GB, { workspace: '/main', dir: '/o/main', idleDays: 30 }),
+    size('workspace-outputs', 10 * GB, { workspace: '/a', dir: '/o/a', idleDays: 2 }),
+    size('workspace-outputs', 10 * GB, { workspace: '/b', dir: '/o/b', idleDays: 5 }),
+  ];
+  const trimmed = (cap: number) =>
+    plan({
+      sizes: outputs,
+      settings: { ...settings, workspaceOutputsMaxGb: cap },
+      protectedRoot: '/self',
+      sourceRoots: new Set(['/main']),
+    }).actions.map((action) => action.workspace);
+  expect(trimmed(15)).toEqual(['/b', '/a']);
+  expect(trimmed(7)).toEqual(['/b', '/a', '/main']);
+});
+
 test('maintenance records go to the one cleanup log, mirror named workspace actions and rotate with retention', () => {
   const file = gcLogFile();
   mkdirSync(dirname(file));
