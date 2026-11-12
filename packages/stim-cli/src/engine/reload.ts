@@ -69,6 +69,7 @@ export function reloadThroughMetro(
     timeoutMs = METRO_TIMEOUT_MS,
     peersOnly = false,
     exact = false,
+    protocolVersion = 2,
     signal,
   }: {
     role?: MetroReloadRole;
@@ -76,6 +77,8 @@ export function reloadThroughMetro(
     timeoutMs?: number;
     peersOnly?: boolean;
     exact?: boolean;
+    /** Metro compares a message's `version` with the number 2; Re.Pack's dev server compares it with the string "2". */
+    protocolVersion?: 2 | '2';
     signal?: AbortSignal;
   },
 ): Promise<MetroReloadResult> {
@@ -110,7 +113,7 @@ export function reloadThroughMetro(
 
     socket.once('open', () => {
       if (settled || signal?.aborted) return;
-      socket.send(JSON.stringify({ version: 2, method: 'getpeers', target: 'server', id: requestId }));
+      socket.send(JSON.stringify({ version: protocolVersion, method: 'getpeers', target: 'server', id: requestId }));
     });
     socket.on('message', (data) => {
       if (settled || signal?.aborted) return;
@@ -143,7 +146,7 @@ export function reloadThroughMetro(
           // shape these matchers do not read -- so an unmatched app may still be
           // connected. Take the free shot with a broadcast before giving up, but
           // report the miss: nothing here proves the app got it.
-          if (!exact) socket.send(JSON.stringify({ version: 2, method: 'reload' }));
+          if (!exact) socket.send(JSON.stringify({ version: protocolVersion, method: 'reload' }));
           const others = exact
             ? peers === 0
               ? ' Nothing at all is connected to it.'
@@ -163,7 +166,8 @@ export function reloadThroughMetro(
         // several devices, not several apps. Reload each of them. iOS could not
         // pick one anyway: its peers carry only `role`.
         if (!peersOnly)
-          for (const [id] of rolePeers) socket.send(JSON.stringify({ version: 2, method: 'reload', target: id }));
+          for (const [id] of rolePeers)
+            socket.send(JSON.stringify({ version: protocolVersion, method: 'reload', target: id }));
         const platforms = new Set<MetroReloadRole>();
         for (const [, metadata] of rolePeers) {
           const query = peerQuery(metadata);
@@ -178,7 +182,9 @@ export function reloadThroughMetro(
       // broadcast path never touches that property. Note what this costs: the
       // throw only happens when some other client exists, so it proves a client
       // is connected but not which, and the target app may not be among them.
-      if (!peersOnly) socket.send(JSON.stringify({ version: 2, method: 'reload' }));
+      // @callstack/repack-dev-server 5.x does the same: it builds `new URL(upgradeRequest.url)` from a relative
+      // path and answers `{ error: { code: 'ERR_INVALID_URL' } }` once any other client is connected.
+      if (!peersOnly) socket.send(JSON.stringify({ version: protocolVersion, method: 'reload' }));
       finish({ ok: true, broadcast: true });
     });
     socket.once('error', (error) =>

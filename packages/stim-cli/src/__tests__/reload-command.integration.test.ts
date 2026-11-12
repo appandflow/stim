@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -1207,6 +1207,24 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     expect(reloadMetro).toHaveBeenCalledTimes(2);
     expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true, role: 'android' });
     expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true });
+  });
+
+  test('a Re.Pack workspace reloads through Metro with the string protocol version', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-reload-home-'));
+    const root = mkdtempSync(join(tmpdir(), 'stim-reload-root-'));
+    vi.stubEnv('STIM_HOME', home);
+    try {
+      writeFileSync(join(root, 'rock.config.mjs'), "import { pluginRepack } from '@rock-js/plugin-repack';\n");
+      const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+      const result = await runReload({ root, platform: 'android', deps: unrecorded({ reloadMetro }) });
+      expect(result.ok).toBe(true);
+      expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true, role: 'android', protocolVersion: '2' });
+      expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true, protocolVersion: '2' });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('an EAS Simulator session reloads through Metro with the session platform', async () => {
