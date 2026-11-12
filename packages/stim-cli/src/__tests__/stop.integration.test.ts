@@ -244,7 +244,17 @@ test('unavailable stop-request storage does not prevent signalling a verified su
     state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
     isAlive: (pid: number) => pid === 4242,
   });
-  await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  const client = await import('../daemon/client.ts');
+  const stimd = vi
+    .spyOn(client, 'stopMetroTree')
+    .mockImplementation(async (_root, _pid, _token, fallback) =>
+      (await fallback()) ? { stopped: true } : { stopped: false, reason: 'not signalled', remedy: 'none' },
+    );
+  try {
+    await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  } finally {
+    stimd.mockRestore();
+  }
   expect(calls.signals).toEqual([4242]);
 });
 
