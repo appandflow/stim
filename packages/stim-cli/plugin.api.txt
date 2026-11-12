@@ -1,42 +1,47 @@
 // The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
 [*] declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
 [*] export runContract
 [*] export type HostedAgentGrant
 [*] export type HostedAgentIssuedGrant
 [*] export type HostedAgentLease
 [*] interface ContractOptions {
-[*] interface ContractOptions { | "agent-driver": AgentDriverContractOptions;
-[*] interface ContractOptions { | "cache-provider": CacheContractModuleOptions;
-[*] interface ContractOptions { | transport: TransportContractOptions;
+[*] interface ContractOptions { @@1 "agent-driver": AgentDriverContractOptions;
+[*] interface ContractOptions { @@1 "cache-provider": CacheContractModuleOptions;
+[*] interface ContractOptions { @@1 transport: TransportContractOptions;
 [*] interface ContractResults {
-[*] interface ContractResults { | "agent-driver": AgentDriverContractResult[];
-[*] interface ContractResults { | "cache-provider": CacheContractResult[];
-[*] interface ContractResults { | transport: TransportContractResult[];
+[*] interface ContractResults { @@1 "agent-driver": AgentDriverContractResult[];
+[*] interface ContractResults { @@1 "cache-provider": CacheContractResult[];
+[*] interface ContractResults { @@1 transport: TransportContractResult[];
 [*] interface HostedAgentIssuedGrant {
-[*] interface HostedAgentIssuedGrant { | driver: string;
-[*] interface HostedAgentIssuedGrant { | lease?: HostedAgentLease;
-[*] interface HostedAgentIssuedGrant { | path: string;
-[*] interface HostedAgentIssuedGrant { | scope: string;
-[*] interface HostedAgentIssuedGrant { | token: string;
+[*] interface HostedAgentIssuedGrant { @@1 driver: string;
+[*] interface HostedAgentIssuedGrant { @@1 lease?: HostedAgentLease;
+[*] interface HostedAgentIssuedGrant { @@1 path: string;
+[*] interface HostedAgentIssuedGrant { @@1 scope: string;
+[*] interface HostedAgentIssuedGrant { @@1 token: string;
 [*] interface HostedAgentLease {
-[*] interface HostedAgentLease { | backend?: "ios-instance" | "android-instance";
-[*] interface HostedAgentLease { | clientId: string;
-[*] interface HostedAgentLease { | deviceKey: string;
-[*] interface HostedAgentLease { | runId: string;
-[*] interface HostedAgentLease { | tenant: string;
+[*] interface HostedAgentLease { @@1 backend?: "ios-instance" | "android-instance";
+[*] interface HostedAgentLease { @@1 clientId: string;
+[*] interface HostedAgentLease { @@1 deviceKey: string;
+[*] interface HostedAgentLease { @@1 runId: string;
+[*] interface HostedAgentLease { @@1 tenant: string;
 [*] type HostedAgentGrant = {
-[*] type HostedAgentGrant = { | driver: "none";
+[*] type HostedAgentGrant = { @@1 driver: "none";
+[*] type HostedAgentGrant = { @branch1 @@0 } | HostedAgentIssuedGrant;
 [*] type ServeRoute = {
-[*] type ServeRoute = { | port: number;
-[*] type ServeRoute = { | state: "routed";
-[*] } | HostedAgentIssuedGrant;
-[*] } | {
-[*] } | { | port: number;
-[*] } | { | ports: number[];
-[*] } | { | reason: string;
-[*] } | { | state: "funneled";
-[*] } | { | state: "missing";
-[*] } | { | state: "unknown";
+[*] type ServeRoute = { @@1 port: number;
+[*] type ServeRoute = { @@1 state: "routed";
+[*] type ServeRoute = { @branch1 @@0 } | {
+[*] type ServeRoute = { @branch1 @@1 port: number;
+[*] type ServeRoute = { @branch1 @@1 ports: number[];
+[*] type ServeRoute = { @branch1 @@1 state: "funneled";
+[*] type ServeRoute = { @branch2 @@0 } | {
+[*] type ServeRoute = { @branch2 @@1 port: number;
+[*] type ServeRoute = { @branch2 @@1 state: "missing";
+[*] type ServeRoute = { @branch3 @@0 } | {
+[*] type ServeRoute = { @branch3 @@1 port: number;
+[*] type ServeRoute = { @branch3 @@1 reason: string;
+[*] type ServeRoute = { @branch3 @@1 state: "unknown";
 [agent-driver] declare const AGENT_DRIVER_API_VERSION: 1;
 [agent-driver] declare const AGENT_DRIVER_UNAVAILABLE;
 [agent-driver] declare function agentDriverUnavailable(message: string): AgentDriverUnavailableError;
@@ -68,108 +73,112 @@
 [agent-driver] export type HostedAgentDevice
 [agent-driver] export type HostedAgentDriver
 [agent-driver] interface AgentClientAccess {
-[agent-driver] interface AgentClientAccess { | command: string;
-[agent-driver] interface AgentClientAccess { | config: string;
+[agent-driver] interface AgentClientAccess { @@1 command: string;
+[agent-driver] interface AgentClientAccess { @@1 config: string;
 [agent-driver] interface AgentClientAccessInput {
-[agent-driver] interface AgentClientAccessInput { | baseUrl: string;
-[agent-driver] interface AgentClientAccessInput { | file: string;
-[agent-driver] interface AgentClientAccessInput { | grant: HostedAgentIssuedGrant;
-[agent-driver] interface AgentClientAccessInput { | platform: "macos" | "ios" | "android";
+[agent-driver] interface AgentClientAccessInput { @@1 baseUrl: string;
+[agent-driver] interface AgentClientAccessInput { @@1 file: string;
+[agent-driver] interface AgentClientAccessInput { @@1 grant: HostedAgentIssuedGrant;
+[agent-driver] interface AgentClientAccessInput { @@1 platform: "macos" | "ios" | "android";
 [agent-driver] interface AgentDriverClaim {
-[agent-driver] interface AgentDriverClaim { | claim: string;
-[agent-driver] interface AgentDriverClaim { | path: string;
-[agent-driver] interface AgentDriverClaim { | previousChild: AgentDriverProcess | null;
+[agent-driver] interface AgentDriverClaim { @@1 claim: string;
+[agent-driver] interface AgentDriverClaim { @@1 path: string;
+[agent-driver] interface AgentDriverClaim { @@1 previousChild: AgentDriverProcess | null;
 [agent-driver] interface AgentDriverClaimRefusal {
-[agent-driver] interface AgentDriverClaimRefusal { | held: string | null;
-[agent-driver] interface AgentDriverClaimRefusal { | waitingFor: string | null;
+[agent-driver] interface AgentDriverClaimRefusal { @@1 held: string | null;
+[agent-driver] interface AgentDriverClaimRefusal { @@1 waitingFor: string | null;
 [agent-driver] interface AgentDriverClient {
-[agent-driver] interface AgentDriverClient { | access(input: AgentClientAccessInput): AgentClientAccess | null;
+[agent-driver] interface AgentDriverClient { @@1 access(input: AgentClientAccessInput): AgentClientAccess | null;
 [agent-driver] interface AgentDriverContractOptions {
-[agent-driver] interface AgentDriverContractOptions { | app: HostedAgentApp;
-[agent-driver] interface AgentDriverContractOptions { | baseDir: string;
-[agent-driver] interface AgentDriverContractOptions { | checkTimeoutMs?: number;
-[agent-driver] interface AgentDriverContractOptions { | clientGrant?: HostedAgentIssuedGrant;
-[agent-driver] interface AgentDriverContractOptions { | id?: string;
-[agent-driver] interface AgentDriverContractOptions { | reference: string;
-[agent-driver] interface AgentDriverContractOptions { | unavailableInput: Omit<AgentDriverInput, "host">;
+[agent-driver] interface AgentDriverContractOptions { @@1 app: HostedAgentApp;
+[agent-driver] interface AgentDriverContractOptions { @@1 baseDir: string;
+[agent-driver] interface AgentDriverContractOptions { @@1 checkTimeoutMs?: number;
+[agent-driver] interface AgentDriverContractOptions { @@1 clientGrant?: HostedAgentIssuedGrant;
+[agent-driver] interface AgentDriverContractOptions { @@1 id?: string;
+[agent-driver] interface AgentDriverContractOptions { @@1 reference: string;
+[agent-driver] interface AgentDriverContractOptions { @@1 unavailableInput: Omit<AgentDriverInput, "host">;
 [agent-driver] interface AgentDriverContractResult {
-[agent-driver] interface AgentDriverContractResult { | error?: string;
-[agent-driver] interface AgentDriverContractResult { | name: string;
-[agent-driver] interface AgentDriverContractResult { | passed: boolean;
+[agent-driver] interface AgentDriverContractResult { @@1 error?: string;
+[agent-driver] interface AgentDriverContractResult { @@1 name: string;
+[agent-driver] interface AgentDriverContractResult { @@1 passed: boolean;
 [agent-driver] interface AgentDriverHost {
-[agent-driver] interface AgentDriverHost { | claims: {
-[agent-driver] interface AgentDriverHost { | processes: {
-[agent-driver] interface AgentDriverHost { || capture(pid: number): Promise<AgentDriverProcess | null>;
-[agent-driver] interface AgentDriverHost { || childPending(claim: string): Promise<void>;
-[agent-driver] interface AgentDriverHost { || clearChild(claim: string): Promise<void>;
-[agent-driver] interface AgentDriverHost { || inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
-[agent-driver] interface AgentDriverHost { || release(claim: string): Promise<boolean>;
-[agent-driver] interface AgentDriverHost { || removeCommand(path: string): Promise<string>;
-[agent-driver] interface AgentDriverHost { || setChild(claim: string, child: AgentDriverProcess): Promise<void>;
-[agent-driver] interface AgentDriverHost { || stop(process: AgentDriverProcess, options: {
-[agent-driver] interface AgentDriverHost { || stopStale(root: string, label: string, options: {
-[agent-driver] interface AgentDriverHost { || take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
-[agent-driver] interface AgentDriverHost { || }): Promise<boolean>;
-[agent-driver] interface AgentDriverHost { || }): Promise<void>;
-[agent-driver] interface AgentDriverHost { ||| group: boolean;
-[agent-driver] interface AgentDriverHost { ||| own?: string;
-[agent-driver] interface AgentDriverHost { ||| steps: AgentDriverStopStep[];
+[agent-driver] interface AgentDriverHost { @@1 claims: {
+[agent-driver] interface AgentDriverHost { @@1 processes: {
+[agent-driver] interface AgentDriverHost { @@2 capture(pid: number): Promise<AgentDriverProcess | null>;
+[agent-driver] interface AgentDriverHost { @@2 childPending(claim: string): Promise<void>;
+[agent-driver] interface AgentDriverHost { @@2 clearChild(claim: string): Promise<void>;
+[agent-driver] interface AgentDriverHost { @@2 inspect(process: AgentDriverProcess): Promise<AgentDriverProcessStatus>;
+[agent-driver] interface AgentDriverHost { @@2 release(claim: string): Promise<boolean>;
+[agent-driver] interface AgentDriverHost { @@2 removeCommand(path: string): Promise<string>;
+[agent-driver] interface AgentDriverHost { @@2 setChild(claim: string, child: AgentDriverProcess): Promise<void>;
+[agent-driver] interface AgentDriverHost { @@2 stop(process: AgentDriverProcess, options: {
+[agent-driver] interface AgentDriverHost { @@2 stopStale(root: string, label: string, options: {
+[agent-driver] interface AgentDriverHost { @@2 take(root: string, label: string): Promise<AgentDriverClaim | AgentDriverClaimRefusal>;
+[agent-driver] interface AgentDriverHost { @@2p }): Promise<boolean>;
+[agent-driver] interface AgentDriverHost { @@2p }): Promise<void>;
+[agent-driver] interface AgentDriverHost { @@3p group: boolean;
+[agent-driver] interface AgentDriverHost { @@3p own?: string;
+[agent-driver] interface AgentDriverHost { @@3p steps: AgentDriverStopStep[];
 [agent-driver] interface AgentDriverInput {
-[agent-driver] interface AgentDriverInput { | claimRoot: string;
-[agent-driver] interface AgentDriverInput { | device?: HostedAgentDevice;
-[agent-driver] interface AgentDriverInput { | env: NodeJS.ProcessEnv;
-[agent-driver] interface AgentDriverInput { | host: AgentDriverHost;
-[agent-driver] interface AgentDriverInput { | stateDir: string;
+[agent-driver] interface AgentDriverInput { @@1 claimRoot: string;
+[agent-driver] interface AgentDriverInput { @@1 device?: HostedAgentDevice;
+[agent-driver] interface AgentDriverInput { @@1 env: NodeJS.ProcessEnv;
+[agent-driver] interface AgentDriverInput { @@1 host: AgentDriverHost;
+[agent-driver] interface AgentDriverInput { @@1 stateDir: string;
 [agent-driver] interface AgentDriverModule {
-[agent-driver] interface AgentDriverModule { | client?: AgentDriverClient;
-[agent-driver] interface AgentDriverModule { | createAgentDriver(input: AgentDriverInput): HostedAgentDriver | Promise<HostedAgentDriver>;
-[agent-driver] interface AgentDriverModule { | id: string;
-[agent-driver] interface AgentDriverModule { | recover?(input: AgentDriverRecoveryInput): Promise<void>;
+[agent-driver] interface AgentDriverModule { @@1 client?: AgentDriverClient;
+[agent-driver] interface AgentDriverModule { @@1 createAgentDriver(input: AgentDriverInput): HostedAgentDriver | Promise<HostedAgentDriver>;
+[agent-driver] interface AgentDriverModule { @@1 id: string;
+[agent-driver] interface AgentDriverModule { @@1 recover?(input: AgentDriverRecoveryInput): Promise<void>;
 [agent-driver] interface AgentDriverProcess {
-[agent-driver] interface AgentDriverProcess { | readonly pid: number;
-[agent-driver] interface AgentDriverProcess { | readonly token: string;
+[agent-driver] interface AgentDriverProcess { @@1 readonly pid: number;
+[agent-driver] interface AgentDriverProcess { @@1 readonly token: string;
 [agent-driver] interface AgentDriverTarget {
-[agent-driver] interface AgentDriverTarget { | path: string;
-[agent-driver] interface AgentDriverTarget { | port: number;
+[agent-driver] interface AgentDriverTarget { @@1 path: string;
+[agent-driver] interface AgentDriverTarget { @@1 port: number;
 [agent-driver] interface HostedAgentDriver {
-[agent-driver] interface HostedAgentDriver { | issue(app: HostedAgentApp): Promise<AgentDriverGrant>;
-[agent-driver] interface HostedAgentDriver { | onExit(listener: () => void): () => void;
-[agent-driver] interface HostedAgentDriver { | readonly name: string;
-[agent-driver] interface HostedAgentDriver { | revoke(session: string): Promise<void>;
-[agent-driver] interface HostedAgentDriver { | start(): Promise<void>;
-[agent-driver] interface HostedAgentDriver { | stop(): Promise<void>;
-[agent-driver] interface HostedAgentDriver { | target(session: string): Promise<AgentDriverTarget | null>;
+[agent-driver] interface HostedAgentDriver { @@1 issue(app: HostedAgentApp): Promise<AgentDriverGrant>;
+[agent-driver] interface HostedAgentDriver { @@1 onExit(listener: () => void): () => void;
+[agent-driver] interface HostedAgentDriver { @@1 readonly name: string;
+[agent-driver] interface HostedAgentDriver { @@1 revoke(session: string): Promise<void>;
+[agent-driver] interface HostedAgentDriver { @@1 start(): Promise<void>;
+[agent-driver] interface HostedAgentDriver { @@1 stop(): Promise<void>;
+[agent-driver] interface HostedAgentDriver { @@1 target(session: string): Promise<AgentDriverTarget | null>;
 [agent-driver] type AgentDriverGrant = Omit<HostedAgentIssuedGrant, "path">;
 [agent-driver] type AgentDriverProcessStatus = "same" | "different" | "gone" | "unknown";
 [agent-driver] type AgentDriverRecoveryInput = Omit<AgentDriverInput, "device">;
 [agent-driver] type AgentDriverStopStep = readonly [signal: NodeJS.Signals, waitMs: number];
 [agent-driver] type AgentDriverUnavailableError = Error & {
-[agent-driver] type AgentDriverUnavailableError = Error & { | code: typeof AGENT_DRIVER_UNAVAILABLE;
+[agent-driver] type AgentDriverUnavailableError = Error & { @@1 code: typeof AGENT_DRIVER_UNAVAILABLE;
 [agent-driver] type HostedAgentApp = {
-[agent-driver] type HostedAgentApp = { | bundleId: string;
-[agent-driver] type HostedAgentApp = { | client: string;
-[agent-driver] type HostedAgentApp = { | session: string;
+[agent-driver] type HostedAgentApp = { @@1 bundleId: string;
+[agent-driver] type HostedAgentApp = { @@1 client: string;
+[agent-driver] type HostedAgentApp = { @@1 session: string;
+[agent-driver] type HostedAgentApp = { @branch1 @@0 } & ({
+[agent-driver] type HostedAgentApp = { @branch1 @@1p avdName?: never;
+[agent-driver] type HostedAgentApp = { @branch1 @@1p pid: number;
+[agent-driver] type HostedAgentApp = { @branch1 @@1p serial?: never;
+[agent-driver] type HostedAgentApp = { @branch1 @@1p udid?: never;
+[agent-driver] type HostedAgentApp = { @branch2 @@0p } | (HostedAgentDevice & {
+[agent-driver] type HostedAgentApp = { @branch2 @@1p pid?: never;
 [agent-driver] type HostedAgentDevice = {
-[agent-driver] type HostedAgentDevice = { | session: string;
-[agent-driver] } & ({
-[agent-driver] } & ({ | avdName?: never;
-[agent-driver] } & ({ | pid: number;
-[agent-driver] } & ({ | serial?: never;
-[agent-driver] } & ({ | udid: string;
-[agent-driver] } & ({ | udid?: never;
-[agent-driver] } | (HostedAgentDevice & {
-[agent-driver] } | (HostedAgentDevice & { | pid?: never;
-[agent-driver] } | {
-[agent-driver] } | { | avdName: string;
-[agent-driver] } | { | serial: string;
-[agent-driver] } | { | udid?: never;
+[agent-driver] type HostedAgentDevice = { @@1 session: string;
+[agent-driver] type HostedAgentDevice = { @branch1 @@0 } & ({
+[agent-driver] type HostedAgentDevice = { @branch1 @@1p avdName?: never;
+[agent-driver] type HostedAgentDevice = { @branch1 @@1p serial?: never;
+[agent-driver] type HostedAgentDevice = { @branch1 @@1p udid: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@0p } | {
+[agent-driver] type HostedAgentDevice = { @branch2 @@1p avdName: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@1p serial: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@1p udid?: never;
 [cache-provider] declare const CACHE_CONTRACT_CHECK_TIMEOUT_MS;
 [cache-provider] declare const CACHE_PROVIDER_API_VERSION: 1;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: {
-[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | config?: CacheProviderConfig | null;
-[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | env?: NodeJS.ProcessEnv;
-[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | projectRoot: string;
-[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | timeoutMs?: number;
+[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { @@1p config?: CacheProviderConfig | null;
+[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { @@1p env?: NodeJS.ProcessEnv;
+[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { @@1p projectRoot: string;
+[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { @@1p timeoutMs?: number;
+[cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { @branch1 @@0p }): Promise<LoadCacheProviderResult>;
 [cache-provider] declare function runCacheProviderContract(options: CacheContractOptions | CacheContractModuleOptions): Promise<CacheContractResult[]>;
 [cache-provider] export CACHE_CONTRACT_CHECK_TIMEOUT_MS
 [cache-provider] export loadCacheProvider
@@ -191,70 +200,69 @@
 [cache-provider] export type FileCacheStoreInput
 [cache-provider] export type LoadCacheProviderResult
 [cache-provider] interface BuildCacheCapability {
-[cache-provider] interface BuildCacheCapability { | resolve(input: BuildResolveInput): string | null | Promise<string | null>;
-[cache-provider] interface BuildCacheCapability { | store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+[cache-provider] interface BuildCacheCapability { @@1 resolve(input: BuildResolveInput): Promise<string | null>;
+[cache-provider] interface BuildCacheCapability { @@1 store(input: BuildStoreInput): Promise<string | null | void>;
 [cache-provider] interface BuildCacheContext extends BuildCacheTarget {
-[cache-provider] interface BuildCacheContext extends BuildCacheTarget { | signal: AbortSignal;
+[cache-provider] interface BuildCacheContext extends BuildCacheTarget { @@1 signal: AbortSignal;
 [cache-provider] interface BuildCacheTarget {
-[cache-provider] interface BuildCacheTarget { | key: string;
-[cache-provider] interface BuildCacheTarget { | platform: "ios" | "android";
-[cache-provider] interface BuildCacheTarget { | projectRoot: string;
+[cache-provider] interface BuildCacheTarget { @@1 key: string;
+[cache-provider] interface BuildCacheTarget { @@1 platform: "ios" | "android";
+[cache-provider] interface BuildCacheTarget { @@1 projectRoot: string;
 [cache-provider] interface BuildResolveInput extends BuildCacheContext {
-[cache-provider] interface BuildResolveInput extends BuildCacheContext { | destinationDir: string;
+[cache-provider] interface BuildResolveInput extends BuildCacheContext { @@1 destinationDir: string;
 [cache-provider] interface BuildStoreInput extends BuildCacheContext {
-[cache-provider] interface BuildStoreInput extends BuildCacheContext { | overwrite: boolean;
-[cache-provider] interface BuildStoreInput extends BuildCacheContext { | sourcePath: string;
+[cache-provider] interface BuildStoreInput extends BuildCacheContext { @@1 overwrite: boolean;
+[cache-provider] interface BuildStoreInput extends BuildCacheContext { @@1 sourcePath: string;
 [cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> {
-[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | baseDir?: string;
-[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | options?: Record<string, unknown>;
-[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | providerModule: string;
+[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { @@1 baseDir?: string;
+[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { @@1 options?: Record<string, unknown>;
+[cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { @@1 providerModule: string;
 [cache-provider] interface CacheContractOptions {
-[cache-provider] interface CacheContractOptions { | abortSettleMs?: number;
-[cache-provider] interface CacheContractOptions { | checkTimeoutMs?: number;
-[cache-provider] interface CacheContractOptions { | platform?: "ios" | "android";
-[cache-provider] interface CacheContractOptions { | projectRoot: string;
-[cache-provider] interface CacheContractOptions { | provider: CacheProvider;
-[cache-provider] interface CacheContractOptions { | workDir: string;
+[cache-provider] interface CacheContractOptions { @@1 abortSettleMs?: number;
+[cache-provider] interface CacheContractOptions { @@1 checkTimeoutMs?: number;
+[cache-provider] interface CacheContractOptions { @@1 platform?: "ios" | "android";
+[cache-provider] interface CacheContractOptions { @@1 projectRoot: string;
+[cache-provider] interface CacheContractOptions { @@1 provider: CacheProvider;
+[cache-provider] interface CacheContractOptions { @@1 workDir: string;
 [cache-provider] interface CacheContractResult {
-[cache-provider] interface CacheContractResult { | capability: "builds" | "module";
-[cache-provider] interface CacheContractResult { | error?: string;
-[cache-provider] interface CacheContractResult { | name: string;
-[cache-provider] interface CacheContractResult { | passed: boolean;
+[cache-provider] interface CacheContractResult { @@1 capability: "builds" | "module";
+[cache-provider] interface CacheContractResult { @@1 error?: string;
+[cache-provider] interface CacheContractResult { @@1 name: string;
+[cache-provider] interface CacheContractResult { @@1 passed: boolean;
 [cache-provider] interface CacheProvider {
-[cache-provider] interface CacheProvider { | builds?: BuildCacheCapability;
-[cache-provider] interface CacheProvider { | files?: FileCacheCapability;
+[cache-provider] interface CacheProvider { @@1 builds?: BuildCacheCapability;
+[cache-provider] interface CacheProvider { @@1 files?: FileCacheCapability;
 [cache-provider] interface CacheProviderConfig {
-[cache-provider] interface CacheProviderConfig { | baseDir: string;
-[cache-provider] interface CacheProviderConfig { | options: Record<string, unknown>;
-[cache-provider] interface CacheProviderConfig { | provider: string;
+[cache-provider] interface CacheProviderConfig { @@1 baseDir: string;
+[cache-provider] interface CacheProviderConfig { @@1 options: Record<string, unknown>;
+[cache-provider] interface CacheProviderConfig { @@1 provider: string;
 [cache-provider] interface CacheProviderModule {
-[cache-provider] interface CacheProviderModule { | apiVersion: typeof CACHE_PROVIDER_API_VERSION;
-[cache-provider] interface CacheProviderModule { | createCacheProvider(input: {
-[cache-provider] interface CacheProviderModule { | }): CacheProvider | Promise<CacheProvider>;
-[cache-provider] interface CacheProviderModule { || env?: NodeJS.ProcessEnv;
-[cache-provider] interface CacheProviderModule { || options: Record<string, unknown>;
-[cache-provider] interface CacheProviderModule { || projectRoot: string;
+[cache-provider] interface CacheProviderModule { @@1 apiVersion: typeof CACHE_PROVIDER_API_VERSION;
+[cache-provider] interface CacheProviderModule { @@1 createCacheProvider(input: {
+[cache-provider] interface CacheProviderModule { @@1p }): CacheProvider | Promise<CacheProvider>;
+[cache-provider] interface CacheProviderModule { @@2p env?: NodeJS.ProcessEnv;
+[cache-provider] interface CacheProviderModule { @@2p options: Record<string, unknown>;
+[cache-provider] interface CacheProviderModule { @@2p projectRoot: string;
 [cache-provider] interface FileCacheCapability {
-[cache-provider] interface FileCacheCapability { | resolve(input: FileCacheResolveInput): Promise<string | null>;
-[cache-provider] interface FileCacheCapability { | stat?(input: Pick<FileCacheResolveInput, "key" | "signal">): Promise<{
-[cache-provider] interface FileCacheCapability { | store(input: FileCacheStoreInput): Promise<void>;
-[cache-provider] interface FileCacheCapability { | } | null>;
-[cache-provider] interface FileCacheCapability { || size: number;
+[cache-provider] interface FileCacheCapability { @@1 resolve(input: FileCacheResolveInput): Promise<string | null>;
+[cache-provider] interface FileCacheCapability { @@1 stat?(input: Pick<FileCacheResolveInput, "key" | "signal">): Promise<{
+[cache-provider] interface FileCacheCapability { @@1 store(input: FileCacheStoreInput): Promise<void>;
+[cache-provider] interface FileCacheCapability { @@1 } | null>;
+[cache-provider] interface FileCacheCapability { @@2 size: number;
 [cache-provider] interface FileCacheResolveInput {
-[cache-provider] interface FileCacheResolveInput { | destinationDir: string;
-[cache-provider] interface FileCacheResolveInput { | key: string;
-[cache-provider] interface FileCacheResolveInput { | signal: AbortSignal;
+[cache-provider] interface FileCacheResolveInput { @@1 destinationDir: string;
+[cache-provider] interface FileCacheResolveInput { @@1 key: string;
+[cache-provider] interface FileCacheResolveInput { @@1 signal: AbortSignal;
 [cache-provider] interface FileCacheStoreInput {
-[cache-provider] interface FileCacheStoreInput { | key: string;
-[cache-provider] interface FileCacheStoreInput { | overwrite: boolean;
-[cache-provider] interface FileCacheStoreInput { | signal: AbortSignal;
-[cache-provider] interface FileCacheStoreInput { | sourcePath: string;
+[cache-provider] interface FileCacheStoreInput { @@1 key: string;
+[cache-provider] interface FileCacheStoreInput { @@1 overwrite: boolean;
+[cache-provider] interface FileCacheStoreInput { @@1 signal: AbortSignal;
+[cache-provider] interface FileCacheStoreInput { @@1 sourcePath: string;
 [cache-provider] interface LoadCacheProviderResult {
-[cache-provider] interface LoadCacheProviderResult { | name?: string;
-[cache-provider] interface LoadCacheProviderResult { | none?: true;
-[cache-provider] interface LoadCacheProviderResult { | provider?: CacheProvider;
-[cache-provider] interface LoadCacheProviderResult { | unavailable?: string;
-[cache-provider] }): Promise<LoadCacheProviderResult>;
+[cache-provider] interface LoadCacheProviderResult { @@1 name?: string;
+[cache-provider] interface LoadCacheProviderResult { @@1 none?: true;
+[cache-provider] interface LoadCacheProviderResult { @@1 provider?: CacheProvider;
+[cache-provider] interface LoadCacheProviderResult { @@1 unavailable?: string;
 [transport] declare const TRANSPORT_API_VERSION: 1;
 [transport] declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
 [transport] export TransportContractOptions
@@ -273,56 +281,56 @@
 [transport] export type TransportResolveInput
 [transport] export type TransportWatchEvent
 [transport] interface Transport {
-[transport] interface Transport { | bindAddresses?(): string[];
-[transport] interface Transport { | close?(): void | Promise<void>;
-[transport] interface Transport { | expose?(input: TransportExposeInput): Promise<TransportExposure>;
-[transport] interface Transport { | id: string;
-[transport] interface Transport { | identify?(peer: TransportPeer): Promise<TransportIdentity | null>;
-[transport] interface Transport { | resolve?(input: TransportResolveInput): Promise<TransportEndpoint | {
-[transport] interface Transport { | unexpose?(input: TransportExposeInput): Promise<void>;
-[transport] interface Transport { | watch?(listener: (event: TransportWatchEvent) => void): () => void;
-[transport] interface Transport { || unresolved: string;
+[transport] interface Transport { @@1 bindAddresses?(): string[];
+[transport] interface Transport { @@1 close?(): void | Promise<void>;
+[transport] interface Transport { @@1 expose?(input: TransportExposeInput): Promise<TransportExposure>;
+[transport] interface Transport { @@1 id: string;
+[transport] interface Transport { @@1 identify?(peer: TransportPeer): Promise<TransportIdentity | null>;
+[transport] interface Transport { @@1 resolve?(input: TransportResolveInput): Promise<TransportEndpoint | {
+[transport] interface Transport { @@1 unexpose?(input: TransportExposeInput): Promise<void>;
+[transport] interface Transport { @@1 watch?(listener: (event: TransportWatchEvent) => void): () => void;
+[transport] interface Transport { @@2 unresolved: string;
 [transport] interface TransportContractOptions {
-[transport] interface TransportContractOptions { | baseDir: string;
-[transport] interface TransportContractOptions { | checkTimeoutMs?: number;
-[transport] interface TransportContractOptions { | env: NodeJS.ProcessEnv;
-[transport] interface TransportContractOptions { | expose?: {
-[transport] interface TransportContractOptions { | options?: Record<string, unknown>;
-[transport] interface TransportContractOptions { | reference: string;
-[transport] interface TransportContractOptions { || port: number;
+[transport] interface TransportContractOptions { @@1 baseDir: string;
+[transport] interface TransportContractOptions { @@1 checkTimeoutMs?: number;
+[transport] interface TransportContractOptions { @@1 env: NodeJS.ProcessEnv;
+[transport] interface TransportContractOptions { @@1 expose?: {
+[transport] interface TransportContractOptions { @@1 options?: Record<string, unknown>;
+[transport] interface TransportContractOptions { @@1 reference: string;
+[transport] interface TransportContractOptions { @@2 port: number;
 [transport] interface TransportContractResult {
-[transport] interface TransportContractResult { | error?: string;
-[transport] interface TransportContractResult { | name: string;
-[transport] interface TransportContractResult { | passed: boolean;
+[transport] interface TransportContractResult { @@1 error?: string;
+[transport] interface TransportContractResult { @@1 name: string;
+[transport] interface TransportContractResult { @@1 passed: boolean;
 [transport] interface TransportEndpoint {
-[transport] interface TransportEndpoint { | host: string;
-[transport] interface TransportEndpoint { | servername: string;
-[transport] interface TransportEndpoint { | url: string;
+[transport] interface TransportEndpoint { @@1 host: string;
+[transport] interface TransportEndpoint { @@1 servername: string;
+[transport] interface TransportEndpoint { @@1 url: string;
 [transport] interface TransportExposeInput {
-[transport] interface TransportExposeInput { | port: number;
+[transport] interface TransportExposeInput { @@1 port: number;
 [transport] interface TransportIdentity {
-[transport] interface TransportIdentity { | id: string;
-[transport] interface TransportIdentity { | name: string;
-[transport] interface TransportIdentity { | user: string;
+[transport] interface TransportIdentity { @@1 id: string;
+[transport] interface TransportIdentity { @@1 name: string;
+[transport] interface TransportIdentity { @@1 user: string;
 [transport] interface TransportInput {
-[transport] interface TransportInput { | env: NodeJS.ProcessEnv;
-[transport] interface TransportInput { | options: Record<string, unknown>;
+[transport] interface TransportInput { @@1 env: NodeJS.ProcessEnv;
+[transport] interface TransportInput { @@1 options: Record<string, unknown>;
 [transport] interface TransportModule {
-[transport] interface TransportModule { | createTransport(input: TransportInput): Transport | Promise<Transport>;
-[transport] interface TransportModule { | id: string;
+[transport] interface TransportModule { @@1 createTransport(input: TransportInput): Transport | Promise<Transport>;
+[transport] interface TransportModule { @@1 id: string;
 [transport] interface TransportPeer {
-[transport] interface TransportPeer { | address: string;
-[transport] interface TransportPeer { | headers: TransportHeaders;
+[transport] interface TransportPeer { @@1 address: string;
+[transport] interface TransportPeer { @@1 headers: TransportHeaders;
 [transport] interface TransportResolveInput {
-[transport] interface TransportResolveInput { | credential: {
-[transport] interface TransportResolveInput { | name: string;
-[transport] interface TransportResolveInput { || address?: string;
-[transport] interface TransportResolveInput { || machine: string;
-[transport] interface TransportResolveInput { || tailnet?: {
-[transport] interface TransportResolveInput { ||| id?: string;
-[transport] interface TransportResolveInput { ||| name: string;
-[transport] interface TransportResolveInput { ||| suffix?: string;
+[transport] interface TransportResolveInput { @@1 credential: {
+[transport] interface TransportResolveInput { @@1 name: string;
+[transport] interface TransportResolveInput { @@2 address?: string;
+[transport] interface TransportResolveInput { @@2 machine: string;
+[transport] interface TransportResolveInput { @@2 tailnet?: {
+[transport] interface TransportResolveInput { @@3 id?: string;
+[transport] interface TransportResolveInput { @@3 name: string;
+[transport] interface TransportResolveInput { @@3 suffix?: string;
 [transport] interface TransportWatchEvent {
-[transport] interface TransportWatchEvent { | addresses: string[];
+[transport] interface TransportWatchEvent { @@1 addresses: string[];
 [transport] type TransportExposure = ServeRoute;
 [transport] type TransportHeaders = Record<string, string | string[] | undefined>;
