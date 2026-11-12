@@ -241,11 +241,14 @@ async function stillUnused(
   worktree: string,
   idleMs: number,
   operation?: StimContext,
+  setting?: string,
 ): Promise<string | null> {
   const [first] = keys;
-  if (!source) return first && !(await stillIdle(first, idleMs, operation)) ? 'it is no longer idle' : null;
-  for (const key of new Set([...workspaceKeys(keys), worktree]))
-    if (!(await stillIdle(key, idleMs, operation, true, key === first))) return `${key} is no longer idle`;
+  if (!source)
+    return first && !(await stillIdle(first, idleMs, operation, false, true, setting)) ? 'it is no longer idle' : null;
+  const held = new Set(workspaceKeys(keys));
+  for (const key of new Set([...held, worktree]))
+    if (!(await stillIdle(key, idleMs, operation, true, held.has(key), setting))) return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
 
@@ -261,6 +264,7 @@ export async function clearDependency(
   reason: string,
   operation?: StimContext,
   requireRestorable: boolean = !dependency.source,
+  setting?: string,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
@@ -279,7 +283,7 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         source: dependency.source,
-        recheck: (keys, worktree) => stillUnused(dependency.source, keys, worktree, idleMs, operation),
+        recheck: (keys, worktree) => stillUnused(dependency.source, keys, worktree, idleMs, operation, setting),
         operation,
       },
     );
@@ -326,7 +330,13 @@ async function takeIdleDependencies(
       config,
       input,
       afterMs,
-      source ? { full: true, onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason) } : {},
+      source
+        ? {
+            full: true,
+            setting: 'idle.sourceDormantDays',
+            onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+          }
+        : {},
     )
   ).filter((candidate) => source || candidate.role === 'linked');
   const { operation } = input;
@@ -358,7 +368,20 @@ async function takeIdleDependencies(
           detail: entry.reason,
           setting: 'idle.sourceDormantDays',
         });
-    take = selectDependencies(ranked, 'take').take;
+    const selected = selectDependencies(ranked, 'keep');
+    take = selected.take;
+    if (!input.act || input.force)
+      for (const { dependency, detail } of selected.kept)
+        actions.push({
+          rung: 4,
+          kind: 'delete-dependencies',
+          target: dependency.candidate.path,
+          workspace: dependency.workspace,
+          outcome: 'kept',
+          bytes: 0,
+          detail,
+          setting: 'idle.sourceDormantDays',
+        });
   } else {
     if (!idle.length) return [];
     take = selectDependencies(await rankDependencies(idle, input.protectedRoot ?? '', operation), 'take').take;
@@ -372,7 +395,16 @@ async function takeIdleDependencies(
         ? `${why}; its real size is unknown`
         : `${why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
     const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
-      ? await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
+      ? await clearDependency(
+          dependency,
+          afterMs,
+          input.protectedRoot ?? '',
+          worktrees,
+          reason,
+          operation,
+          false,
+          source ? 'idle.sourceDormantDays' : undefined,
+        )
       : {
           status: 'would',
           bytes: dependency.privateBytes ?? 0,
@@ -406,7 +438,6 @@ async function takeIdleDependencies(
 async function dependencyTrees(operation: StimContext): Promise<string[]> {
   const trees = new Set<string>();
   for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
-    if (!worktree.linked) continue;
     for (const base of new Set([worktree.path, ...worktree.keys]))
       for (const path of existingDirsOf(base, ARTIFACT_DIRS.dependencies)) trees.add(path);
   }

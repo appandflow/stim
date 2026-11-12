@@ -604,13 +604,19 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   after those of every linked worktree: it has had no activity for
   idle.sourceDormantDays (7; 0 never; no activity means no Stim command, source
   file write, git write or commit, in the checkout and in every Stim workspace
-  in it, registered or not; a worktree warm copying from it is activity, and a
-  running warm keeps it), at any level, or the level is critical, the checkout is idle 2
+  in it, registered or not; a worktree warm copying from it is activity when the
+  warmed app has a Stim workspace in the source, and a running warm keeps it;
+  runs from or works in it means a process whose working directory is in the
+  checkout or whose command line names a path in it, and reading files in an
+  editor with no process there is not activity), at any level, or the level is critical, the checkout is idle 2
   minutes and its volume is still under the critical level (pressure ladder
   rung 8, before the history and tool caches; \`stim gc --pressure critical\`
   always takes it). Nothing that runs from or works in it, builds, drives,
   leases, hosts or is pinned with maintenance.keep is touched, nor a checkout
-  whose node_modules a linked worktree links to, or that is not a real
+  whose node_modules a linked worktree listed by git links to (any symlink in
+  its top two directory levels, up to 2000 entries, resolving into the tree;
+  unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
+  rule (critical takes it), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies

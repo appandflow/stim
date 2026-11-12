@@ -23,7 +23,7 @@ import {
 
 type WarmPhase = 'refresh' | 'copy';
 
-const WARM_CLAIM_LABEL = 'worktree warm';
+export const WARM_CLAIM_LABEL = 'worktree warm';
 const WARM_CLAIM_POLL_MS = 250;
 const WARM_CLAIM_PROGRESS_MS = 30_000;
 const WARM_CLAIM_CEILING_MS = 90 * 60 * 1000;

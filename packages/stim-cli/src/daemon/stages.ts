@@ -216,6 +216,8 @@ function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, 
 /** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
 interface IdleSelection {
   full?: boolean;
+  /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
+  setting?: string;
   onKept?: (path: string, reason: string) => void;
 }
 
@@ -225,7 +227,7 @@ async function idleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept }: IdleSelection & { discover?: boolean } = {},
+  { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
@@ -278,8 +280,9 @@ export async function stillIdle(
   operation?: StimContext,
   full = false,
   locked = true,
+  setting: string = PRESSURE_THRESHOLD,
 ): Promise<boolean> {
-  return (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked, operation, full })) !== null;
+  return (await idleFor(path, thresholdMs, setting, { locked, operation, full })) !== null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
@@ -289,10 +292,8 @@ export function idleStageCandidates(
   thresholdMs: number,
   selection: IdleSelection = {},
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true, {
-    discover: true,
-    ...selection,
-  });
+  const { setting = PRESSURE_THRESHOLD, ...rest } = selection;
+  return idleWorkspaces(config, reading, thresholdMs, setting, () => true, { discover: true, ...rest });
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */

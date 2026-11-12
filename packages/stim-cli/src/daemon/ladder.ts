@@ -694,7 +694,22 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         },
         context.why,
       );
-  const { take } = selectDependencies(ranked, 'take');
+  const { take, kept: small } = selectDependencies(ranked, 'take');
+  if (!context.act || context.force)
+    for (const { dependency, detail } of small)
+      recordAction(
+        context,
+        {
+          rung: 8,
+          kind: 'delete-dependencies',
+          target: dependency.candidate.path,
+          workspace: dependency.workspace,
+          outcome: 'kept',
+          bytes: 0,
+          detail,
+        },
+        context.why,
+      );
   if (!take.length) return;
   const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
   if (shortDevices?.size === 0) return;

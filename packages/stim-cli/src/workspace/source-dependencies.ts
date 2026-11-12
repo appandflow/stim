@@ -8,8 +8,8 @@ import {
 } from '@stim-cli/core/state';
 import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { warmClaimPath } from '../engine/warm-claim.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { WARM_CLAIM_LABEL, warmClaimPath } from '../engine/warm-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { updateWorkspaceState } from './workspace-state.ts';
 
 const withWorkspace = (keys: readonly string[]): string[] =>
@@ -54,6 +54,38 @@ export function warmCopyingFrom(root: string): string | null {
     if (survey.unresolved.length) return 'its warm claim cannot be read';
   }
   return null;
+}
+
+/**
+ * Takes the warm claim of the source checkout at `root` exclusively and without waiting, so no worktree warm can start
+ * copying from it until `release`. A warm holds the claim shared around its copy, so the two exclude each other; when
+ * a warm holds it, or it cannot be taken, `kept` says why and nothing is held.
+ */
+export function takeWarmClaim(root: string): { release: () => void } | { kept: string } {
+  const held: ClaimHandle[] = [];
+  const release = () => {
+    for (const claim of held) releaseClaim(claim);
+  };
+  try {
+    for (const path of new Set([root, canonicalPath(root)])) {
+      const attempt = tryAcquireClaim({
+        root: warmClaimPath(path),
+        mode: 'exclusive',
+        label: WARM_CLAIM_LABEL,
+        details: { phase: 'refresh' },
+      });
+      if (!attempt.acquired) {
+        releaseClaim(attempt.pending ?? null);
+        release();
+        return { kept: 'a worktree warm is copying from it' };
+      }
+      held.push(attempt.acquired);
+    }
+  } catch {
+    release();
+    return { kept: 'its warm claim cannot be taken' };
+  }
+  return { release };
 }
 
 /**

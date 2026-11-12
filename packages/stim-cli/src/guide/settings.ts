@@ -504,14 +504,18 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         ios/Pods deleted for the next Stim command to restore
                         (default 1; fractions allowed; 0 never). Every level
                         of \`stim gc\` and the stim-daemon apply it.
+                        Machine layer. See \`guide lifecycle budget\`.
   idle.sourceDormantDays
                         days without activity before a source (main)
                         checkout's node_modules and ios/Pods are deleted, at
                         any level, after those of linked worktrees (default
-                        7; fractions allowed; 0 never; machine only). A
-                        \`stim worktree warm\` that copied from the checkout
-                        counts as activity. See \`guide cleanup disk\`.
-                        Machine layer. See \`guide lifecycle budget\`.
+                        7; fractions allowed; 0 never). Activity is a Stim
+                        command, a source file write, a git write or a commit
+                        in the checkout or any workspace in it, a process
+                        working in it, an agent session, and a \`stim worktree
+                        warm\` copying from it when the warmed app has a Stim
+                        workspace in the source. Machine layer. See \`guide
+                        cleanup disk\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,

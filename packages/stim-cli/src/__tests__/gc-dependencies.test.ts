@@ -28,8 +28,10 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
-import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
+import { recordWarmedFrom, takeWarmClaim } from '../workspace/source-dependencies.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import assert from 'node:assert';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { testContext } from './_context.ts';
@@ -106,6 +108,19 @@ function write(path: string) {
   writeFileSync(path, 'x');
 }
 
+function measureTrees(root: string) {
+  for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) {
+    const bytes = 512 * 1024 ** 2;
+    writeCacheFile(diskUsageCacheFile(path), {
+      path,
+      measuredAt: new Date().toISOString(),
+      bytes,
+      privateBytes: bytes,
+      signature: treeSignature(path),
+    });
+  }
+}
+
 function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<string, string> {
   const repo = join(projects, 'repo');
   mkdirSync(repo, { recursive: true });
@@ -135,16 +150,7 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
     write(join(root, 'node_modules', 'pkg', 'index.js'));
     write(join(root, 'ios', 'Pods', 'Manifest.lock'));
     ageTree(root, hourAgo);
-    for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) {
-      const bytes = 512 * 1024 ** 2;
-      writeCacheFile(diskUsageCacheFile(path), {
-        path,
-        measuredAt: new Date().toISOString(),
-        bytes,
-        privateBytes: bytes,
-        signature: treeSignature(path),
-      });
-    }
+    measureTrees(root);
     if (name === 'repo' || worktrees.find((entry) => entry.name === name)?.workspace) {
       upsertProject(root, { metroPort: null });
       recordWorkspaceUse(root, hourAgo);
@@ -369,6 +375,7 @@ function ageCheckout(root: string, at: Date) {
   recordWorkspaceUse(root, at);
   utimesSync(workspaceStateFile(root), at, at);
   ageTree(root, at);
+  measureTrees(root);
   const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', { cwd: root, encoding: 'utf-8' }).trim();
   for (const file of ['index', 'HEAD', join('logs', 'HEAD')])
     if (existsSync(join(gitDir, file))) utimesSync(join(gitDir, file), at, at);
@@ -489,8 +496,13 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
+const rung8 = (payload: LevelPayload, path: string) =>
+  payload.actions.find(
+    (action) => action.rung === 8 && action.kind === 'delete-dependencies' && action.target === path,
+  );
+
 test.skipIf(process.platform === 'win32')(
-  'a source checkout keeps its dependencies while a worktree warm holds its claim, an app in it is active, or a worktree links to them',
+  'a source checkout keeps its dependencies, with the reason in a dry run, while a worktree warm holds its claim, an app in it is active, or a worktree links to them',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
@@ -498,7 +510,10 @@ test.skipIf(process.platform === 'win32')(
     ]);
     const source = roots.repo ?? '';
     const linker = roots.linker ?? '';
+    const modules = join(source, 'node_modules');
     const claim = plantClaim(warmClaimPath(source), 'shared', liveClaimOwner());
+    const warming: { payload: LevelPayload } = await gcJson();
+    expect(rung8(warming.payload, modules)?.detail).toMatch(/warm is copying/);
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
     rmSync(claim, { force: true });
@@ -509,16 +524,63 @@ test.skipIf(process.platform === 'win32')(
     upsertProject(app, { metroPort: null });
     recordWorkspaceUse(app, new Date());
     ensureWorkspaceStorage(app);
+    const active: { payload: LevelPayload } = await gcJson();
+    expect(rung8(active.payload, modules)?.detail).toMatch(/is not idle/);
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
     recordWorkspaceUse(app, new Date(Date.now() - 60 * 60_000));
     utimesSync(workspaceStateFile(app), new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 60 * 60_000));
 
-    rmSync(join(linker, 'node_modules'), { recursive: true, force: true });
-    symlinkSync(join(source, 'node_modules'), join(linker, 'node_modules'));
+    mkdirSync(join(linker, 'apps', 'x'), { recursive: true });
+    symlinkSync(modules, join(linker, 'apps', 'x', 'node_modules'));
     writeFileSync(join(linker, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    const linked: { payload: LevelPayload } = await gcJson();
+    expect(rung8(linked.payload, modules)).toMatchObject({ outcome: 'kept' });
+    expect(rung8(linked.payload, modules)?.detail).toMatch(/links apps\/x\/node_modules to it/);
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
   },
   60_000,
 );
+
+test.skipIf(process.platform === 'win32')(
+  'a source checkout tree not measured yet is not taken at 7 days idle, and is at critical',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    ageCheckout(source, daysAgo(8));
+    rmSync(diskUsageCacheFile(modules), { force: true });
+    ageTree(source, daysAgo(8));
+    const normal = await quietly(() => runGc({ pressure: 'normal' }));
+    expect(normal).toBeDefined();
+    expect(existsSync(sourceModules(source))).toBe(true);
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(false);
+  },
+  60_000,
+);
+
+test('the source warm claim keeps a warm out while a delete holds it, and is refused while a warm holds it', () => {
+  const root = join(projects, 'claimed');
+  mkdirSync(root);
+  const sharedWarm = () =>
+    tryAcquireClaim({ root: warmClaimPath(root), mode: 'shared', label: 'worktree warm', details: { phase: 'copy' } });
+
+  const held = takeWarmClaim(root);
+  assert('release' in held);
+  expect(sharedWarm().acquired).toBeUndefined();
+  held.release();
+
+  const running = sharedWarm().acquired;
+  assert(running);
+  expect(takeWarmClaim(root)).toEqual({ kept: 'a worktree warm is copying from it' });
+  const second = sharedWarm().acquired;
+  assert(second);
+  releaseClaim(second);
+  releaseClaim(running);
+
+  const again = takeWarmClaim(root);
+  expect('release' in again).toBe(true);
+  if ('release' in again) again.release();
+});

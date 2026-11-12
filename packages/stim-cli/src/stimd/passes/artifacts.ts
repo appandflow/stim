@@ -1,6 +1,6 @@
-import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
@@ -38,8 +38,8 @@ import {
   runningFromReason,
   type RunningProcesses,
 } from '../../workspace/running-from.ts';
-import { finishLightened, recordLightened, restoreProblem } from '../../workspace/lightened.ts';
-import { recordSourceDependencies, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
+import { finishLightened, recordLightened, restoreProblem, workspaceKeys } from '../../workspace/lightened.ts';
+import { recordSourceDependencies, takeWarmClaim, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
 import {
   listWorktrees,
   LOCKED_REASON,
@@ -276,11 +276,17 @@ async function pinsOf(
 
 type InUseReader = (workspace: string) => string[];
 
-function inUseNow(kind: ArtifactKind, locked: string | undefined): InUseReader {
+/** The workspaces whose native-run claim the caller holds, so their own claim is not a reason to keep. */
+type Held = string | readonly string[] | undefined;
+
+const isHeld = (locked: Held, key: string): boolean =>
+  typeof locked === 'string' ? key === locked : (locked?.includes(key) ?? false);
+
+function inUseNow(kind: ArtifactKind, locked: Held): InUseReader {
   return (key) =>
     kind === 'build'
-      ? workspaceBuildReasons(key, { nativeRun: key !== locked })
-      : workspaceInUse(key, { nativeRun: key !== locked });
+      ? workspaceBuildReasons(key, { nativeRun: !isHeld(locked, key) })
+      : workspaceInUse(key, { nativeRun: !isHeld(locked, key) });
 }
 
 async function inUseOf(
@@ -288,11 +294,11 @@ async function inUseOf(
   kind: ArtifactKind,
   signal: AbortSignal,
   operation: StimContext | undefined,
-  locked?: string,
+  locked?: Held,
 ): Promise<InUseReader> {
   const reasons = new Map<string, string[]>();
   for (const key of candidate.keys) {
-    const nativeRun = key !== locked;
+    const nativeRun = !isHeld(locked, key);
     reasons.set(
       key,
       kind === 'build'
@@ -317,7 +323,7 @@ function keptReason(
     now: number;
     windowMs: number;
     pinned: (workspace: string) => boolean;
-    locked?: string;
+    locked?: Held;
     running?: RunningProcesses | null;
     inUse?: InUseReader;
   },
@@ -351,7 +357,7 @@ function artifactGuard(
   candidate: ArtifactCandidate,
   kind: ArtifactKind,
   pinned: (workspace: string) => boolean,
-  locked?: string,
+  locked?: Held,
   running?: RunningProcesses | null,
   inUse: InUseReader = inUseNow(kind, locked),
 ): string | null {
@@ -449,17 +455,54 @@ export async function collectArtifactsAsync(
   return { candidates, skips };
 }
 
-/** Why a linked worktree keeps a source checkout's dependency tree: its own one at the same place is a link into it. */
+const LINK_SCAN_ENTRIES = 2000;
+const LINK_SCAN_DEPTH = 2;
+
+/**
+ * Why a listed linked worktree keeps a source checkout's dependency tree: a symlink in it resolves into the tree. The scan
+ * reads the worktree's directories down to `LINK_SCAN_DEPTH` levels (so `apps/<app>/node_modules` is seen) and checks
+ * every entry in them, a `node_modules` entry itself included, without descending into `node_modules` or `.git`, and
+ * stops after `LINK_SCAN_ENTRIES` entries per worktree. A worktree git does not list is not scanned.
+ */
 function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly ArtifactWorktree[]): string | null {
-  const rel = relative(candidate.worktree, candidate.path);
   const real = canonicalPath(candidate.path);
+  const into = (path: string): boolean => {
+    try {
+      const target = canonicalPath(path);
+      return target === real || target.startsWith(`${real}${sep}`);
+    } catch {
+      return false;
+    }
+  };
   for (const other of worktrees) {
     if (!other.linked) continue;
-    const path = join(other.path, rel);
-    try {
-      if (lstatSync(path).isSymbolicLink() && `${canonicalPath(path)}${sep}`.startsWith(`${real}${sep}`))
-        return `the worktree ${other.path} links its ${rel} to it`;
-    } catch {}
+    let seen = 0;
+    const scan = (dir: string, depth: number): string | null => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return null;
+      }
+      for (const entry of entries) {
+        if (++seen > LINK_SCAN_ENTRIES) return null;
+        const path = join(dir, entry.name);
+        if (entry.isSymbolicLink()) {
+          if (into(path)) return path;
+        } else if (
+          depth < LINK_SCAN_DEPTH &&
+          entry.isDirectory() &&
+          entry.name !== '.git' &&
+          entry.name !== 'node_modules'
+        ) {
+          const found = scan(path, depth + 1);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    const found = scan(other.path, 0);
+    if (found) return `the worktree ${other.path} links ${relative(other.path, found)} to it`;
   }
   return null;
 }
@@ -559,24 +602,25 @@ export async function clearArtifact(
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
-  const remove = async () => {
+  const heldKeys: string[] = options.source ? workspaceKeys(candidate.keys) : key ? [key] : [];
+  const removeUnderClaims = async () => {
     const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
     if (lock) return lockReason(lock);
     const reason = keptReason(
-      candidate,
+      { ...candidate, source: false },
       kind,
       {
         ...options,
         pinned: await pinsOf(candidate.keys, options.pinned),
         now: Date.now(),
         running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
-        inUse: await inUseOf(candidate, kind, signal, operation, key),
-        ...(key ? { locked: key } : {}),
+        inUse: await inUseOf(candidate, kind, signal, operation, heldKeys),
+        locked: heldKeys,
       },
       await artifactReads(candidate, kind, signal, operation),
     );
     if (reason) return reason;
-    const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
+    const late = options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
     const stillUnsafe = options.source
       ? ((await regenerableDirProblem(worktree.path, candidate.path, signal)) ??
@@ -585,19 +629,36 @@ export async function clearArtifact(
     if (stillUnsafe) return stillUnsafe;
     const record = kind === 'dependencies' && !options.source;
     if (record) recordLightened(candidate.keys, candidate.path);
+    const parent = dirname(candidate.path);
+    const parentTimes = options.source ? statSync(parent, { throwIfNoEntry: false }) : undefined;
     rmSync(candidate.path, { recursive: true, force: true });
+    if (parentTimes) utimesSync(parent, parentTimes.atime, parentTimes.mtime);
     if (record) finishLightened(candidate.keys, candidate.path);
     if (kind === 'dependencies' && options.source) recordSourceDependencies(candidate.keys, candidate.path);
     return null;
   };
-  const kept = key
-    ? await withIdleWorkspace(key, remove, {
-        purpose: 'maintenance',
-        supervisor: kind === 'dependencies',
-        ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
-        operation,
-      }).then((run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`))
-    : await remove();
+  const remove = async (): Promise<string | null> => {
+    if (!options.source) return removeUnderClaims();
+    const warm = takeWarmClaim(candidate.worktree);
+    if ('kept' in warm) return warm.kept;
+    try {
+      return await removeUnderClaims();
+    } finally {
+      warm.release();
+    }
+  };
+  const holdAll = async (keys: readonly string[]): Promise<string | null> => {
+    const [head, ...rest] = keys;
+    if (head === undefined) return remove();
+    const run = await withIdleWorkspace(head, () => holdAll(rest), {
+      purpose: 'maintenance',
+      supervisor: kind === 'dependencies',
+      ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
+      operation,
+    });
+    return run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
+  };
+  const kept = await holdAll(heldKeys);
   if (kept) return { status: 'kept', bytes: 0, detail: kept };
   const freed = Math.max(0, lowestFree(measureDisk()) - before);
   return {

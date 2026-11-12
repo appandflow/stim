@@ -2661,14 +2661,22 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   has had no activity for idle.sourceDormantDays (7; 0 never; at any level, last
   in this step; no activity means no Stim command, source file write, git write
   or commit, in the checkout and in every Stim workspace in it, registered or
-  not; a worktree warm copying from it is activity and a running warm keeps it,
-  without moving its last use), or at critical under rung 8 by the same
-  evidence; its build outputs follow the one-day rule like any
+  not; a worktree warm copying from it is activity when the warmed app has a
+  Stim workspace in the source, and a running warm keeps it, without moving its
+  last use), or at critical under rung 8 by the same evidence. Runs from or
+  works in it means a process whose working directory is in the checkout or
+  whose command line names a path in it; reading files in an editor with no
+  process there is not activity. A tree whose size is not measured yet is not
+  taken at the 7-day rule, and is at critical, as for a linked worktree. A
+  linked worktree listed by git, with a symlink in its top two directory levels
+  (up to 2000 entries, not entering node_modules or .git) that resolves into the
+  tree, keeps it; a worktree git does not list is not scanned; its build outputs follow the one-day rule like any
   workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
   in a linked worktree then adds to its carry line that the source has no
   installed node_modules or ios/Pods to copy and since when, with the
   installs to run (warm never installs; stim worktree warm --refresh installs in
-  the source). A linked worktree whose own dependencies were deleted and
+  the source but also fast-forwards it and refuses when it is dirty or detached,
+  then install there by hand). A linked worktree whose own dependencies were deleted and
   recorded can no longer be restored by warm once the source lost them: its
   next native run refuses with STIM_DEPS_FAILED and asks for an install there. \`stim
   status\` prints a source checkout line and --json carries
