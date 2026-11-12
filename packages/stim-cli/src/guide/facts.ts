@@ -1121,7 +1121,8 @@ RULES
                               never
     agentDevice             <AgentDeviceUsage|null>  report-only; workspace state
                               goes only with its workspace
-    swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted
+    swiftpmCache            <SwiftpmCacheUsage|null> reported; only rung 9
+                              removes it, at critical
     gradleVersions          { home, olderThanDays, blocked, gradleRunning,
                               gradleRunningPids, versions: [{ version, dirs,
                               bytes, lastModifiedAt, willDelete, reason,
@@ -2162,14 +2163,16 @@ SWIFTPM CACHE DISK USAGE
   swiftpmCache: { version: 1, measuredAt, dir, present, bytes, complete } | null.
   The user-level cache is ~/Library/Caches/org.swift.swiftpm on macOS and
   org.swift.swiftpm under XDG_CACHE_HOME (default ~/.cache) elsewhere.
-  It is shared by every SwiftPM build on the machine; Stim never deletes it.
+  It is shared by every SwiftPM build on the machine; only gc's last rung, 9,
+  removes it, at critical (\`guide cleanup gc\`).
   bytes is null and complete is false if du fails; absent directories have
   present: false, bytes: 0 and complete: true. Plain output omits absent caches.
   $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
   keyed on the resolved dir. stats and gc alone run du -sk with a
   20-second timeout. Server stats.get reads only the cached value. status,
   start, ios, android and the pressure ladder never measure it. gc reports it as
-  sections.swiftpmCache, never in caches or actionable; no gc run touches it.
+  sections.swiftpmCache, never in caches or actionable; only rung 9 at
+  critical removes it.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a

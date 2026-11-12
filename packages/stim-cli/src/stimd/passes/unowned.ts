@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
@@ -244,6 +244,35 @@ export function machineCleanupRefusal(env: NodeJS.ProcessEnv, paths: readonly st
   if (runsRealCommands()) return 'the test runner never cleans the real machine';
   const outside = paths.find((path) => path !== testRoot && !path.startsWith(`${testRoot}${sep}`));
   return outside ? `the test runner never deletes ${outside}, outside its temporary directory` : null;
+}
+
+/**
+ * Whether a cache sits on a volume that is short: one of `shortDevices`, the device ids of the volumes under the
+ * critical level, or any volume when `shortDevices` is null, as `stim gc --pressure critical` asks.
+ */
+export function onShortVolume(
+  paths: readonly string[],
+  shortDevices: ReadonlySet<number> | null,
+  deviceOf: (path: string) => number | null = deviceOfPath,
+): boolean {
+  if (shortDevices === null) return true;
+  return paths.some((path) => {
+    const device = deviceOf(path);
+    return device !== null && shortDevices.has(device);
+  });
+}
+
+/** The device id of `path`, or of its nearest existing ancestor; null when none can be read. */
+export function deviceOfPath(path: string): number | null {
+  let current = path;
+  for (;;) {
+    try {
+      return statSync(current).dev;
+    } catch {
+      if (dirname(current) === current) return null;
+      current = dirname(current);
+    }
+  }
 }
 
 function isLink(path: string): boolean {

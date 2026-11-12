@@ -3,6 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
+  buildWorkerRoot,
   fingerprintIndexDir,
   fingerprintIndexLock,
   sharedCompilationCache,
@@ -20,7 +21,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
-import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { formatBytes, measuredDirectorySizeAsync, volumeRootFor } from '../fs-util.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -35,9 +36,16 @@ import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { measureDisk } from './measure.ts';
-import { diskPressure, diskThresholds } from './pressure.ts';
+import { diskThresholds } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
-import { cleanToolCache, reportedBytes, reportedCaches, surveyToolCaches } from '../stimd/passes/unowned.ts';
+import {
+  cleanToolCache,
+  deviceOfPath,
+  onShortVolume,
+  reportedBytes,
+  reportedCaches,
+  surveyToolCaches,
+} from '../stimd/passes/unowned.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -654,17 +662,25 @@ async function historyRung(context: RungContext): Promise<void> {
  * Rung 9, the last: the caches of tools Stim does not own, each emptied through the tool's own command while no
  * process of that tool runs, with its size before and after; Android NDKs, unused system images and Exact's cache are
  * only reported with the command a person runs. Only at critical, after the rungs above, and never from a home STIM_HOME
- * scopes, since those caches are machine-wide: the stim-daemon's ladder runs it at most hourly while still short, a
- * `stim gc` at the measured level only while free disk, measured again, is still under the critical level, and
- * `stim gc --pressure critical` every time.
+ * scopes, since those caches are machine-wide. It acts only on a cache whose volume is under the critical level when
+ * measured again after the rungs above: the stim-daemon's ladder at most hourly, a `stim gc` at the measured level each
+ * time. `stim gc --pressure critical` treats every volume as short.
  */
 async function unownedRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
-  if (context.force ? context.force.measured && !(await diskCritical(context)) : !(await context.stillShort())) return;
+  const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
+  if (shortDevices?.size === 0) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
-    const result = await cleanToolCache(plan, context.act, context.operation);
+    const result = onShortVolume(plan.cache.paths, shortDevices)
+      ? await cleanToolCache(plan, context.act, context.operation)
+      : {
+          outcome: 'kept' as const,
+          before: plan.bytes,
+          after: plan.bytes,
+          detail: 'its volume is not under the critical level',
+        };
     const freed =
       result.before !== null && result.after !== null
         ? Math.max(0, result.before - result.after)
@@ -713,13 +729,25 @@ async function unownedRung(context: RungContext): Promise<void> {
   }
 }
 
-/** Whether free disk on a volume Stim uses is under the critical level, measured now. */
-async function diskCritical(context: RungContext): Promise<boolean> {
-  const pressure = diskPressure(
-    await measureDisk(context.config, context.operation?.signal),
-    diskThresholds(context.config, context.operation?.env).thresholds,
+/**
+ * The device ids of the volumes Stim uses whose free disk is under the critical level, measured now: the devices of the
+ * config dir, the registered projects and the build worker root whose volume measures critical.
+ */
+async function criticalDevices(context: RungContext): Promise<Set<number>> {
+  const { thresholds } = diskThresholds(context.config, context.operation?.env);
+  const devices = new Set<number>();
+  if (thresholds.criticalMb <= 0) return devices;
+  const critical = new Set(
+    (await measureDisk(context.config, context.operation?.signal))
+      .filter((volume) => volume.freeMb < thresholds.criticalMb)
+      .map((volume) => volume.volume),
   );
-  return pressure.level === 'critical';
+  for (const path of [configDir(), ...Object.keys(context.config.projects), buildWorkerRoot(context.config)]) {
+    if (!critical.has(volumeRootFor(path))) continue;
+    const device = deviceOfPath(path);
+    if (device !== null) devices.add(device);
+  }
+  return devices;
 }
 
 const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {

@@ -1,5 +1,5 @@
 import { mkdirSync, realpathSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
@@ -19,12 +19,11 @@ process.env.STIM_ENGINE_ROOT = join(tmpdir(), 'stim-test-engine-absent');
 
 // A test never reads or writes the developer's home: ~/.stim/machine (the EAS ledger, the list of Stim homes) and
 // every other HOME-derived path resolve under the run's private TMPDIR (vitest.global-tmpdir.ts).
-// npm keeps its package cache under HOME; the tests that pack and install Stim run offline and need the real one.
-process.env.npm_config_cache ??= join(homedir(), '.npm');
 const home = join(tmpdir(), 'home');
 mkdirSync(home, { recursive: true });
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+process.env.npm_config_cache = join(home, '.npm');
 
 // gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
 process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());

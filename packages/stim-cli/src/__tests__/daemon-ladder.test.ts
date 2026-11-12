@@ -36,6 +36,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -647,7 +648,12 @@ describe('the ladder stim gc forces', () => {
     expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
   });
 
-  const forced = (level: 'high' | 'critical', fromRung: number, operation = testContext()) => {
+  const forced = (
+    level: 'high' | 'critical',
+    fromRung: number,
+    operation = testContext(),
+    { measured = false, lastRung }: { measured?: boolean; lastRung?: number } = {},
+  ) => {
     const config = loadConfig();
     if (!config) throw new Error('the test home has no config');
     return runLadder(
@@ -658,8 +664,9 @@ describe('the ladder stim gc forces', () => {
         devices: [],
         simsFailed: false,
         remeasure: async () => pressure('normal'),
-        force: { level, why: 'stim gc' },
+        force: { level, why: 'stim gc', measured },
         fromRung,
+        ...(lastRung === undefined ? {} : { lastRung }),
         operation,
       },
       pressure('normal'),
@@ -678,12 +685,24 @@ describe('the ladder stim gc forces', () => {
     const unscoped = testContext({
       env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
     });
-    const planned = async (level: 'high' | 'critical', operation = unscoped) =>
-      (await forced(level, 9, operation)).actions.filter((action) => action.kind === 'clean-tool-cache');
+    const planned = async (
+      level: 'high' | 'critical',
+      operation = unscoped,
+      options: { measured?: boolean; lastRung?: number } = {},
+    ) => (await forced(level, 9, operation, options)).actions.filter((action) => action.kind === 'clean-tool-cache');
 
     expect(await planned('high')).toEqual([]);
     expect(await planned('critical', testContext())).toEqual([]);
     expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
+    expect(await planned('critical', unscoped, { lastRung: 8 })).toEqual([]);
+
+    const disk = vi.spyOn(daemonMeasure, 'measureDisk');
+    disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024 }]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([]);
+    disk.mockResolvedValue([{ volume: '/', freeMb: 1024 }]);
+    expect(await planned('critical', unscoped, { measured: true })).toEqual([
+      expect.objectContaining({ rung: 9, outcome: 'would' }),
+    ]);
   });
 });
 

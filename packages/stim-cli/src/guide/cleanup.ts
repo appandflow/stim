@@ -636,8 +636,9 @@ gc --dry-run also reports the user-level SwiftPM cache after agent-device:
 ~/Library/Caches/org.swift.swiftpm on macOS, or org.swift.swiftpm under
 XDG_CACHE_HOME (default ~/.cache) elsewhere. It is shared by every SwiftPM
 build on this machine, so it is never in caches and never changes actionable.
-Only the last rung, 9, removes it, at critical and only while the earlier
-rungs left the disk short, and only while no Stim build lock or build slot is
+Only the last rung, 9, removes it, at critical: for a measured critical only
+while its volume is still under the critical level after the earlier rungs,
+and under --pressure critical whatever its volume, and only while no Stim build lock or build slot is
 live or unresolved and no swift-build, swift-package, swift-frontend,
 xcodebuild or SourceKitService process runs. It renames the directory aside on
 the same volume and deletes the renamed copy.
@@ -976,7 +977,7 @@ SWEEPING FINISHED WORKTREES
   pull request whose head is or contains HEAD.
     stim gc --dry-run    # report merged worktrees from local state
     stim gc              # refresh, then remove them
-    stim gc --pressure critical   # also the clean idle ones, and the finished ones without the grace period
+    stim gc --pressure critical   # also the finished ones without the grace period, and the clean idle ones while maintenance.removeIdleWorktrees is true
   An acting gc runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use and recent activity under the removal locks, and idleness
@@ -1063,9 +1064,9 @@ THE PRESSURE LADDER
   and a linked worktree's node_modules and Pods after an hour at high. It never touches
   a workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence), and maintenance.keep
-  protects a workspace. Report-only caches and what Stim never deletes (the
-  SwiftPM cache, other DerivedData, Android NDKs, system images, ~/.cache/exact)
-  are never touched. Caches whose loss slows the next build go only for an idle
+  protects a workspace. Report-only caches and what Stim never deletes (other
+  DerivedData, Android NDKs, system images, ~/.cache/exact) are never touched;
+  the SwiftPM cache goes only with rung 9, at critical. Caches whose loss slows the next build go only for an idle
   workspace or at critical. An acting run appends each item to
   $STIM_HOME/gc/gc.ndjson. \`stim revive\` resumes an idle workspace; the next
   \`stim ios\` or \`stim android\` creates the devices of a dormant one.
@@ -1671,7 +1672,8 @@ DEVICE RECORDINGS
                                   a workspace whose project root cannot be
                                   proven gone keeps them
     stim gc --pressure critical   also every device recording not being
-                                  written, in every workspace
+                                  written, except those of workspaces
+                                  pinned with maintenance.keep or in use
     recording.enabled false       the recordings of each workspace it turns off
 
   \`gc --dry-run\` lists them in the recordings section of \`gc --dry-run --json\` with each
