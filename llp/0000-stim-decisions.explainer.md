@@ -98,3 +98,4 @@ the workflow.
 - [LLP 0012](./0012-desktop-engine.decision.md) covers stim Desktop and the matching-home engine.
 - [LLP 0013](./0013-owned-devices.decision.md) covers owned devices, pools, and leases.
 - [LLP 0014](./0014-native-builds.decision.md) covers native build invocations, artifacts, and signing.
+- [LLP 0015](./0015-compatibility-removals.decision.md) covers the compatibility mechanisms that ended in 2.0.

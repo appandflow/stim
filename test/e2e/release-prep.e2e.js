@@ -35,18 +35,6 @@ const makeWorkspace = () => {
     mkdirSync(join(root, 'packages', dir), { recursive: true });
     cpSync(join(REPO, 'packages', dir, 'package.json'), manifestIn(root, dir));
   }
-  mkdirSync(join(root, 'packages/core/state'), { recursive: true });
-  writeFileSync(join(root, 'packages/core/state/release-floors.json'), '{"oneEngine":null}\n');
-  const corePath = manifestIn(root, 'core');
-  const core = readManifest(root, 'core');
-  core.scripts.build = `node -e "require('fs').mkdirSync('dist', {recursive:true}); require('fs').copyFileSync('state/release-floors.json', 'dist/release-floors.json')"`;
-  writeFileSync(corePath, `${JSON.stringify(core, null, 2)}\n`);
-  mkdirSync(join(root, '.github/actions/stim-ci/dist'), { recursive: true });
-  writeFileSync(join(root, '.github/actions/stim-ci/dist/main.mjs'), 'unpinned');
-  const actionPath = join(root, '.github/actions/stim-ci/package.json');
-  const action = JSON.parse(readFileSync(actionPath, 'utf8'));
-  action.scripts.build = `node -e "require('fs').copyFileSync('../../../packages/core/dist/release-floors.json', 'dist/main.mjs')"`;
-  writeFileSync(actionPath, `${JSON.stringify(action, null, 2)}\n`);
   const rootManifest = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
   delete rootManifest.scripts.preinstall;
   writeFileSync(join(root, 'package.json'), `${JSON.stringify(rootManifest, null, 2)}\n`);
@@ -175,26 +163,4 @@ test('pnpm pack ships the CLI without private workspace runtime dependencies', (
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
-});
-
-test('release floors reject patches, stay unpinned for candidates, and pin once at a stable minor', () => {
-  withWorkspace((root) => {
-    const floorPath = join(root, 'packages/core/state/release-floors.json');
-    const bundlePath = join(root, '.github/actions/stim-ci/dist/main.mjs');
-    const floors = () => JSON.parse(readFileSync(floorPath, 'utf8'));
-    const before = versionsIn(root);
-    const patch = runPrep(root, '99.0.1');
-    assert.equal(patch.status, 1);
-    assert.match(patch.stderr, /patch cannot ship pending release floors/);
-    assert.deepEqual(versionsIn(root), before);
-    assert.equal(floors().oneEngine, null);
-    assert.equal(runPrep(root, '99.0.0-rc.1').status, 0);
-    assert.equal(floors().oneEngine, null);
-    assert.equal(readFileSync(bundlePath, 'utf8'), 'unpinned');
-    assert.equal(runPrep(root, '99.0.0').status, 0);
-    assert.equal(floors().oneEngine, '99.0.0');
-    assert.deepEqual(JSON.parse(readFileSync(bundlePath, 'utf8')), floors());
-    assert.equal(runPrep(root, '99.0.1').status, 0);
-    assert.equal(floors().oneEngine, '99.0.0');
-  });
 });

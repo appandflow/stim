@@ -72,12 +72,13 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   delete process.env.STIM_DESKTOP_LIFETIME_FD;
-  const [{ runStimd }, { readDesktopInput }, { serveThroughStimd, stimdLive }, { daemonMode }] = await Promise.all([
-    import('../stimd/main.ts'),
-    import('../stimd/desktop-key.ts'),
-    import('../daemon/client.ts'),
-    import('../daemon/mode.ts'),
-  ]);
+  const [{ runStimd, daemonClaimRefusal }, { readDesktopInput }, { serveThroughStimd, stimdLive }, { daemonMode }] =
+    await Promise.all([
+      import('../stimd/main.ts'),
+      import('../stimd/desktop-key.ts'),
+      import('../daemon/client.ts'),
+      import('../daemon/mode.ts'),
+    ]);
   if ((bootstrapFd ?? '0') !== '0' || (lifetimeFd ?? '0') !== '0')
     return refuse('Desktop bootstrap input is invalid or unavailable.');
   let desktop: Awaited<ReturnType<typeof readDesktopInput>> | undefined;
@@ -103,8 +104,7 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
     onNet: answered,
   });
   if (served) return;
-  if (!stimdLive())
-    return refuse('a stim-daemon from an older Stim still holds this Stim home; it exits once nothing runs in it.');
+  if (!stimdLive()) return refuse(daemonClaimRefusal());
   console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
   let heard = false;
   await serveThroughStimd(serve, (answer) => {

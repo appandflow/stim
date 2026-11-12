@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -92,6 +93,30 @@ test.each([
   expect(result.stdout).toBe('');
   expect(result.stderr).toBe('stim-server: Desktop bootstrap input is invalid or unavailable.\n');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a port another process holds is refused with that pid and the remedy',
+  async () => {
+    const holder = createServer();
+    await new Promise<void>((done) => holder.listen(0, '127.0.0.1', done));
+    const address = holder.address();
+    assert(address && typeof address === 'object');
+    const { port } = address;
+    try {
+      const result = spawnSync(process.execPath, [BIN, '--port', String(port), '--loopback-only'], {
+        env: { ...process.env, STIM_HOME: home },
+        encoding: 'utf8',
+        timeout: 20_000,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(
+        `stim-server: port ${port} is held by pid ${process.pid}; stop it (kill ${process.pid}), or run stim serve --port <n>.\n`,
+      );
+    } finally {
+      await new Promise<void>((done) => holder.close(() => done()));
+    }
+  },
+);
 
 describe('--json', () => {
   it('pair prints the QR payload with the server key fingerprint and its expiry', () => {

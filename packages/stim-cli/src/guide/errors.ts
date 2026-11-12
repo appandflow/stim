@@ -1203,7 +1203,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Web shares live inside this Stim home's stim-server, the net thread of its
   stimd. stim share ios|android asks stimd, started when none runs, to start
   the net thread when none answers. This code means that failed; the message
-  says why, such as an older stim-server holding the port. A stimd of
+  says why, such as another process holding the port, whose pid it names. A stimd of
   another Stim build answers STIM_DAEMON_UNAVAILABLE instead. Fix what it names,
   or read $STIM_HOME/daemon/daemon.ndjson, then run stim share again. From
   share list or share stop it only means that no net thread runs, so nothing
