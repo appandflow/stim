@@ -144,6 +144,58 @@ exit 1
     }
   }, 30_000);
 
+  test('a worker failure during a requested stop does not restart the stopped stream', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    writeFileSync(liveLine, `${event(Date.now() - 5000, 'before')}\n`);
+    writeFileSync(showLines, '');
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start({ root, ...spec }, env);
+      await vi.waitFor(() => expect(count('before')).toBe(1));
+      const worker = captured.workers.at(-1);
+      if (!worker) throw new Error('the logs worker was not started');
+      const stopping = streams.stop(root, 'ios', 'default', streamId);
+      await worker.terminate();
+      expect(await stopping).toBe(true);
+      await new Promise((done) => setTimeout(done, 800));
+      expect(startCount()).toBe(1);
+      expect(streams.running()).toBe(false);
+      expect(readWorkspaceState(root)?.collectors).toBeUndefined();
+    } finally {
+      await streams.close().catch(() => {});
+    }
+  }, 30_000);
+
+  test('a second worker failure does not restart a stream again and says logging stopped', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    writeFileSync(liveLine, `${event(Date.now() - 5000, 'before')}\n`);
+    writeFileSync(showLines, '');
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start({ root, ...spec }, env);
+      await vi.waitFor(() => expect(count('before')).toBe(1));
+      await captured.workers.at(-1)?.terminate();
+      await vi.waitFor(() => expect(startCount()).toBe(2));
+      await vi.waitFor(() =>
+        expect(records().filter((record) => record.event === 'collector_interrupted')).toHaveLength(1),
+      );
+      await vi.waitFor(() => expect(streams.running()).toBe(true));
+      await captured.workers.at(-1)?.terminate();
+      await vi.waitFor(() =>
+        expect(records().filter((record) => record.event === 'collector_interrupted')).toHaveLength(2),
+      );
+      const last = records().filter((record) => record.event === 'collector_interrupted')[1];
+      expect(last?.msg).toContain('logging stopped');
+      expect(last?.msg).toContain('stim ios|android');
+      await new Promise((done) => setTimeout(done, 800));
+      expect(startCount()).toBe(2);
+      expect(streams.running()).toBe(false);
+      expect(readWorkspaceState(root)?.collectors?.ios).toMatchObject({ streamId, handover: true });
+    } finally {
+      await streams.close().catch(() => {});
+    }
+  }, 30_000);
+
   test('a worker failure no longer blocks draining a workspace once the new worker has synced it', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });

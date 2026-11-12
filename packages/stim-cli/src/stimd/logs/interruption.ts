@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { rotatedLogPath } from '@stim-cli/core';
 import { parseNdjsonLine } from '../../ndjson.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
@@ -14,29 +14,55 @@ export interface LastWritten {
   record: number | null;
 }
 
-/** Reads both generations of `file`, newest first, for the last records `streamId` wrote. */
+const CHUNK = 256 * 1024;
+
+/**
+ * Reads the generations of `file` from the end, in chunks, for the last records `streamId` wrote. It stops one chunk
+ * after the first device line it finds and keeps the newest timestamp among the lines it saw, so a backfill that
+ * appended older lines after newer ones moves the start back only when it spans more than that window.
+ */
 export async function lastWrittenFor(file: string, streamId: string): Promise<LastWritten> {
   const found: LastWritten = { line: null, record: null };
   const needle = `"streamId":${JSON.stringify(streamId)}`;
+  const take = (raw: string) => {
+    if (!raw.includes(needle)) return;
+    const record = parseNdjsonLine(raw);
+    if (!record || record.streamId !== streamId || typeof record.ts !== 'number') return;
+    found.record = Math.max(found.record ?? 0, record.ts);
+    if (record.event === undefined) found.line = Math.max(found.line ?? 0, record.ts);
+  };
   for (const path of [file, rotatedLogPath(file)]) {
-    let text: string;
+    let handle;
     try {
-      text = await readFile(path, 'utf8');
+      handle = await open(path, 'r');
     } catch {
       continue;
     }
-    const lines = text.split('\n');
-    for (let index = lines.length - 1; index >= 0; index--) {
-      const raw = lines[index];
-      if (!raw || !raw.includes(needle)) continue;
-      const record = parseNdjsonLine(raw);
-      if (!record || record.streamId !== streamId || typeof record.ts !== 'number') continue;
-      found.record = Math.max(found.record ?? 0, record.ts);
-      if (record.event === undefined) {
-        found.line = record.ts;
-        return found;
+    try {
+      let end = (await handle.stat()).size;
+      let partial = Buffer.alloc(0);
+      let after = 0;
+      while (end > 0) {
+        const start = Math.max(0, end - CHUNK);
+        const chunk = Buffer.alloc(end - start);
+        await handle.read(chunk, 0, chunk.length, start);
+        const data = Buffer.concat([chunk, partial]);
+        const newline = start > 0 ? data.indexOf(10) : -1;
+        if (start > 0 && newline < 0) {
+          partial = data;
+          end = start;
+          continue;
+        }
+        const complete = start > 0 ? data.subarray(newline + 1) : data;
+        partial = start > 0 ? data.subarray(0, newline) : Buffer.alloc(0);
+        for (const raw of complete.toString('utf8').split('\n')) take(raw);
+        end = start;
+        if (found.line !== null && ++after >= 2) break;
       }
+    } finally {
+      await handle.close();
     }
+    if (found.line !== null) break;
   }
   return found;
 }

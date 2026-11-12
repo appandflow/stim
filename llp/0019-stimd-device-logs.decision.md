@@ -33,15 +33,22 @@ with no device lines and no record of why until `stim ios|android` ran again.
 - **A planned update** resumes as before and then backfills. No interrupted
   record is written: the stop and start records mark the gap and the backfill
   fills it.
-- **A logs worker failure.** Each stream that can be resumed is marked handed
-  over with the failure as its reason, so its cleanup keeps the record. After
-  the streams have stopped, stimd restarts them once, in the environment each
-  was started with (kept in memory, never on disk). A second failure during that
-  recovery restarts nothing more; the records stay for the next stimd start.
+- **A logs worker failure.** Each resumable stream that is not already being
+  stopped is marked handed over with the failure as its reason, so its cleanup
+  keeps the record; a stream being stopped is left alone and stays stopped. After
+  the streams have stopped, stimd restarts them in the environment each was
+  started with (kept in memory, never on disk). Each stream is restarted at most
+  once per stimd lifetime after a worker failure. If the worker fails again, the
+  stream is not restarted: one interrupted record says logging stopped, and that
+  the next `stim ios|android` in the workspace, or a stimd restart (the record
+  stays handed over), starts it again. The bound is by count, not time, so a
+  failure caused by data cannot loop.
 - **Physical device consoles are not resumed**, because restarting
   `devicectl --console` launches the app. They get the interrupted record only,
   and the record is marked (`interruptedAt`) so later boots do not repeat it.
-  Their claim and orphaned child are left as they were.
+  After a crash their claim and orphaned child are left as they were. After a
+  worker failure the console's child is still signalled and its record removed,
+  as for any stream the worker's failure ends, and then the record is written.
 
 ## The interrupted record
 
@@ -56,13 +63,19 @@ app did not fail, capture did. If a backfill fails, its own
 
 The resumed stream backfills with the existing `backfillDeviceLog`, from one
 millisecond after the newest device line (a record with no `event`) that the
-stream wrote to the workspace's device log, or from the stream's `startedAt` when
-it wrote none. Lines already written have a timestamp at or before that point,
+stream wrote to the workspace's device log, or, when it wrote none, from its `startedAt` but no earlier than five minutes
+before the resume (a quiet app's long range would be slow and large).
+The scan reads the log from its end in chunks and stops one chunk after the first
+device line it finds, taking the newest timestamp it saw. Lines already written have a timestamp at or before that point,
 and the worker drops backfilled lines older than it, so nothing is written
 twice. The worker's deduplication window against the live stream is unchanged.
 
 Limits:
 
+- A stimd that died while a backfill appended older lines after newer ones can
+  start the next backfill too early, repeating the live lines in between, when
+  that spans more than the scan window. A host clock that moves backwards loses
+  gap lines stamped before the start.
 - A line with the same millisecond as the last written one, and written after
   it, is not recovered. Android timestamps include a clock offset measured again
   at resume, so a line within the offset's jitter of the boundary can repeat or
@@ -87,6 +100,11 @@ web record whose Chrome has no observer refuses on its own. Until then
 `ownedDrain` for that root refuses with the stop remedy, and `ownedRunning()`
 holds idle exit.
 
+A web observer's gap after a worker failure leaves no record in `web.ndjson`;
+once its root syncs again, drain reports it complete. A drain that times out
+closing a failed observer still drops it, so a re-attach to the same Chrome can
+overlap the first writer's last buffered writes.
+
 The remedy for a state that cannot be verified is to stop this stimd: it is
 safe, and the next command starts a new one.
 
@@ -99,7 +117,9 @@ its observer until stimd restarted (#5386).
 
 ## Provenance
 
-Maintainer decision: "Bring back helper for both and fix 3 to 6 in stimd", 2026-11-12 ([#5572](https://github.com/appandflow/stim/issues/5572#issuecomment-6834812204)). Items 3, 5 and 6 of the regression audit are this decision. How they are fixed (the claim proof, the owned and booted check, `warn` and the record's shape, backfill from the last written line, per-root unverified state, report-once for a failed web writer) was chosen by the coordinating session and the implementing lane.
+Maintainer decision: "Bring back helper for both and fix 3 to 6 in stimd", 2026-11-12 ([#5572](https://github.com/appandflow/stim/issues/5572#issuecomment-6834812204)). Items 3, 5 and 6 of the regression audit are this decision. How they are fixed (the claim proof, the owned and booted check, `warn` and the record's shape, backfill from the last written line, per-root unverified state, restart once per stream) was chosen by the coordinating session and the implementing lane. Dropping a failed web writer after one report
+is audit item C4, not part of the maintainer's "3 to 6"; it was chosen by the
+coordinating session and the lane, and it needs the maintainer's explicit OK.
 
 Related: #5572, #5462, #5465, #5386.
 

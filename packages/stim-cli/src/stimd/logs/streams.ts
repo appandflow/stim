@@ -396,6 +396,7 @@ function spawnChild(
 }
 
 const noop = () => {};
+const NO_LINE_LOOKBACK_MS = 5 * 60_000;
 class AndroidPidChanged extends Error {}
 
 function environmentHash(env: Record<string, string>): string {
@@ -449,7 +450,7 @@ export function createStreams(
   let writerRecovery: Promise<void> | null = null;
   const unverified = new Set<string>();
   const inflight = new Map<string, number>();
-  let recovering = false;
+  const restarted = new Set<string>();
   let ownedPending = 0;
   let closing = false;
   let closePromise: Promise<void> | null = null;
@@ -476,8 +477,12 @@ export function createStreams(
     )
       stream.controller.abort();
   };
-  const stop = async (stream: Stream): Promise<void> => {
+  const stop = async (stream: Stream, requested = true): Promise<void> => {
     stream.stopping = true;
+    if (requested) {
+      stream.handover = false;
+      stream.interruptedBy = null;
+    }
     const retry = stream.finalized;
     await abortAfterSignal(stream);
     if (
@@ -517,7 +522,7 @@ export function createStreams(
         log(`the logs worker failed: ${error.message}`);
         const lost = [...new Set(streams.values())];
         for (const stream of lost) {
-          if (!closing && !stream.spec.physical) {
+          if (!closing && !stream.spec.physical && !stream.stopping) {
             stream.handover = true;
             stream.interruptedBy = `the logs worker failed (${error.message})`;
           }
@@ -525,10 +530,14 @@ export function createStreams(
         }
         if (closing) return;
         for (const root of inflight.keys()) unverified.add(root);
-        for (const root of Object.keys(loadConfig()?.projects ?? {})) {
-          try {
-            if (readWebRecord(root)?.chromeProcess) unverified.add(root);
-          } catch {}
+        try {
+          for (const root of Object.keys(loadConfig()?.projects ?? {})) {
+            try {
+              if (readWebRecord(root)?.chromeProcess) unverified.add(root);
+            } catch {}
+          }
+        } catch (failure) {
+          log(`the config cannot be read to find owned browsers: ${errorText(failure)}`);
         }
         recover(lost, error);
       },
@@ -1062,6 +1071,7 @@ export function createStreams(
     root: string,
     env: Record<string, string>,
     envs: Map<string, Record<string, string>> = new Map(),
+    skip: Set<string> = new Set(),
   ): Promise<void> => {
     const groups = new Map<
       string,
@@ -1079,7 +1089,7 @@ export function createStreams(
     for (const [slotKey, record] of Object.entries(state?.collectors ?? {})) {
       if (!isJsonObject(record) || record.kind !== 'stream' || typeof record.streamId !== 'string') continue;
       const id = record.streamId;
-      if (live.has(id)) continue;
+      if (live.has(id) || skip.has(id)) continue;
       const handedOver = handedOverStream(record);
       if (!handedOver && typeof record.interruptedAt === 'string') continue;
       const crashed = !handedOver;
@@ -1148,7 +1158,8 @@ export function createStreams(
       const streamEnv = envs.get(id) ?? env;
       try {
         const last = await lastWrittenFor(file, id);
-        const since = last.line !== null ? last.line + 1 : Date.parse(startedAt ?? '');
+        const since =
+          last.line !== null ? last.line + 1 : Math.max(Date.parse(startedAt ?? ''), Date.now() - NO_LINE_LOOKBACK_MS);
         for (const [index, spec] of specs.entries())
           await startLocked(spec, streamEnv, undefined, runId, index === 0 ? id : undefined);
         const stream = [...streams.values()].find((entry) => entry.id === id);
@@ -1199,23 +1210,33 @@ export function createStreams(
       }
     });
   function recover(lost: Stream[], error: Error): void {
-    if (recovering) {
-      log(`the logs worker failed again during recovery; streams stay recorded for the next stimd start`);
-      return;
-    }
     if (!lost.length && !unverified.size) return;
-    recovering = true;
     void (async () => {
       await Promise.allSettled(lost.map((stream) => stream.done));
-      const envs = new Map(lost.map((stream) => [stream.id, stream.env]));
-      const roots = new Set(lost.filter((stream) => !stream.spec.physical).map((stream) => stream.root));
-      for (const root of roots) {
+      const marked = lost.filter((stream) => stream.interruptedBy !== null);
+      const again = marked.filter((stream) => restarted.has(stream.id));
+      const first = marked.filter((stream) => !restarted.has(stream.id));
+      for (const stream of first) restarted.add(stream.id);
+      const envs = new Map(first.map((stream) => [stream.id, stream.env]));
+      for (const root of new Set(first.map((stream) => stream.root))) {
         if (closing) return;
-        await serialize(root, () => resumeIn(root, lost[0]?.env ?? {}, envs)).catch((failure: unknown) =>
-          log(`device log streams in ${root} were not restarted: ${String(failure)}`),
-        );
+        await serialize(root, () =>
+          resumeIn(root, first[0]?.env ?? {}, envs, new Set(again.map((stream) => stream.id))),
+        ).catch((failure: unknown) => log(`device log streams in ${root} were not restarted: ${String(failure)}`));
       }
-      for (const stream of lost.filter((entry) => entry.spec.physical)) {
+      const stopped = [
+        ...again.map((stream) => ({
+          stream,
+          reason: `the logs worker failed again (${error.message}) after stimd restarted this stream; logging stopped here. The next stim ios|android in this workspace, or a stimd restart, starts it again`,
+        })),
+        ...lost
+          .filter((stream) => stream.spec.physical)
+          .map((stream) => ({
+            stream,
+            reason: `the logs worker failed (${error.message}); restarting a physical device console would launch the app again`,
+          })),
+      ];
+      for (const { stream, reason } of stopped) {
         const platform = stream.spec.platform;
         await writeLost(
           stream.root,
@@ -1224,21 +1245,11 @@ export function createStreams(
           stream.spec,
           platform,
           undefined,
-          interruptedRecord({
-            platform,
-            from: null,
-            until: Date.now(),
-            reason: `the logs worker failed (${error.message}); restarting a physical device console would launch the app again`,
-            outcome: 'lost',
-          }),
-        ).catch((failure: unknown) => log(`could not record the interrupted console: ${String(failure)}`));
+          interruptedRecord({ platform, from: null, until: Date.now(), reason, outcome: 'lost' }),
+        ).catch((failure: unknown) => log(`could not record the interrupted stream: ${String(failure)}`));
       }
       for (const root of unverified) if (!closing) await syncRoot(root);
-    })()
-      .catch((failure: unknown) => log(`logs worker recovery failed: ${String(failure)}`))
-      .finally(() => {
-        recovering = false;
-      });
+    })().catch((failure: unknown) => log(`logs worker recovery failed: ${String(failure)}`));
   }
   return {
     async ownedSync(root) {
@@ -1436,7 +1447,7 @@ export function createStreams(
       closePromise ??= (async () => {
         await Promise.all(queues.values());
         if (options?.handover) for (const stream of streams.values()) stream.handover = !stream.spec.physical;
-        const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
+        const results = await Promise.allSettled([...new Set(streams.values())].map((stream) => stop(stream, false)));
         const recovery = await Promise.allSettled([writerRecovery]);
         const owned = await Promise.allSettled([writers?.ownedClose()]);
         const closed = await Promise.allSettled([writers?.close()]);

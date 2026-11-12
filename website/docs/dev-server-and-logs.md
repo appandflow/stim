@@ -298,7 +298,7 @@ A run that builds or reuses an app and then fails before the app is running adds
 `build` error record with event `run_failed`, the error code and the phase it failed
 in, so `stim logs --errors` lists the failure that `stim status` shows.
 
-When stimd or its logs worker stops a simulator or emulator log stream and restarts it, the device log gets one `collector_interrupted` warning with the gap and the reason, and Stim backfills the gap where the platform still holds those lines; `--errors` does not list it.
+When stimd dies or its logs worker fails, the device log gets one `collector_interrupted` warning with the gap and the reason, and Stim backfills the gap where the platform still holds those lines; `--errors` does not list it.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a

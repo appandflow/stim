@@ -171,14 +171,19 @@ export function streamOwnerGone(root: string, streamId: string): { gone: true } 
   if (!holders.length)
     return {
       gone: false,
-      reason: `no claim at ${path} names it, so its owner cannot be verified`,
+      reason: `no claim at ${path} names it, so its owner cannot be verified. Once no process writes this stream, \`stim stop\` in the workspace removes its record`,
     };
   for (const holder of holders) {
     const owner = inspectProcessIdentity(holder.owner);
+    if (owner === 'same')
+      return {
+        gone: false,
+        reason: `its owner (pid ${holder.owner.pid}) is still running; stop that stimd to replace it`,
+      };
     if (owner !== 'gone' && owner !== 'different')
       return {
         gone: false,
-        reason: `its owner (pid ${holder.owner.pid}) is ${owner === 'same' ? 'running' : 'unverified'}`,
+        reason: `its owner (pid ${holder.owner.pid}) cannot be identified. Verify that process has stopped, then run ${claimRemoveCommand(holder.path)} and restart stimd`,
       };
   }
   return { gone: true };
