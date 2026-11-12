@@ -20,6 +20,7 @@ export function createThreadTable(): ThreadTable {
     abort() {
       controller.abort();
     },
+    settle() {},
     async close() {},
   };
 }
