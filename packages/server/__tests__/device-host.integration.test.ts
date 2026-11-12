@@ -730,10 +730,9 @@ test.skipIf(process.platform === 'win32')(
       );
       if ('code' in begun) throw new Error(begun.message);
       const captureIdentity = processIdentity.captureProcessIdentity;
-      vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) => {
-        if (pid !== process.pid) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-        return captureIdentity(pid);
-      });
+      vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) =>
+        pid === process.pid ? captureIdentity(pid) : { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' },
+      );
       const result = await control.input(owner, begun.session, { input: 'posture', posture: 'unfolded' });
       expect(result).toMatchObject({ code: 'action-failed', message: expect.stringContaining('fold broke') });
       expect(result).not.toMatchObject({ message: expect.stringContaining('child identity') });
@@ -2129,10 +2128,9 @@ test.skipIf(process.platform === 'win32')(
   async () => {
     writeFileSync(join(home, 'worker.mjs'), "process.stderr.write('worker broke\\n');process.exit(5);\n");
     const capture = processIdentity.captureProcessIdentity;
-    vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) => {
-      if (pid !== process.pid) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-      return capture(pid);
-    });
+    vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) =>
+      pid === process.pid ? capture(pid) : { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' },
+    );
     try {
       const answer = await host.offer('client', { platform: 'ios' });
       expect(answer).toMatchObject({ error: { message: expect.stringContaining('worker broke') } });

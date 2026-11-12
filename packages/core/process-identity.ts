@@ -39,11 +39,44 @@ export function childExitedWithin(child: ObservableChild, graceMs: number = EXIT
   });
 }
 
-/** Runs `onLive` when a child whose capture read `NOT_FOUND` has not been seen to exit; see {@link childExitedWithin}. */
+/**
+ * Runs `onLive` when a child whose capture read `NOT_FOUND` has not been seen to exit; see {@link childExitedWithin}.
+ * A throwing `onLive` is logged, not raised, so it cannot become an unhandled rejection.
+ */
 export function unlessChildExits(child: ObservableChild, onLive: () => void, graceMs?: number): void {
   void (async () => {
-    if (!(await childExitedWithin(child, graceMs))) onLive();
+    if (await childExitedWithin(child, graceMs)) return;
+    try {
+      onLive();
+    } catch (error) {
+      console.error(`stim: a child whose identity was not found could not be handled: ${String(error)}`);
+    }
   })();
+}
+
+/**
+ * For a caller that must record a child's identity but read `NOT_FOUND`: when the child's own exit is not seen within
+ * the grace, a live process is capturable, so read it again and give the token to `record`. A child that still cannot
+ * be read, or whose record fails, is stopped through its handle, so nothing runs without a record.
+ */
+export function recordIdentityUnlessExited(
+  child: ObservableChild & Pick<ChildProcess, 'pid' | 'kill'>,
+  record: (token: string) => void,
+  graceMs?: number,
+): void {
+  unlessChildExits(
+    child,
+    () => {
+      const again = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      try {
+        if (!again?.ok) throw new Error('identity unreadable');
+        record(again.token);
+      } catch {
+        child.kill('SIGKILL');
+      }
+    },
+    graceMs,
+  );
 }
 
 export function captureProcessToken(pid: number): string | null {

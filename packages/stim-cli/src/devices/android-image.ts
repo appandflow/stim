@@ -14,7 +14,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, recordIdentityUnlessExited } from '../process-identity.ts';
 import { settingValueAt } from '../workspace/settings.ts';
 import {
   androidHome,
@@ -275,8 +275,10 @@ export async function installSystemImage({
           if (child.pid === undefined) return;
           const captured = captureProcessIdentity(child.pid);
           if (captured.ok) setClaimChild(held, { pid: child.pid, processToken: captured.token });
-          else if (captured.code !== 'NOT_FOUND')
-            throw new Error(`Cannot record the sdkmanager process: ${captured.reason}`);
+          else if (captured.code === 'NOT_FOUND') {
+            const pid = child.pid;
+            recordIdentityUnlessExited(child, (processToken) => setClaimChild(held, { pid, processToken }));
+          } else throw new Error(`Cannot record the sdkmanager process: ${captured.reason}`);
         },
       });
     } catch (error) {

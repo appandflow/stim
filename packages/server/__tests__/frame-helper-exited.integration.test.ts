@@ -26,10 +26,9 @@ it.skipIf(process.platform === 'win32')(
     const claim = tryAcquireClaim({ root: join(home, 'frames.claims'), mode: 'exclusive' }).acquired;
     if (!claim) throw new Error('The test claim was not acquired.');
     const capture = processIdentity.captureProcessIdentity;
-    vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) => {
-      if (pid !== process.pid) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-      return capture(pid);
-    });
+    vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((pid) =>
+      pid === process.pid ? capture(pid) : { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' },
+    );
     const failed = new Promise<string>((resolve) => {
       const source = new HelperSource(
         helper,

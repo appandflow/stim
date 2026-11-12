@@ -4052,10 +4052,11 @@ describe('parked hosted device GC', () => {
       const script = join(deviceHostArea(sessionId), 'home', 'exiting-worker.mjs');
       writeFileSync(script, "process.stderr.write('worker broke\\n');process.exit(6);\n");
       setExecutor({ ...getExecutor(), spawn: (file, _args, options) => spawn(file, [script], options) });
-      vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-        return captureProcessIdentity(pid);
-      });
+      vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) =>
+        pid === process.pid
+          ? captureProcessIdentity(pid)
+          : { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' },
+      );
       try {
         expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
         expect(takeGcResults()).toMatchObject([{ status: 'failed', detail: expect.stringContaining('worker broke') }]);

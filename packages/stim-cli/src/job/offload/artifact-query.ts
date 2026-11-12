@@ -9,12 +9,7 @@ import {
   setClaimChild,
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
-import {
-  captureProcessIdentity,
-  inspectProcessIdentity,
-  unlessChildExits,
-  type ProcessRecord,
-} from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
 import type {
   BuildArtifactIdentity,
@@ -187,13 +182,10 @@ export function runArtifactQuery({
   });
   signal.addEventListener('abort', cancel, { once: true });
   const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-  const unavailable = () => {
+  if (!captured?.ok || child.pid === undefined) {
     signalChild(child, 'SIGKILL');
     cancel();
-  };
-  if (captured?.ok === false && captured.code === 'NOT_FOUND') unlessChildExits(child, unavailable);
-  else if (!captured?.ok || child.pid === undefined) unavailable();
-  else {
+  } else {
     identity = { pid: child.pid, processToken: captured.token };
     try {
       setClaimChild(claim, identity);

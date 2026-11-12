@@ -241,7 +241,10 @@ async function deleteInBackground(trash: WorktreeTrash): Promise<'background' | 
         releaseClaim(trash.claim);
       };
       if (!(await childExitedWithin(child))) {
-        child.once('exit', release);
+        const again = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (again?.ok && child.pid !== undefined) {
+          setClaimChild(trash.claim, { pid: child.pid, processToken: again.token });
+        }
         return 'background';
       }
       release();

@@ -14,7 +14,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, recordIdentityUnlessExited } from '../process-identity.ts';
 import { createLineReader, stripAnsi } from '../process-output.ts';
 import { iosRuntimeMatches, listIosRuntimesAsync } from './ios.ts';
 
@@ -150,8 +150,13 @@ export async function ensureIosRuntime({
                 const identity = { pid: child.pid, processToken: captured.token };
                 setClaimChild(claim, identity);
                 if (slot?.claim) setClaimChild(slot.claim, identity);
-              } else if (captured.code !== 'NOT_FOUND')
-                throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
+              } else if (captured.code === 'NOT_FOUND') {
+                const pid = child.pid;
+                recordIdentityUnlessExited(child, (processToken) => {
+                  setClaimChild(claim, { pid, processToken });
+                  if (slot?.claim) setClaimChild(slot.claim, { pid, processToken });
+                });
+              } else throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
             }
             child.stdout?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
             child.stderr?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
