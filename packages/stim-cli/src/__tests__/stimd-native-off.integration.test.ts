@@ -17,6 +17,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { runOperation } from '../run-operation.ts';
 import { startDeviceLogStream, stopDeviceLogStream } from '../daemon/client.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
+import { killStimdUnder } from '../../../../vitest.kill-run-processes.ts';
 import { testContext } from './_context.ts';
 
 describe.skipIf(process.platform === 'win32')('native device logs without automatic passes', () => {
@@ -113,6 +114,7 @@ describe.skipIf(process.platform === 'win32')('native device logs without automa
           );
         }
         vi.unstubAllEnvs();
+        killStimdUnder(home);
         rmSync(home, { recursive: true, force: true });
         rmSync(root, { recursive: true, force: true });
       }
