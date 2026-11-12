@@ -1,6 +1,7 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
+import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
 import {
@@ -103,7 +104,11 @@ export async function rankDependencies(
   );
   return found.candidates
     .flatMap((candidate) => {
-      const workspace = workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? ''));
+      const workspace =
+        workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? '')) ??
+        (candidate.keys.every((key) => !getProject(key)) && rank.has(canonicalOrNull(candidate.worktree) ?? '')
+          ? candidate.worktree
+          : undefined);
       if (!workspace) return [];
       const dependency: RankedDependency = {
         candidate,

@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, type Config } from '@stim-cli/core/state';
@@ -50,12 +50,33 @@ export function selectDiscovered({
   return [...found.values()].toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
-function recognises(path: string): boolean {
+const PROJECT_FOLDERS = ['apps', 'examples', 'packages'];
+const PROJECT_FOLDER_ENTRIES = 50;
+
+function isProject(path: string): boolean {
   try {
     return projectRegistry.selectDoctor(path).problem === null;
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether Stim's project detection recognises the folder: it is a project itself, or a direct child of its `apps/`,
+ * `examples/` or `packages/` is, as in a monorepo whose root holds no app.
+ */
+function recognises(path: string): boolean {
+  if (isProject(path)) return true;
+  return PROJECT_FOLDERS.some((folder) => {
+    try {
+      return readdirSync(join(path, folder), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+        .slice(0, PROJECT_FOLDER_ENTRIES)
+        .some((entry) => isProject(join(path, folder, entry.name)));
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function childrenOf(
@@ -92,7 +113,20 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): string[
  * direct children of `maintenance.discoverRoots`. A scoped STIM_HOME discovers only from that setting, so a scratch
  * home never reaches the repositories of another. Nothing is registered, written or persisted.
  */
-export async function discoverCheckouts(
+export function discoverCheckouts(
+  config: Config | null,
+  known: readonly string[],
+  operation?: StimContext,
+): Promise<DiscoveredCheckout[]> {
+  if (!operation) return computeDiscovered(config, known, operation);
+  let found = memo.get(operation);
+  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation)));
+  return found;
+}
+
+const memo = new WeakMap<StimContext, Promise<DiscoveredCheckout[]>>();
+
+async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
@@ -121,5 +155,19 @@ export async function discoverCheckouts(
   for (const [folder, from] of folders) children.push(...(await childrenOf(folder, 'sibling', from, operation)));
   for (const root of configuredRoots(config, env))
     children.push(...(await childrenOf(canonicalPath(root), 'root', root, operation)));
+  if (!isScopedHome(operation?.env)) {
+    const options = { env, signal: operation?.signal, declareFor: operation };
+    const seen = new Set(worktrees.map(({ from }) => from));
+    for (const child of children) {
+      if (!child.recognised) continue;
+      operation?.signal.throwIfAborted();
+      const { entries, ...source } = await resolveSourceCheckoutAsync(child.path, options);
+      if ('refusal' in source || seen.has(source.path)) continue;
+      seen.add(source.path);
+      for (const entry of entries)
+        if (!entry.bare && !entry.prunable && entry.path !== source.path && existsSync(entry.path))
+          worktrees.push({ path: canonicalPath(entry.path), from: source.path });
+    }
+  }
   return selectDiscovered({ known: known.map(canonicalPath), worktrees, children });
 }

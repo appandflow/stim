@@ -1107,8 +1107,10 @@ discovery finds it: linked worktrees of the repositories of registered projects
 (\`git worktree list\`), direct children of the folders that hold those
 checkouts, and direct children of the folders in maintenance.discoverRoots (a
 machine setting, a list of absolute paths). A child counts only when Stim's
-project detection recognises it as a project it handles; any other folder is
-ignored. Discovery registers nothing, writes nothing and recomputes each run.
+project detection recognises it as a project it handles, itself or through a
+direct child of its apps, examples or packages folder (a monorepo root); any
+other folder is ignored. A recognised folder's own linked worktrees are found
+through git worktree list. Discovery registers nothing, writes nothing and recomputes each run.
 A scoped STIM_HOME discovers only from its own maintenance.discoverRoots.
   stim settings set maintenance.discoverRoots '["/Users/me/Developer"]' --scope machine
 A discovered checkout follows the registered rules: its regenerable build
@@ -1119,9 +1121,14 @@ source file writes (outside node_modules, Pods, build output and nested
 worktrees), its last commit, its git writes. A process running from or working
 in it, an agent session in it, a pin by maintenance.keep, more source files than
 the scan reads, or evidence that cannot be read keeps it. Dirty work is kept,
-never archived. Its node_modules and Pods stay, since Stim has no workspace
-record to restore them from. \`stim gc --dry-run\` lists the discovered
-checkouts and what each would lose.
+never archived (a registered finished worktree's dirty work is archived first).
+A linked discovered worktree idle for idle.dormantDays loses node_modules and
+Pods like a registered one; a main checkout keeps them. A target directory at
+a checkout root that carries Cargo's CACHEDIR.TAG and whose files git ignores
+counts as build output for every checkout, under the same guards as an Exact
+app's. \`stim gc --dry-run\` lists the discovered checkouts and what each would
+lose, or why it is kept; a checkout with more source files than the scan reads
+is listed under Needs a person.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`

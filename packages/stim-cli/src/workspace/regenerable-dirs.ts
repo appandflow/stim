@@ -129,18 +129,27 @@ export async function exactTargetDirAsync(root: string): Promise<string | null> 
   return (await readAsync(exactTargetDirs(root)))[0] ?? null;
 }
 
+const CACHEDIR_TAG = 'CACHEDIR.TAG';
+
+function* cargoRootTargetDirs(root: string): DirReads<string[]> {
+  const path = join(root, CARGO_TARGET);
+  if (!(yield* realDirectory(path))) return [];
+  return (yield* namesIn(path)).includes(CACHEDIR_TAG) ? [path] : [];
+}
+
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
-  const cargo = yield* exactTargetDirs(root);
+  const cargo = [...new Set([...(yield* exactTargetDirs(root)), ...(yield* cargoRootTargetDirs(root))])];
   return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
- * out as DerivedData, and an Exact app's Cargo `target/` (beside its `exact.mjs`). A `.dd` that is not
- * laid out as DerivedData is not one, nor is a `target/` anywhere else.
+ * out as DerivedData, and a Cargo `target/` directly under `root`: an Exact app's (beside its `exact.mjs`) or any
+ * that carries Cargo's `CACHEDIR.TAG`. A `.dd` that is not laid out as DerivedData is not one, nor is a `target/`
+ * anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {
   return readSync(discoveredBuildDirsReads(root));
@@ -179,7 +188,11 @@ export function isBuildDirPath(path: string): boolean {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET) return readSync(exactTargetDirs(dirname(path))).includes(path);
+  if (name === CARGO_TARGET)
+    return (
+      readSync(exactTargetDirs(dirname(path))).includes(path) ||
+      readSync(cargoRootTargetDirs(dirname(path))).includes(path)
+    );
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
@@ -212,7 +225,8 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    (await readAsync(exactTargetDirs(dirname(path)))).includes(path)
+    ((await readAsync(exactTargetDirs(dirname(path)))).includes(path) ||
+      (await readAsync(cargoRootTargetDirs(dirname(path)))).includes(path))
   ) {
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);

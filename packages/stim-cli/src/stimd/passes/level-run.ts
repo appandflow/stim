@@ -11,6 +11,9 @@ import { loadConfig } from '../../workspace/config.ts';
 import { measureDisk, measureMemory } from '../../daemon/measure.ts';
 import { classifyPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { runDormantReduction, runForcedLadder } from '../../daemon/passes.ts';
+import { discoveredKeepReason, dormantAfterMs } from '../../daemon/stages.ts';
+import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
+import { processReader } from '../../workspace/running-from.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
@@ -19,6 +22,7 @@ import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
+import { existsSync } from 'node:fs';
 import { discoverCheckouts, type DiscoveredCheckout } from '../../workspace/discovery.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 
@@ -45,7 +49,7 @@ export interface LevelRun {
   /** What the run could not decide or reach, each for a person to look at. */
   blocked: string[];
   /** Checkouts no stim command ran in that this run treats as workspaces, with the actions it took or would take in each. */
-  discovered: (DiscoveredCheckout & { actions: LevelRunAction[] })[];
+  discovered: (DiscoveredCheckout & { actions: LevelRunAction[]; kept?: string })[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
 }
@@ -185,15 +189,24 @@ export async function runMaintenanceAtLevel({
     });
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
-  const discovered = found.map((checkout) =>
-    Object.assign({}, checkout, {
-      actions: actions.filter((action) =>
-        [action.target, action.workspace].some(
-          (path) => path !== undefined && (path === checkout.path || path.startsWith(`${checkout.path}/`)),
-        ),
+  const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
+  const processes = processReader(operation?.signal);
+  const discovered: LevelRun['discovered'] = [];
+  for (const checkout of found) {
+    const mine = actions.filter((action) =>
+      [action.target, action.workspace].some(
+        (path) => path !== undefined && (path === checkout.path || path.startsWith(`${checkout.path}/`)),
       ),
-    }),
-  );
+    );
+    const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
+    const kept =
+      taken || idleMs <= 0 || !existsSync(checkout.path)
+        ? null
+        : await discoveredKeepReason(checkout.path, idleMs, operation, processes);
+    if (kept && /source entries to check|cannot be read/.test(kept))
+      blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
+    discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
+  }
   const usage = sizes
     .filter((size) => size.bytes > 0)
     .toSorted((a, b) => b.bytes - a.bytes)

@@ -124,11 +124,11 @@ async function runsSomething(path: string, project: ProjectRecord, reading: Devi
 
 /**
  * How long a workspace with nothing running has had no activity, when that is at least `thresholdMs` and nothing
- * keeps it: a blocker, unreadable evidence, `maintenance.keep`, or `idle.minutes` 0.
+ * keeps it: a blocker, unreadable evidence, `maintenance.keep`, or `idle.minutes` 0; else why it is kept.
  */
 const PRESSURE_THRESHOLD = 'the pressure idle threshold';
 
-async function idleFor(
+async function idleVerdict(
   path: string,
   thresholdMs: number,
   setting: string,
@@ -137,7 +137,7 @@ async function idleFor(
     operation,
     processes = processReader(operation?.signal),
   }: { locked?: boolean; operation?: StimContext; processes?: () => Promise<RunningProcesses | null> } = {},
-): Promise<number | null> {
+): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
   const stim = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
@@ -146,16 +146,41 @@ async function idleFor(
       ? stim
       : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, processes, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
-  if (!decision.stop) return null;
+  if (!decision.stop) return { kept: decision.reason };
   try {
     const { settings } = await projectSettings(path, operation);
-    if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) return null;
+    if (maintenanceKeepSetting(settings)) return { kept: 'pinned by maintenance.keep' };
+    if (idleMinutesSetting(settings) === 0) return { kept: 'idle.minutes is 0' };
   } catch (error) {
     if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     operation?.signal.throwIfAborted();
-    return null;
+    return { kept: `its settings cannot be resolved: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return decision.idleMs;
+  return { idleMs: decision.idleMs };
+}
+
+async function idleFor(
+  path: string,
+  thresholdMs: number,
+  setting: string,
+  options: Parameters<typeof idleVerdict>[3] = {},
+): Promise<number | null> {
+  const verdict = await idleVerdict(path, thresholdMs, setting, options);
+  return 'idleMs' in verdict ? verdict.idleMs : null;
+}
+
+/** Why a discovered checkout is not idle `thresholdMs` by the activity definition, or null when it is. */
+export async function discoveredKeepReason(
+  path: string,
+  thresholdMs: number,
+  operation?: StimContext,
+  processes?: () => Promise<RunningProcesses | null>,
+): Promise<string | null> {
+  const verdict = await idleVerdict(path, thresholdMs, 'idle.dormantDays', {
+    operation,
+    ...(processes ? { processes } : {}),
+  });
+  return 'kept' in verdict ? verdict.kept : null;
 }
 
 function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, b: T): T {
@@ -214,7 +239,7 @@ export function idleStageCandidates(
   reading: DeviceReading,
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true);
+  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true, { discover: true });
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */
