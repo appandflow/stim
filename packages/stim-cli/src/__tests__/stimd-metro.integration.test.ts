@@ -17,10 +17,11 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
-import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -134,6 +135,16 @@ function ask(op: string, params: Record<string, unknown>, opToken?: string): Pro
         resolve(JSON.parse(line));
       }
     });
+  });
+}
+
+function cliRun(cwd: string, args: string[]): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.stderr.on('data', (chunk) => (out += chunk));
+    child.once('exit', (code) => resolve({ code, out }));
   });
 }
 
@@ -265,7 +276,7 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     await expect(
-      ask('tunnel.ensure', { root, provider: 'cloudflared', port: await freePort(), requireReachable: false }),
+      ask('tunnel.ensure', { root, mode: 'cloudflared', port: await freePort(), requireReachable: false }),
     ).resolves.toMatchObject({ op: 'tunnel' });
     const exited = once(child, 'exit');
     child.stdin?.end();
@@ -298,7 +309,7 @@ exec sleep 600
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     const pending = ask('tunnel.ensure', {
       root,
-      provider: 'cloudflared',
+      mode: 'cloudflared',
       port: await freePort(),
       requireReachable: false,
     });
@@ -332,7 +343,7 @@ exec sleep 600
     expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
     void ask('tunnel.ensure', {
       root,
-      provider: 'cloudflared',
+      mode: 'cloudflared',
       port: await freePort(),
       requireReachable: false,
     }).catch(() => {});
@@ -468,7 +479,7 @@ exports.runServer = (config) => new Promise((resolve) => {
       });
       expect(readFileSync(join(dir, 'metro-env'), 'utf8').trim()).toBe('first');
       first.socket.write(
-        `${JSON.stringify({ op: 'tunnel.ensure', params: { root, port, provider: 'cloudflared', requireReachable: false } })}\n`,
+        `${JSON.stringify({ op: 'tunnel.ensure', params: { root, port, mode: 'cloudflared', requireReachable: false } })}\n`,
       );
       await vi.waitFor(() => expect(first.lines[3]).toMatchObject({ op: 'tunnel' }), { timeout: 15_000 });
       expect(readFileSync(join(dir, 'tunnel-env'), 'utf8').trim()).toBe('first');
@@ -861,12 +872,267 @@ require('node:http')
     expect(alive(first.pid)).toBe(false);
   }, 30_000);
 
+  test('tunnel.ensure tries ngrok, then cloudflared, records the tunnel, reuses it, refuses another port, and tunnel.stop ends it', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
+    await startStimd();
+    const port = await freePort();
+    const stateOf = () =>
+      existsSync(workspaceStateFile(root)) ? JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')) : {};
+
+    const first = await ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false });
+    expect(first).toMatchObject({
+      op: 'tunnel',
+      reused: false,
+      provider: 'cloudflared',
+      url: 'https://fixture-words.trycloudflare.com',
+      port,
+    });
+    expect(stateOf().metroTunnel).toMatchObject({
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: first.pid,
+      processToken: first.processToken,
+    });
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://other' } }));
+    await expect(ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false })).resolves.toMatchObject({
+      reused: true,
+      pid: first.pid,
+    });
+    expect(stateOf().metroTunnel).toMatchObject({ kind: 'managed', pid: first.pid });
+    await expect(
+      ask('tunnel.ensure', { root, mode: 'auto', port: port + 1, requireReachable: false }),
+    ).resolves.toMatchObject({ op: 'error', code: 'STIM_REMOTE_START_REQUIRED' });
+
+    await expect(ask('tunnel.stop', { root, pid: first.pid, processToken: first.processToken })).resolves.toMatchObject(
+      { op: 'tunnel.stopped', state: 'stopped' },
+    );
+    expect(alive(first.pid)).toBe(false);
+    expect(stateOf().metroTunnel).toBeUndefined();
+  }, 30_000);
+
+  test('stim start --remote runs the tunnel in stimd and stim stop ends it and releases its claim', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'cloudflared' } } });
+    try {
+      const started = await cliRun(root, ['start', '--remote', '--json', '--wait', '40']);
+      expect(started.code).toBe(0);
+      const recorded = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel;
+      expect(recorded).toMatchObject({ kind: 'managed', provider: 'cloudflared', port });
+      const claim = readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live[0];
+      expect(claim?.child?.pid).toBe(recorded.pid);
+      expect(alive(recorded.pid)).toBe(true);
+
+      const stopped = await cliRun(root, ['stop']);
+      expect(stopped.code).toBe(0);
+      expect(alive(recorded.pid)).toBe(false);
+      expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
+    } finally {
+      const daemon = record()?.pid;
+      if (typeof daemon === 'number' && daemon > 0) {
+        if (alive(daemon)) process.kill(daemon, 'SIGTERM');
+        for (const until = Date.now() + 15_000; alive(daemon) && Date.now() < until;)
+          await new Promise((done) => setTimeout(done, 50));
+      }
+    }
+  }, 90_000);
+
+  test('a stimd that ends during the tunnel URL wait leaves a tunnel that stim stop ends and start --remote can replace', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'cloudflared' } } });
+    write(
+      join(dir, 'bin', 'cloudflared'),
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done\nsleep 4\n' +
+        'echo "https://slow.trycloudflare.com" >> "$log"\nexec sleep 600\n',
+      0o755,
+    );
+    const claimRoot = join(workspaceDir(root), 'tunnel.claim');
+    const daemon = await startStimd();
+    const crashed = stimd ? once(stimd, 'exit') : Promise.resolve();
+    const pending = ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false }).catch(
+      () => null,
+    );
+    await vi.waitFor(() => expect(readClaimSet(claimRoot).live[0]?.child).toBeTruthy(), { timeout: 10_000 });
+    const held = readClaimSet(claimRoot).live[0];
+    expect(held?.details).toMatchObject({ port, provider: 'cloudflared' });
+    const providerPid = held?.child?.pid;
+    process.kill(daemon, 'SIGKILL');
+    await crashed;
+    void pending;
+    stimd = null;
+    expect(alive(providerPid)).toBe(true);
+    expect(existsSync(workspaceStateFile(root)) && readFileSync(workspaceStateFile(root), 'utf8')).not.toContain(
+      'metroTunnel',
+    );
+
+    await startStimd();
+    const stopped = await cliRun(root, ['stop']);
+    expect(stopped.code).toBe(0);
+    expect(alive(providerPid)).toBe(false);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+
+    const restarted = await cliRun(root, ['start', '--remote', '--json', '--wait', '40']);
+    expect(restarted.code).toBe(0);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel).toMatchObject({
+      kind: 'managed',
+      url: 'https://slow.trycloudflare.com',
+    });
+    expect((await cliRun(root, ['stop'])).code).toBe(0);
+  }, 90_000);
+
+  test("starting Expo's own tunnel first stops the workspace's managed tunnel", async () => {
+    const root = join(dir, 'expo-managed');
+    write(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^50.0.0' } }));
+    write(join(root, 'app.json'), JSON.stringify({ name: 'app', platforms: ['ios', 'android'] }));
+    write(
+      join(root, 'node_modules', 'expo', 'package.json'),
+      JSON.stringify({ name: 'expo', version: '50.0.0', bin: { expo: 'bin/cli' } }),
+    );
+    write(
+      join(root, 'node_modules', 'expo', 'bin', 'cli'),
+      `#!/usr/bin/env node
+const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
+require('node:http')
+  .createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''))
+  .listen(port, () => console.log('Waiting on exp://fixture-tunnel.exp.direct'));
+`,
+      0o755,
+    );
+    const workspace = realpathSync(root);
+    const port = await freePort();
+    await startStimd();
+    const managed = await ask('tunnel.ensure', { root: workspace, mode: 'cloudflared', port, requireReachable: false });
+    expect(managed).toMatchObject({ op: 'tunnel' });
+    await expect(ask('metro.ensure', { root: workspace, port, tunnel: true })).resolves.toMatchObject({ op: 'metro' });
+    expect(alive(managed.pid)).toBe(false);
+    expect(readClaimSet(join(workspaceDir(workspace), 'tunnel.claim')).live).toEqual([]);
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')).metroTunnel).toEqual({
+        kind: 'expo',
+        url: 'https://fixture-tunnel.exp.direct',
+      }),
+    );
+  }, 30_000);
+
+  test('stim stop exits non-zero while another live process or an unresolved claim holds a tunnel', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port });
+    const claimRoot = join(workspaceDir(root), 'tunnel.claim');
+    const sleeper = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    sleeper.unref();
+    const sleeperPid = sleeper.pid;
+    if (!sleeperPid) throw new Error('fixture did not start');
+    try {
+      await startStimd();
+      plantClaim(claimRoot, 'exclusive', goneClaimOwner(process.pid), {
+        details: { port, provider: 'cloudflared' },
+        child: { record: { pid: sleeperPid, processToken: captureProcessToken(sleeperPid) } },
+      });
+      const live = await cliRun(root, ['stop']);
+      expect(live.code).not.toBe(0);
+      expect(live.out).toContain(`process ${process.pid} still holds`);
+      expect(alive(sleeperPid)).toBe(true);
+
+      rmSync(claimRoot, { recursive: true, force: true });
+      plantClaim(claimRoot, 'exclusive', goneClaimOwner(), { details: { port }, child: { record: null } });
+      const unresolved = await cliRun(root, ['stop']);
+      expect(unresolved.code).not.toBe(0);
+      expect(unresolved.out).toContain('tunnel.claim');
+    } finally {
+      process.kill(-sleeperPid, 'SIGKILL');
+    }
+  }, 60_000);
+
+  test('a url-less claim first adopted by tunnel.ensure is stopped and replaced, not reused', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    const sleeper = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    sleeper.unref();
+    const sleeperPid = sleeper.pid;
+    if (!sleeperPid) throw new Error('fixture did not start');
+    try {
+      await startStimd();
+      plantClaim(join(workspaceDir(root), 'tunnel.claim'), 'exclusive', goneClaimOwner(), {
+        details: { port, provider: 'cloudflared' },
+        child: { record: { pid: sleeperPid, processToken: captureProcessToken(sleeperPid) } },
+      });
+      const answer = await ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false });
+      expect(answer).toMatchObject({ op: 'tunnel', reused: false });
+      expect(answer.pid).not.toBe(sleeperPid);
+      expect(alive(sleeperPid)).toBe(false);
+    } finally {
+      if (alive(sleeperPid)) process.kill(-sleeperPid, 'SIGKILL');
+    }
+  }, 30_000);
+
+  test('a named provider that fails is refused with its reason and no other provider runs', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
+    await startStimd();
+    const answer = await ask('tunnel.ensure', { root, mode: 'ngrok', port: await freePort(), requireReachable: false });
+    expect(answer).toMatchObject({
+      op: 'error',
+      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+      remedy: expect.stringContaining('ngrok: ngrok exited before printing a tunnel URL.'),
+    });
+    expect(answer.remedy).not.toContain('cloudflared');
+    expect(readClaimSet(join(workspaceDir(root), 'tunnel.claim')).live).toEqual([]);
+  }, 30_000);
+
+  test('a tunnel an earlier CLI recorded without a claim is reused or stopped by its verified identity, never another', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    const old = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    old.unref();
+    const oldPid = old.pid;
+    if (!oldPid) throw new Error('fixture did not start');
+    const token = captureProcessToken(oldPid);
+    const recordedTunnel = {
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: old.pid,
+      url: 'https://old.trycloudflare.com',
+      port,
+      startedAt: 'T',
+      processToken: token,
+    };
+    write(workspaceStateFile(root), JSON.stringify({ metroTunnel: recordedTunnel }));
+    try {
+      await startStimd();
+      await expect(ask('tunnel.stop', { root, pid: old.pid, processToken: 'someone-else' })).resolves.toMatchObject({
+        op: 'error',
+        code: 'tunnel-changed',
+      });
+      await expect(
+        ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false }),
+      ).resolves.toMatchObject({
+        reused: true,
+        pid: old.pid,
+        url: 'https://old.trycloudflare.com',
+      });
+      await expect(ask('tunnel.stop', { root, pid: old.pid, processToken: token })).resolves.toMatchObject({
+        state: 'stopped',
+      });
+      expect(alive(old.pid)).toBe(false);
+      expect(
+        existsSync(workspaceStateFile(root))
+          ? JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel
+          : undefined,
+      ).toBeUndefined();
+    } finally {
+      if (alive(old.pid)) process.kill(-oldPid, 'SIGKILL');
+    }
+  }, 30_000);
+
   test('a restarted stimd re-adopts its Metro and tunnel by claim and reads the output it missed; a Metro of other injected files is foreign until a launch restarts it', async () => {
     const root = bareProject();
     const port = await freePort();
     await startStimd();
     const metro = await ask('metro.ensure', { root, port });
-    const tunnel = await ask('tunnel.ensure', { root, provider: 'cloudflared', port, requireReachable: false });
+    const tunnel = await ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false });
     expect(tunnel).toMatchObject({ op: 'tunnel', url: 'https://fixture-words.trycloudflare.com' });
 
     await stopStimd();
@@ -890,7 +1156,10 @@ require('node:http')
       { timeout: 5000, interval: 100 },
     );
     await expect(ask('metro.ensure', { root, port })).resolves.toEqual({ ...metro, state: 'running' });
-    await expect(ask('tunnel.ensure', { root, provider: 'cloudflared', port })).resolves.toEqual(tunnel);
+    await expect(ask('tunnel.ensure', { root, mode: 'cloudflared', port })).resolves.toEqual({
+      ...tunnel,
+      reused: true,
+    });
 
     await stopStimd();
     const claim = claimFile(root, 'metro');

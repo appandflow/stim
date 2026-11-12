@@ -103,6 +103,7 @@ import {
   ensureMetro,
   stopManagedMetro,
   ensureTunnel,
+  stopManagedTunnel,
   metroChildrenRun,
   metroRootsEndingWithStimd,
   metroOpFlags,
@@ -1315,10 +1316,11 @@ async function runStimdInner(
               ),
             );
           }
-        } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
+        } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop' || op === 'tunnel.stop') {
           admissionRevision++;
-          const context = opContexts.get(socket);
-          if (ops.has(socket) && !context) {
+          const opOwner = typeof message.opToken === 'string' ? opTokens.get(message.opToken) : socket;
+          const context = opOwner ? opContexts.get(opOwner) : undefined;
+          if ((ops.has(socket) || typeof message.opToken === 'string') && !context) {
             reply({ op: 'error', code: 'op-not-ready', message: 'the operation has no admitted workspace' });
             continue;
           }
@@ -1345,8 +1347,10 @@ async function runStimdInner(
               ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
               : op === 'metro.stop'
                 ? stopManagedMetro(message.params, log)
-                : ensureTunnel(message.params, operationEnv);
-          const controller = opControllers.get(socket);
+                : op === 'tunnel.stop'
+                  ? stopManagedTunnel(message.params, log)
+                  : ensureTunnel(message.params, log, operationEnv, opControllers.get(opOwner ?? socket)?.signal);
+          const controller = opOwner ? opControllers.get(opOwner) : undefined;
           const ask =
             context && controller
               ? traceInvocation(context, `stimd.${op}`, () => withInvocation(context, controller.signal, perform))
