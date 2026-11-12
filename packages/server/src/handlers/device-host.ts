@@ -41,6 +41,7 @@ function carry(ctx: ConnectionContext, stream: Duplex): void {
   });
 }
 
+// @ref LLP 0010#the-client-opens-every-bridge -- clients can run behind a one-way connection
 function linkMetro(ctx: ConnectionContext, id: RequestId, raw: unknown, session: PairedDevice): void {
   if (ctx.metroLink || ctx.metroStream) return ctx.error(id, 'bad-request', 'This connection already links Metro.');
   const link: MetroLink = {

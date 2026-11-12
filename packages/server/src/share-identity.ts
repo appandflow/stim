@@ -17,6 +17,7 @@ export function digest(value: string): Buffer {
  * The access `given` earns: the control password's, or the view password's. Both digests are always compared, so the
  * time taken does not say which password, or whether a view password exists, was closer.
  */
+// @ref LLP 0011#viewer-permissions-stay-on-the-server -- viewer authority comes from the server-side session
 export function accessFor(given: string, control: Buffer, view: Buffer | null): ShareAccess | null {
   const hash = digest(given);
   const isControl = timingSafeEqual(hash, control);

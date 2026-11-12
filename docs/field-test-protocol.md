@@ -131,7 +131,7 @@ Deviate when reality demands it — and log why as a friction.
    (`expo-child` for Expo apps, `bare-inproc` for bare RN — a wrong detection
    here is CRITICAL), the global readable workspace directory created under
    `~/.stim/workspaces/<project>--<digest>/`, second
-   `start` a no-op, `status` shows the supervisor healthy.
+   `start` a no-op, `status` shows Metro running.
 4. **Build.** `stim ios` (and/or `android`). Cold: watch the phase
    lines; on failure judge the extracted diagnostic against the raw log in
    `~/.stim/workspaces/<project>--<digest>/logs/build-*.ndjson` — was it enough to act on? Assert the
@@ -157,7 +157,8 @@ Deviate when reality demands it — and log why as a friction.
 9. **Verify cleanup**, all five:
    - `xcrun simctl list devices | grep Stim` → none of yours remain
      (`emulator -list-avds` likewise on Android)
-   - `ps aux | grep -E 'Stim|supervisor'` → no supervisors or collectors
+   - `ps aux | grep -E 'Stim|devicectl|metro|expo'` → no Metro, `devicectl` or
+     build process of yours remains (stimd itself may stay resident)
    - `stim status` → your workspaces gone from the registry
    - `git -C <repo> status --porcelain` and `git worktree list` → main
      checkout byte-identical to before you started (capture a baseline!)
@@ -210,12 +211,13 @@ seal, `codesign --force --sign <sha1>
 pristine control behaved identically. Rerun it only when the re-seal ladder
 itself changes.
 
-**B. Device log capture** (appandflow/stim#179). The collector's parser is
-tested against a real `os_log` stderr mirror captured on macOS, not on a
-phone. What a phone has to settle:
+**B. Device log capture** (appandflow/stim#179). stimd's logs thread runs
+`devicectl device process launch --console` as its child and writes
+`device.ndjson`. The parser is tested against a real `os_log` stderr mirror
+captured on macOS, not on a phone. What a phone has to settle:
 
-1. **Fields observed live vs. the fixtures.** Run the collector against the
-   app and quote real lines from `device.ndjson`. Confirm each claim the
+1. **Fields observed live vs. the fixtures.** Run `ios --device`, then quote
+   real lines from `stim logs --source device`. Confirm each claim the
    `guide logs` table makes: `ts` is the device's own clock and not the
    host's; `proc` is `name(pid)`; `category` is present for React Native's
    `javascript` / `native` calls and absent for `NSLog`; `subsystem` is
@@ -225,35 +227,35 @@ phone. What a phone has to settle:
 2. **The os_log mirror actually mirrors.** Without `OS_ACTIVITY_DT_MODE` the
    stream carries plain `stdout`/`stderr` writes only. Prove the variable is
    doing work: a `console.log` from JS must appear. If it does not, the
-   collector is capturing almost nothing and the gap is still open.
+   capture is recording almost nothing and the gap is still open.
 3. **Timeline integration.** `logs --source device` shows the records in one
    timeline with `metro` and `build`, ordered by `ts` across sources.
    `logs --errors` with no `--source` still excludes them. A native crash
    before JS starts appears with level `fatal`.
-4. **Launch coupling.** On hardware the collector performs the launch, so
-   confirm exactly one app instance starts, that `--terminate-existing`
-   replaced a running one, and that a dev-client deep link passed as
-   `--payload-url` opened the right URL.
-5. **Cleanup on unplug.** Pull the cable with the collector running. It must
-   remove its own `collectors.ios` registration and exit; `status` must stop
-   reporting it and `gc --dry-run` must find nothing, because a phone is never recorded
-   as a device. Then reconnect and run `ios --device` again: the replacement
-   must start cleanly. **Which closing record does it write?** A non-zero
-   devicectl exit becomes `collector_failed`, a zero exit becomes
-   `collector_stopped`, and nobody has observed which one a cable-pull
-   produces. Record the exit code and the record. If unplugging reports a
-   failure, that is a wrong error on a normal action and the classification
-   needs to change.
-6. **Replacement and ownership.** With a collector live, run `ios --device`
-   again and confirm the previous pid was proven this workspace's and
-   signalled, and that `stop` reaps the survivor.
+4. **Launch coupling.** The stream performs the launch, so confirm exactly
+   one app instance starts, that `--terminate-existing` replaced a running
+   one, and that a dev-client deep link passed as `--payload-url` opened the
+   right URL.
+5. **Unplug.** Pull the cable with the stream running. The workspace's
+   `state.json` must lose its `collectors.ios` record, the `devicectl` child
+   of stimd must be gone, stimd itself must keep running, and `status` and
+   `gc --dry-run` must report no device, because a phone is never recorded as
+   a device. Then reconnect and run `ios --device` again: the new stream must
+   start cleanly. **Which closing record does it write?** A non-zero devicectl
+   exit becomes `collector_failed`, a zero exit becomes `collector_stopped`,
+   and nobody has observed which one a cable-pull produces. Record the exit
+   code and the record. If unplugging reports a failure, that is a wrong
+   error on a normal action and the classification needs to change.
+6. **Replacement and stop.** With a stream live, run `ios --device` again and
+   confirm `ps` shows one `devicectl` console child of stimd for the phone, not
+   two. Then `stop` and confirm that child is gone.
 
 **C. Install, launch and Debug over the LAN** (#178 phases 3 and 5). What a
 phone has to settle, and what is already settled:
 
 1. **The dev-client Debug loop, end to end.** `stim ios --device` on a
    provisioned expo-dev-client project: cache HIT on the `-device` key, install,
-   launch through the collector with the deep link on `--payload-url`, a bundle
+   launch through stimd's device log stream with the deep link on `--payload-url`, a bundle
    request from the phone in `logs --source metro`, and `launched: true`.
    **PASSED 2026-09-01** on the phone above.
 2. **The device pid, never a host pid.** The run's `launch` line names a pid read
@@ -282,11 +284,11 @@ phone has to settle, and what is already settled:
    lands (phase 6), because a cached Release app carries its builder's JS.
    Prove `metroPort` is null, no LAN machinery runs, and the process is alive on
    the phone three seconds after launch.
-7. **The app dies with its collector.** `stop` (or `gc`, or pulling the
-   cable) ends the collector, and because the collector is the launch, the app
+7. **The app dies with its log stream.** `stop` (or `gc`, or pulling the
+   cable) ends the stream, and because the stream is the launch, the app
    closes on the phone. Confirm the app is still INSTALLED, that `status` and
    `gc --dry-run` report no device, and that the next `ios --device` starts it again.
-   **OBSERVED 2026-09-01**: SIGTERM to the collector alone terminates the app.
+   **OBSERVED 2026-09-01**: SIGTERM to the collector alone terminated the app.
 8. **An uninstall costs the developer trust.** After any uninstall -- including
    the signer-conflict retry -- the next launch is refused until the trust is
    granted again, and the Local Network permission has to be re-tapped.
@@ -309,7 +311,7 @@ phone has to settle, and what is already settled:
    `[button] "Reload"` and `agent-device press 'label="Reload"'` produced Metro
    `iOS Bundled 75ms` at 23:15:20 with the app running. The devicectl
    `--terminate-existing --payload-url` relaunch also recovers (twice), at the
-   cost of the collector's process. `agent-device metro reload` does not: it
+   cost of the log stream. `agent-device metro reload` does not: it
    needs `--metro-host`/`--metro-port` on a phone and still does nothing to an
    app that never connected. NOT YET RUN ON HARDWARE: the same detection and
    recovery on a BARE app, which needs a provisioned bare project, and the

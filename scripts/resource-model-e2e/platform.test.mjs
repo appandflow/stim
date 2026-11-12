@@ -76,24 +76,22 @@ describe('stim process attribution', () => {
   const sinceMs = Date.parse('Mon Nov  2 14:59:00 2026');
   const ps = parsePs(
     [
-      row(100, 1, 20480, START, 'stim-supervisor'),
+      row(100, 1, 20480, START, 'stimd    '),
       row(101, 100, 262144, START, 'node /w/rme1-01/node_modules/expo/bin/cli start'),
-      row(200, 1, 20480, START, 'stim-supervisor'),
+      row(200, 1, 20480, START, 'stimd    '),
       row(201, 200, 262144, START, 'node /w/other-01/node_modules/expo/bin/cli start'),
       row(300, 1, 4096, START, 'xcodebuild -derivedDataPath /h/rme1-home/workspaces/x/derived-data build'),
       row(301, 1, 4096, START, 'xcodebuild -derivedDataPath /elsewhere/derived-data build'),
-      row(400, 1, 2048, START, 'stim-collector'),
     ].join('\n'),
   );
 
-  it("counts only the run's own supervisors, Metro, xcodebuild and collectors", () => {
+  it("counts only the run's own stimd, Metro and xcodebuild", () => {
     const identities = new Map();
-    recordIdentities(identities, ps, recordedAt([100, 400]), scope, sinceMs);
+    recordIdentities(identities, ps, recordedAt([100]), scope, sinceMs);
     const totals = classifyStimProcesses(ps, { identities, ...scope });
-    expect(totals.supervisor.n).toBe(1);
+    expect(totals.stimd.n).toBe(1);
     expect(totals.metro.n).toBe(1);
     expect(totals.xcodebuild.n).toBe(1);
-    expect(totals.collector.n).toBe(1);
     expect(totals.metro.rssMb).toBe(256);
   });
 
@@ -101,20 +99,18 @@ describe('stim process attribution', () => {
     const identities = new Map([[100, START]]);
     const reused = parsePs(
       [
-        row(100, 1, 20480, LATER, 'stim-supervisor'),
+        row(100, 1, 20480, LATER, 'stimd'),
         row(101, 100, 9000, LATER, 'xcodebuild -project Other.xcodeproj build'),
       ].join('\n'),
     );
     expect(provenOurs(reused, identities, scope)).toEqual([]);
     const totals = classifyStimProcesses(reused, { identities, ...scope });
-    expect(totals.supervisor.n + totals.xcodebuild.n).toBe(0);
+    expect(totals.stimd.n + totals.xcodebuild.n).toBe(0);
   });
 
   it('does not record a pid that is not a stim process of the run, or that started before the run', () => {
     const rows = parsePs(
-      [row(500, 1, 2048, START, '/bin/zsh -l'), row(600, 1, 2048, 'Mon Nov  2 09:00:00 2026', 'stim-supervisor')].join(
-        '\n',
-      ),
+      [row(500, 1, 2048, START, '/bin/zsh -l'), row(600, 1, 2048, 'Mon Nov  2 09:00:00 2026', 'stimd')].join('\n'),
     );
     const identities = new Map();
     recordIdentities(identities, rows, recordedAt([500, 600]), scope, sinceMs);
@@ -122,7 +118,7 @@ describe('stim process attribution', () => {
   });
 
   it('does not adopt a process that started after the pid was recorded', () => {
-    const adopted = parsePs(row(700, 1, 20480, LATER, 'stim-supervisor'));
+    const adopted = parsePs(row(700, 1, 20480, LATER, 'stimd'));
     const identities = new Map();
     recordIdentities(identities, adopted, recordedAt([700]), scope, sinceMs);
     expect(identities.size).toBe(0);
@@ -130,11 +126,11 @@ describe('stim process attribution', () => {
   });
 
   it('reads process start times independent of the machine locale only when ps prints them in the C format', () => {
-    expect(parsePs(row(7, 1, 1024, START, 'stim-collector --root /w/rme1-01'))[0]).toMatchObject({
+    expect(parsePs(row(7, 1, 1024, START, 'stimd'))[0]).toMatchObject({
       pid: 7,
       lstart: START,
     });
-    expect(parsePs('8 1 1024 lun.  2 nov. 16:52:03 2026 stim-collector')[0].lstart).toBeNull();
+    expect(parsePs('8 1 1024 lun.  2 nov. 16:52:03 2026 stimd')[0].lstart).toBeNull();
   });
 });
 
