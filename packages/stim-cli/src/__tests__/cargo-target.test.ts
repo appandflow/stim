@@ -1,15 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import {
-  renameStands,
-  selectIncremental,
-  staleCargoPaths,
-  staleCargoTargetPaths,
-  trimCargoTarget,
-} from '../workspace/cargo-target.ts';
+import { staleCargoPaths, staleCargoTargetPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
 
 const DAY = 24 * 3_600_000;
 const NOW = Date.parse('2026-11-11T20:00:00Z');
@@ -49,6 +52,7 @@ function makeProfile(path: string, ageMs: number): void {
   mkdirSync(join(dir, '.fingerprint', 'unit-0123456789abcdef'));
   writeFileSync(join(dir, '.fingerprint', 'unit-0123456789abcdef', 'lib'), 'x');
   writeFileSync(join(dir, 'deps', 'libx.rlib'), 'x'.repeat(1000));
+  writeFileSync(join(dir, '.cargo-lock'), '');
   const at = new Date(Date.now() - ageMs);
   for (const entry of [
     join(dir, '.fingerprint', 'unit-0123456789abcdef', 'lib'),
@@ -100,20 +104,74 @@ test('trimming removes the stale profiles, keeps the rest and leaves nothing asi
   }
 });
 
-test('the incremental pass takes the largest directories until the overage is covered', () => {
-  const candidates = [
-    { path: 'a', bytes: 5 },
-    { path: 'b', bytes: 9 },
-    { path: 'c', bytes: 2 },
-  ];
-  expect(selectIncremental(candidates, 12)).toEqual(['b', 'a']);
-  expect(selectIncremental(candidates, 100)).toEqual(['b', 'a', 'c']);
-  expect(selectIncremental(candidates, 0)).toEqual([]);
+function stubProcesses(handlers: { lsof?: (args: string[]) => string; ps?: () => string }): void {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file === 'lsof') return handlers.lsof?.(args) ?? '';
+      if (file === 'ps') return handlers.ps?.() ?? '';
+      return real.runFileAsync(file, args, options);
+    },
+  });
+}
+
+test('a profile a process works in or runs a binary from stays, and an unreadable process list keeps everything', async () => {
+  try {
+    makeProfile('debug', 3 * DAY);
+    makeProfile('release', 3 * DAY);
+    makeProfile('host-dev', 3 * DAY);
+    const real = realpathSync.native(target);
+    stubProcesses({
+      lsof: (args) => (args.includes('-t') ? '' : `p100\nn${real}/debug\nn/usr/lib/libSystem.B.dylib\n`),
+      ps: () => `${real}/release/deps/mytest-0123456789abcdef --nocapture\n/bin/zsh -l\n`,
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual(['host-dev']);
+    expect(result.kept).toEqual(['debug: a process uses it', 'release: a process uses it']);
+
+    stubProcesses({
+      lsof: () => {
+        throw new Error('lsof timed out');
+      },
+    });
+    makeProfile('profile-b', 3 * DAY);
+    const unreadable = await trimCargoTarget(target, { needBytes: 0 });
+    expect(unreadable.removed).toEqual([]);
+    expect(existsSync(join(target, 'profile-b', 'deps', 'libx.rlib'))).toBe(true);
+  } finally {
+    resetExecutor();
+  }
 });
 
-test('a move is rolled back when a build holds the lock afterwards or lsof cannot say', () => {
-  expect(renameStands({ stdout: '' })).toBe(true);
-  expect(renameStands({ status: 1, stdout: '' })).toBe(true);
-  expect(renameStands({ stdout: '4242\n' })).toBe(false);
-  expect(renameStands({ status: 2, stdout: '' })).toBe(false);
+test('a directory that cannot be put back after a build took its lock is never deleted', async () => {
+  try {
+    makeProfile('debug', 3 * DAY);
+    let locks = 0;
+    stubProcesses({
+      lsof: (args) => {
+        if (
+          !args.includes(join(realpathSync.native(target), 'debug', '.cargo-lock')) &&
+          !args.some((arg) => arg.includes('.stim-trimmed'))
+        )
+          return '';
+        if (++locks < 2) return '';
+        mkdirSync(join(target, 'debug', 'deps'), { recursive: true });
+        writeFileSync(join(target, 'debug', 'deps', 'new-build'), 'x');
+        return '4242\n';
+      },
+    });
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept.join(' ')).toContain('could not be put back');
+    expect(existsSync(join(target, 'debug', 'deps', 'new-build'))).toBe(true);
+    const stranded = readdirSync(target).filter((name) => name.startsWith('.stim-not-restored-'));
+    expect(stranded).toHaveLength(1);
+    expect(existsSync(join(target, stranded[0] ?? '', '.fingerprint'))).toBe(true);
+  } finally {
+    resetExecutor();
+  }
 });

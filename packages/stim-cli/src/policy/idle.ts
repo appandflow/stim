@@ -11,9 +11,12 @@ export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
  */
 const AGENT_DEVICE_IDLE_MS: number = 10 * MINUTE_MS;
 
-/** The window within which an activity of `basis` keeps a workspace running under an `idleMs` threshold. */
-export function activityWindowMs(basis: string, idleMs: number): number {
-  return basis === 'agent-device command' ? Math.max(idleMs, AGENT_DEVICE_IDLE_MS) : idleMs;
+/**
+ * The window within which an activity of `basis` keeps a workspace running under an `idleMs` threshold. Only under
+ * disk pressure does an agent-device command hold longer than `idleMs`.
+ */
+export function activityWindowMs(basis: string, idleMs: number, pressured: boolean): number {
+  return pressured && basis === 'agent-device command' ? Math.max(idleMs, AGENT_DEVICE_IDLE_MS) : idleMs;
 }
 
 /**
@@ -40,7 +43,7 @@ export type IdleStopDecision =
 
 export function decideIdleStop(
   evidence: IdleStopEvidence,
-  { idleMs, now, setting }: { idleMs: number; now: number; setting: string },
+  { idleMs, now, setting, pressured = false }: { idleMs: number; now: number; setting: string; pressured?: boolean },
 ): IdleStopDecision {
   if (!(idleMs > 0)) return { stop: false, reason: `${setting} is 0` };
   const last = evidence.activity
@@ -51,7 +54,7 @@ export function decideIdleStop(
     );
   const idle = last ? now - last.at : NaN;
   const holding = evidence.activity
-    .filter(({ at, basis }) => Number.isFinite(at) && now - at < activityWindowMs(basis, idleMs))
+    .filter(({ at, basis }) => Number.isFinite(at) && now - at < activityWindowMs(basis, idleMs, pressured))
     .reduce<IdleStopEvidence['activity'][number] | null>(
       (best, entry) => (!best || entry.at > best.at ? entry : best),
       null,

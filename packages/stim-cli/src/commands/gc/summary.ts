@@ -6,7 +6,7 @@ const CATEGORIES: Record<string, string> = {
   'delete-build-outputs': 'Workspace build outputs',
   'idle-stage': 'Idle dev servers and their build outputs',
   'clear-build-dirs': 'Workspace build outputs',
-  'trim-cargo-target': 'Cargo target of Exact apps',
+  'trim-cargo': 'Cargo target of Exact apps',
   'trim-cache': 'Shared caches',
   'empty-cache': 'Shared caches',
   'unregister-cache': 'Shared caches',

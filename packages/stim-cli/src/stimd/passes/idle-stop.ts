@@ -268,6 +268,7 @@ export async function idleStopEvidence(
     platform = process.platform,
     locked = false,
     serving = false,
+    pressured = false,
     operation,
   }: {
     now: number;
@@ -275,6 +276,8 @@ export async function idleStopEvidence(
     platform?: NodeJS.Platform;
     locked?: boolean;
     serving?: boolean;
+    /** Disk pressure shortened the threshold: an agent-device command then still holds for 10 minutes. */
+    pressured?: boolean;
     operation?: StimContext;
   },
 ): Promise<IdleStopEvidence> {
@@ -298,13 +301,14 @@ export async function idleStopEvidence(
       at: Date.parse(at),
     })),
   ].filter(({ at }) => Number.isFinite(at));
-  if (activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs))) return { activity, keep: [] };
+  if (activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs, pressured)))
+    return { activity, keep: [] };
   const keep = await keepReasons(root, devices, { now, platform, locked, operation });
   if (keep.length) return { activity, keep };
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
-  if (!activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs)))
+  if (!activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs, pressured)))
     keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return { activity, keep };
 }

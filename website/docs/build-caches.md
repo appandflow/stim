@@ -537,13 +537,12 @@ stim gc`}
 />
 
 Automatic maintenance also bounds the Cargo `target/` of an Exact app that is in use. Above
-`maintenance.cargoTargetMaxGb` (25 GiB by default, 0 for no cap; a `target/` too large to measure in time counts as
-over it) it removes the profiles and target triples that no build wrote in the last day, judged by directory times
+`maintenance.cargoTargetMaxGb` (25 GiB by default, 0 for no cap) it removes the profiles and target triples that no build wrote in the last day, judged by directory times
 and Exact's own `.exact-sweep.json` ledger. If it is still over the cap it removes the `incremental/` directory of
 each remaining profile, largest first, until it is under. A profile a Cargo build holds open, and any path a running
 process executes from or holds open, stay; other processes do not protect the rest of the `target/`. Exact's own
 sweep removes units unused for a week; the cap works on profiles and incremental caches and does not write its ledger.
-Removed directories go through `target/.stim-trimmed` and come back if a build takes their lock during the move.
+Removed directories go through `target/.stim-trimmed` and come back if a build takes their lock during the move; one that cannot be put back is kept as `.stim-not-restored-*` for you to merge or delete. A `target/` too large to measure in time has only its stale profiles trimmed and is reported as needing attention.
 
 `stim gc` clears the outputs of a workspace over `maintenance.workspaceOutputsMaxGb`
 or unused for `maintenance.olderThanDays`, as long as it is not building and did

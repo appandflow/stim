@@ -20,7 +20,8 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
-import { driversKeepDevice, workspaceDeviceLastUseAt } from './activity.ts';
+import { activityWindowMs } from '../policy/idle.ts';
+import { drivenOnlyByAgentDevice, driversKeepDevice, workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from './ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from './teardown.ts';
@@ -39,8 +40,9 @@ export function idleShutdownDueMs(
     idleMs,
     now,
     buildInProgress,
+    pressured = false,
     platform = process.platform,
-  }: { idleMs: number; now: number; buildInProgress: boolean; platform?: NodeJS.Platform },
+  }: { idleMs: number; now: number; buildInProgress: boolean; pressured?: boolean; platform?: NodeJS.Platform },
 ): number | null {
   if (buildInProgress || driversKeepDevice(activity) || (activity.state === 'driven' && activity.unknown?.length))
     return null;
@@ -51,7 +53,10 @@ export function idleShutdownDueMs(
   const last = Date.parse(activity.lastActivityAt ?? '');
   if (!Number.isFinite(last)) return null;
   const idle = now - last;
-  return idle >= idleMs ? idle : null;
+  const window = drivenOnlyByAgentDevice(activity)
+    ? activityWindowMs('agent-device command', idleMs, pressured)
+    : idleMs;
+  return idle >= window ? idle : null;
 }
 
 interface IdleDecision {

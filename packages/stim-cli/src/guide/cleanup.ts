@@ -123,8 +123,8 @@ In on mode a pass runs, cheapest to rebuild first:
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
      app, in use or not, over maintenance.cargoTargetMaxGb (default 25, 0 no
-     cap; one du walk per target/, and a walk that times out counts as over the
-     cap): first the profiles and target triples no build wrote in the last
+     cap; one du walk per target/; one that times out records no size, only its
+     stale profiles are trimmed, and it is reported as needing a person): first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
      remaining profile, largest first, until under the cap. Each is renamed

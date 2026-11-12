@@ -2443,7 +2443,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   the stim-daemon shuts down, once per tick, the longest-idle booted owned
   device of another workspace that has had no activity for 2 minutes and has
   no blocker (driver, lock, lease, build, live web share, recent input or
-  window use), then wakes the waiter. It shuts down through centralized
+  window use), then wakes the waiter. A device only an agent-device session
+  drives needs 10 minutes since that session's last command instead, and one
+  whose last command cannot be dated is never reclaimed. It shuts down through centralized
   teardown and never deletes; the device's workspace records "reclaimed for
   a waiting run". A device a web share keeps booted, live or stopped for now, is never reclaimed:
   the waiter keeps waiting, and its progress line names the share

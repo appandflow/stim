@@ -12,18 +12,23 @@ import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings
 const GIB = 1024 ** 3;
 const CARGO_TARGET_SIZE = 'Cargo target';
 const SIZE_TIMEOUT_MS = 120_000;
-/** Recorded for a `target/` too large to measure in time: over any cap. */
-const UNMEASURED_BYTES = 2 ** 50;
+
+/**
+ * The `target/` directories the last size scan could not measure in time, by app root. They are no size entry: nothing
+ * is known of their size, so the plan only trims their stale profiles and reports them as needing a person.
+ */
+let unmeasured = new Map<string, string>();
 
 const kept = (detail: string): ActionOutcome => ({ status: 'kept', bytes: 0, detail });
 
-/** One walk of each Exact app's `target/`; none when the cap is 0. A walk that times out records the target as over the cap. */
+/** One walk of each Exact app's `target/`; none when the cap is 0. A walk that times out leaves no size and is planned from `unmeasured`. */
 export async function measureCargoTargets(
   roots: readonly string[],
   now: number,
   operation?: StimContext,
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
+  unmeasured = new Map();
   if (resolveMaintenanceSettings().cargoTargetMaxGb === 0) return sizes;
   for (const root of roots) {
     const dir = await exactTargetDirAsync(root);
@@ -32,14 +37,8 @@ export async function measureCargoTargets(
       timeoutMs: SIZE_TIMEOUT_MS,
       ...(operation ? { signal: operation.signal, operation } : {}),
     });
-    sizes.push({
-      name: CARGO_TARGET_SIZE,
-      category: 'other',
-      dir,
-      bytes: bytes ?? UNMEASURED_BYTES,
-      measuredAt: now,
-      workspace: root,
-    });
+    if (bytes === null) unmeasured.set(root, dir);
+    else sizes.push({ name: CARGO_TARGET_SIZE, category: 'other', dir, bytes, measuredAt: now, workspace: root });
   }
   return sizes;
 }
@@ -68,40 +67,53 @@ export async function planCargoTargets({
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   const cap = settings.cargoTargetMaxGb * GIB;
   if (cap === 0) return plan;
-  for (const size of sizes) {
-    if (size.name !== CARGO_TARGET_SIZE || size.bytes <= cap || !size.workspace) continue;
+  const targets = [
+    ...sizes.flatMap((size) =>
+      size.name === CARGO_TARGET_SIZE && size.bytes > cap && size.workspace
+        ? [{ dir: size.dir, workspace: size.workspace, bytes: size.bytes }]
+        : [],
+    ),
+    ...[...unmeasured].map(([workspace, dir]) => ({ dir, workspace, bytes: null })),
+  ];
+  for (const { dir, workspace, bytes } of targets) {
     const over =
-      size.bytes === UNMEASURED_BYTES
-        ? `${size.dir} could not be measured in time, so it counts as over the ${settings.cargoTargetMaxGb}G cargo target cap`
-        : `${size.dir} is ${(size.bytes / GIB).toFixed(1)}G, over the ${settings.cargoTargetMaxGb}G cargo target cap`;
-    if (pinned(size.workspace)) {
-      plan.skips.push({ target: size.dir, reason: 'pinned by maintenance.keep', workspace: size.workspace });
+      bytes === null
+        ? `${dir} is too large to measure within ${SIZE_TIMEOUT_MS / 1000}s, so only its stale profiles are trimmed`
+        : `${dir} is ${(bytes / GIB).toFixed(1)}G, over the ${settings.cargoTargetMaxGb}G cargo target cap`;
+    if (pinned(workspace)) {
+      plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
-    const stale = staleCargoTargetPaths(size.dir, now);
+    if (bytes === null) plan.blocked.push(over);
+    const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
-      plan.skips.push({ target: size.dir, reason: stale.refusal, workspace: size.workspace });
+      plan.skips.push({ target: dir, reason: stale.refusal, workspace });
       continue;
     }
-    const overBytes = size.bytes - cap;
-    let freeable = await bytesOf(stale.paths.map((path) => join(size.dir, path)));
+    const gone = stale.paths.map((path) => join(dir, path));
+    let freeable = await bytesOf(gone);
+    const overBytes = bytes === null ? 0 : bytes - cap;
     if (freeable < overBytes) {
-      const gone = stale.paths.map((path) => join(size.dir, path));
-      const remaining = (cargoProfileDirs(size.dir) ?? []).filter(
+      const remaining = (cargoProfileDirs(dir) ?? []).filter(
         (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
       );
       freeable += await bytesOf(remaining.map((profile) => join(profile, 'incremental')).filter(existsSync));
     }
-    if (freeable === 0 && !existsSync(join(size.dir, '.stim-trimmed'))) {
-      plan.blocked.push(`${over}; every profile was used in the last day and none has an incremental cache`);
+    if (freeable === 0 && !existsSync(join(dir, '.stim-trimmed'))) {
+      if (bytes !== null)
+        plan.blocked.push(`${over}; every profile was used in the last day and none has an incremental cache`);
       continue;
     }
     plan.actions.push({
       kind: 'would-clear-build-dirs',
-      target: size.dir,
-      workspace: size.workspace,
-      bytes: Math.min(overBytes, freeable),
-      reason: `${over}; trims the profiles unused for a day, then the incremental caches`,
+      target: dir,
+      workspace,
+      bytes: bytes === null ? freeable : Math.min(overBytes, freeable),
+      ...(bytes === null ? { olderThanDays: 1 } : {}),
+      reason:
+        bytes === null
+          ? `${over}; trims the profiles unused for a day`
+          : `${over}; trims the profiles unused for a day, then the incremental caches`,
     });
   }
   return plan;
@@ -115,7 +127,10 @@ export async function trimCargoTargetAction(
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer an Exact app target/');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
-  const result = await trimCargoTarget(action.target, { needBytes: action.bytes, signal: operation?.signal });
+  const result = await trimCargoTarget(action.target, {
+    needBytes: action.olderThanDays === undefined ? action.bytes : 0,
+    signal: operation?.signal,
+  });
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;
   if (result.deleteError)
     return {

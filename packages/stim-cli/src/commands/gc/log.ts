@@ -110,7 +110,7 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'stop-watchman': 'watchman',
   'delete-gradle-version': 'gradleVersion',
   'clear-build-dirs': 'buildDirectory',
-  'trim-cargo-target': 'buildDirectory',
+  'trim-cargo': 'buildDirectory',
   'delete-dependencies': 'dependencies',
   'prune-project': 'project',
   'delete-orphaned-devices': 'device',

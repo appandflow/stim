@@ -6,6 +6,6 @@ import type { MaintenanceAction } from '@stim-cli/core/state';
  */
 export function executedActionName(action: Pick<MaintenanceAction, 'kind' | 'workspace'>): string {
   return action.kind === 'would-clear-build-dirs' && action.workspace
-    ? 'trim-cargo-target'
+    ? 'trim-cargo'
     : action.kind.replace(/^would-/, '');
 }

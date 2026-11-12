@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
-import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
+import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
@@ -7,7 +7,11 @@ import { measuredDirectorySizeAsync } from '../fs-util.ts';
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
-const NOT_PROFILES = new Set(['.exact-swept', ASIDE]);
+const NOT_PROFILES = new Set(['.exact-swept']);
+const OWN_PREFIX = '.stim-';
+const STRANDED = 'NOT-RESTORED';
+const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
+const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
 export interface CargoProfile {
   /** The profile directory relative to `target/`: `debug` or `<triple>/<profile>`. */
@@ -89,7 +93,7 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   const top = subdirectories(target);
   if (!top) return null;
   for (const first of top) {
-    if (NOT_PROFILES.has(first.name)) continue;
+    if (NOT_PROFILES.has(first.name) || first.name.startsWith(OWN_PREFIX)) continue;
     if (existsSync(join(target, first.name, '.fingerprint'))) {
       profiles.push(first.name);
       continue;
@@ -167,7 +171,7 @@ function lockHeld(outcome: LsofOutcome): boolean {
  * Whether a rename of a profile that passed the lock check stands: it is rolled back when a Cargo build holds the
  * profile's `.cargo-lock` after the move, or when that cannot be told.
  */
-export function renameStands(afterMove: LsofOutcome): boolean {
+function renameStands(afterMove: LsofOutcome): boolean {
   return !lockHeld(afterMove);
 }
 
@@ -175,7 +179,7 @@ export function renameStands(afterMove: LsofOutcome): boolean {
  * The `<profile>/incremental` directories to remove, largest first, until `needBytes` are covered; all of them when
  * they cannot cover it.
  */
-export function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
+function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
   const chosen: string[] = [];
   let covered = 0;
   for (const { path, bytes } of candidates.toSorted((a, b) => b.bytes - a.bytes)) {
@@ -196,24 +200,34 @@ async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofO
   }
 }
 
-/** The absolute paths under `target` that `lsof -Fn` lists as open or executed, and `ps` lists in a command line. */
+const folded = (path: string): string => (FOLD_CASE ? path.toLowerCase() : path);
+
+/**
+ * The absolute paths under `target` that `lsof -Fn` lists as open, a working directory or an executable, and `ps`
+ * lists in a command line. On a case-insensitive volume the comparison ignores case, since lsof reports the on-disk
+ * case and a command line the case the caller typed.
+ */
 function targetPathsInUse(target: string, lsofNames: string, commandLines: string): string[] {
-  const prefix = `${target}/`;
+  const prefix = `${folded(target)}/`;
   const found = new Set<string>();
-  for (const line of lsofNames.split('\n'))
-    if (line.startsWith('n') && (line.slice(1) === target || line.slice(1).startsWith(prefix)))
-      found.add(line.slice(1));
-  for (const line of commandLines.split('\n'))
-    for (let at = line.indexOf(prefix); at !== -1; at = line.indexOf(prefix, at + 1)) {
-      const end = line.slice(at).search(/\s/);
-      found.add(end === -1 ? line.slice(at) : line.slice(at, at + end));
+  for (const line of lsofNames.split('\n')) {
+    const name = folded(line.slice(1));
+    if (line.startsWith('n') && (name === folded(target) || name.startsWith(prefix))) found.add(name);
+  }
+  for (const line of commandLines.split('\n')) {
+    const text = folded(line);
+    for (let at = text.indexOf(prefix); at !== -1; at = text.indexOf(prefix, at + 1)) {
+      const end = text.slice(at).search(/\s/);
+      found.add(end === -1 ? text.slice(at) : text.slice(at, at + end));
     }
+  }
   return [...found];
 }
 
 /** Whether a path in `used` is `dir` or inside it. */
 function inUse(used: readonly string[], dir: string): boolean {
-  return used.some((path) => path === dir || path.startsWith(`${dir}/`));
+  const name = folded(dir);
+  return used.some((path) => path === name || path.startsWith(`${name}/`));
 }
 
 /**
@@ -253,11 +267,23 @@ async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
  * open, and a profile whose `.cargo-lock` a build holds, stays.
  */
 export async function trimCargoTarget(
-  target: string,
+  registeredTarget: string,
   { needBytes, now = Date.now(), signal }: { needBytes: number; now?: number; signal?: AbortSignal },
 ): Promise<CargoTrimResult> {
-  const aside = join(target, ASIDE);
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  let target: string;
+  try {
+    target = realpathSync.native(registeredTarget);
+  } catch {
+    return { ...result, kept: [`${registeredTarget} cannot be resolved to its on-disk path`] };
+  }
+  const aside = join(target, ASIDE);
+  let keepAside = false;
+  if (existsSync(join(aside, STRANDED)))
+    return {
+      ...result,
+      kept: [`${aside} holds a directory that could not be put back; a person must merge or delete it`],
+    };
   try {
     await rm(aside, { recursive: true, force: true });
   } catch (error) {
@@ -291,15 +317,28 @@ export async function trimCargoTarget(
       }
     await mkdir(aside, { recursive: true });
     const there = join(aside, String(moved++));
-    await rename(dir, there);
+    try {
+      await rename(dir, there);
+    } catch (error) {
+      result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+      return false;
+    }
     for (const profile of await locks(there))
       if (!renameStands(await lockOutcome(profile, signal))) {
         try {
           await rename(there, dir);
           result.kept.push(`${label}: a build took its .cargo-lock during the move`);
         } catch {
+          const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
+          const home = await rename(there, stranded).then(
+            () => stranded,
+            () => {
+              keepAside = true;
+              return there;
+            },
+          );
           result.kept.push(
-            `${label}: a build took its .cargo-lock during the move and the directory could not be put back; it stays in ${there}`,
+            `${label}: a build took its .cargo-lock during the move and the directory could not be put back; it stays in ${home} for a person to merge or delete`,
           );
         }
         return false;
@@ -325,6 +364,10 @@ export async function trimCargoTarget(
       const parent = dirname(path);
       await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
     }
+  }
+  if (keepAside) {
+    await writeFile(join(aside, STRANDED), '').catch(() => {});
+    return result;
   }
   try {
     await rm(aside, { recursive: true, force: true });
