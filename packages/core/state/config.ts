@@ -128,6 +128,11 @@ export function derivedBuildCap(cores: number = availableParallelism()): number 
   return Math.max(1, Math.floor(cores / 6));
 }
 
+/** The derived `concurrency.maxTests`: one test command per six cores, at least one. */
+export function derivedTestCap(cores: number = availableParallelism()): number {
+  return Math.max(1, Math.floor(cores / 6));
+}
+
 /** The derived `concurrency.maxDevices`: one booted simulator or emulator per 1.5 GB of RAM above 4 GB, at least two. */
 export function derivedDeviceCap(totalBytes: number = totalmem()): number {
   return Math.max(2, Math.floor((totalBytes - 4 * GIB) / (1.5 * GIB)));
@@ -150,6 +155,15 @@ export function admissionLimits({
     maxDevices: set.maxDevices || derivedDeviceCap(totalBytes),
     derived: { builds: set.maxBuilds === 0, devices: set.maxDevices === 0 },
   };
+}
+
+/** The test slots this machine runs at once: `concurrency.maxTests` when set above 0, else the derived cap. */
+export function testSlotLimit({ env = ambientEnv(), cores }: { env?: NodeJS.ProcessEnv; cores?: number } = {}): {
+  max: number;
+  derived: boolean;
+} {
+  const set = limit('concurrency.maxTests', loadConfig(), env);
+  return { max: set || derivedTestCap(cores), derived: set === 0 };
 }
 
 export function getPlatformDeviceLimits({

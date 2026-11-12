@@ -82,6 +82,14 @@ export interface DaemonWaiter {
   since: string;
 }
 
+/** A run waiting for a test slot, 1 for the run that gets the next free one. */
+export interface DaemonTestWaiter {
+  position: number;
+  workspace: string | null;
+  label: string;
+  since: string;
+}
+
 /** `$STIM_HOME/daemon/snapshot.json`: the daemon's identity and its last tick. */
 export interface DaemonSnapshot {
   version: 1;
@@ -116,6 +124,8 @@ export interface DaemonStatus {
   pressure?: DaemonPressure;
   /** Runs waiting for a build slot or a device boot now, read from the wait queues. */
   waiting?: DaemonWaiter[];
+  /** Runs waiting for a test slot now, in arrival order; absent when none wait. */
+  testWaiting?: DaemonTestWaiter[];
   /** The last actions a daemon of this home took, oldest first, from its snapshot. */
   recent?: DaemonRecentAction[];
 }

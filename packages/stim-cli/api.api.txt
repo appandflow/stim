@@ -285,9 +285,15 @@
 [*] interface DaemonStatus { | running: {
 [*] interface DaemonStatus { | setting?: DaemonMode;
 [*] interface DaemonStatus { | since: string;
+[*] interface DaemonStatus { | testWaiting?: DaemonTestWaiter[];
 [*] interface DaemonStatus { | unresolved: string;
 [*] interface DaemonStatus { | waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { | } | null;
+[*] interface DaemonTestWaiter {
+[*] interface DaemonTestWaiter { | label: string;
+[*] interface DaemonTestWaiter { | position: number;
+[*] interface DaemonTestWaiter { | since: string;
+[*] interface DaemonTestWaiter { | workspace: string | null;
 [*] interface DaemonWaiter {
 [*] interface DaemonWaiter { | label: string;
 [*] interface DaemonWaiter { | platform?: string;

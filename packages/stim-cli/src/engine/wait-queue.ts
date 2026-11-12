@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { DaemonWaiter } from '@stim-cli/core/state';
+import type { DaemonTestWaiter, DaemonWaiter } from '@stim-cli/core/state';
 import {
   ClaimRefusedError,
   inspectClaimSet,
@@ -9,11 +9,12 @@ import {
 } from '../ownership-claim.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
-export type WaitResource = DaemonWaiter['resource'];
+export type WaitResource = DaemonWaiter['resource'] | 'test';
 
 const QUEUE: Record<WaitResource, { dir: string; label: string }> = {
   build: { dir: 'build-waits', label: 'build wait' },
   boot: { dir: 'device-waits', label: 'device wait' },
+  test: { dir: 'test-waits', label: 'test wait' },
 };
 
 const MINUTE_MS = 60_000;
@@ -138,4 +139,23 @@ export function listWaiting(): DaemonWaiter[] {
     }
   }
   return waiting;
+}
+
+/** Every run waiting for a test slot, in arrival order; an unreadable queue is skipped. */
+export function listTestWaiting(): DaemonTestWaiter[] {
+  let waiters: ClaimHolder[];
+  try {
+    waiters = liveWaiters('test');
+  } catch {
+    return [];
+  }
+  return waiters.map((holder, index) => {
+    const { root, displayName } = holder.details;
+    return {
+      position: index + 1,
+      workspace: typeof root === 'string' ? root : null,
+      label: typeof displayName === 'string' ? displayName : typeof root === 'string' ? root : 'a run',
+      since: holder.startedAt,
+    };
+  });
 }

@@ -1480,7 +1480,7 @@ function openNet(timeoutMs: number): Promise<Socket | null> {
   });
 }
 
-export type DaemonResource = 'build' | 'boot';
+export type DaemonResource = 'build' | 'boot' | 'test';
 
 const OPS: Record<DaemonResource, { wait: string; released: string; changed: string; what: string }> = {
   build: {
@@ -1494,6 +1494,12 @@ const OPS: Record<DaemonResource, { wait: string; released: string; changed: str
     released: 'boot.released',
     changed: 'boot.changed',
     what: 'device boot',
+  },
+  test: {
+    wait: 'test.wait',
+    released: 'test.released',
+    changed: 'test.changed',
+    what: 'test slot',
   },
 };
 
