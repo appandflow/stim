@@ -5,7 +5,7 @@
 **Systems:** Cleanup
 **Author:** Janic Duplessis / Claude
 **Date:** 2026-11-12
-**Related:** LLP 0002, LLP 0003
+**Related:** LLP 0002, LLP 0003, LLP 0005
 
 ## Stim gc deletes by default
 
@@ -38,15 +38,19 @@ Free disk on any volume Stim writes to sets the level:
 | refuse   | the hard floor, after the ladder ran  | `disk.hardFloorGb`    | 5 GB    |
 
 Only the hard floor refuses a command (`start`, `ios` and `android` with
-`STIM_LOW_DISK`). High and critical only reclaim, so raising them adds no
-refusal.
+`STIM_LOW_DISK`). High and critical only reclaim, so their levels can be high
+without stopping anyone's work.
 
-Reason: at the old defaults (high 20 GB, critical 6 GB) a cold Xcode build took
-a MacBook from 15 GB to 7.3 GB in three minutes and the ladder never reached
-critical. The high level stays above critical so high always acts first.
+Reason: a cold Xcode build can take a disk from 15 GB to 7.3 GB free in three
+minutes, so a critical level of a few GB is reached only after the disk is
+nearly full. The high level stays above critical so high always acts first.
 
-The maintainer set critical to 20 GB on 2026-11-11; the 40 GB high level
-followed from it (#5492, #5514).
+Maintainer decision: "Ok I think 6gb is way too small for default considering
+some projects can take several gbs (I guess headroom check will help, but maybe
+raise to 20gb)", 2026-11-11, for `disk.criticalFreeGb`.
+
+Maintainer decision: "40gb for high sounds good too", 2026-11-11, for
+`disk.minFreeGb`. The 40 GB figure was proposed by the coordinator.
 
 ## What each level deletes
 
@@ -56,9 +60,18 @@ Each level includes the ones below it.
   records, finished linked worktrees after `gc.worktreeGraceMinutes`, unused
   simulator runtimes), and every workspace idle `idle.dormantDays` reduced to
   its minimal size.
-- high: the pressure ladder, rungs 0 to 7.
-- critical: rungs 0 to 8 with shorter idle times and no grace, then rung 9,
-  the caches of tools Stim does not own (LLP 0003).
+- high: the pressure ladder, rungs 0 to 7, including the `node_modules` and
+  Pods of linked worktrees idle an hour; every Cargo `target/` on the volume
+  loses its stale profiles and `incremental/` data (LLP 0005).
+- critical: rungs 0 to 8 with shorter idle times and no grace, idle Cargo
+  build units (LLP 0005), then rung 9, the caches of tools Stim does not own
+  (LLP 0003).
+
+Maintainer decision: "1 hour", 2026-11-11, for the idle time before a linked
+worktree loses `node_modules` and Pods at high.
+
+Maintainer decision: "make sure all things we can delete are actually deleted
+at max pressure level", 2026-11-11.
 
 The full table lives in `website/docs/commands.md` (the `gc` section) and in
 `stim guide cleanup`; this document records why the levels are shaped this
@@ -68,8 +81,7 @@ way, not the table.
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to
 its minimal size at every level: build outputs, owned devices, logs archived,
-and in a linked worktree `node_modules` and Pods. Keep rules exist for work
-that would be lost, not for time spent rebuilding.
+and in a linked worktree `node_modules` and Pods.
 
 Maintainer decision: "I think projects not touched for like 1 day should be
 reduced to minimal size", 2026-11-11.
@@ -77,19 +89,40 @@ reduced to minimal size", 2026-11-11.
 Maintainer decision: "Need to be more aggressive in our resources reclaim, i
 dont want to have computers in this situation again", 2026-11-11.
 
-Maintainer decision: "make sure all things we can delete are actually deleted
-at max pressure level", 2026-11-11.
-
 ## Planned
 
-- `maintenance.olderThanDays` default 7 to 3, and linked worktrees reduced
-  before the main checkout, which loses `node_modules` and Pods at critical or
-  after 7 idle days (#5524). Until it lands the main checkout's dependencies
-  are never deleted (LLP 0002).
+Pull request #5540, for #5524:
+
+- `maintenance.olderThanDays` defaults to 3 days.
+- Every stage and rung takes linked worktrees before the main checkout, since
+  new worktrees are warmed from it; `stim worktree warm` and `stim status` say
+  when the main checkout was reduced and should be rebuilt first.
+- A main checkout loses `node_modules` and Pods at critical, at the start of
+  rung 8, once idle 2 minutes and after every linked worktree's dependencies,
+  or at any level after `idle.sourceDormantDays` (default 7, 0 for never). A
+  `stim worktree warm` that copies from it counts as activity.
+
+Maintainer decision: "Is 7 days for age sweep a bit much, maybe 3", 2026-11-12.
+
+Maintainer decision: "Do we have diff rules for worktrees vs main checkout i
+think we should prio cleaning up worktrees, then main since this is what new
+worktree are created from, ideally it will also be clear that when a main
+checkout is cleaned it should be rebuilt first", 2026-11-12.
+
+Maintainer decision: "I think we should consider deleting main checkout deps
+and pods on critical", 2026-11-12.
+
+Maintainer decision: "I think a main checkout could also be considered idle but
+with maybe like 7 d", 2026-11-12. Maintainer decision: "I meant deps yes",
+2026-11-12: the 7 days apply to dependencies, not build output.
+
+Maintainer decision: "2 min is good, yes to rest", 2026-11-12, for the idle
+window at critical. The setting name, the placement in rung 8 and what counts
+as activity were chosen by the coordinator and the reviews.
 
 ## Links
 
-- Issues: #5492, #5512. Pull request: #5514.
+- Issues: #5492, #5512, #5524. Pull requests: #5514, #5540.
 - Code: `packages/core/state/settings-registry.ts` (defaults),
   `packages/stim-cli/src/daemon/ladder.ts` (rungs),
   `packages/stim-cli/src/commands/gc.ts`.

@@ -22,10 +22,7 @@ Reason: a cold build can take a disk from above a pressure level to well below
 it in minutes, so a build should make room first. Refusing would stop work on
 an estimate, and the estimate is a guess.
 
-The maintainer decided on 2026-11-11 that headroom never refuses a build and
-that the default without history is per project type and platform (#5512;
-paraphrased there, not quoted). This replaced an earlier plan, still in the
-body of #5513, to refuse with the number needed.
+Maintainer decision: "headroom should never refuse builds tho", 2026-11-11.
 
 ## Only the build's own device counts
 
@@ -40,6 +37,8 @@ Reason: only space on the build's own volume helps the build, and a build holds
 its build slot while it waits, so the run must be bounded and must not delete
 more than the build needs.
 
+Chosen by the coordinator and the reviews of #5517, not by the maintainer.
+
 ## Estimate and measurement
 
 The estimate is the median of the project's ten newest positive records for that
@@ -48,11 +47,15 @@ its project's history; without history, a default per project type and
 platform. A build's size is the drop in free space on its volume between start
 and end: two volume reads, no directory walk.
 
+Maintainer decision: "If no build history can we still have a default headroom
+value, maybe per project type", 2026-11-11.
+
 Reason: the median keeps one inflated record, such as a build that ran beside
 another, from pinning the estimate. The free-space drop needs two reads where a
 size walk would visit every output file while the build holds its slot.
 
-Chosen in the reviews of #5517, not by the maintainer.
+The median, the ten-record window and the free-space measurement were chosen
+by the coordinator and the reviews of #5517, not by the maintainer.
 
 ## Links
 

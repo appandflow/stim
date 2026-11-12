@@ -50,17 +50,22 @@ source files are ASCII-only.
 ## How to change them
 
 A pull request that implements a new maintainer decision adds or edits the
-document in the same pull request. Quote the maintainer as `AGENTS.md` defines
-for approved product decisions: `Maintainer decision: "<words>", <date>`, with
-the words exactly as written. A rule an agent or reviewer chose is recorded as
-such, with the pull request that settled it, never as the maintainer's.
+document in the same pull request. Quote the maintainer in the form `AGENTS.md`
+defines for approved product decisions: the words `Maintainer decision:`, the
+maintainer's words in double quotes exactly as written in the cited issue or
+pull request comment, then the date. A rule an agent or reviewer chose is
+recorded as such, with the issue or pull request that settled it, never as the
+maintainer's.
 
 A new document takes the next free number; numbers are never reused. The header
 needs `Type`, `Status`, `Systems`, `Author` and `Date`, and the filename ends in
 the type (`.decision.md`). `scripts/ref-check`, run by `pnpm run lint`, fails on
 a missing document, a missing section, a malformed header or a reference to a
 file that does not exist. It does not judge whether a document still matches the
-code.
+code. It reads `@ref` followed by a space as a reference in every file git
+lists except `.json` files, and only inside `<!-- -->` comments in Markdown, so
+prose in code, a guide or a fixture that writes `@ref` and a space fails lint;
+write it in backticks or without the space.
 
 This repository uses the format of Linked Literate Programming
 (https://github.com/ccheever/llp), its `@ref` comments and its checker, not its

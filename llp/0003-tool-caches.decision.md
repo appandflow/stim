@@ -18,9 +18,10 @@ only while no Stim build lock or build slot is live or unresolved. Android
 NDKs, system images no AVD uses and `~/.cache/exact` are reported with the
 command that removes them, never deleted.
 
-Maintainer decision: "Can critical also delete caches stim dont own (maybe just
-if it is unable to free enough space? or the cache is getting really big?)",
-2026-11-11.
+The rules below answer a question the maintainer asked on 2026-11-11: "Can
+critical also delete caches stim dont own (maybe just if it is unable to free
+enough space? or the cache is getting really big?)". The question approves
+nothing by itself; the choices below record what was decided.
 
 ## Rung 9 runs only at critical
 
@@ -35,9 +36,8 @@ next build downloads them again, and the disk is no better. They are shared by
 every project on the machine, not only Stim's, so they go only when nothing
 cheaper is left.
 
-Chosen in the review of #5514, not by the maintainer. The maintainer's words
-above ask for critical and "if it is unable to free enough space"; they do not
-cover high.
+Chosen in the review of #5514, not by the maintainer, following the question's
+"critical" and "if it is unable to free enough space".
 
 ## Only on the short volume
 
@@ -58,6 +58,8 @@ rung 9. It never runs in a scoped home (LLP 0002).
 
 Reason: the build is about to read the Gradle and SwiftPM caches; clearing them
 would slow the build that asked for room.
+
+Chosen in the review of #5514, not by the maintainer.
 
 ## Links
 

@@ -124,7 +124,7 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   return { profiles, extras };
 }
 
-// @ref LLP 0005#the-in-use-cap -- modification times only; APFS records no reads
+// @ref LLP 0005#the-size-cap -- modification times only; APFS records no reads
 function newestMtime(profile: string): number | null {
   let newest = -Infinity;
   for (const path of [profile, ...PROFILE_PARTS.map((part) => join(profile, part))]) {
