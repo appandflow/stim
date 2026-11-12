@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import type { StimContext } from '@stim-cli/core';
 import { runArtifactLifecycle, type ArtifactLifecycle } from './artifact-lifecycle.ts';
 import {
   waitForSharedBuild,
@@ -8,6 +9,7 @@ import {
   type waitForBuild,
 } from './build-lock.ts';
 import type { acquireBuildSlot, BuildSlotHandle, releaseBuildSlot } from './build-slots.ts';
+import { createBuildHeadroom } from './build-headroom-run.ts';
 import { createCleanupScope } from './cleanup-scope.ts';
 import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 
@@ -44,6 +46,8 @@ export interface ArtifactAdapter<Artifact, Preparation, Placement, Failure> {
 
 export interface ArtifactRequest {
   root: string;
+  /** The run's context; without it the local compile gets no disk headroom check and no size measurement. */
+  context?: StimContext;
   logFile: string;
   deps: {
     acquireBuildLock: typeof acquireBuildLock;
@@ -92,7 +96,7 @@ export async function settleArtifactCleanup(
 
 export async function acquireArtifact<Artifact, Preparation, Placement, Failure>(
   adapter: ArtifactAdapter<Artifact, Preparation, Placement, Failure>,
-  { root, logFile, deps }: ArtifactRequest,
+  { root, logFile, deps, context }: ArtifactRequest,
 ): Promise<AcquiredArtifact<Artifact, Failure>> {
   const owned = createCleanupScope((error) => adapter.temporaryReleaseFailed(error));
   let closeOffload: (() => void) | null = null;
@@ -145,9 +149,20 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
     },
   };
 
+  const headroom = context ? createBuildHeadroom({ root, platform: adapter.platform, context }) : null;
   try {
+    const lifecycle = adapter.lifecycle(run);
     const artifact = await runArtifactLifecycle({
-      ...adapter.lifecycle(run),
+      ...lifecycle,
+      build: {
+        ...lifecycle.build,
+        compile: async (placement, preparation) => {
+          await headroom?.begin();
+          const compiled = await lifecycle.build.compile(placement, preparation);
+          await headroom?.finish();
+          return compiled;
+        },
+      },
       release: async (failure) => {
         let cleanupError: unknown;
         try {

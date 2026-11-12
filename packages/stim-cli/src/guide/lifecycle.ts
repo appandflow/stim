@@ -2602,6 +2602,42 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      daemon's, and a command with no daemon runs it only for owned devices
      whose workspace has no running dev server (IDLE SHUTDOWN below).
 
+  BUILD HEADROOM: before a local native compile (ios, android, macos; a cache
+  hit or an offloaded build writes little here and is not checked), Stim
+  estimates the bytes the compile writes: the median of the project's newest
+  10 positive bytesWritten of succeeded, non-hit builds of that platform in the
+  last 30 days (\`guide logs\`, BUILD LEDGER), matched by project key so a new
+  worktree inherits its project's history. Without history it uses a default
+  for the project type and platform, in GB: Expo 6 ios and 6 android; bare
+  React Native and Re.Pack 8 and 6; standalone native 4 and 3 (macOS 2); Exact
+  20 ios. A project type Stim does not recognise uses the standalone native
+  default. They are estimates, not measurements. The target is that estimate
+  plus the critical floor (disk.criticalFreeGb, or disk.hardFloorGb when
+  higher). When free disk on the project's volume is under the target, Stim runs
+  the ladder once, in the build's own process, and the build then starts
+  whatever the result. That run is high level only (rungs 2 to 8, never
+  rung 9, so a build does not clear the Gradle caches it is about to read),
+  and it stops as soon as the volume, found by its device id, has the target
+  free, whether the target is under or over disk.minFreeGb: a target of 24 GB
+  on a volume with 22 GB free frees about 2 GB and does not go on toward
+  disk.minFreeGb. Other volumes and memory do not count. It asks the daemon
+  for nothing and takes a machine-wide claim, so a build that finds it held,
+  or finds a stimd of another build refusing this process, skips it. A
+  headroom run can overlap the daemon's own pass; the worst case is freeing more
+  than needed, as both may delete different parked devices or trim the same
+  cache. The run ends after any action that leaves the build volume's free
+  space no higher, such as one on another volume. It runs at most 60 seconds: the
+  deadline and cancelling the build are checked before every rung and every
+  action, so a step in flight finishes and none is left half done. If the space
+  is still short, one warning on stderr (also in --json mode) gives the bytes
+  expected and available. The check adds no refusal and no error code, a
+  failure inside it never fails the build; disk.hardFloorGb still refuses as
+  rung 7 says. It does something the daemon would not when the target is
+  over disk.minFreeGb (a project whose median build is over disk.minFreeGb
+  minus the critical floor), when the daemon has not yet run its pass, or
+  when it is not running; with the default estimates under the high level
+  the daemon's own pass already brings the machine under it.
+
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
   reduced to its minimal size, at every level, by \`stim gc\` and by the

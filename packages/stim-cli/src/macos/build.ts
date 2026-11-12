@@ -23,6 +23,7 @@ import {
   type OffloadChoice,
 } from '../offload/client.ts';
 import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../build-placement.ts';
+import { createBuildHeadroom } from '../engine/build-headroom-run.ts';
 import { macosDir } from './state.ts';
 import { reidentifyBundle } from './stage.ts';
 import { validateMacosArtifactPlatform } from './artifact-platform.ts';
@@ -278,8 +279,11 @@ export async function buildMacosBundle({
         });
         requireLocalBuild(buildMachine);
         if (record) record.builtOn = 'here';
+        const headroom = createBuildHeadroom({ root, platform: 'macos', context });
+        await headroom.begin();
         progress.step('compile');
         const bin = await recipe.compile({ scratch, writer, note });
+        await headroom.finish();
         progress.step('install');
         const staged = join(staging, `${recipe.product}.app`);
         await recipe.stage(bin, staged, bundleId, displayName);
