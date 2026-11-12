@@ -117,6 +117,7 @@ test.skipIf(process.platform === 'win32')(
       mkdirSync(join(item.linked, 'node_modules', `pkg-${index}`), { recursive: true });
       writeFileSync(join(item.linked, 'node_modules', `pkg-${index}`, 'index.js'), 'module.exports = 1;');
     }
+    writeFileSync(join(item.linked, 'node_modules', '.package-lock.json'), '{}');
     const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
 
     expect(await client.removeWorktree({ target: item.linked })).toEqual({ removed: true, exitCode: 0 });
@@ -134,6 +135,7 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(item.root, '.git', 'info', 'exclude'), 'node_modules/\n');
     mkdirSync(join(item.linked, 'node_modules', 'pkg'), { recursive: true });
     writeFileSync(join(item.linked, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
+    writeFileSync(join(item.linked, 'node_modules', '.package-lock.json'), '{}');
     const execSpy = vi.spyOn(getExecutor(), 'runFileAsync');
     const client = createStim({ projectRoot: item.linked, home: item.home, env: item.env });
 
