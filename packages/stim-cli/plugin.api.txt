@@ -24,9 +24,6 @@
 [*] interface HostedAgentLease { | deviceKey: string;
 [*] interface HostedAgentLease { | runId: string;
 [*] interface HostedAgentLease { | tenant: string;
-[*] interface PluginSource {
-[*] interface PluginSource { | load(): Promise<unknown>;
-[*] interface PluginSource { | manifest(): unknown | Promise<unknown>;
 [*] type HostedAgentGrant = {
 [*] type HostedAgentGrant = { | driver: "none";
 [*] type ServeRoute = {
@@ -41,51 +38,35 @@
 [*] } | { | state: "missing";
 [*] } | { | state: "unknown";
 [agent-driver] declare const AGENT_DRIVER_API_VERSION: 1;
-[agent-driver] declare const AGENT_DRIVER_LOAD_TIMEOUT_MS;
 [agent-driver] declare const AGENT_DRIVER_UNAVAILABLE;
-[agent-driver] declare const AGENT_ROUTE_PREFIX;
-[agent-driver] declare function agentClientConfigFile(id: string): string;
 [agent-driver] declare function agentDriverUnavailable(message: string): AgentDriverUnavailableError;
-[agent-driver] declare function agentRoute(session: string): string;
 [agent-driver] declare function isAgentDriverUnavailable(error: unknown): error is AgentDriverUnavailableError;
-[agent-driver] declare function loadAgentDriver(id: string, source: PluginSource, input: AgentDriverInput, timeoutMs?: number): Promise<LoadAgentDriverResult>;
-[agent-driver] declare function loadAgentDriverModule(id: string, source: PluginSource, timeoutMs?: number): Promise<LoadAgentDriverModuleResult>;
-[agent-driver] declare function newAgentToken(): string;
 [agent-driver] declare function runAgentDriverContract(options: AgentDriverContractOptions): Promise<AgentDriverContractResult[]>;
 [agent-driver] export AGENT_DRIVER_API_VERSION
-[agent-driver] export AGENT_DRIVER_LOAD_TIMEOUT_MS
 [agent-driver] export AGENT_DRIVER_UNAVAILABLE
-[agent-driver] export AGENT_ROUTE_PREFIX
-[agent-driver] export AgentClientAccess
-[agent-driver] export AgentClientAccessInput
-[agent-driver] export AgentDriverClaim
-[agent-driver] export AgentDriverClaimRefusal
-[agent-driver] export AgentDriverClient
 [agent-driver] export AgentDriverContractOptions
 [agent-driver] export AgentDriverContractResult
-[agent-driver] export AgentDriverGrant
-[agent-driver] export AgentDriverHost
-[agent-driver] export AgentDriverInput
-[agent-driver] export AgentDriverModule
-[agent-driver] export AgentDriverProcess
-[agent-driver] export AgentDriverProcessStatus
-[agent-driver] export AgentDriverRecoveryInput
-[agent-driver] export AgentDriverStopStep
-[agent-driver] export AgentDriverTarget
-[agent-driver] export AgentDriverUnavailableError
-[agent-driver] export HostedAgentApp
-[agent-driver] export HostedAgentDevice
-[agent-driver] export HostedAgentDriver
-[agent-driver] export LoadAgentDriverModuleResult
-[agent-driver] export LoadAgentDriverResult
-[agent-driver] export agentClientConfigFile
 [agent-driver] export agentDriverUnavailable
-[agent-driver] export agentRoute
 [agent-driver] export isAgentDriverUnavailable
-[agent-driver] export loadAgentDriver
-[agent-driver] export loadAgentDriverModule
-[agent-driver] export newAgentToken
 [agent-driver] export runAgentDriverContract
+[agent-driver] export type AgentClientAccess
+[agent-driver] export type AgentClientAccessInput
+[agent-driver] export type AgentDriverClaim
+[agent-driver] export type AgentDriverClaimRefusal
+[agent-driver] export type AgentDriverClient
+[agent-driver] export type AgentDriverGrant
+[agent-driver] export type AgentDriverHost
+[agent-driver] export type AgentDriverInput
+[agent-driver] export type AgentDriverModule
+[agent-driver] export type AgentDriverProcess
+[agent-driver] export type AgentDriverProcessStatus
+[agent-driver] export type AgentDriverRecoveryInput
+[agent-driver] export type AgentDriverStopStep
+[agent-driver] export type AgentDriverTarget
+[agent-driver] export type AgentDriverUnavailableError
+[agent-driver] export type HostedAgentApp
+[agent-driver] export type HostedAgentDevice
+[agent-driver] export type HostedAgentDriver
 [agent-driver] interface AgentClientAccess {
 [agent-driver] interface AgentClientAccess { | command: string;
 [agent-driver] interface AgentClientAccess { | config: string;
@@ -170,10 +151,6 @@
 [agent-driver] type HostedAgentApp = { | session: string;
 [agent-driver] type HostedAgentDevice = {
 [agent-driver] type HostedAgentDevice = { | session: string;
-[agent-driver] type LoadAgentDriverModuleResult = {
-[agent-driver] type LoadAgentDriverModuleResult = { | module: AgentDriverModule;
-[agent-driver] type LoadAgentDriverResult = {
-[agent-driver] type LoadAgentDriverResult = { | driver: HostedAgentDriver;
 [agent-driver] } & ({
 [agent-driver] } & ({ | avdName?: never;
 [agent-driver] } & ({ | pid: number;
@@ -186,76 +163,33 @@
 [agent-driver] } | { | avdName: string;
 [agent-driver] } | { | serial: string;
 [agent-driver] } | { | udid?: never;
-[agent-driver] } | { | unavailable: string;
-[cache-provider] declare const BUILD_RESOLVE_TIMEOUT_ENV;
-[cache-provider] declare const BUILD_RESOLVE_TIMEOUT_MS;
-[cache-provider] declare const BUILD_UPLOAD_TIMEOUT_ENV;
-[cache-provider] declare const BUILD_UPLOAD_TIMEOUT_MS;
 [cache-provider] declare const CACHE_CONTRACT_CHECK_TIMEOUT_MS;
 [cache-provider] declare const CACHE_PROVIDER_API_VERSION: 1;
-[cache-provider] declare const PROVIDER_LOAD_TIMEOUT_ENV;
-[cache-provider] declare const PROVIDER_LOAD_TIMEOUT_MS;
-[cache-provider] declare function buildResolveTimeoutMs(env?: NodeJS.ProcessEnv): number;
-[cache-provider] declare function buildUploadTimeoutMs(env?: NodeJS.ProcessEnv): number;
-[cache-provider] declare function cacheProviderContractChecks(options: CacheContractOptions): CacheContractCheck[];
-[cache-provider] declare function callWithTimeout<T>(call: (signal: AbortSignal) => T | Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<ProviderCallResult<T>>;
-[cache-provider] declare function createFilesystemFileCache(directory: string): FileCacheCapability & Required<Pick<FileCacheCapability, "stat">>;
-[cache-provider] declare function createWarnOnce(emit: (message: string) => void): WarnOnce;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: {
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | config?: CacheProviderConfig | null;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | env?: NodeJS.ProcessEnv;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | projectRoot: string;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: { | timeoutMs?: number;
-[cache-provider] declare function resolveTieredBuild({ local, loadProvider, target, destinationDir, ensureDestination, skipRead, warn, timeoutMs, signal }: ResolveTieredBuildOptions): Promise<TieredBuildResolution | null>;
 [cache-provider] declare function runCacheProviderContract(options: CacheContractOptions | CacheContractModuleOptions): Promise<CacheContractResult[]>;
-[cache-provider] declare function storeTieredBuild({ local, loadProvider, target, sourcePath, overwrite, warn, timeoutMs, signal }: StoreTieredBuildOptions): Promise<TieredBuildStoreResult>;
-[cache-provider] declare function timeoutFromEnv(name: string, fallback: number, env?: NodeJS.ProcessEnv): number;
 [cache-provider] export CACHE_CONTRACT_CHECK_TIMEOUT_MS
-[cache-provider] export CacheContractCheck
-[cache-provider] export CacheContractModuleOptions
-[cache-provider] export CacheContractOptions
-[cache-provider] export CacheContractResult
-[cache-provider] export cacheProviderContractChecks
 [cache-provider] export loadCacheProvider
 [cache-provider] export runCacheProviderContract
-[cache-provider] export type BUILD_RESOLVE_TIMEOUT_ENV
-[cache-provider] export type BUILD_RESOLVE_TIMEOUT_MS
-[cache-provider] export type BUILD_UPLOAD_TIMEOUT_ENV
-[cache-provider] export type BUILD_UPLOAD_TIMEOUT_MS
 [cache-provider] export type BuildCacheCapability
 [cache-provider] export type BuildCacheContext
 [cache-provider] export type BuildCacheTarget
 [cache-provider] export type BuildResolveInput
 [cache-provider] export type BuildStoreInput
 [cache-provider] export type CACHE_PROVIDER_API_VERSION
+[cache-provider] export type CacheContractModuleOptions
+[cache-provider] export type CacheContractOptions
+[cache-provider] export type CacheContractResult
 [cache-provider] export type CacheProvider
 [cache-provider] export type CacheProviderConfig
 [cache-provider] export type CacheProviderModule
 [cache-provider] export type FileCacheCapability
 [cache-provider] export type FileCacheResolveInput
 [cache-provider] export type FileCacheStoreInput
-[cache-provider] export type LoadBuildProvider
 [cache-provider] export type LoadCacheProviderResult
-[cache-provider] export type MetroCacheCapability
-[cache-provider] export type MetroCacheContext
-[cache-provider] export type MetroCacheGetInput
-[cache-provider] export type MetroCacheSetInput
-[cache-provider] export type PROVIDER_LOAD_TIMEOUT_ENV
-[cache-provider] export type PROVIDER_LOAD_TIMEOUT_MS
-[cache-provider] export type ProviderCallResult
-[cache-provider] export type ResolveTieredBuildOptions
-[cache-provider] export type StoreTieredBuildOptions
-[cache-provider] export type TieredBuildResolution
-[cache-provider] export type TieredBuildStoreResult
-[cache-provider] export type WarnOnce
-[cache-provider] export type buildResolveTimeoutMs
-[cache-provider] export type buildUploadTimeoutMs
-[cache-provider] export type callWithTimeout
-[cache-provider] export type createFilesystemFileCache
-[cache-provider] export type createWarnOnce
-[cache-provider] export type resolveTieredBuild
-[cache-provider] export type storeTieredBuild
-[cache-provider] export type timeoutFromEnv
 [cache-provider] interface BuildCacheCapability {
 [cache-provider] interface BuildCacheCapability { | resolve(input: BuildResolveInput): string | null | Promise<string | null>;
 [cache-provider] interface BuildCacheCapability { | store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
@@ -270,10 +204,6 @@
 [cache-provider] interface BuildStoreInput extends BuildCacheContext {
 [cache-provider] interface BuildStoreInput extends BuildCacheContext { | overwrite: boolean;
 [cache-provider] interface BuildStoreInput extends BuildCacheContext { | sourcePath: string;
-[cache-provider] interface CacheContractCheck {
-[cache-provider] interface CacheContractCheck { | capability: "builds";
-[cache-provider] interface CacheContractCheck { | name: string;
-[cache-provider] interface CacheContractCheck { | run(): Promise<void>;
 [cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> {
 [cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | baseDir?: string;
 [cache-provider] interface CacheContractModuleOptions extends Omit<CacheContractOptions, "provider"> { | options?: Record<string, unknown>;
@@ -293,7 +223,6 @@
 [cache-provider] interface CacheProvider {
 [cache-provider] interface CacheProvider { | builds?: BuildCacheCapability;
 [cache-provider] interface CacheProvider { | files?: FileCacheCapability;
-[cache-provider] interface CacheProvider { | metro?: MetroCacheCapability;
 [cache-provider] interface CacheProviderConfig {
 [cache-provider] interface CacheProviderConfig { | baseDir: string;
 [cache-provider] interface CacheProviderConfig { | options: Record<string, unknown>;
@@ -325,63 +254,12 @@
 [cache-provider] interface LoadCacheProviderResult { | none?: true;
 [cache-provider] interface LoadCacheProviderResult { | provider?: CacheProvider;
 [cache-provider] interface LoadCacheProviderResult { | unavailable?: string;
-[cache-provider] interface MetroCacheCapability {
-[cache-provider] interface MetroCacheCapability { | get(input: MetroCacheGetInput): unknown;
-[cache-provider] interface MetroCacheCapability { | set(input: MetroCacheSetInput): void | Promise<void>;
-[cache-provider] interface MetroCacheContext {
-[cache-provider] interface MetroCacheContext { | cacheName: string;
-[cache-provider] interface MetroCacheContext { | projectRoot: string;
-[cache-provider] interface MetroCacheContext { | signal: AbortSignal;
-[cache-provider] interface MetroCacheGetInput extends MetroCacheContext {
-[cache-provider] interface MetroCacheGetInput extends MetroCacheContext { | key: Buffer;
-[cache-provider] interface MetroCacheSetInput extends MetroCacheContext {
-[cache-provider] interface MetroCacheSetInput extends MetroCacheContext { | key: Buffer;
-[cache-provider] interface MetroCacheSetInput extends MetroCacheContext { | value: unknown;
-[cache-provider] interface ProviderCallResult<T> {
-[cache-provider] interface ProviderCallResult<T> { | failed?: string;
-[cache-provider] interface ProviderCallResult<T> { | timedOut?: true;
-[cache-provider] interface ProviderCallResult<T> { | value?: T;
-[cache-provider] interface ResolveTieredBuildOptions {
-[cache-provider] interface ResolveTieredBuildOptions { | destinationDir: string;
-[cache-provider] interface ResolveTieredBuildOptions { | ensureDestination?: (destinationDir: string) => void;
-[cache-provider] interface ResolveTieredBuildOptions { | loadProvider?: LoadBuildProvider | null;
-[cache-provider] interface ResolveTieredBuildOptions { | local: BuildCacheCapability;
-[cache-provider] interface ResolveTieredBuildOptions { | signal?: AbortSignal;
-[cache-provider] interface ResolveTieredBuildOptions { | skipRead?: boolean;
-[cache-provider] interface ResolveTieredBuildOptions { | target: BuildCacheTarget;
-[cache-provider] interface ResolveTieredBuildOptions { | timeoutMs?: number;
-[cache-provider] interface ResolveTieredBuildOptions { | warn?: WarnOnce;
-[cache-provider] interface StoreTieredBuildOptions {
-[cache-provider] interface StoreTieredBuildOptions { | loadProvider?: LoadBuildProvider | null;
-[cache-provider] interface StoreTieredBuildOptions { | local: BuildCacheCapability;
-[cache-provider] interface StoreTieredBuildOptions { | overwrite: boolean;
-[cache-provider] interface StoreTieredBuildOptions { | signal?: AbortSignal;
-[cache-provider] interface StoreTieredBuildOptions { | sourcePath: string;
-[cache-provider] interface StoreTieredBuildOptions { | target: BuildCacheTarget;
-[cache-provider] interface StoreTieredBuildOptions { | timeoutMs?: number;
-[cache-provider] interface StoreTieredBuildOptions { | warn?: WarnOnce;
-[cache-provider] interface TieredBuildResolution {
-[cache-provider] interface TieredBuildResolution { | path: string;
-[cache-provider] interface TieredBuildResolution { | providerName?: string;
-[cache-provider] interface TieredBuildResolution { | storedLocally?: boolean;
-[cache-provider] interface TieredBuildResolution { | tier: "local" | "provider";
-[cache-provider] interface TieredBuildStoreResult {
-[cache-provider] interface TieredBuildStoreResult { | localPath: string | null;
-[cache-provider] interface TieredBuildStoreResult { | providerName: string | null;
-[cache-provider] interface TieredBuildStoreResult { | providerUpload: Promise<ProviderCallResult<void>> | null;
-[cache-provider] type LoadBuildProvider = () => Promise<LoadCacheProviderResult> | LoadCacheProviderResult;
-[cache-provider] type WarnOnce = (code: string, message: string) => void;
 [cache-provider] }): Promise<LoadCacheProviderResult>;
 [transport] declare const TRANSPORT_API_VERSION: 1;
-[transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & {
-[transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | input: TransportInput;
-[transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | reference: string;
-[transport] declare function loadTransport({ reference, load, manifest, input, timeoutMs }: PluginSource & { | timeoutMs?: number;
 [transport] declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
 [transport] export TransportContractOptions
 [transport] export TransportContractResult
 [transport] export runTransportContract
-[transport] export type LoadTransportResult
 [transport] export type TRANSPORT_API_VERSION
 [transport] export type Transport
 [transport] export type TransportEndpoint
@@ -394,7 +272,6 @@
 [transport] export type TransportPeer
 [transport] export type TransportResolveInput
 [transport] export type TransportWatchEvent
-[transport] export type loadTransport
 [transport] interface Transport {
 [transport] interface Transport { | bindAddresses?(): string[];
 [transport] interface Transport { | close?(): void | Promise<void>;
@@ -447,10 +324,5 @@
 [transport] interface TransportResolveInput { ||| suffix?: string;
 [transport] interface TransportWatchEvent {
 [transport] interface TransportWatchEvent { | addresses: string[];
-[transport] type LoadTransportResult = {
-[transport] type LoadTransportResult = { | transport: Transport;
 [transport] type TransportExposure = ServeRoute;
 [transport] type TransportHeaders = Record<string, string | string[] | undefined>;
-[transport] } | {
-[transport] } | { | unavailable: string;
-[transport] }): Promise<LoadTransportResult>;

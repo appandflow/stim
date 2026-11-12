@@ -1,8 +1,67 @@
-export * from '@stim-cli/cache/contract';
-export type * from '@stim-cli/cache/tiers';
+export {
+  CACHE_CONTRACT_CHECK_TIMEOUT_MS,
+  runCacheProviderContract,
+  type CacheContractModuleOptions,
+  type CacheContractOptions,
+  type CacheContractResult,
+} from '@stim-cli/cache/contract';
+export type {
+  BuildCacheCapability,
+  BuildCacheContext,
+  BuildCacheTarget,
+  BuildResolveInput,
+  BuildStoreInput,
+  CACHE_PROVIDER_API_VERSION,
+  CacheProvider,
+  CacheProviderConfig,
+  CacheProviderModule,
+  FileCacheCapability,
+  FileCacheResolveInput,
+  FileCacheStoreInput,
+  LoadCacheProviderResult,
+} from '@stim-cli/cache/tiers';
 export { loadCacheProvider } from '@stim-cli/cache';
-export * from '@stim-cli/agent-driver/driver';
-export type * from '@stim-cli/transport';
+export {
+  AGENT_DRIVER_API_VERSION,
+  AGENT_DRIVER_UNAVAILABLE,
+  agentDriverUnavailable,
+  isAgentDriverUnavailable,
+  type AgentClientAccess,
+  type AgentClientAccessInput,
+  type AgentDriverClaim,
+  type AgentDriverClaimRefusal,
+  type AgentDriverClient,
+  type AgentDriverGrant,
+  type AgentDriverHost,
+  type AgentDriverInput,
+  type AgentDriverModule,
+  type AgentDriverProcess,
+  type AgentDriverProcessStatus,
+  type AgentDriverRecoveryInput,
+  type AgentDriverStopStep,
+  type AgentDriverTarget,
+  type AgentDriverUnavailableError,
+  type HostedAgentApp,
+  type HostedAgentDevice,
+  type HostedAgentDriver,
+  type HostedAgentGrant,
+  type HostedAgentIssuedGrant,
+  type HostedAgentLease,
+} from '@stim-cli/agent-driver/driver';
+export type {
+  TRANSPORT_API_VERSION,
+  Transport,
+  TransportEndpoint,
+  TransportExposeInput,
+  TransportExposure,
+  TransportHeaders,
+  TransportIdentity,
+  TransportInput,
+  TransportModule,
+  TransportPeer,
+  TransportResolveInput,
+  TransportWatchEvent,
+} from '@stim-cli/transport';
 export * from './agent-driver-kit.ts';
 export * from './transport-kit.ts';
 export * from './plugin-kit.ts';

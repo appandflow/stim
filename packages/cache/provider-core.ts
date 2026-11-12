@@ -27,31 +27,6 @@ export interface CacheProviderConfig {
   baseDir: string;
 }
 
-export interface MetroCacheContext {
-  projectRoot: string;
-  cacheName: string;
-  signal: AbortSignal;
-}
-
-export interface MetroCacheGetInput extends MetroCacheContext {
-  key: Buffer;
-}
-
-export interface MetroCacheSetInput extends MetroCacheContext {
-  key: Buffer;
-  value: unknown;
-}
-
-/**
- * Metro transform cache. `get` returns `null` or `undefined` for a miss. `set`
- * stores the value under the key. Both receive an `AbortSignal` the provider
- * must honor.
- */
-export interface MetroCacheCapability {
-  get(input: MetroCacheGetInput): unknown;
-  set(input: MetroCacheSetInput): void | Promise<void>;
-}
-
 export interface BuildCacheTarget {
   projectRoot: string;
   platform: 'ios' | 'android';
@@ -117,8 +92,6 @@ export interface FileCacheCapability {
 
 export interface CacheProvider {
   files?: FileCacheCapability;
-  /** Ignored by Stim; Metro uses its local filesystem store. */
-  metro?: MetroCacheCapability;
   builds?: BuildCacheCapability;
 }
 
