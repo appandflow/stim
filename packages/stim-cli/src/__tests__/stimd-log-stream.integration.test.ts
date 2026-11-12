@@ -678,8 +678,7 @@ process.exit(0);`;
     try {
       const spec = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
       const { streamId } = await streams.start(spec, env);
-      await vi.waitFor(() => expect(existsSync(readyFile)).toBe(true));
-      const pid = Number(readFileSync(readyFile, 'utf8'));
+      const pid = await waitForPid(readyFile);
       const token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       child = { pid, processToken: token };
