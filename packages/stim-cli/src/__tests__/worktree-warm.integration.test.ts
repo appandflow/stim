@@ -31,6 +31,7 @@ import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { isUncertain } from '../fingerprint/key.ts';
+import { fingerprintInstallProblem } from '../fingerprint/operation.ts';
 import { recordPrebuild } from '../engine/prebuild.ts';
 import { workspaceName } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -348,6 +349,46 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(readFileSync(join(target, 'ios/Pods/Manifest.lock'), 'utf-8')).toBe('main pods');
   expect(readFileSync(join(root, 'ios/Podfile.lock'), 'utf-8')).toBe('main pods');
 }, 30_000);
+
+test.each([
+  'matching inputs',
+  'changed lockfile',
+  'removed patch',
+  'stale source install',
+  'patch removed after warm',
+  'stamp replaced after warm',
+])(
+  'the cache gate checks the carried npm install with %s',
+  async (scenario) => {
+    const manifest = '{"name":"warm-fixture","dependencies":{"react-native":"1.0.0"}}';
+    const lockfile = 'package-lock.json';
+    const stamp = 'node_modules/.package-lock.json';
+    const patch = 'patches/react-native+1.0.0.patch';
+    const lock = '{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"1.0.0"}}}';
+    const installed = new Date(Date.now() - 60_000);
+    const beforeInstall = new Date(installed.getTime() - 60_000);
+    const checkout = new Date(Date.now() + 60_000);
+    write(root, 'package.json', manifest);
+    write(target, 'package.json', manifest);
+    write(root, lockfile, lock);
+    write(target, lockfile, scenario === 'changed lockfile' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
+    write(root, patch, 'patch applied in source');
+    if (scenario !== 'removed patch') write(target, patch, 'patch applied in source');
+    write(root, stamp, lock);
+    utimesSync(join(root, stamp), installed, installed);
+    utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
+    utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);
+    utimesSync(join(target, lockfile), checkout, checkout);
+
+    expect((await runWarm(target)).code).toBe(0);
+    expect(existsSync(join(target, stamp))).toBe(true);
+    if (scenario === 'patch removed after warm') rmSync(join(target, patch));
+    if (scenario === 'stamp replaced after warm') write(target, stamp, lock);
+    const stale = expect.stringMatching(/package-lock.json changed after the last install/);
+    expect(fingerprintInstallProblem(target)).toEqual(scenario === 'matching inputs' ? null : stale);
+  },
+  30_000,
+);
 
 test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {
   write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');

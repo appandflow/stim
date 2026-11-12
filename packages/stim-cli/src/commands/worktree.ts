@@ -33,6 +33,7 @@ import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
+import { prepareNpmInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
@@ -441,6 +442,10 @@ export async function warmWorktreeTarget(opts: {
             const releases: ((failures: readonly unknown[]) => void)[] = [];
             const failures: unknown[] = [];
             const nativeDir = checkNativeDir(root, generatedFrom, releases, failures, operation);
+            // Warming a repository with several apps from its root cannot establish which app's patch inputs apply.
+            const recordNpmInstall = workspace
+              ? prepareNpmInstallCarry(join(root, relative(target, workspace)), workspace)
+              : null;
             let result: Awaited<ReturnType<typeof cloneIgnoredEntries>>;
             try {
               result = await trace.spanAsync('carry ignored entries', () =>
@@ -486,6 +491,7 @@ export async function warmWorktreeTarget(opts: {
               for (const release of releases) release(failures);
             }
             if (result.copied.length) {
+              recordNpmInstall?.(result.copied.map((rel) => join(target, rel)));
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
               reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);

@@ -1,12 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { ensurePrivateDir } from '@stim-cli/core';
+import { ensurePrivateDir, workspaceStateDir } from '@stim-cli/core';
 import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 import { gitLocation } from './git-index.ts';
-import { patches } from './inputs.ts';
+import { installRoot, patches } from './inputs.ts';
 import {
   canonicalJson,
   FINGERPRINT_SCHEMA,
@@ -485,36 +484,77 @@ export const checkoutTag = (project: string): string => sha256(project).slice(0,
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
-function npmLockPackages(path: string): object | null {
-  const lock: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  const version = field(lock, 'lockfileVersion');
-  const packages = field(lock, 'packages');
-  return (version === 2 || version === 3) && packages && typeof packages === 'object' && !Array.isArray(packages)
-    ? packages
-    : null;
+function installInputs(roots: Roots): string[] | Uncertain {
+  const discovered = patches(roots);
+  if (isUncertain(discovered)) return discovered;
+  const seen = new Set<string>();
+  const files = (dir: string): string[] => {
+    const info = statSync(dir, { throwIfNoEntry: false });
+    if (!info) return [];
+    if (!info.isDirectory()) return [dir];
+    const real = realpathSync.native(dir);
+    if (seen.has(real)) return [];
+    seen.add(real);
+    return readdirSync(dir).flatMap((name) => files(join(dir, name)));
+  };
+  const dirs = [...new Set([roots.project, roots.install])];
+  return [
+    ...LOCKFILES.map((name) => join(roots.install, name)),
+    ...discovered.files,
+    ...[...discovered.dirs, ...dirs.flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name)))].flatMap(files),
+  ];
 }
 
-function npmInstallMatches(lockfile: string, stamp: string): boolean {
+const npmStamp = (roots: Roots) => join(roots.install, 'node_modules', '.package-lock.json');
+const npmCarryRecord = (roots: Roots) => join(workspaceStateDir(roots.project), 'warmed-npm-install.json');
+
+function installInputDigest(roots: Roots, inputs: string[]): string {
+  const manifests = [join(roots.project, 'package.json'), join(roots.install, 'package.json')];
+  const rows = [...new Set([...inputs, ...manifests])].map((path): [string, string | null] => [
+    relocate(path, roots),
+    statSync(path, { throwIfNoEntry: false }) ? sha256(readFileSync(path)) : null,
+  ]);
+  return sha256(canonicalJson(Object.fromEntries(rows)));
+}
+
+/** Records matching inputs and the exact install stamp only when warm copied the source's node_modules. */
+export function prepareNpmInstallCarry(sourceProject: string, project: string): ((copied: string[]) => void) | null {
+  const source = { project: sourceProject, install: installRoot(sourceProject) };
+  const target = { project, install: installRoot(project) };
   try {
-    const wanted = npmLockPackages(lockfile);
-    const installed = npmLockPackages(stamp);
-    if (!wanted || !installed) return false;
-    // npm's hidden lockfile omits the root importer and can omit optional packages.
-    return (
-      Object.entries(wanted).every(([path, entry]) => {
-        if (path === '') return true;
-        return Object.hasOwn(installed, path)
-          ? isDeepStrictEqual(field(installed, path), entry)
-          : field(entry, 'optional') === true;
-      }) && Object.keys(installed).every((path) => Object.hasOwn(wanted, path))
-    );
+    const sourceStamp = statKey(npmStamp(source));
+    const installedAt = mtime(npmStamp(source));
+    if (!sourceStamp || installedAt === undefined || mtime(join(source.install, 'package-lock.json')) === undefined)
+      return null;
+    const sourceStampHash = readHash(npmStamp(source));
+    const inputs = installInputs(source);
+    if (!sourceStampHash || isUncertain(inputs) || inputs.some((path) => (mtime(path) ?? 0) > installedAt)) return null;
+    const digest = installInputDigest(source, inputs);
+    return (copied) => {
+      if (!copied.includes(dirname(npmStamp(target)))) return;
+      try {
+        const sourceInputs = installInputs(source);
+        const targetInputs = installInputs(target);
+        if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
+        if (installInputDigest(source, sourceInputs) !== digest || installInputDigest(target, targetInputs) !== digest)
+          return;
+        if (sourceInputs.some((path) => (mtime(path) ?? 0) > installedAt)) return;
+        const stamp = statKey(npmStamp(target));
+        if (!stamp || readHash(npmStamp(target)) !== sourceStampHash) return;
+        if (statKey(npmStamp(source))?.key !== sourceStamp.key || statKey(npmStamp(target))?.key !== stamp.key) return;
+        const record = npmCarryRecord(target);
+        ensurePrivateDir(dirname(record));
+        writePrivate(record, JSON.stringify({ stamp: stamp.key, inputs: digest }));
+      } catch {}
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
- * A newer patch or a newer lockfile without a matching installed tree; null if no install stamp can be compared.
+ * A patch or the lockfile written after the newest install stamp, which an install has not applied yet; null when
+ * every one is older, no stamp exists, or worktree warm verified the copied install against these inputs.
  */
 export function newerThanInstall(roots: Roots): string | Uncertain | null {
   try {
@@ -524,30 +564,21 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
     );
     if (stamps.length === 0) return null;
     const installed = Math.max(...stamps);
-    const discovered = patches(roots);
-    if (isUncertain(discovered)) return discovered;
-    const seen = new Set<string>();
-    const files = (dir: string): string[] => {
-      const info = statSync(dir, { throwIfNoEntry: false });
-      if (!info) return [];
-      if (!info.isDirectory()) return [dir];
-      const real = realpathSync.native(dir);
-      if (seen.has(real)) return [];
-      seen.add(real);
-      return readdirSync(dir).flatMap((name) => files(join(dir, name)));
-    };
-    const npmStamp = join(roots.install, 'node_modules', '.package-lock.json');
-    for (const name of LOCKFILES) {
-      const path = join(roots.install, name);
-      if ((mtime(path) ?? 0) <= installed) continue;
-      if (name !== 'package-lock.json' || mtime(npmStamp) !== installed || !npmInstallMatches(path, npmStamp))
-        return path;
-    }
-    const patchFiles = [
-      ...discovered.files,
-      ...[...discovered.dirs, ...dirs.flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name)))].flatMap(files),
-    ];
-    return patchFiles.find((path) => (mtime(path) ?? 0) > installed) ?? null;
+    const inputs = installInputs(roots);
+    if (isUncertain(inputs)) return inputs;
+    const pending = inputs.find((path) => (mtime(path) ?? 0) > installed);
+    if (!pending) return null;
+    const record = readJson(npmCarryRecord(roots));
+    const stamp = statKey(npmStamp(roots));
+    if (
+      stamp &&
+      mtime(npmStamp(roots)) === installed &&
+      field(record, 'stamp') === stamp.key &&
+      field(record, 'inputs') === installInputDigest(roots, inputs) &&
+      statKey(npmStamp(roots))?.key === stamp.key
+    )
+      return null;
+    return pending;
   } catch {
     return { uncertain: 'patch inputs could not be inspected' };
   }
