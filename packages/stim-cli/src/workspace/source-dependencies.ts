@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import {
   currentSourceDependencies,
   readWorkspaceState,
@@ -43,12 +43,15 @@ export function recordWarmedFrom(key: string, now: Date = new Date()): void {
  */
 export function sourceDependenciesNotice({
   root,
+  target,
   appDir,
   iosDir,
   install,
   pods,
 }: {
   root: string;
+  /** The linked worktree being warmed. */
+  target: string;
   appDir: string;
   iosDir: string;
   install: (dir: string) => string;
@@ -56,17 +59,20 @@ export function sourceDependenciesNotice({
 }): string | null {
   const missing: string[] = [];
   const commands: string[] = [];
+  let targetNeedsInstall = false;
   const state = dependencyState(appDir, root);
   if (state && !hasInstalledDependencies(state.root, state.installed)) {
     missing.push('node_modules');
     commands.push(install(state.root));
+    targetNeedsInstall ||= !hasInstalledDependencies(join(target, relative(root, state.root)), state.installed);
   }
   if (existsSync(join(iosDir, 'Podfile')) && !existsSync(join(iosDir, 'Pods'))) {
     missing.push('ios/Pods');
     commands.push(pods(iosDir));
+    targetNeedsInstall ||= !existsSync(join(target, relative(root, iosDir), 'Pods'));
   }
   if (!missing.length) return null;
   const cleared = sourceDependenciesOf(appDir);
   const since = cleared ? ` since ${cleared.at}, when maintenance deleted them` : '';
-  return `the source checkout ${root} has no installed ${missing.join(' or ')} to copy${since}. Install them there (${commands.join('; ')}) so new worktrees warm from it; this worktree needs its own install before it builds`;
+  return `the source checkout ${root} has no installed ${missing.join(' or ')} to copy${since}. Install them there (${commands.join('; ')}) so new worktrees warm from it${targetNeedsInstall ? '; this worktree needs its own install before it builds, or stim worktree warm --refresh installs in the source and copies here' : ''}`;
 }

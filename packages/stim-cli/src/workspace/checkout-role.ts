@@ -6,11 +6,7 @@ import { matchWorktreeEntry, resolveSourceCheckoutAsync, type SourceCheckout, ty
  * Whether `path` lies in a linked worktree. A path git does not place in a listed worktree, or a repository whose
  * source checkout git cannot name, counts as a source checkout, which maintenance reduces last.
  */
-function classifyCheckout(
-  entries: readonly WorktreeEntry[],
-  source: SourceCheckout,
-  path: string,
-): CheckoutRole {
+function classifyCheckout(entries: readonly WorktreeEntry[], source: SourceCheckout, path: string): CheckoutRole {
   if ('refusal' in source) return 'source';
   const entry = matchWorktreeEntry([...entries], path);
   return entry && !entry.bare && entry.path !== source.path ? 'linked' : 'source';

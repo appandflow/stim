@@ -495,6 +495,7 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) recordWarmedFrom(sourceApp);
             const noDependencies = sourceDependenciesNotice({
               root,
+              target,
               appDir: sourceApp,
               iosDir: appIosProjectDir(sourceApp).dir,
               install: (dir) => dependencyInstallCommand(dir),

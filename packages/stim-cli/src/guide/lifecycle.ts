@@ -2655,16 +2655,19 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   cannot restore the same versions (its lockfile differs from the source
   checkout's, or the source checkout's dependencies were not installed from
   its own lockfile), refuses with STIM_DEPS_FAILED and asks for an install.
-  Every stage takes linked worktrees before source (main) checkouts, longest
-  idle first in each. A source checkout's node_modules and ios/Pods go when it
+  The ladder rungs, this stage, the caps and the age sweep take linked worktrees
+  before source (main) checkouts, longest idle first in each; the idle stage,
+  which reaches every workspace with something running, keeps its own order. A source checkout's node_modules and ios/Pods go when it
   has had no activity for idle.sourceDormantDays (7; 0 never; at any level, last
   in this step; a worktree warm that copied from it is activity), or at
   critical under rung 8; its build outputs follow the one-day rule like any
   workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
   in a linked worktree then adds to its carry line that the source has no
   installed node_modules or ios/Pods to copy and since when, with the
-  installs to run (the source's own, and this worktree's: warm never installs,
-  and a build there without dependencies fails until they are installed); \`stim
+  installs to run (warm never installs; stim worktree warm --refresh installs in
+  the source). A linked worktree whose own dependencies were deleted and
+  recorded can no longer be restored by warm once the source lost them: its
+  next native run refuses with STIM_DEPS_FAILED and asks for an install there. \`stim
   status\` prints a source checkout line and --json carries
   sourceDependenciesCleared { at, dirs }, until the directories are installed
   again. The bytes it reports
