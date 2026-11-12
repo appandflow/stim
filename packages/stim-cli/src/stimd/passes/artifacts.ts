@@ -406,7 +406,13 @@ export async function collectArtifactsAsync(
 ): Promise<ReturnType<typeof collectArtifacts>> {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
-  const running = kind === 'dependencies' ? await readRunningProcessesAsync(signal) : null;
+  let listed: RunningProcesses | null | undefined;
+  const runningNow = async (): Promise<RunningProcesses | null> =>
+    kind === 'dependencies'
+      ? listed === undefined
+        ? (listed = await readRunningProcessesAsync(signal))
+        : listed
+      : null;
   const all = await artifactWorktreesAsync(signal, operation);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
@@ -444,6 +450,7 @@ export async function collectArtifactsAsync(
           ...(options.source ? { source: true } : {}),
         };
         const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
+        const running = inUse ? await runningNow() : null;
         let reason = !inUse
           ? 'the command that started this pass runs inside its worktree'
           : artifactGuard(candidate, kind, pinned, undefined, running, inUse);
