@@ -125,6 +125,12 @@ export async function readRunningProcessesAsync(
   return runningFrom(ps, lsof === null ? null : parseLsof(lsof));
 }
 
+/** The process table once for a pass, which every checkout then reads instead of running `ps` and `lsof` again. */
+export function processReader(signal?: AbortSignal): () => Promise<RunningProcesses | null> {
+  let table: Promise<RunningProcesses | null> | undefined;
+  return () => (table ??= readRunningProcessesAsync(signal).then((running) => othersRunningAsync(running, signal)));
+}
+
 function stimOnPath(): string | null {
   const found = getExecutor().findExecutable('stim');
   if (!found) return null;

@@ -54,6 +54,11 @@ export function gcDetailLines(run: LevelRun): string[] {
     lines.push(
       `${action.outcome}\t${formatBytes(action.bytes)}\t${action.rung === null ? 'maintenance' : `rung ${action.rung}`}\t${action.kind}\t${action.target}\t${[action.reason, action.detail].filter(Boolean).join('; ')}${action.restore ? `; restore with ${action.restore}` : ''}`,
     );
+  for (const checkout of run.discovered)
+    lines.push(
+      `discovered\t${checkout.origin}\t${checkout.path}\tfrom ${checkout.from}${checkout.kept ? `; kept: ${checkout.kept}` : ''}`,
+    );
+  for (const entry of run.outside) lines.push(`outside the folders Stim manages\t${entry.path}\tof ${entry.from}`);
   for (const reason of run.blocked) lines.push(`blocked\t${reason}`);
   return lines;
 }
@@ -93,6 +98,27 @@ export function formatGcSummary(
       lines.push(`    ${action.bytes ? `${formatBytes(action.bytes)}  ` : ''}${action.target}`);
     if (actions.length > largest.length) lines.push(`    and ${actions.length - largest.length} more`);
   }
+  if (run.discovered.length) {
+    lines.push(`Discovered checkouts no stim command ran in (${run.discovered.length}), treated as workspaces:`);
+    for (const checkout of run.discovered.slice(0, LARGEST_SHOWN * 4)) {
+      const mine = checkout.actions.filter((action) => action.outcome === (act ? 'done' : 'would'));
+      const freed = mine.reduce((sum, action) => sum + action.bytes, 0);
+      const what = mine.length
+        ? mine.map((action) => action.kind.replaceAll('-', ' ')).join(', ')
+        : (checkout.actions.find((action) => action.outcome === 'kept')?.detail ??
+          (checkout.kept ? `kept: ${checkout.kept}` : 'idle, with no regenerable output to clear'));
+      lines.push(`  ${freed ? `${formatBytes(freed)}  ` : ''}${checkout.path} (${checkout.origin}): ${what}`);
+    }
+    if (run.discovered.length > LARGEST_SHOWN * 4)
+      lines.push(`  and ${run.discovered.length - LARGEST_SHOWN * 4} more`);
+  }
+  if (run.outside.length)
+    lines.push(
+      `Outside the folders Stim manages (${run.outside.length} worktrees of known repositories, left alone): ${run.outside
+        .slice(0, 3)
+        .map((entry) => entry.path)
+        .join(', ')}${run.outside.length > 3 ? ', ...' : ''}`,
+    );
   const reported = run.actions.filter((action) => action.kind === 'report-tool-cache');
   if (failed.length || run.blocked.length || reported.length) {
     lines.push('Needs a person:');

@@ -18,6 +18,8 @@ import {
   workspaceBuildReasonsAsync,
 } from '../../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../../commands/worktree.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -124,7 +126,9 @@ export async function artifactWorktreesAsync(
   operation?: StimContext,
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of registeredRoots(await candidateRootsAsync(operation))) {
+  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
+  const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
+  for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
       env: operation?.env,

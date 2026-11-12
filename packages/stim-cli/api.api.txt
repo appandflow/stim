@@ -321,6 +321,10 @@
 [*] interface DevicePlacement { | decision: "local" | "hosted" | "waited-locally" | "eas";
 [*] interface DevicePlacement { | machine?: string;
 [*] interface DevicePlacement { | reason: string;
+[*] interface DiscoveredCheckout {
+[*] interface DiscoveredCheckout { | from: string;
+[*] interface DiscoveredCheckout { | origin: DiscoveryOrigin;
+[*] interface DiscoveredCheckout { | path: string;
 [*] interface DoctorReport {
 [*] interface DoctorReport { | daemon: DaemonStatus & {
 [*] interface DoctorReport { | deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
@@ -485,10 +489,12 @@
 [*] interface GcRunPayload { | actionable: boolean;
 [*] interface GcRunPayload { | actions: LevelRunAction[];
 [*] interface GcRunPayload { | blocked: string[];
+[*] interface GcRunPayload { | discovered: LevelRun["discovered"];
 [*] interface GcRunPayload { | failures: number | null;
 [*] interface GcRunPayload { | inventory?: GcInventory | null;
 [*] interface GcRunPayload { | level: PressureLevel;
 [*] interface GcRunPayload { | mode: "dry-run" | "delete";
+[*] interface GcRunPayload { | outside: LevelRun["outside"];
 [*] interface GcRunPayload { | pressure: DaemonPressure;
 [*] interface GcRunPayload { | results: GcResult[];
 [*] interface GcRunPayload { | sections?: GcJsonSections;
@@ -678,6 +684,22 @@
 [*] interface IosFacts { | waitedForBuild: {
 [*] interface IosFacts { | webPreviewUrl?: string | null;
 [*] interface IosFacts { | } | null;
+[*] interface LevelRun {
+[*] interface LevelRun { | actions: LevelRunAction[];
+[*] interface LevelRun { | blocked: string[];
+[*] interface LevelRun { | bytes: number;
+[*] interface LevelRun { | dir: string;
+[*] interface LevelRun { | discovered: (DiscoveredCheckout & {
+[*] interface LevelRun { | from: string;
+[*] interface LevelRun { | kept?: string;
+[*] interface LevelRun { | level: PressureLevel;
+[*] interface LevelRun { | name: string;
+[*] interface LevelRun { | outside: {
+[*] interface LevelRun { | path: string;
+[*] interface LevelRun { | pressure: DaemonPressure;
+[*] interface LevelRun { | usage: {
+[*] interface LevelRun { | })[];
+[*] interface LevelRun { | }[];
 [*] interface LevelRunAction {
 [*] interface LevelRunAction { | bytes: number;
 [*] interface LevelRunAction { | detail: string;
@@ -1393,6 +1415,7 @@
 [*] type DeviceToolRequest = { | platform: "ios" | "android";
 [*] type DeviceToolRequest = { | set: string;
 [*] type DeviceToolRequest = { | tool: "location";
+[*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
 [*] type GcItem = {

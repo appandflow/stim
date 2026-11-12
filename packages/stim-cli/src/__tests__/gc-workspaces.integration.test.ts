@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+
 import {
   existsSync,
   lstatSync,
@@ -383,6 +384,8 @@ describe('workspace directories without workspace.json', () => {
     for (const dir of [present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
   });
 });
+
+vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
 test('listWorkspaceDirs resolves each directory through its workspace.json', () => {
   const { root } = goneWorkspace('app');
@@ -2384,7 +2387,7 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
     git('config user.name test', cwd);
   };
   const commit = (cwd: string, file: string) => {
-    writeFileSync(join(cwd, file), file);
+    writeFileSync(join(cwd, file), file === 'package.json' ? JSON.stringify({ dependencies: { expo: '*' } }) : file);
     git(`add ${file}`, cwd);
     git(`commit -q -m ${file}`, cwd);
   };
@@ -2486,6 +2489,21 @@ test('gc keeps merged linked worktrees where no stim command ran, and removes th
   expect(existsSync(worktrees.merged ?? '')).toBe(false);
   for (const name of ['squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
+}, 240_000);
+
+test('gc lists a merged worktree in a maintenance.discoverRoots folder and keeps it while it is recent, with no workspace directory', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const config = loadConfig();
+  if (!config) throw new Error('no config');
+  saveConfig({ ...config, maintenance: { discoverRoots: [projects] } });
+  const before = listWorkspaceDirs().length;
+
+  const { payload } = await gcJson({ pressure: 'normal' });
+
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+  expect(payload.discovered.map((entry: { path: string }) => basename(entry.path))).toContain('merged');
+  expect(listWorkspaceDirs()).toHaveLength(before);
 }, 240_000);
 
 test('a worktree only a workspace.json names counts as used', async () => {

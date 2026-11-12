@@ -1,4 +1,5 @@
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, parse, resolve } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
@@ -19,7 +20,7 @@ export const SETTING_SCOPES: readonly SettingScope[] = ['machine', 'workspace', 
 export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
   | { kind: 'path'; absolute?: boolean; relative?: boolean; patternHelp?: string }
-  | { kind: 'strings' }
+  | { kind: 'strings'; absolutePaths?: boolean }
   | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
@@ -848,6 +849,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
+    key: 'maintenance.discoverRoots',
+    type: { kind: 'strings', absolutePaths: true },
+    scopes: MACHINE,
+    default: [],
+    description:
+      'Absolute folders (a leading ~ is the home folder) whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
+  },
+  {
     key: 'maintenance.keep',
     type: BOOLEAN,
     scopes: PROJECT,
@@ -1265,6 +1274,18 @@ export function settingValueError(definition: SettingDefinition | string, value:
     ) {
       return numberBounds(type);
     }
+  }
+  if (type.kind === 'strings' && type.absolutePaths) {
+    const entries = Array.isArray(value) ? value : [];
+    const relative = entries.find((entry) => !isAbsolute(entry) && !/^~(?:[\\/]|$)/.test(entry));
+    if (relative !== undefined)
+      return `an array of absolute paths (a leading ~ is the home folder), not ${JSON.stringify(relative)}`;
+    const broad = entries.find((entry) => {
+      const path = entry === '~' || entry.startsWith('~/') ? resolve(homedir(), entry.slice(2)) : resolve(entry);
+      return path === resolve(homedir()) || path === parse(path).root;
+    });
+    if (broad !== undefined)
+      return `an array of folders below the home folder, not ${JSON.stringify(broad)}: the home folder and the filesystem root are too broad to discover in`;
   }
   if (type.kind === 'path') {
     const path = value as string;

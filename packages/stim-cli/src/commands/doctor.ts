@@ -18,6 +18,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
+import { broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
@@ -719,6 +720,22 @@ async function assembleDoctorReport(
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
+  const missingRoots = missingDiscoverRoots(loadConfig(), env);
+  if (missingRoots.length)
+    findings.push({
+      level: 'note',
+      title: 'maintenance.discoverRoots names paths that are not folders',
+      detail: `${missingRoots.join(', ')} ${missingRoots.length === 1 ? 'is' : 'are'} missing or not a folder, so nothing is discovered there.`,
+      fix: 'Correct the list with `stim settings set maintenance.discoverRoots <json array> --scope machine`.',
+    });
+  const broadRoots = broadDiscoverRoots(loadConfig(), env);
+  if (broadRoots.length)
+    findings.push({
+      level: 'note',
+      title: 'maintenance.discoverRoots names folders that are too broad',
+      detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
+      fix: 'Name folders below the home folder, such as ~/Developer.',
+    });
   return {
     project: root,
     platform: opts.platform ?? null,

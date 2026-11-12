@@ -11,6 +11,9 @@ import { loadConfig } from '../../workspace/config.ts';
 import { measureDisk, measureMemory } from '../../daemon/measure.ts';
 import { classifyPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { runDormantReduction, runForcedLadder } from '../../daemon/passes.ts';
+import { discoveredKeepReason, dormantAfterMs } from '../../daemon/stages.ts';
+import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
+import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
@@ -19,6 +22,14 @@ import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
+import { existsSync } from 'node:fs';
+import {
+  broadDiscoverRoots,
+  discoverCheckouts,
+  discoveredOutside,
+  type DiscoveredCheckout,
+} from '../../workspace/discovery.ts';
+import { listedRoots } from '../../commands/gc/worktrees.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
 export interface LevelRunAction {
@@ -42,6 +53,10 @@ export interface LevelRun {
   actions: LevelRunAction[];
   /** What the run could not decide or reach, each for a person to look at. */
   blocked: string[];
+  /** Checkouts no stim command ran in that this run treats as workspaces, with the actions it took or would take in each. */
+  discovered: (DiscoveredCheckout & { actions: LevelRunAction[]; kept?: string })[];
+  /** Worktrees discovery reached outside the folders Stim manages, which no run acts on. */
+  outside: { path: string; from: string }[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
 }
@@ -119,6 +134,12 @@ export async function runMaintenanceAtLevel({
     actions.push(action);
     onAction?.(action);
   };
+  const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);
+  for (const root of broadDiscoverRoots(loadConfig(), env))
+    blocked.push(
+      `maintenance.discoverRoots entry ${root} is too broad (the home folder, a folder holding it or /), so nothing is discovered there`,
+    );
+  const outside = await discoveredOutside(loadConfig(), listedRoots(), operation);
   const now = Date.now();
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
   const sizes = [
@@ -180,10 +201,28 @@ export async function runMaintenanceAtLevel({
     });
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
+  const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
+  const reads = discoveredReads(operation?.signal);
+  const discovered: LevelRun['discovered'] = [];
+  const ownerOf = (path: string) =>
+    found
+      .filter((entry) => path === entry.path || path.startsWith(`${entry.path}/`))
+      .toSorted((a, b) => b.path.length - a.path.length)[0]?.path;
+  for (const checkout of found) {
+    const mine = actions.filter((action) => ownerOf(action.target) === checkout.path);
+    const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
+    const kept =
+      taken || idleMs <= 0 || !existsSync(checkout.path)
+        ? null
+        : await discoveredKeepReason(checkout.path, idleMs, operation, reads);
+    if (kept && /source entries to check|cannot be read/.test(kept))
+      blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
+    discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
+  }
   const usage = sizes
     .filter((size) => size.bytes > 0)
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 10)
     .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
-  return { pressure, level, actions, blocked, usage };
+  return { pressure, level, actions, blocked, discovered, outside, usage };
 }
