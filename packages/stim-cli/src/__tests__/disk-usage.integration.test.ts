@@ -111,3 +111,22 @@ test('a walk claim held elsewhere leaves the folder unmeasured, and the walk run
   releaseClaim(held);
   expect((await refreshMeasure(tree, { ...options, claim: true })).outcome).toBe('measured');
 }, 120_000);
+
+test('a claimed walk whose child exits before its identity can be recorded is still measured', async () => {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: (file, args, opts) =>
+      real.runFileAsync(file, args, {
+        ...opts,
+        onSpawn: (child) => {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+          opts?.onSpawn?.(child);
+        },
+      }),
+  });
+
+  const result = await refreshMeasure(tree, { ...options, claim: true });
+
+  expect(result.outcome).toBe('measured');
+});

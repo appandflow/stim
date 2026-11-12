@@ -264,7 +264,7 @@ function reportChild(
       child.stdin?.destroy();
       child.stdout?.destroy();
       child.stderr?.destroy();
-      if (!ended) {
+      const awaitClose = async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           nativeClosed,
@@ -273,7 +273,11 @@ function reportChild(
           }),
         ]);
         clearTimeout(timer);
+      };
+      if (!ended) {
+        await awaitClose();
         if (!ended) await new Promise<void>((resolve) => setImmediate(resolve));
+        if (!ended && observe() === 'gone') await awaitClose();
         if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
       }
       if (

@@ -85,7 +85,7 @@ import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
-import { listWaiting } from '../engine/wait-queue.ts';
+import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
@@ -149,15 +149,16 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
-type Resource = 'build' | 'boot';
+type Resource = 'build' | 'boot' | 'test';
 
-const RESOURCES: readonly Resource[] = ['build', 'boot'];
+const RESOURCES: readonly Resource[] = ['build', 'boot', 'test'];
 /** What `stim serve` and a service unit ask the net thread to serve from stimd's boot. */
 export type ServeOptions = Omit<NetOptions, 'desktopKey' | 'script' | 'owner'>;
 
 const OPS: Record<Resource, { wait: string; waiting: string; released: string; changed: string }> = {
   build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
+  test: { wait: 'test.wait', waiting: 'test.waiting', released: 'test.released', changed: 'test.changed' },
 };
 
 /** Marks this stimd's boot abnormal in its home claim, which then outlives it; set while `runStimd` holds that claim. */
@@ -856,7 +857,7 @@ async function runStimdInner(
   let dependencyWork: Promise<void> | undefined;
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
-  const waiters: Record<Resource, Socket[]> = { build: [], boot: [] };
+  const waiters: Record<Resource, Socket[]> = { build: [], boot: [], test: [] };
   const wokenAt = new WeakMap<Socket, number>();
   let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
@@ -1015,7 +1016,7 @@ async function runStimdInner(
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
-    for (const list of [waiters.build, waiters.boot, tickReplies]) list.length = 0;
+    for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
     for (const socket of open) socket.end(changed);
     const running = net.running();
     const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
@@ -1425,7 +1426,7 @@ async function runStimdInner(
     loopDelay.disable();
     interrupt?.();
     server.close();
-    for (const waiter of [...waiters.build, ...waiters.boot, ...tickReplies]) waiter.destroy();
+    for (const waiter of [...waiters.build, ...waiters.boot, ...waiters.test, ...tickReplies]) waiter.destroy();
     for (const socket of open) socket.end().unref();
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
@@ -1623,8 +1624,8 @@ async function runStimdInner(
       }
       const waiting = listWaiting();
       alive =
-        waiters.build.length || waiters.boot.length || waiting.length
-          ? 'a run waits for a build slot or a device boot'
+        waiters.build.length || waiters.boot.length || waiters.test.length || waiting.length || listTestWaiting().length
+          ? 'a run waits for a build slot, a test slot or a device boot'
           : net.running()
             ? 'the net thread serves'
             : homeAlive(config, measured, hasActiveCommands(), cleanups.reason());

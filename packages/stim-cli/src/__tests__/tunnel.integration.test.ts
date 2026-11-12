@@ -340,6 +340,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
   test('a process whose start token cannot be captured is cleaned up and not returned as owned', async () => {
     const signals: Array<NodeJS.Signals | number | undefined> = [];
     const child = makeChildProcess({
+      pid: process.pid,
       kill(signal) {
         signals.push(signal);
         child.emit('exit', null, signal);
@@ -357,6 +358,22 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     const result = await promise;
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('process identity token') });
     expect(signals).toEqual(['SIGTERM']);
+  });
+
+  test('a provider that exits before its start token is read is refused as exited, not as an unreadable token', async () => {
+    const child = makeChildProcess();
+    const promise = startTunnel({
+      provider: 'ngrok',
+      port: 8081,
+      spawnFn: () => child,
+      probeReachable: async () => true,
+      readProcessToken: () => null,
+    });
+    child.emit('exit', 1, null);
+    await expect(promise).resolves.toEqual({
+      failed: true,
+      reason: 'ngrok exited before printing a tunnel URL.',
+    });
   });
 });
 

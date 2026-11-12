@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree, signalProcessTreeAsync } from '../metro.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
@@ -575,15 +575,22 @@ export async function startTunnel({
     }
   };
   const initialProcessToken = captureChildIdentity();
-  if (!initialProcessToken) {
+  const goneAtStart = (() => {
+    if (initialProcessToken) return false;
+    const captured = captureProcessIdentity(pid);
+    return !captured.ok && captured.code === 'NOT_FOUND';
+  })();
+  if (!initialProcessToken && !goneAtStart) {
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
-  childIdentity = { pid, processToken: initialProcessToken };
-  if (claims.length > 0 && process.platform !== 'win32') {
-    try {
-      for (const claim of claims) setClaimChild(claim, childIdentity);
-    } catch (error) {
-      return failAfterCleanup(`Could not record ${provider} process ownership: ${describe(error)}`);
+  if (initialProcessToken) {
+    childIdentity = { pid, processToken: initialProcessToken };
+    if (claims.length > 0 && process.platform !== 'win32') {
+      try {
+        for (const claim of claims) setClaimChild(claim, childIdentity);
+      } catch (error) {
+        return failAfterCleanup(`Could not record ${provider} process ownership: ${describe(error)}`);
+      }
     }
   }
 
@@ -600,6 +607,8 @@ export async function startTunnel({
       exited || childExited,
     );
   }
+  if (!initialProcessToken)
+    return failAfterCleanup(`${provider} exited before its tunnel could be recorded.`, childExited);
   if (!outputFile) resumeChildPipes(child);
 
   if (requireReachable) {
