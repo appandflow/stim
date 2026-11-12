@@ -1,13 +1,15 @@
-import { daemonClaimRoot } from '@stim-cli/core/state';
+import { daemonClaimRoot, legacyDaemonSocket } from '@stim-cli/core/state';
 import { readClaimSet, type ClaimOwner } from '@stim-cli/core/ownership-claim';
-import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { inspectProcessIdentity, waitForProcessExit, type ProcessIdentityStatus } from '../process-identity.ts';
 
 // compat C30 until 2.1.0
-const EXIT_WAIT_MS = 10_000;
+const EXIT_WAIT_MS = 3000;
+
+type Log = (level: 'info' | 'warn', event: string, message: string) => void;
 
 export interface LegacyDaemonHolder {
   owner: ClaimOwner;
-  /** Whether the claim carries the record a pre-2.0 stim-daemon writes: its socket and its mode. */
+  /** Whether the claim carries what a pre-2.0 stim-daemon writes: its socket and its mode, and no build. */
   stimDaemon: boolean;
 }
 
@@ -18,7 +20,10 @@ export function legacyDaemonHolder(): LegacyDaemonHolder | null {
     return holder
       ? {
           owner: holder.owner,
-          stimDaemon: typeof holder.details.socket === 'string' && typeof holder.details.mode === 'string',
+          stimDaemon:
+            holder.details.socket === legacyDaemonSocket() &&
+            typeof holder.details.mode === 'string' &&
+            holder.details.build === undefined,
         }
       : null;
   } catch {
@@ -27,26 +32,43 @@ export function legacyDaemonHolder(): LegacyDaemonHolder | null {
 }
 
 /** Sends SIGTERM to `owner` only while its identity reads `same`, in this one synchronous step. */
-function terminate(owner: ClaimOwner): boolean {
-  if (inspectProcessIdentity(owner) !== 'same') return false;
+function terminate(owner: ClaimOwner): ProcessIdentityStatus | 'signalled' | 'failed' {
+  const identity = inspectProcessIdentity(owner);
+  if (identity !== 'same') return identity;
   try {
     process.kill(owner.pid, 'SIGTERM');
-    return true;
+    return 'signalled';
   } catch {
-    return false;
+    return 'failed';
   }
 }
 
 /**
- * Stops a stim-daemon from before Stim 2.0 that holds this home's daemon claim exclusively, and waits for its process
- * to end. The old daemon has no stop request; on SIGTERM it releases its claim, and it owns no child: dev servers,
- * log collectors and devices run on and stay as they are. Returns the pid it stopped, or null when it signalled nothing
- * or the process was still running after the wait.
+ * Stops a stim-daemon from before Stim 2.0 that holds this home's daemon claim exclusively. The old daemon has no stop
+ * request; on SIGTERM it releases its claim at once and exits after the tick in progress. It owns no child: dev servers,
+ * log collectors and devices run on and stay as they are. Waits up to {@link EXIT_WAIT_MS} for the process to end; one
+ * that has released its claim and still runs is left to finish its tick, and one that still holds the claim makes the
+ * caller's claim attempt fail. Logs the signal, or why none was sent, and the outcome.
  */
-export async function takeOverLegacyDaemon(): Promise<number | null> {
+export async function takeOverLegacyDaemon(log: Log): Promise<void> {
   const holder = legacyDaemonHolder();
-  if (!holder?.stimDaemon || !terminate(holder.owner)) return null;
-  return (await waitForProcessExit(holder.owner, EXIT_WAIT_MS)) ? holder.owner.pid : null;
+  if (!holder?.stimDaemon) return;
+  const { owner } = holder;
+  const sent = terminate(owner);
+  if (sent !== 'signalled') {
+    log('warn', 'stimd_takeover_skipped', `stim-daemon pid ${owner.pid} was not signalled: its identity reads ${sent}`);
+    return;
+  }
+  log('info', 'stimd_takeover_signal', `sent SIGTERM to stim-daemon pid ${owner.pid}, whose identity read same`);
+  if (await waitForProcessExit(owner, EXIT_WAIT_MS)) {
+    log('info', 'stimd_takeover', `stopped stim-daemon pid ${owner.pid}, from an older Stim`);
+    return;
+  }
+  log(
+    'warn',
+    'stimd_takeover_overlap',
+    `stim-daemon pid ${owner.pid} still runs ${EXIT_WAIT_MS / 1000} s after SIGTERM and ${legacyDaemonHolder() ? 'still holds the daemon claim, so stimd cannot take it' : 'has released the daemon claim, so stimd takes it while that daemon finishes its tick'}`,
+  );
 }
 // compat end
 

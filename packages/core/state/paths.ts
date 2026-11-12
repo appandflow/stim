@@ -335,6 +335,13 @@ export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
 }
 
+// compat C30 until 2.1.0
+/** The socket a stim-daemon from before Stim 2.0 listened on, which it records in its claim. */
+export function legacyDaemonSocket(): string {
+  return localSocket(join(daemonDir(), 'daemon.sock'));
+}
+// compat end
+
 /** The daemon's own log, rotated like workspace logs. */
 export function daemonNdjsonFile(): string {
   return join(daemonDir(), 'daemon.ndjson');

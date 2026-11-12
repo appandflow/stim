@@ -745,8 +745,7 @@ async function runStimdInner(
   }
   startup.signal.throwIfAborted();
   // compat C30 until 2.1.0
-  const stopped = await takeOverLegacyDaemon();
-  if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
+  await takeOverLegacyDaemon(log);
   // compat end
   let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
