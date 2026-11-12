@@ -240,7 +240,7 @@ export function legacyDaemonRefusal(
   const { pid } = holder.owner;
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
-    message: `Process ${pid} from an older stim holds this home's daemon claim and Stim could not stop it, so stimd cannot start.`,
+    message: `Process ${pid} from an older stim holds this home's daemon claim, so stimd cannot start.`,
     remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later (\`npm i -D stim@next\` or \`npx stim@next\` until 2.0.0 is released).`,
   };
 }

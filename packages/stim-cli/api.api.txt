@@ -290,6 +290,7 @@
 [*] interface DaemonStatus { | testWaiting?: DaemonTestWaiter[];
 [*] interface DaemonStatus { | unresolved: string;
 [*] interface DaemonStatus { | unverified?: UnverifiedCleanup[];
+[*] interface DaemonStatus { | verified: boolean;
 [*] interface DaemonStatus { | waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { | } | null;
 [*] interface DaemonTestWaiter {

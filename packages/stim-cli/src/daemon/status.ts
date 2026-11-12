@@ -14,7 +14,7 @@ import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
-import { legacyDaemonStop } from './legacy-daemon.ts';
+import { isStimDaemonClaim, legacyDaemonStop } from './legacy-daemon.ts';
 import { daemonMode, parseDaemonMode } from './mode.ts';
 
 /**
@@ -31,14 +31,16 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   try {
     const survey = readClaimSet(daemonClaimRoot());
     // compat C30 until 2.1.0
-    older = survey.live.find((entry) => entry.mode === 'exclusive');
+    older = survey.live.some((entry) => entry.mode === 'shared')
+      ? undefined
+      : survey.live.find((entry) => entry.mode === 'exclusive');
     // compat end
     holder = older ? undefined : survey.live[0];
     unresolved = survey.unresolved[0];
   } catch (error) {
     unresolved = { path: daemonClaimRoot(), reason: error instanceof Error ? error.message : String(error) };
   }
-  const read = readDaemonSnapshot();
+  const read = older ? null : readDaemonSnapshot();
   const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
   const waiting = listWaiting();
   const testWaiting = listTestWaiting();
@@ -50,7 +52,9 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     ...(mode === setting ? {} : { setting }),
     running: holder ? { pid: holder.owner.pid, since: holder.startedAt } : null,
     // compat C30 until 2.1.0
-    ...(older ? { older: { pid: older.owner.pid, stop: legacyDaemonStop(older.owner.pid) } } : {}),
+    ...(older
+      ? { older: { pid: older.owner.pid, stop: legacyDaemonStop(older.owner.pid), verified: isStimDaemonClaim(older) } }
+      : {}),
     // compat end
     lastTickAt: snapshot?.tickAt ?? null,
     intervalMs: snapshot?.intervalMs ?? null,
@@ -86,7 +90,7 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   // compat C30 until 2.1.0
   if (status.older)
-    return `Daemon: pid ${status.older.pid} from an older stim holds the daemon claim; it is not this stim's daemon, and the next command that starts stimd stops it (or run ${status.older.stop})${claim}`;
+    return `Daemon: pid ${status.older.pid} from an older stim holds the daemon claim; it is not this stim's daemon; ${status.older.verified ? `the next command that starts stimd stops it, or run ${status.older.stop}` : `stimd does not stop it, so run ${status.older.stop}`}${claim}`;
   // compat end
   if (status.mode === 'off' && !status.running) return `Daemon: off (daemon.mode); no automatic pass runs${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
@@ -153,7 +157,9 @@ export function daemonFindings(
       level: 'cost',
       title: 'A stim-daemon from an older Stim holds the daemon claim',
       detail: `pid ${status.older.pid} runs until every workspace in the home has been idle for idle.dormantDays, and while it runs this Stim's stimd cannot start, so no daemon of this version decides idle here.`,
-      fix: `Run stim start, ios or android: stimd stops it when it can verify it. Otherwise stop it with \`${status.older.stop}\`.`,
+      fix: status.older.verified
+        ? `Run stim start, ios or android: stimd stops this daemon, or stop it yourself with \`${status.older.stop}\`.`
+        : `stimd does not stop this process because Stim cannot verify it as its own older daemon; stop it with \`${status.older.stop}\` if nothing needs it.`,
     });
   // compat end
   if (status.claim)

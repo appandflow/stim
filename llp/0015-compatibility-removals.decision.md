@@ -44,32 +44,48 @@ any 1.40 command starts it. Refusing it therefore cost up to three days after an
 upgrade (#5620).
 
 stimd takes over from it before it takes the shared claim (compat C30, ends
-2.1.0). It acts only when the claim's record is what a stim-daemon writes (a
-`socket` and a `mode` in its details) and, in the same synchronous step that
-sends the signal, `inspectProcessIdentity` of the claim's owner reads `same`. It
-sends SIGTERM, because the old daemon has no stop request: its socket answers
-`hello`, `snapshot`, `tick` and the slot and boot queue operations only. Its
-SIGTERM handler closes the socket, releases the claim and exits after the tick
-in progress. stimd waits up to 10 seconds for that identity to read `gone` or
-`different`, then takes the claim and logs `stimd_takeover` with the pid.
+2.1.0), at every stimd start whatever `daemon.mode` says: `off` still starts stimd
+for Metro, the tunnel and device logs, and those need the claim. It acts only when
+the claim is exclusive, its `socket` is this home's pre-2.0 daemon socket, it has a
+`mode` and no `build` (a 2.0 stimd's details carry one), and, in the same
+synchronous step that sends the signal, `inspectProcessIdentity` of the claim's
+owner reads `same`. (A claim file stores no label, so the label `stim-daemon` cannot
+be checked.) It sends SIGTERM, because the old daemon has no stop request: its
+socket answers `hello`, `snapshot`, `tick` and the slot and boot queue operations
+only. The old handler closes the socket, releases the claim at once and exits after
+the tick in progress. stimd logs the signal (`stimd_takeover_signal`, with the pid
+and the identity it read) or why none was sent (`stimd_takeover_skipped`), waits up
+to 3 seconds for that identity to read `gone` or `different`, and logs
+`stimd_takeover`.
 
 The old daemon owns no child. It runs `ps`, `lsof` and `git` for a tick and
 starts nothing that outlives it, so dev servers (each with its own supervisor),
 log collectors and owned devices keep running; stimd adopts the dev servers as
 it adopts any other (`adoptMetroChildren`). A takeover stops nothing else.
 
-stimd refuses and signals nothing when the holder's record is not a
-stim-daemon's, when the identity reads `unknown` or `different`, or when the
-process is still running after the wait. It logs `stimd_claim_held`, and the CLI
-shows the same refusal for `stim start` and for the commands that need Metro or
-a managed tunnel: the pid, the stop command (`kill <pid>`, `taskkill /PID <pid>
-/F` on Windows) and the update remedy (stim 2.0.0 or later). `stim serve` prints
-the same text.
+When the process still runs after the wait, stimd logs `stimd_takeover_overlap`
+(warn, with the pid) and goes on to its normal claim attempt. That attempt
+succeeds when the old daemon has released the claim, which a real 1.40 daemon does
+at the signal, so stimd runs while the old daemon finishes its tick. The overlap
+is judged harmless from reading 1.40: its tick writes `snapshot.json` (rewritten on
+the next 2.0 tick), per-workspace idle and dormant stages, and the maintenance run,
+which takes `maintenance/run.claims` exclusively in both versions. stimd never
+signals a second time. If the old process still holds the claim, the attempt fails
+and stimd refuses.
 
-Known limits: the old daemon releases its claim when it receives the signal, not
-when it exits, so a daemon still finishing a tick after the 10-second wait can
-overlap a later stimd's first tick. On Windows `process.kill` ends the process
-at once and its claim is recovered through its dead identity.
+stimd signals nothing when the holder's record is not a stim-daemon's. A claim
+whose identity reads `different` is dead and one that reads `unknown` is
+unresolved; neither is a live holder. stimd then refuses or starts as it would
+without them. The refusal logs `stimd_claim_held`, and the CLI shows the same text
+for `stim start` and the commands that need Metro or a managed tunnel: the pid, the
+stop command (`kill <pid>`, `taskkill /PID <pid> /F` on Windows) and the update
+remedy (stim 2.0.0 or later). `stim serve` prints the same text. The wait is below
+the CLI's 5-second wait for stimd, so a command that started stimd does not give up
+before the takeover ends.
+
+Known limit: on Windows `process.kill` ends the process at once and its claim is
+recovered through its dead identity; whether the socket recorded there matches is
+unverified, and a mismatch leaves the refusal.
 
 Decision: the coordinator chose this takeover in the #5620 lane brief, on
 2026-11-12, not the maintainer. It reverses the part of the earlier decision
