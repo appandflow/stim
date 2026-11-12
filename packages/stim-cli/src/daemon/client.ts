@@ -408,8 +408,6 @@ async function admitOperation(
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
-  const legacy = legacyDaemonRefusal();
-  if (legacy) return { answer: { op: 'error', ...legacy } };
   await ensureStimd(env, process.platform, true, held, 'stim start', true, { ...context, workspace: root }, true);
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
@@ -914,6 +912,10 @@ export async function ensureStimd(
         `Stim: the ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved, so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, run ${removeCommands(claims)}.`,
       );
       return true;
+    }
+    if (command === 'stim start') {
+      const legacy = legacyDaemonRefusal();
+      if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
     admitting = pin && !held;
     if (stimdLive()) {

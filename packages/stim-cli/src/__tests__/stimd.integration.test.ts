@@ -14,7 +14,7 @@ import { connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as spawnChild, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   daemonClaimRoot,
   daemonNdjsonFile,
@@ -1767,12 +1767,26 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const successor = startDaemonProcess();
     expect(await successor.exited).toBe(0);
 
-    await expect(ensureMetroThroughStimd({ root: home, port: 8082 }, 500)).resolves.toMatchObject({
-      op: 'error',
+    const expected = {
       code: 'STIM_DAEMON_UNAVAILABLE',
       message: expect.stringContaining(`stim-daemon pid ${legacy.pid}`),
       remedy: expect.stringContaining(`kill ${legacy.pid}`),
+    };
+    await expect(ensureMetroThroughStimd({ root: home, port: 8082 }, 500)).resolves.toMatchObject({
+      op: 'error',
+      ...expected,
     });
+    writeFileSync(join(home, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.0.0' } }));
+    const preload = new URL('../../../../test/e2e/fixtures/block-detached-stimd.mjs?throw-detached', import.meta.url);
+    const cli = spawnSync(process.execPath, ['--import', preload.href, entry, 'start', '--json'], {
+      cwd: home,
+      env: { ...process.env, STIM_DAEMON: 'on' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(cli.error).toBeUndefined();
+    assert.equal(cli.status, 1, cli.stderr);
+    expect(JSON.parse(cli.stdout)).toMatchObject(expected);
     expect(readFileSync(record, 'utf8').trim().split('\n')).toEqual(['listening']);
     expect(readClaimSet(daemonClaimRoot()).live.map((claim) => [claim.owner.pid, claim.mode])).toEqual([
       [legacy.pid, 'exclusive'],
