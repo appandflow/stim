@@ -84,9 +84,11 @@ function unlistedWorktreeRemedy(dir: UnlistedWorktreeDir): string {
 }
 
 interface GcJsonLock {
+  /** @internal Carries no compatibility: a path inside the Stim home. */
   path: string;
   platform: string;
   key: string | null;
+  /** @internal Carries no compatibility. */
   pid: number | null;
   projectRoot: string | null;
 }

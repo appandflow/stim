@@ -12,7 +12,7 @@ import {
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { realpathSync, lstatSync } from 'node:fs';
 import { StimError, type StimPlanOptions } from 'stim';
-import { createStim } from 'stim/internal/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 import { SLOT_NAME } from '../control.ts';
 import { decodeSecret, secretValues } from '@stim-cli/core/noise-session';
 import { type DesktopSetup, startDesktopSetup, type DesktopSetupAnswer } from '../desktop-setup.ts';
@@ -107,7 +107,7 @@ function writeDesktopSetting(ctx: ConnectionContext, id: RequestId, params: unkn
   }, ctx.actionLimits.timeoutMs);
   const task = Promise.resolve()
     .then(async () => {
-      const client = createStim({
+      const client = createLocalStim({
         admission: 'none',
         projectRoot: cwd,
         env: ctx.options.env,
@@ -363,7 +363,7 @@ export function desktopMethod(
       id,
       'stim doctor',
       async (signal) => ({
-        ...(await createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).doctor({
+        ...(await createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).doctor({
           signal,
           platform,
           record: true,
@@ -488,7 +488,7 @@ function readDesktopSettings(ctx: ConnectionContext, id: RequestId, method: stri
   }
   const cwd = resolvePath(params.cwd);
   ctx.inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-    createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
+    createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
   );
 }
 

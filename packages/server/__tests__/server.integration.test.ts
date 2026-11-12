@@ -116,8 +116,8 @@ test('server close cancels a home identity waiting on the config lock', async ()
   const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
   assert(lock);
   let entered = false;
-  const original = stimSelf.createStim;
-  const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+  const original = stimSelf.createLocalStim;
+  const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
     const client = original(options);
     return {
       ...client,
@@ -3371,7 +3371,7 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const api = vi.spyOn(stimSelf, 'createStim');
+    const api = vi.spyOn(stimSelf, 'createLocalStim');
     const methods = [
       'desktop.start.subscribe',
       'desktop.run.subscribe',
@@ -3399,12 +3399,12 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const original = stimSelf.createStim;
+    const original = stimSelf.createLocalStim;
     const startWork = vi.fn<() => Promise<never>>(async () => {
       throw new Error('fixture start');
     });
     const api = vi
-      .spyOn(stimSelf, 'createStim')
+      .spyOn(stimSelf, 'createLocalStim')
       .mockImplementation((options) => ({ ...original(options), start: startWork }));
     try {
       expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');

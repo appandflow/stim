@@ -1,0 +1,14 @@
+// The stim/cache-manifest API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+[*] declare function register(entry: CacheEntry, path?: string): CacheEntry;
+[*] declare function unregister(dir: string, path?: string): boolean;
+[*] export register
+[*] export type CacheEntry
+[*] export unregister
+[*] interface CacheEntry {
+[*] interface CacheEntry { @@1 dir: string;
+[*] interface CacheEntry { @@1 entriesDepth?: number;
+[*] interface CacheEntry { @@1 layout?: string;
+[*] interface CacheEntry { @@1 name?: string;
+[*] interface CacheEntry { @@1 note?: string;
+[*] interface CacheEntry { @@1 prune?: "atomic" | "entries";
+[*] interface CacheEntry { @@1 registeredBy?: string;

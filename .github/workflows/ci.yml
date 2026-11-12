@@ -112,7 +112,7 @@ jobs:
       - name: Hot-path closures of the built CLI
         run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver,api
 
-      - name: stim and stim/plugin API reports match their baselines and the base branch's
+      - name: The API reports match their baselines and the base branch's
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}

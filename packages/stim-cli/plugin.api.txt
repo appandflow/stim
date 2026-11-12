@@ -1,4 +1,5 @@
 // The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+// The agent-driver and transport kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.
 // Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
 [*] declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
 [*] export runContract

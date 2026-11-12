@@ -9,7 +9,8 @@ const stimCli = join(root, 'packages', 'stim-cli');
 const notesFile = 'docs/releases/unreleased.md';
 
 /**
- * Each public entry the gate freezes: `stim/plugin`, and the package root `stim` (`createStim`). `untagged` is the kind
+ * Each public entry the gate freezes: `stim/plugin`, the package root `stim` (`createStim`), `stim/ci` and
+ * `stim/cache-manifest`. `integersFrom` names the report whose integers a report without its own uses. `untagged` is the kind
  * that owns the root's lines, which come from no plugin kind's module: a change to them needs the `stim` integer.
  * `produced` names where the other side builds objects Stim reads: the interfaces a plugin implements, or the types a
  * caller passes to `createStim` and the client's methods.
@@ -30,6 +31,24 @@ const REPORTS = [
     baselineFile: 'packages/stim-cli/api.api.txt',
     untagged: 'stim',
     produced: 'arguments',
+  },
+  {
+    name: 'stim/ci',
+    entry: 'ci',
+    source: '../ci/src/index.ts',
+    baselineFile: 'packages/stim-cli/ci.api.txt',
+    untagged: 'stim',
+    produced: 'arguments',
+    integersFrom: 'stim',
+  },
+  {
+    name: 'stim/cache-manifest',
+    entry: 'cache-manifest',
+    source: 'src/cache-manifest.ts',
+    baselineFile: 'packages/stim-cli/cache-manifest.api.txt',
+    untagged: 'stim',
+    produced: 'arguments',
+    integersFrom: 'stim',
   },
 ];
 
@@ -288,8 +307,9 @@ function producedDeclarations(lines, produced) {
       const method = line.depth === 1 && line.member ? splitMethod(line.member) : null;
       if (method) queue.push(...identifiers(method.params));
     }
-    const create = (byName.get('createStim') ?? []).find((line) => line.depth === null);
-    if (create) queue.push(...identifiers(splitMethod(create.top.replace(/^declare function /, ''))?.params ?? ''));
+    for (const line of parsed)
+      if (line.depth === null && line.top.startsWith('declare function '))
+        queue.push(...identifiers(splitMethod(line.top.replace(/^declare function /, ''))?.params ?? ''));
   }
   const seen = new Set();
   while (queue.length) {
@@ -505,22 +525,30 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error('--reset is only for the prerelease line of a major: .github/next-version names no later major.');
     process.exit(1);
   }
+  const generated = new Map();
   for (const report of REPORTS) {
     const { name, baselineFile } = report;
     const current = await generateReport(report);
     const committed = readFile(report);
+    generated.set(name, { current, baseline: reportLines(committed) });
+    const source = report.integersFrom ? generated.get(report.integersFrom) : null;
+    const integers = source && { before: kindIntegers(source.baseline), after: kindIntegers(source.current) };
     if (reset) {
       writeFileSync(join(root, baselineFile), `${[...header(report), RESET_HEADER, ...current].join('\n')}\n`);
       console.log(`Reset ${baselineFile}.`);
       continue;
     }
-    const options = { notes, untagged: report.untagged, produced: report.produced };
+    const options = { notes, untagged: report.untagged, produced: report.produced, integers };
     const verdict = apiReportVerdict({ ...options, baseline: reportLines(committed), current });
     const listing = [
       ...verdict.removed.map((line) => `  - ${line}`),
       ...verdict.added.map((line) => `  + ${line}`),
     ].join('\n');
-    if (verdict.status === 'same') {
+    const headed = [...header(report), ...(committed.includes(RESET_HEADER) ? [RESET_HEADER] : []), ...current];
+    if (verdict.status === 'same' && update && `${headed.join('\n')}\n` !== committed) {
+      writeFileSync(join(root, baselineFile), `${headed.join('\n')}\n`);
+      console.log(`Updated the header of ${baselineFile}.`);
+    } else if (verdict.status === 'same') {
       console.log(`${name} API report: ${current.length} lines, unchanged.`);
     } else if (verdict.status === 'breaking') {
       console.error(
@@ -532,10 +560,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = 1;
       continue;
     } else if (update) {
-      writeFileSync(
-        join(root, baselineFile),
-        `${[...header(report), ...(committed.includes(RESET_HEADER) ? [RESET_HEADER] : []), ...current].join('\n')}\n`,
-      );
+      writeFileSync(join(root, baselineFile), `${headed.join('\n')}\n`);
       console.log(`Updated ${baselineFile} (${verdict.status}):\n${listing}`);
     } else {
       console.error(

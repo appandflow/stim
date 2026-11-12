@@ -638,8 +638,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       const held = claim?.acquired;
       let recovered = false;
       let first = true;
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
         const client = original(options);
         return {
           ...client,
@@ -1758,8 +1758,8 @@ describe('build.plan', () => {
       fail: (cause: Error) => void;
     }[] = [];
     let cancelled = 0;
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       plan: async (request) => {
         assert(request.platform !== 'macos');

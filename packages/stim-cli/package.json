@@ -72,11 +72,6 @@
       "module-sync": "./dist/attached-stimd.mjs",
       "default": "./dist/attached-stimd.mjs"
     },
-    "./internal/build-artifact-cache": {
-      "types": "./dist/build-artifact-cache.d.mts",
-      "module-sync": "./dist/build-artifact-cache.mjs",
-      "default": "./dist/build-artifact-cache.mjs"
-    },
     "./ci": {
       "types": "./dist/ci.d.mts",
       "module-sync": "./dist/ci.mjs",

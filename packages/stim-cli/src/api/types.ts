@@ -222,7 +222,7 @@ export type StimGcItem = import('../commands/gc/item.ts').GcItem;
 export interface StimGcItemOptions extends StimReadOptions {
   item: StimGcItem;
 }
-export interface StimGcItemResult {
+interface StimGcItemResult {
   results: import('../commands/gc/results.ts').GcResult[];
   exitCode: 0 | 1;
 }

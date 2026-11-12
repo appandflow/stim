@@ -4,8 +4,11 @@ import type { EngineClient, EngineOptions, StimClient, StimFailure, StimOptions 
 
 export { StimError };
 
+/** @internal The integer of what `runOp` receives from another Stim build; see `runOp`. */
+export { RUN_OP_VERSION } from './api/run-op-version.ts';
+
 /** The integer of the `stim` API. It goes up only when an export is removed, renamed or changes meaning. */
-export const STIM_API_VERSION = 1 as const;
+export const STIM_API_VERSION = 2 as const;
 export type {
   StimBuildOptions,
   StimBuildResult,
@@ -15,15 +18,10 @@ export type {
   StimDoctorOptions,
   StimDoctorRepairOptions,
   StimDeviceUnlockOptions,
-  StimDeviceToolOptions,
   StimDoctorReport,
-  StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
   StimGcMutationResult,
-  StimGcItem,
-  StimGcItemOptions,
-  StimGcItemResult,
   StimGcReport,
   StimOptions,
   StimPlatform,

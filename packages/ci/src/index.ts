@@ -43,7 +43,7 @@ function stimEnvironment(options: CIOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
     ...(options.home ? { STIM_HOME: resolve(options.home) } : {}),
-    ...(options.buildCache ? { STIM_BUILD_CACHE: resolve(options.buildCache) } : {}),
+    ...(options.buildCacheDir ? { STIM_BUILD_CACHE: resolve(options.buildCacheDir) } : {}),
   };
 }
 
@@ -135,7 +135,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let stim = createStim({
     projectRoot,
     home: options.home ? resolve(options.home) : undefined,
-    buildCacheDir: options.buildCache ? resolve(options.buildCache) : undefined,
+    buildCacheDir: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
     onProgress,
   });
   let attempted = false;
@@ -155,7 +155,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       stim = createStim({
         projectRoot,
         home: options.home ? resolve(options.home) : undefined,
-        buildCacheDir: options.buildCache ? resolve(options.buildCache) : undefined,
+        buildCacheDir: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
         env: { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
         onProgress,
       });
@@ -166,7 +166,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     const context = {
       projectRoot,
       home: options.home ? resolve(options.home) : undefined,
-      buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+      buildCache: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
       env: host ? { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' } : { ...process.env },
       onProgress,
     };
@@ -283,11 +283,11 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   return result;
 }
 
-function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string): string {
+function buildCommand({ run, home, buildCacheDir }: CIOptions, projectRoot: string): string {
   const flags = [`--platform ${run.platform}`];
   if (projectRoot !== realpathSync(process.cwd())) flags.push(`--project ${JSON.stringify(projectRoot)}`);
   if (home) flags.push(`--home ${JSON.stringify(resolve(home))}`);
-  if (buildCache) flags.push(`--build-cache ${JSON.stringify(resolve(buildCache))}`);
+  if (buildCacheDir) flags.push(`--build-cache ${JSON.stringify(resolve(buildCacheDir))}`);
   if (run.platform === 'ios') {
     if (run.scheme !== undefined) flags.push(`--scheme ${JSON.stringify(run.scheme)}`);
     if (run.configuration !== undefined) flags.push(`--configuration ${JSON.stringify(run.configuration)}`);

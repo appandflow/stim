@@ -1,6 +1,6 @@
 // The stim API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
 // Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
-[*] @internal declare function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown>;
+[*] @internal declare function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown>;
 [*] declare class StimError extends Error {
 [*] declare class StimError extends Error { @@1 constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
 [*] declare class StimError extends Error { @@1 readonly code: string;
@@ -11,8 +11,11 @@
 [*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
 [*] declare const GRADLE_DAEMONS_KIND;
 [*] declare const HOST_CAPABILITIES: readonly ["physical-ios", "physical-android", "macos-window", "macos-windows", "macos-window-select", "macos-window-control", "macos-keyboard-extended", "duo-frames", "native-xcode-build", "native-xcode-toolchain"];
+[*] declare const LOG_LEVELS: readonly ["debug", "info", "warn", "error", "fatal"];
+[*] declare const LOG_SOURCES: readonly ["metro", "client", "device", "build", "agent", "maintenance", "placement"];
 [*] declare const PLACEMENT_DECISIONS: readonly ["here", "offloaded", "fell-back"];
-[*] declare const STIM_API_VERSION: 1;
+[*] declare const RUN_OP_VERSION: 1;
+[*] declare const STIM_API_VERSION: 2;
 [*] declare const WATCHMAN_KIND;
 [*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
 [*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
@@ -39,6 +42,7 @@
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @@1 groups: TempLeftoverGroup[];
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @@1 root: string;
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @branch1 @@0 } | null;
+[*] export RUN_OP_VERSION
 [*] export STIM_API_VERSION
 [*] export StimError
 [*] export createStim
@@ -46,22 +50,17 @@
 [*] export type StimBuildOptions
 [*] export type StimBuildResult
 [*] export type StimClient
-[*] export type StimDeviceToolOptions
 [*] export type StimDeviceUnlockOptions
 [*] export type StimDiagnostics
 [*] export type StimDiagnosticsOptions
 [*] export type StimDoctorOptions
 [*] export type StimDoctorRepairOptions
 [*] export type StimDoctorReport
-[*] export type StimGcItem
-[*] export type StimGcItemOptions
-[*] export type StimGcItemResult
 [*] export type StimGcMutationOptions
 [*] export type StimGcMutationResult
 [*] export type StimGcOptions
 [*] export type StimGcReport
 [*] export type StimLogsOptions
-[*] export type StimMachineAccessOptions
 [*] export type StimOptions
 [*] export type StimPlan
 [*] export type StimPlanOptions
@@ -344,10 +343,10 @@
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
 [*] interface DoctorReport {
-[*] interface DoctorReport { @@1 daemon: DaemonStatus & {
+[*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
+[*] interface DoctorReport { @@1 @internal maintenance: ReturnType<typeof maintenanceStatus> & {
 [*] interface DoctorReport { @@1 deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
 [*] interface DoctorReport { @@1 findings: Finding[];
-[*] interface DoctorReport { @@1 maintenance: ReturnType<typeof maintenanceStatus> & {
 [*] interface DoctorReport { @@1 platform: DoctorPlatform | null;
 [*] interface DoctorReport { @@1 pressure: DaemonPressure | null;
 [*] interface DoctorReport { @@1 project: string;
@@ -372,9 +371,9 @@
 [*] interface GcInventory { @@1 runtimes: InventoryRuntime[];
 [*] interface GcInventory { @@1 systemImages: InventorySystemImage[];
 [*] interface GcJsonLock {
+[*] interface GcJsonLock { @@1 @internal path: string;
+[*] interface GcJsonLock { @@1 @internal pid: number | null;
 [*] interface GcJsonLock { @@1 key: string | null;
-[*] interface GcJsonLock { @@1 path: string;
-[*] interface GcJsonLock { @@1 pid: number | null;
 [*] interface GcJsonLock { @@1 platform: string;
 [*] interface GcJsonLock { @@1 projectRoot: string | null;
 [*] interface GcJsonSections {
@@ -1055,6 +1054,10 @@
 [*] interface RemoteListing { @@2 reachability: Reachability;
 [*] interface RemoteListing { @@2 revoke: string[];
 [*] interface RemoteListing { @@2 serverKeyFingerprint: string | null;
+[*] interface RunExtras {
+[*] interface RunExtras { @@1 cleanAppState?: boolean;
+[*] interface RunExtras { @@1 recordedBuild?: boolean;
+[*] interface RunExtras { @@1 signal?: AbortSignal;
 [*] interface RunLeaseFacts {
 [*] interface RunLeaseFacts { @@1 expiresAt: string;
 [*] interface RunLeaseFacts { @@1 kind: string;
@@ -1142,24 +1145,24 @@
 [*] interface StatsPlacement { @@1 reason: string;
 [*] interface StatsPlacement { @@1 slotWaitMs?: number;
 [*] interface StimClient {
+[*] interface StimClient { @@1 @internal deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
+[*] interface StimClient { @@1 @internal deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
+[*] interface StimClient { @@1 @internal identity(options?: StimReadOptions): Promise<string>;
+[*] interface StimClient { @@1 @internal requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { @@1 build(options: StimBuildOptions): Promise<StimBuildResult>;
 [*] interface StimClient { @@1 build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
 [*] interface StimClient { @@1 collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
-[*] interface StimClient { @@1 deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
-[*] interface StimClient { @@1 deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
 [*] interface StimClient { @@1 diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
 [*] interface StimClient { @@1 doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { @@1 followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void, onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>): Promise<() => void>;
-[*] interface StimClient { @@1 gc(options?: StimGcOptions): Promise<StimGcReport>;
-[*] interface StimClient { @@1 identity(options?: StimReadOptions): Promise<string>;
 [*] interface StimClient { @@1 logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
 [*] interface StimClient { @@1 plan(options: StimPlanOptions): Promise<StimPlan>;
+[*] interface StimClient { @@1 previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
 [*] interface StimClient { @@1 readonly projectRoot: string;
 [*] interface StimClient { @@1 reload(options?: StimReloadOptions): Promise<StimReloadResult>;
 [*] interface StimClient { @@1 remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
 [*] interface StimClient { @@1 removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
 [*] interface StimClient { @@1 repairDoctor(options?: StimDoctorRepairOptions): Promise<{
-[*] interface StimClient { @@1 requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { @@1 run(options: StimRunOptions): Promise<StimRunResult>;
 [*] interface StimClient { @@1 run<P extends StimPlatform>(options: StimRunOptions & {
 [*] interface StimClient { @@1 setSetting(key: string, value: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
@@ -1197,7 +1200,7 @@
 [*] interface StimDiagnostics { @@1 directory: string;
 [*] interface StimDiagnostics { @@1 records: NdjsonRecord[];
 [*] interface StimDiagnosticsOptions {
-[*] interface StimDiagnosticsOptions { @@1 errors?: boolean;
+[*] interface StimDiagnosticsOptions { @@1 errorsOnly?: boolean;
 [*] interface StimDiagnosticsOptions { @@1 signal?: AbortSignal;
 [*] interface StimDiagnosticsOptions { @@1 tail?: number;
 [*] interface StimDoctorOptions extends StimReadOptions {
@@ -1225,17 +1228,17 @@
 [*] interface StimLogsOptions {
 [*] interface StimLogsOptions { @@1 errorsOnly?: boolean;
 [*] interface StimLogsOptions { @@1 grep?: string;
-[*] interface StimLogsOptions { @@1 minLevel?: string;
+[*] interface StimLogsOptions { @@1 minLevel?: LogLevel;
 [*] interface StimLogsOptions { @@1 signal?: AbortSignal;
 [*] interface StimLogsOptions { @@1 since?: string;
 [*] interface StimLogsOptions { @@1 slot?: string;
-[*] interface StimLogsOptions { @@1 sources?: string[];
+[*] interface StimLogsOptions { @@1 sources?: LogSource[];
 [*] interface StimLogsOptions { @@1 tail?: number;
 [*] interface StimMachineAccessOptions extends StimReadOptions {
 [*] interface StimMachineAccessOptions extends StimReadOptions { @@1 ticket?: string;
 [*] interface StimOptions {
-[*] interface StimOptions { @@1 admission?: "command" | "none";
-[*] interface StimOptions { @@1 buildCache?: string;
+[*] interface StimOptions { @@1 @internal admission?: "command" | "none";
+[*] interface StimOptions { @@1 buildCacheDir?: string;
 [*] interface StimOptions { @@1 env?: NodeJS.ProcessEnv;
 [*] interface StimOptions { @@1 home?: string;
 [*] interface StimOptions { @@1 onProgress?: (event: StimProgress) => void;
@@ -1479,6 +1482,8 @@
 [*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & {
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & { @@1 buildCache?: string;
 [*] type GcItem = {
 [*] type GcItem = { @@1 dir: string;
 [*] type GcItem = { @@1 kind: "cache";
@@ -1567,6 +1572,8 @@
 [*] type KeyConfirmer = (machine: string, serverKey: string) => Promise<boolean>;
 [*] type LaunchStatus = boolean | "unverified" | "bundling";
 [*] type LeasePlatform = "ios" | "android";
+[*] type LogLevel = (typeof LOG_LEVELS)[number];
+[*] type LogSource = (typeof LOG_SOURCES)[number];
 [*] type MachineAuth = {
 [*] type MachineAuth = { @@1 access: Access;
 [*] type MachineAuth = { @@1 serverKey: string;
@@ -1629,6 +1636,11 @@
 [*] type RecordingKeptCode = "unresolved" | "retained" | "recently-recorded";
 [*] type ReloadPlatform = WorkspaceLaunchPlatform | "web";
 [*] type RunOutcomeKind = "hit" | "cold";
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @@1 wait?: unknown;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@0 } ? Omit<Options, "wait"> & {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
 [*] type SettingScope = "machine" | "workspace" | "repo" | "committed";
 [*] type SettingsPayload = {
 [*] type SettingsPayload = { @@1 files: Partial<Record<SettingScope, string>>;
@@ -1689,10 +1701,7 @@
 [*] type StimPlatform = "ios" | "android" | "macos" | "web";
 [*] type StimReloadResult = ReloadFacts;
 [*] type StimRemoteMachines = RemoteListing;
-[*] type StimRunOptions = PlatformRunOptions & {
-[*] type StimRunOptions = PlatformRunOptions & { @@1 cleanAppState?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { @@1 recordedBuild?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { @@1 signal?: AbortSignal;
+[*] type StimRunOptions = RunSelectors & RunExtras;
 [*] type StimRunResult = {
 [*] type StimRunResult = { @@1 facts: IosFacts;
 [*] type StimRunResult = { @@1 platform: "ios";
@@ -1706,7 +1715,7 @@
 [*] type StimRunResult = { @branch2 @@2 bundle: string;
 [*] type StimRunResult = { @branch2 @@2 bundleId: string;
 [*] type StimRunResult = { @branch2 @@2 executable: string;
-[*] type StimRunResult = { @branch2 @@2 launched: boolean | "unverified";
+[*] type StimRunResult = { @branch2 @@2 launched: LaunchStatus;
 [*] type StimRunResult = { @branch2 @@2 logs: {
 [*] type StimRunResult = { @branch2 @@2 pid: number | null;
 [*] type StimRunResult = { @branch2 @@2 product: string;

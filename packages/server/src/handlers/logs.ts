@@ -1,7 +1,7 @@
 import { send, readFailure, type ConnectionContext } from './context.ts';
 import type { RequestId } from '../protocol.ts';
 import { parseLogFilter, LogBatcher, archivedLogs } from '../logs.ts';
-import { createStim } from 'stim/internal/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 
 export function subscribeLogs(
   ctx: ConnectionContext,
@@ -66,7 +66,7 @@ export function subscribeLogs(
   });
   const task = Promise.resolve()
     .then(() =>
-      createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).followLogs(
+      createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).followLogs(
         {
           sources: parsed.filter.sources,
           minLevel: parsed.filter.level,
@@ -115,7 +115,7 @@ export function queryLogs(ctx: ConnectionContext, id: RequestId, params: unknown
     return send(ctx.socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
   }
   ctx.inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
-    records: await createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).logs({
+    records: await createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).logs({
       sources: parsed.filter.sources,
       minLevel: parsed.filter.level,
       slot: parsed.filter.slot,
