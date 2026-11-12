@@ -7,6 +7,7 @@ import { compareStimVersions } from './stim-installations.ts';
 export const SERVER_FINDING_CODES = [
   'server-multiple',
   'server-service-crash',
+  'server-service-override',
   'server-desktop-authority',
   'server-version',
   'server-home',
@@ -63,6 +64,8 @@ export interface InstalledServerService {
   label: string;
   installed: InstalledService;
   job: LaunchdJob | UnitJob | null;
+  /** The systemd drop-in that sets `ExecStart=`, which the unit's own command never runs under. */
+  override?: string | undefined;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -271,6 +274,16 @@ const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: st
 
 function serviceStateFindings(setup: ServerSetup): Finding[] {
   return setup.services.flatMap((service): Finding[] => {
+    if (service.override)
+      return [
+        {
+          code: 'server-service-override',
+          level: 'note',
+          title: `A systemd drop-in overrides the command of the ${service.label} service`,
+          detail: `${service.override}, so the service cannot move onto the engine's stimd shim and keeps running the build that command names.`,
+          fix: `Remove ExecStart= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+        },
+      ];
     const { job, installed } = service;
     const server = setup.servers.find((each) => each.kind === 'service' && each.label === service.label);
     const log = installed.logPath ? ` The log is ${installed.logPath}.` : '';

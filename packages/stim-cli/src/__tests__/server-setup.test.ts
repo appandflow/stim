@@ -206,6 +206,16 @@ describe('serverSetupFindings', () => {
       ).toEqual([]);
     });
 
+    it('names the systemd drop-in that stops a service from moving onto the engine shim', () => {
+      const [finding] = serverSetupFindings(
+        setup({
+          services: [service({ override: '/home/me/.config/systemd/user/x.service.d/o.conf sets ExecStart=' })],
+        }),
+      );
+      expect(finding).toMatchObject({ code: 'server-service-override', level: 'note' });
+      expect(finding?.detail).toContain('o.conf');
+    });
+
     it('reports an installed service with no job', () => {
       const [finding] = down(null);
       expect(finding?.title).toContain('installed but not running');

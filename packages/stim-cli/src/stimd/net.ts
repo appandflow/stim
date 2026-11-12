@@ -32,7 +32,8 @@ type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
-  | { type: 'update'; why: string };
+  | { type: 'update'; why: string }
+  | { type: 'restart'; why: string };
 
 /** Whether the net thread serves, on which port, or why it does not. */
 type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
@@ -58,6 +59,7 @@ export function createNetThread(
   log: (level: 'info' | 'warn', event: string, msg: string) => void,
   onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
+  onRestart: (why: string) => void = () => {},
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
@@ -143,6 +145,7 @@ export function createNetThread(
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
           } else if (message.type === 'update') onUpdate(message.why);
+          else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });

@@ -175,6 +175,20 @@ promotion), and no other connection can. An exact npm release needs no setting; 
 packages are taken only while `server.acceptClientBuilds` is `true`, its
 default being `false`.
 
+A service installed before the engine existed moves onto the shim when its server boots on a Stim that has this
+code. On Linux that boot rewrites the unit's `ExecStart=`, runs `systemctl --user daemon-reload`, and reads
+`systemctl show` back to confirm that systemd loaded the shim (a failed reload is retried at each later boot and logged
+with the restart command). The net thread then asks stimd to exit once idle: no command, no pinned work (build slots,
+hosted native work, cleanups, running Metro, log streams), the same condition as an engine switch. systemd's
+`Restart=always` starts it again about 30 seconds later from the loaded shim definition. A pure npm-copy service
+therefore needs one automatic restart after its first boot on this code; until a restart reaches code that has the
+rewrite (`stim service install`, `systemctl --user restart`, a crash or a reboot) it stays on its build. When the
+engine later flips under a shim service, the stimd hands its home to a transient `systemd-run` successor and the
+unit's restarted process attaches to that successor, so one stimd owns the home. A unit with a drop-in that sets
+`ExecStart=`, or a multi-line `ExecStart=`, is not rewritten; the server logs it and `stim doctor` reports the
+drop-in. A launchd job re-reads its plist only at bootstrap, so the macOS rewrite does not take effect on an exit and
+restart; it needs a `launchctl bootout` and `bootstrap`. That gap is not closed here.
+
 A per-user service keeps worker ownership with the approving user. A version-neutral launchd or systemd shim lets the engine switch after work drains without replacing service setup or pairings. [Engine integration](https://github.com/appandflow/stim/pull/5380).
 
 ## Code
