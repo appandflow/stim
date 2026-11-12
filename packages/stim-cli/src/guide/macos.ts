@@ -164,9 +164,10 @@ reset after reaching 8 MiB; it warns that output written during the reset may
 be dropped. If stimd stays down, the files grow until a stimd copies them.
 The run ends only when the app and its process group are gone and lsof shows no
 other process holding either output file open. stim stop, the next stim macos,
-a hosted stop or replacement, and workspace removal wait up to 5 s for that and
-otherwise fail, naming the pid that still holds the output (a helper the app
-started outside its process group, for example). Stim sends that process no
+a hosted stop or replacement, and workspace removal fail at once while the app
+runs, wait up to 5 s while only its group or another process holding the output
+blocks the end, and then fail, naming the pid that still holds the output (a
+helper the app started outside its process group, for example). Stim sends that process no
 signal: stop it yourself, then retry. A process of another user is invisible to
 lsof.
 An app launch requires its output observer. If the observer cannot start, Stim

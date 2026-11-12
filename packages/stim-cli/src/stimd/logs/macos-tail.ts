@@ -87,6 +87,14 @@ export function drained(dir: string, app: MacosProcess): boolean {
   return mark?.processToken === app.processToken && mark.exited === true && mark.pending === undefined;
 }
 
+/** Removes an app's raw output files once its end is recorded; a failure leaves them to workspace removal. */
+export function removeRawOutput(dir: string, launchId: string): void {
+  for (const stream of ['out', 'err'] as const)
+    try {
+      rmSync(join(dir, macosAppLogName(launchId, stream)), { force: true });
+    } catch {}
+}
+
 function sinkIdentity(sink: string): { ino: string; size: number } | null {
   try {
     const stat = statSync(sink, { bigint: true });
@@ -238,7 +246,7 @@ export function tailMacosApp(
   };
   const buffer = Buffer.alloc(CHUNK_BYTES);
   const follow = (file: (typeof files)[number]): void => {
-    if (unsettled) state = resumeState(readMark(dir), app.processToken, sink);
+    if (unsettled) state = { ...resumeState(readMark(dir), app.processToken, sink), dropped: state.dropped };
     let size: number;
     try {
       size = statSync(file.path).size;
@@ -322,10 +330,23 @@ export function tailMacosApp(
     releaseClaim(claim);
     end();
   };
+  const conclude = (): boolean => {
+    reason = null;
+    stop();
+    removeRawOutput(dir, launchId);
+    return true;
+  };
   const finish = (force: boolean): Promise<boolean> => {
     if (done) return Promise.resolve(state.exited);
     finishing ??= (async () => {
       waiting = false;
+      try {
+        if (unsettled) settle();
+      } catch {
+        reason = 'the macOS app output could not be read or recorded';
+        return false;
+      }
+      if (state.exited) return conclude();
       if (!pump()) {
         reason = 'the macOS app output could not be read or recorded';
         return false;
@@ -376,13 +397,7 @@ export function tailMacosApp(
         reason = 'the macOS app output could not be recorded';
         return false;
       }
-      reason = null;
-      stop();
-      for (const file of files)
-        try {
-          rmSync(file.path, { force: true });
-        } catch {}
-      return true;
+      return conclude();
     })().finally(() => {
       finishing = null;
     });

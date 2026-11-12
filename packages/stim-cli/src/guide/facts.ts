@@ -2013,7 +2013,7 @@ RULES
             slot?, id, owned, cpuPercent, residentMb, memoryMb,
             processes }] }
 
-  kind         macos      the owned Swift Package app and supervisor
+  kind         macos      the owned Swift Package app
                simulator  a booted simulator's launchd_sim tree
                emulator   an emulator's launcher and qemu tree, by its -avd
                metro      a workspace's supervisor and Metro trees

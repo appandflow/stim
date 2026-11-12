@@ -11,7 +11,7 @@ import { inspectProcessIdentity } from '../../process-identity.ts';
 import { readWebRecord } from '../../web/state.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { drained, tailMacosApp } from './macos-tail.ts';
+import { drained, removeRawOutput, tailMacosApp } from './macos-tail.ts';
 import { observeBrowser } from './web.ts';
 
 const MACOS_SCAN_MS = 2000;
@@ -106,7 +106,10 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     if (closed || !dir || !record?.app) return true;
     const identity = inspectProcessIdentity(record.app);
     if (identity === 'unknown') return false;
-    if (identity !== 'same' && drained(dir, record.app)) return true;
+    if (identity !== 'same' && drained(dir, record.app)) {
+      removeRawOutput(dir, record.launchId);
+      return true;
+    }
     const key = `macos:${dir}`;
     if (streams.get(key)?.token === record.app.processToken || ended.get(key) === record.app.processToken) return true;
     await replaced(key, record.app.processToken);

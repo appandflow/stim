@@ -2062,7 +2062,7 @@ describe('macOS build placement and promotion', () => {
         }
       },
     );
-    test('cancellation during LaunchServices verification cleans up the launched app', async () => {
+    test('cancellation during LaunchServices verification stops the app and the commands it started', async () => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
       vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
@@ -2073,9 +2073,25 @@ describe('macOS build placement and promotion', () => {
         },
       );
       vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
-      const stopChildren = vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
-      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
-      const app = macosProcess(process.pid);
+      const mocked = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor(mocked);
+      const idle = 'setInterval(() => {}, 1000)';
+      const launched = real.spawn(
+        process.execPath,
+        [
+          '-e',
+          `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'], detached: true },
+      );
+      children.push(launched);
+      const helper = Number(
+        await new Promise<string>((resolve) => launched.stdout?.once('data', (data) => resolve(String(data)))),
+      );
+      if (launched.pid === undefined) throw new Error('the fixture app did not start');
+      const app = macosProcess(launched.pid);
       const claim = {
         root: 'fixture',
         path: 'fixture',
@@ -2090,11 +2106,11 @@ describe('macOS build placement and promotion', () => {
       vi.spyOn(stimdClient, 'observeOwnedMacos').mockResolvedValue(null);
       vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
       const controller = new AbortController();
-      const executor = getExecutor();
       setExecutor({
-        ...executor,
+        ...mocked,
         runFileAsync: async (file, args, options) => {
-          if (file !== 'lsappinfo') return executor.runFileAsync(file, args, options);
+          if (file === 'ps') return real.runFileAsync(file, args, options);
+          if (file !== 'lsappinfo') return mocked.runFileAsync(file, args, options);
           controller.abort(new Error('cancelled during LaunchServices'));
           return 'ASN:0x0-0x1:';
         },
@@ -2102,9 +2118,15 @@ describe('macOS build placement and promotion', () => {
       await expect(
         runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
       ).rejects.toThrow('cancelled during LaunchServices');
-      expect(stopChildren).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
-      expect(stop).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
-      expect(readMacosRecord(root)?.app).toBeUndefined();
+      try {
+        expect(inspectProcessIdentity(app)).not.toBe('same');
+        expect(() => process.kill(helper, 0)).toThrow(/ESRCH/);
+        expect(readMacosRecord(root)?.app).toBeUndefined();
+      } finally {
+        try {
+          process.kill(helper, 'SIGKILL');
+        } catch {}
+      }
     });
 
     test.each([false, true])(

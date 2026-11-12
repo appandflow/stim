@@ -159,5 +159,29 @@ describe.skipIf(process.platform !== 'darwin')('macOS app output tail', () => {
     expect(notLanded.ready()).toBeNull();
     notLanded.close();
     expect(messages(dir)).toEqual(['one', 'two', 'Observing Fixture output.', 'three', 'four']);
+    process.kill(record.pid, 'SIGKILL');
+    await vi.waitFor(() => expect(inspectProcessIdentity(record)).not.toBe('same'));
+    const last = readMark(mark);
+    writeFileSync(
+      mark,
+      JSON.stringify({
+        ...last,
+        pending: {
+          ino,
+          size: readFileSync(sink).length,
+          next: { ...last, exited: true, processToken: undefined },
+        },
+      }),
+    );
+    appendFileSync(
+      sink,
+      `${JSON.stringify({ src: 'client', platform: 'macos', level: 'info', msg: 'Exited Fixture.' })}\n`,
+    );
+    const finished = tailMacosApp(dir, record, 'Fixture', 'fixture');
+    if (!finished) throw new Error('the tail did not resume');
+    expect(await finished.drain()).toBe(true);
+    expect(messages(dir).filter((msg) => msg === 'Exited Fixture.')).toHaveLength(1);
+    expect(existsSync(out)).toBe(false);
+    expect(drained(dir, record)).toBe(true);
   });
 });

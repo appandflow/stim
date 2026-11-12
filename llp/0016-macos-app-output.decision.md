@@ -20,8 +20,9 @@ unless the app wrote something at warn level or above (stderr) first.
 
 stimd's logs worker copies both files into `macos-app.ndjson` in the same
 directory, stdout at info and stderr at warn. It finds the apps to follow from
-workspace state and from hosted macOS sessions, when a command asks and every
-two seconds, so a stimd that starts later picks up an app that runs or one
+workspace state when a command asks and when stimd starts, and from hosted macOS
+sessions every two seconds; a workspace whose tail another stimd holds is retried
+every two seconds. A stimd that starts later so picks up an app that runs or one
 whose output it has not finished copying.
 
 Reason: a per-workspace Node supervisor cost a process per app, a registration
@@ -41,9 +42,11 @@ hold:
 
 `stim stop`, the next `stim macos`, a hosted session's stop and its app
 replacement, and workspace removal each ask stimd to drain the app's output and
-proceed only once that end is recorded. When it is not recorded within five
-seconds, they fail and say why: the app still runs, its group remains, a pid
-still holds the output open (named), or `lsof` could not answer. Stim sends no
+proceed only once that end is recorded. They fail at once while the app runs
+or its output cannot be read or recorded, wait up to five seconds while only its
+group or another process holding the output blocks the end, and then fail and
+say why: the group remains, a pid still holds the output open (named), or `lsof`
+could not answer. A local stop or relaunch reports `STIM_MACOS_OWNER_UNVERIFIED`. Stim sends no
 signal to a process it found only through `lsof`; the person stops it.
 
 Reason: an app can start a helper that leaves its process group, inherits its
@@ -66,7 +69,12 @@ What the check cannot see:
 
 One stimd at a time follows a directory, through an ownership claim
 (`macos-app.tail.lock`) whose owner is that stimd; a successor takes it over
-only when that stimd is gone or has released it. Before each append to
+only when that stimd is gone or has released it. The one exception is a claim
+this same stimd holds: stimd replaces its logs worker only after closing the one
+that failed, so such a claim was left by a worker that no longer runs, and the
+new worker takes it over. Within one Stim home the stimd claim already keeps a
+second stimd out; the tail claim also covers a stimd started in a hosted
+session's private home, which can name the same directory. Before each append to
 `macos-app.ndjson` the tail records, in `macos-app.tail.json`, the file's
 identity and size and the read position the append completes; after the append
 it records that position alone. A stimd that resumes from a record with an
