@@ -169,9 +169,10 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     return drained(dir, record.app) ? null : 'the macOS app output could not be drained';
   };
   const workspace = async (root: string, asked: boolean, webOnly = false): Promise<void> => {
-    if (!webOnly) {
-      await local(root);
-    }
+    if (!webOnly)
+      void local(root).catch((error: unknown) =>
+        log('warn', 'owned_macos_failed', `${root}: ${error instanceof Error ? error.message : String(error)}`),
+      );
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return;
     const key = `web:${root}`;
