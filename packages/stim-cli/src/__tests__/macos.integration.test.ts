@@ -69,7 +69,7 @@ import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../work
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
-import * as processIdentity from '../process-identity.ts';
+import * as processIdentity from '@stim-cli/core/process-identity';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 
