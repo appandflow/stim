@@ -86,7 +86,12 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
 function deferredNote(status: MaintenanceStatus): string {
   const first = status.deferred?.toSorted((a, b) => a.since - b.since)[0];
   if (!first) return '';
-  const since = new Date(first.since).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const since = new Date(first.since).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   return `; ${status.deferred?.map(({ check }) => check).join(', ')} checks deferred for host load since ${since}`;
 }
 

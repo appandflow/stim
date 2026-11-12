@@ -12,6 +12,7 @@ const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
 /** The lock files Cargo 1.97 writes in a profile; a running build holds all three. */
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
+const UNIT_CHUNK = 25;
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
@@ -170,16 +171,18 @@ export function staleCargoTargetPaths(
 }
 
 /**
- * The units no build used for a day in every profile of `target/` outside `skip`, as absolute paths: a unit's fingerprint
- * directory, build-script directory and `deps` files. The newest unit of each crate is never among them.
+ * The units Exact's ledger shows no build used for a day in every profile of `target/` outside `skip`, as absolute
+ * paths: a unit's fingerprint directory, build-script directory and `deps` files. The newest unit of each crate is never
+ * among them, and a target without that ledger has none.
  */
 export function idleCargoUnitPaths(target: string, now: number, skip: readonly string[] = []): string[] {
   const ledger = readLedger(target);
-  const stamps = 'refusal' in ledger ? EMPTY_LEDGER.units : ledger.units;
+  if ('refusal' in ledger || !ledger.units.size) return [];
+  const stamps = ledger.units;
   const found: string[] = [];
   for (const profile of cargoProfileDirs(target) ?? []) {
     if (skip.some((gone) => profile === gone || profile.startsWith(`${gone}/`))) continue;
-    const units = readCargoUnits(profile, stamps, profile.slice(target.length + 1));
+    const units = readCargoUnits(profile, stamps, profile.slice(target.length + 1), now);
     if (!units) continue;
     for (const [, paths] of cargoUnitPaths(profile, idleCargoUnits(units, now, CARGO_PROFILE_IDLE_MS)))
       found.push(...paths.map((path) => join(profile, path)));
@@ -272,11 +275,15 @@ function inUse(used: readonly string[], dir: string): boolean {
  * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; null when
  * either cannot be read, which keeps everything.
  */
-async function readTargetUse(target: string, signal?: AbortSignal): Promise<string[] | null> {
+async function readTargetUse(target: string, signal?: AbortSignal, lowPriority = false): Promise<string[] | null> {
   const exec = getExecutor();
   try {
-    const lsof = await exec.runFileAsync('lsof', ['-nP', '-w', '-Fn'], { timeoutMs: 60_000, signal });
-    const ps = await exec.runFileAsync('ps', ['-axww', '-o', 'args='], { timeoutMs: 30_000, signal });
+    const run = (file: string, args: string[], timeoutMs: number) =>
+      lowPriority
+        ? exec.runFileAsync('nice', ['-n', '19', file, ...args], { timeoutMs, signal })
+        : exec.runFileAsync(file, args, { timeoutMs, signal });
+    const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
+    const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     return targetPathsInUse(target, lsof, ps);
   } catch {
     signal?.throwIfAborted();
@@ -293,8 +300,8 @@ export interface CargoTrimResult {
   deleteError?: string;
 }
 
-async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
-  return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal })) ?? 0;
+async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): Promise<number> {
+  return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal, lowPriority })) ?? 0;
 }
 
 /**
@@ -310,12 +317,14 @@ export async function trimCargoTarget(
     needBytes,
     incremental = 'toNeed',
     units = 'none',
+    lowPriority = false,
     now = Date.now(),
     signal,
   }: {
     needBytes: number;
     incremental?: 'toNeed' | 'all';
     units?: 'none' | 'toNeed' | 'all';
+    lowPriority?: boolean;
     now?: number;
     signal?: AbortSignal;
   },
@@ -342,8 +351,9 @@ export async function trimCargoTarget(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const used = await readTargetUse(target, signal);
-  if (used === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
+  const first = await readTargetUse(target, signal, lowPriority);
+  if (first === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
+  let used: string[] = first;
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   const ledger = readLedger(target);
@@ -407,64 +417,89 @@ export async function trimCargoTarget(
         return false;
       }
     }
-    result.bytes += bytes ?? (await sizeOf(there, signal));
+    result.bytes += bytes ?? (await sizeOf(there, signal, lowPriority));
     result.removed.push(label);
     return true;
   };
   const sweepUnits = async (profile: string, key: string): Promise<{ units: number; bytes: number; kept?: string }> => {
     const none = { units: 0, bytes: 0 };
-    const all = readCargoUnits(profile, 'refusal' in ledger ? EMPTY_LEDGER.units : ledger.units, key);
+    if ('refusal' in ledger || !ledger.units.size) return none;
+    const all = readCargoUnits(profile, ledger.units, key, now);
     if (!all) return { ...none, kept: 'its units cannot be listed' };
-    const idle = idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS);
-    const paths = [...cargoUnitPaths(profile, idle)].filter(
-      ([, unitPaths]) => !unitPaths.some((path) => inUse(used, join(profile, path))),
-    );
-    if (!paths.length) return none;
-    if (lockHeld(await lockOutcome(profile, signal))) return { ...none, kept: 'a build holds its .cargo-lock' };
-    const batch = join(aside, `units-${moved++}`);
-    const done: string[] = [];
-    const putBack = async (): Promise<string | null> => {
-      for (const path of done.toReversed()) {
+    const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
+    if (!candidates.length) return none;
+    const fresh = await readTargetUse(target, signal, lowPriority);
+    if (fresh === null) return { ...none, kept: 'the files processes hold open cannot be read' };
+    let swept = 0;
+    let bytes = 0;
+    for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
+      signal?.throwIfAborted();
+      const chunk = candidates
+        .slice(at, at + UNIT_CHUNK)
+        .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
+      if (!chunk.length) continue;
+      const held = await lockOutcome(profile, signal);
+      if (lockHeld(held))
+        return { units: swept, bytes, kept: `a build holds its ${held.file ?? '.cargo-lock'}, so the sweep stopped` };
+      const batch = join(aside, `units-${moved++}`);
+      const done: string[] = [];
+      let failure: string | null = null;
+      for (const path of removalOrder(chunk.flatMap(([, paths]) => paths))) {
         try {
-          await rename(join(batch, path), join(profile, path));
-        } catch {
-          keepAside = true;
-          await writeFile(join(aside, STRANDED), '').catch(() => {});
-          return `${path} could not be put back; it stays in ${batch} for a person to merge or delete`;
+          await mkdir(dirname(join(batch, path)), { recursive: true });
+          await rename(join(profile, path), join(batch, path));
+          done.push(path);
+        } catch (error) {
+          if (errorCode(error) === 'ENOENT') continue;
+          failure = `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`;
+          break;
         }
       }
-      return null;
-    };
-    for (const path of removalOrder(paths.flatMap(([, unitPaths]) => unitPaths))) {
+      const after = await lockOutcome(profile);
+      if (failure === null && !renameStands(after))
+        failure = `a build took its ${after.file ?? '.cargo-lock'} during the move, so the sweep stopped`;
+      if (failure !== null) {
+        const stranded = await putBack(profile, batch, done);
+        return { units: swept, bytes, kept: stranded ?? failure };
+      }
+      swept += chunk.length;
+      bytes += await sizeOf(batch, signal, lowPriority);
+    }
+    return { units: swept, bytes };
+  };
+  const putBack = async (profile: string, batch: string, done: readonly string[]): Promise<string | null> => {
+    for (const path of done.toReversed()) {
+      const home = join(profile, path);
+      const there = join(batch, path);
+      if (existsSync(home)) {
+        await rm(there, { recursive: true, force: true }).catch(() => {});
+        continue;
+      }
       try {
-        await mkdir(dirname(join(batch, path)), { recursive: true });
-        await rename(join(profile, path), join(batch, path));
-        done.push(path);
-      } catch (error) {
-        if (errorCode(error) === 'ENOENT') continue;
-        const stranded = await putBack();
-        return {
-          ...none,
-          kept: stranded ?? `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`,
-        };
+        await rename(there, home);
+      } catch {
+        keepAside = true;
+        await writeFile(join(aside, STRANDED), '').catch(() => {});
+        return `${path} is missing and could not be put back; it stays in ${batch} for a person to merge or delete`;
       }
     }
-    if (!renameStands(await lockOutcome(profile))) {
-      const stranded = await putBack();
-      return { ...none, kept: stranded ?? 'a build took its .cargo-lock during the move' };
-    }
-    return { units: paths.length, bytes: await sizeOf(batch, signal) };
+    return null;
   };
   for (const path of stale.paths) await move(join(target, path), path, null, profilesAt);
   const removedStale = new Set(stale.paths.map((path) => join(target, path)));
   const remaining = (cargoProfileDirs(target) ?? []).filter(
     (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
   );
-  if (incremental === 'all' || result.bytes < needBytes) {
+  const refreshed =
+    incremental === 'all' || result.bytes < needBytes ? await readTargetUse(target, signal, lowPriority) : used;
+  if (refreshed === null) result.kept.push('the files processes hold open cannot be read');
+  else used = refreshed;
+  if (refreshed !== null && (incremental === 'all' || result.bytes < needBytes)) {
     const candidates: { path: string; bytes: number }[] = [];
     for (const profile of remaining) {
       const dir = join(profile, 'incremental');
-      if (existsSync(dir)) candidates.push({ path: dir, bytes: await sizeOf(dir, signal) });
+      if (incremental === 'toNeed' && inUse(used, profile)) continue;
+      if (existsSync(dir)) candidates.push({ path: dir, bytes: await sizeOf(dir, signal, lowPriority) });
     }
     const chosen =
       incremental === 'all'

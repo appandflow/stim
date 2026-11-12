@@ -52,7 +52,7 @@ export interface MaintenanceAction {
   /** For a Cargo target trim: the bytes the target is over its cap, which the trim still covers after its first steps. */
   overBytes?: number;
   check?: 'worktree' | 'sweep' | 'disk' | 'idle';
-  /** The disk pressure level that planned the action; it runs only while free disk stays under that level's floor. */
+  /** The disk level that planned a Cargo target trim, 2 for high and 3 for critical, which selects how much it removes. */
   level?: 2 | 3;
 }
 

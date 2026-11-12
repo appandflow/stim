@@ -10,7 +10,7 @@ import { candidateRootsAsync, type WorktreeSweep } from '../../commands/gc/workt
 import { listWorktreesAsync } from '../../workspace/worktree.ts';
 import { planCargoTargets } from './cargo-target.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
-import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
+import { maintenancePinned, maintenancePinnedAsync, maintenancePinnedReader, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
@@ -29,6 +29,28 @@ export interface PlannedMaintenance extends MaintenancePlan {
   nextRemoval?: { target: string; at: number };
   /** The blocked reasons and skips of each part this plan covered. */
   byCheck: Partial<Record<MaintenancePlanPart, Pick<MaintenancePlan, 'blocked' | 'skips'>>>;
+}
+
+/** The Cargo target trims of the recorded sizes alone, planned at low priority without the rest of the caps preamble. */
+async function planCargoOnly(
+  recordedSizes: readonly MaintenanceSize[],
+  settings: MaintenanceSettings,
+  level: PressureLevel | undefined,
+  operation: StimContext | undefined,
+): Promise<MaintenancePlan> {
+  const pins = new Map<string, boolean>();
+  for (const size of recordedSizes)
+    if (size.name === 'Cargo target' && size.workspace && !pins.has(size.workspace))
+      pins.set(size.workspace, await maintenancePinnedReader(operation)(size.workspace));
+  return planCargoTargets({
+    sizes: recordedSizes,
+    settings,
+    pinned: (workspace) => pins.get(workspace) ?? true,
+    now: Date.now(),
+    signal: operation?.signal,
+    lowPriority: true,
+    ...(level ? { level } : {}),
+  });
 }
 
 export async function plannedMaintenance(
@@ -108,6 +130,10 @@ export async function plannedMaintenance(
   };
   if (!caps && !sweep && !worktrees) {
     if (idle && devices) merge('idle', await idleStops());
+    return result;
+  }
+  if (cargoOnly && !sweep && !worktrees && !idle) {
+    merge('caps', await planCargoOnly(recordedSizes, settings, cargoLevel, operation));
     return result;
   }
   const outputs = await collectWorkspaceOutputs({

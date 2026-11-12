@@ -9,7 +9,7 @@ export interface CargoUnit {
   id: string;
   crate: string;
   hash: string;
-  /** When a build last used it, in ms, or null when that cannot be told. */
+  /** The ledger stamp, or now when a build read it since the last sweep; null when it has no stamp. */
   lastUsedMs: number | null;
 }
 
@@ -34,25 +34,28 @@ export function idleCargoUnits(units: readonly CargoUnit[], now: number, idleMs:
   });
 }
 
-function newestMtime(path: string): number | null {
+/** Exact's sweep sets the access time of every fingerprint file back to 1970-01-02; a later read of one shows a build considered the unit. */
+const ACCESS_RESET_MS = 86_400_000;
+
+function readSinceSweep(path: string): boolean {
   try {
-    let newest = statSync(path).mtimeMs;
-    for (const name of readdirSync(path)) newest = Math.max(newest, statSync(join(path, name)).mtimeMs);
-    return newest;
+    return readdirSync(path).some((name) => statSync(join(path, name)).atimeMs > ACCESS_RESET_MS);
   } catch {
-    return null;
+    return true;
   }
 }
 
 /**
- * The units of the profile at `profile`: each `.fingerprint/<crate>-<hash>` directory, used when Exact's ledger stamps
- * `<profileKey>#<hash>` or when a file in the fingerprint directory was written, whichever is later. Null when
- * `.fingerprint` cannot be listed.
+ * The units of the profile at `profile`, timed only by Exact's `.exact-sweep.json` stamps (`<profileKey>#<hash>`), which
+ * its sweep records from reads of each unit's fingerprint, or by a read since that sweep. Cargo does not touch the
+ * fingerprint of a fresh dependency, so file modification times say nothing about use: a unit with no stamp has no
+ * time and stays. Null when `.fingerprint` cannot be listed.
  */
 export function readCargoUnits(
   profile: string,
   stamps: ReadonlyMap<string, number>,
   profileKey: string,
+  now: number,
 ): CargoUnit[] | null {
   let names: string[];
   try {
@@ -64,13 +67,12 @@ export function readCargoUnits(
   for (const id of names) {
     const match = UNIT_NAME.exec(id);
     if (!match) continue;
-    const written = newestMtime(join(profile, FINGERPRINT, id));
     const stamped = stamps.get(`${profileKey}#${match[2]}`);
     units.push({
       id,
       crate: match[1] ?? id,
       hash: match[2] ?? '',
-      lastUsedMs: written === null ? null : Math.max(written, stamped ?? 0),
+      lastUsedMs: stamped === undefined ? null : readSinceSweep(join(profile, FINGERPRINT, id)) ? now : stamped,
     });
   }
   return units;

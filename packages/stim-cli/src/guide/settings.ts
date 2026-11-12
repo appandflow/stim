@@ -775,7 +775,8 @@ AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 Automatic maintenance runs in daemon.mode: it removes what gc would under the
 caps below, measures sizes at most hourly and waits while the one-minute load
 is above 4 per core, except that the Cargo target cap still measures and
-trims hourly at low priority, and any check deferred for 3 hours runs anyway;
+trims hourly at low priority, and the size scan deferred for 3 hours runs anyway (the other checks stay
+deferred);
 stim status and its JSON (maintenance.deferred) say what is deferred and since
 when.
 maintenance.keep is a project setting: pin a workspace so neither the daemon

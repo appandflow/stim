@@ -152,46 +152,57 @@ export async function measureCargoTargets(
   return sizes;
 }
 
-async function bytesOf(paths: readonly string[], signal?: AbortSignal): Promise<number> {
+async function bytesOf(paths: readonly string[], signal?: AbortSignal, lowPriority = false): Promise<number> {
   let total = 0;
   for (const path of paths) {
     signal?.throwIfAborted();
-    total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+    total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority })) ?? 0;
   }
   return total;
 }
 
 const DU_CHUNK = 400;
 
-/** The bytes of many paths with one `du` per chunk, for the thousands of files and directories of a unit sweep. */
-async function bytesOfMany(paths: readonly string[], signal?: AbortSignal): Promise<number> {
+/** The bytes of many paths with one `du` per chunk; null when any chunk could not be measured. */
+async function bytesOfMany(
+  paths: readonly string[],
+  signal?: AbortSignal,
+  lowPriority = false,
+): Promise<number | null> {
   let total = 0;
   for (let at = 0; at < paths.length; at += DU_CHUNK) {
     signal?.throwIfAborted();
+    const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
     try {
-      const out = await getExecutor().runFileAsync('du', ['-sk', ...paths.slice(at, at + DU_CHUNK)], {
-        timeoutMs: SIZE_TIMEOUT_MS,
-        signal,
-      });
+      const out = await (lowPriority
+        ? getExecutor().runFileAsync('nice', ['-n', '19', 'du', ...args], { timeoutMs: SIZE_TIMEOUT_MS, signal })
+        : getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
       for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
-    } catch (error) {
+    } catch {
       signal?.throwIfAborted();
-      if (!(error instanceof Error && 'stdout' in error)) continue;
+      return null;
     }
   }
   return total;
 }
 
+/** Whether a target still over its cap after the other steps loses its idle units too, at normal and high; one place to turn off. */
+const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'toNeed';
+
 /**
  * What a trim of a Cargo `target/` removes at a disk level: normal covers the overage with stale profiles, then
- * `incremental` data, then idle units; high removes every stale profile and all `incremental` data whatever the cap,
- * and idle units only while still over it; critical also removes every idle unit.
+ * `incremental` data; high removes every stale profile and all `incremental` data whatever the cap; critical also
+ * removes every idle unit (which needs Exact's usage ledger). While still over the cap after those steps, idle units go
+ * too at normal and high.
  */
-export function cargoTrimPolicy(level: PressureLevel): {
+function cargoTrimPolicy(level: PressureLevel): {
   incremental: 'toNeed' | 'all';
-  units: 'toNeed' | 'all';
+  units: 'none' | 'toNeed' | 'all';
 } {
-  return { incremental: level === 'normal' ? 'toNeed' : 'all', units: level === 'critical' ? 'all' : 'toNeed' };
+  return {
+    incremental: level === 'normal' ? 'toNeed' : 'all',
+    units: level === 'critical' ? 'all' : UNITS_WHEN_OVER_CAP,
+  };
 }
 
 const LEVELS = { normal: undefined, high: 2, critical: 3 } as const;
@@ -215,6 +226,7 @@ export async function planCargoTargets({
   signal,
   level,
   diskLevel = measuredDiskLevel,
+  lowPriority = false,
 }: {
   sizes: readonly MaintenanceSize[];
   settings: MaintenanceSettings;
@@ -223,6 +235,7 @@ export async function planCargoTargets({
   signal?: AbortSignal;
   level?: PressureLevel;
   diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
+  lowPriority?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   const cap = settings.cargoTargetMaxGb * GIB;
@@ -263,15 +276,22 @@ export async function planCargoTargets({
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    let freeable = await bytesOf(gone, signal);
+    let freeable = await bytesOf(gone, signal, lowPriority);
     if (policy.incremental === 'all' || freeable < overBytes) {
       const remaining = (cargoProfileDirs(dir) ?? []).filter(
         (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
       );
-      freeable += await bytesOf(remaining.map((profile) => join(profile, 'incremental')).filter(existsSync), signal);
+      freeable += await bytesOf(
+        remaining.map((profile) => join(profile, 'incremental')).filter(existsSync),
+        signal,
+        lowPriority,
+      );
     }
-    if (policy.units === 'all' || freeable < overBytes)
-      freeable += await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal);
+    if (policy.units === 'all' || (policy.units === 'toNeed' && freeable < overBytes)) {
+      const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority);
+      if (unitBytes === null) plan.blocked.push(`${dir}: the idle build units could not be measured`);
+      else freeable += unitBytes;
+    }
     if (freeable === 0 && !existsSync(join(dir, '.stim-trimmed'))) {
       if (bytes !== null && tightened === 'normal')
         plan.blocked.push(`${why}; every profile was used in the last day and none has anything idle to remove`);
@@ -304,6 +324,7 @@ async function stillManaged(root: string, operation?: StimContext): Promise<bool
 export async function trimCargoTargetAction(
   action: MaintenanceAction,
   operation?: StimContext,
+  lowPriority = false,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
@@ -314,6 +335,7 @@ export async function trimCargoTargetAction(
   const result = await trimCargoTarget(action.target, {
     needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
     ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
+    lowPriority,
     signal: operation?.signal,
   });
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;

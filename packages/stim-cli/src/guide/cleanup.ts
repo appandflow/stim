@@ -137,8 +137,8 @@ In on mode a pass runs, cheapest to rebuild first:
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
      remaining profile, largest first, until under the cap, then, still over,
-     the build units no build used for a day in each remaining profile (see
-     CARGO UNITS below). The disk level of the volume holding a target/
+     the idle build units of each remaining profile, only where Exact's
+     ledger shows their use (see CARGO UNITS below). The disk level of the volume holding a target/
      tightens this: at high every recognised target/, in use or not, loses all
      its stale profiles and all incremental/ data whatever the cap, and its
      idle units only while it is over the cap; at critical it loses every idle
@@ -147,8 +147,10 @@ In on mode a pass runs, cheapest to rebuild first:
      the hourly size scan, or hourly on its own while host load defers the size
      scan (the cap is never held back by load, and its du runs at low priority,
      one target/ at a time, 120 seconds at most each, ended at once by a
-     handover), and at once for stim gc. Without Exact's ledger, a build that
-     changes nothing leaves no trace in a profile's directory times. Each is renamed
+     handover; the planning du, the trim's du, lsof and ps run niced, while
+     reading the units' directories is in-process and short), and at once
+     for stim gc. Without Exact's ledger, a build that changes nothing leaves
+     no trace in a profile's directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
      moved back if a build took one of the profile's lock files (.cargo-lock,
      .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
@@ -1642,18 +1644,25 @@ a changed value.
 CARGO UNITS
   A unit is one build of one crate in a profile: .fingerprint/<crate>-<hash>,
   build/<crate>-<hash> and the deps/ files carrying the hash. Cargo keeps the
-  old ones whenever a crate's version, features or dependencies change. A unit
-  is idle when its last use is over a day old, taken from Exact's
-  .exact-sweep.json stamp (<profile>#<hash>) or the newest time in its
-  .fingerprint directory, whichever is later; the newest unit of each crate
-  stays whatever its age, and a unit whose time cannot be read stays. The
-  fingerprint directory is removed first, so an interrupted removal leaves
-  Cargo a unit it must rebuild and never a fingerprint that points at missing
-  files; then build/, then deps/. All of it is renamed aside under the same
-  lock recheck and rollback as profiles, skipping a profile whose lock a build
-  holds and a unit any of whose files a process holds open or names. A
-  removed unit costs a rebuild of that crate, never a wrong build. Hard links
-  Cargo made in the profile root keep the bytes of a removed deps/ file.
+  old ones whenever a crate's version, features or dependencies change. Cargo
+  does not touch the fingerprint of a fresh dependency, so modification times
+  say nothing about use; only Exact's .exact-sweep.json ledger does: its sweep
+  stamps a unit (<profile>#<hash>) when a build read the unit's fingerprint,
+  even if it compiled nothing. Units are swept only in a target that has that
+  ledger. A unit is idle when its stamp is over a day old and no build read
+  its fingerprint since that sweep (the access time Exact's sweep resets); a
+  unit with no stamp stays, and so does the newest unit of each crate. The
+  work goes in chunks of 25 units: the three lock files (.cargo-lock,
+  .cargo-build-lock, .cargo-artifact-lock) are checked before and after each
+  chunk and the sweep of that profile stops when one is held. A chunk is
+  renamed aside, fingerprints first, then build/, then deps/. When a lock turns
+  up after a chunk, the chunk is put back path by path without overwriting:
+  a path a build recreated since is left alone and its old copy deleted.
+  A unit removed while no build holds a lock costs a rebuild of that crate. The
+  remaining window is one chunk: a build that starts after a chunk's first
+  check and judged a unit fresh before that chunk moved it can still fail with
+  a missing file, and the next build recovers. Hard links Cargo made in the
+  profile root keep the bytes of a removed deps/ file.
 
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,

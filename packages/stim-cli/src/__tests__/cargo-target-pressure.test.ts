@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MaintenanceSize } from '@stim-cli/core/state';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cargoTrimPolicy, planCargoTargets } from '../stimd/passes/cargo-target.ts';
+import { planCargoTargets } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
 const DAY = 24 * 3_600_000;
@@ -50,12 +50,6 @@ describe('the Cargo target trim under disk pressure', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
-  });
-
-  it('maps a level to what it removes', () => {
-    expect(cargoTrimPolicy('normal')).toEqual({ incremental: 'toNeed', units: 'toNeed' });
-    expect(cargoTrimPolicy('high')).toEqual({ incremental: 'all', units: 'toNeed' });
-    expect(cargoTrimPolicy('critical')).toEqual({ incremental: 'all', units: 'all' });
   });
 
   it('tightens only the targets on a volume under the level, and an explicit level applies to every target', async () => {

@@ -322,7 +322,12 @@ async function deferIfLoaded(
   state: MaintenanceState,
   check: MaintenanceCheck,
   operation: StimContext | undefined,
-  record: (event: 'maintenance_skip', level: 'debug', msg: string, fields: Record<string, unknown>) => void,
+  record: (
+    event: MaintenanceRecord['event'],
+    level: MaintenanceRecord['level'],
+    msg: string,
+    fields: Record<string, unknown>,
+  ) => void,
   keepState: () => void,
   cap: { ran: boolean },
 ): Promise<boolean> {
@@ -333,7 +338,18 @@ async function deferIfLoaded(
   });
   markDeferred(state, check, Date.now());
   keepState();
-  if (check === 'size') cap.ran = await measureCapOnly(state, Date.now(), operation);
+  if (check !== 'size') return true;
+  try {
+    cap.ran = await measureCapOnly(state, Date.now(), operation);
+  } catch (error) {
+    throwUnverifiedCleanup(error);
+    operation?.signal.throwIfAborted();
+    const message = error instanceof Error ? error.message : String(error);
+    record('maintenance_failure', 'error', `The Cargo target cap could not measure: ${message}`, {
+      target: 'cargo target cap',
+      error: message,
+    });
+  }
   return true;
 }
 
@@ -554,6 +570,7 @@ export async function runMaintenance(
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
+        lowPriority: cap.ran,
         ...(tick ? { operation: tick.operation } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
