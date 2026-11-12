@@ -71,7 +71,11 @@ function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
     if (!captured.ok) {
       if (captured.code === 'NOT_FOUND') {
         const pid = child.pid;
-        recordIdentityUnlessExited(child, (processToken) => setClaimChild(claim, { pid, processToken }));
+        recordIdentityUnlessExited(
+          child,
+          (processToken) => setClaimChild(claim, { pid, processToken }),
+          (reason) => debugLog.log('disk-walk-stopped', { reason }),
+        );
         return;
       }
       throw new Error(`Cannot record the disk usage walk: ${captured.reason}`);

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   captureProcessToken,
   childExitedWithin,
@@ -31,6 +32,7 @@ test('a NOT_FOUND child counts as exited only once its own exit is seen', async 
 test('a live child whose identity read NOT_FOUND is handled after the grace, and an exited one is not', async () => {
   const running = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   const exiting = spawn(process.execPath, ['-e', 'process.exit(3)'], { stdio: 'ignore' });
+  await once(exiting, 'exit');
   try {
     const live = vi.fn<() => void>();
     const exited = vi.fn<() => void>();
@@ -39,8 +41,9 @@ test('a live child whose identity read NOT_FOUND is handled after the grace, and
     await vi.waitFor(() => expect(live).toHaveBeenCalledTimes(1));
     expect(exited).not.toHaveBeenCalled();
 
+    const fail = vi.fn<(reason: string) => void>();
     const tokens: string[] = [];
-    recordIdentityUnlessExited(running, (token) => tokens.push(token), 50);
+    recordIdentityUnlessExited(running, (token) => tokens.push(token), fail, 50);
     await vi.waitFor(() => expect(tokens).toEqual([captureProcessToken(running.pid ?? 0)]));
     expect(running.killed).toBe(false);
 
@@ -49,9 +52,11 @@ test('a live child whose identity read NOT_FOUND is handled after the grace, and
       () => {
         throw new Error('cannot record');
       },
+      fail,
       50,
     );
     await vi.waitFor(() => expect(running.killed).toBe(true));
+    expect(fail).toHaveBeenCalledWith('cannot record');
   } finally {
     running.kill('SIGKILL');
   }

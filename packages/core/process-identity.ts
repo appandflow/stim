@@ -57,11 +57,13 @@ export function unlessChildExits(child: ObservableChild, onLive: () => void, gra
 /**
  * For a caller that must record a child's identity but read `NOT_FOUND`: when the child's own exit is not seen within
  * the grace, a live process is capturable, so read it again and give the token to `record`. A child that still cannot
- * be read, or whose record fails, is stopped through its handle, so nothing runs without a record.
+ * be read, or whose record fails, is stopped through its handle, so nothing runs without a record, and `stopped` gets
+ * the reason.
  */
 export function recordIdentityUnlessExited(
   child: ObservableChild & Pick<ChildProcess, 'pid' | 'kill'>,
   record: (token: string) => void,
+  stopped: (reason: string) => void,
   graceMs?: number,
 ): void {
   unlessChildExits(
@@ -69,9 +71,10 @@ export function recordIdentityUnlessExited(
     () => {
       const again = child.pid === undefined ? null : captureProcessIdentity(child.pid);
       try {
-        if (!again?.ok) throw new Error('identity unreadable');
+        if (!again?.ok) throw new Error(again?.reason ?? 'the process has no pid');
         record(again.token);
-      } catch {
+      } catch (error) {
+        stopped(error instanceof Error ? error.message : String(error));
         child.kill('SIGKILL');
       }
     },

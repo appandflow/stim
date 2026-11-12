@@ -119,6 +119,7 @@ export async function ensureIosRuntime({
       30_000,
     );
     heartbeat.unref();
+    let recordFailure: string | undefined;
     try {
       markClaimChildPending(held);
       if (slot?.claim) markClaimChildPending(slot.claim);
@@ -152,10 +153,14 @@ export async function ensureIosRuntime({
                 if (slot?.claim) setClaimChild(slot.claim, identity);
               } else if (captured.code === 'NOT_FOUND') {
                 const pid = child.pid;
-                recordIdentityUnlessExited(child, (processToken) => {
-                  setClaimChild(claim, { pid, processToken });
-                  if (slot?.claim) setClaimChild(slot.claim, { pid, processToken });
-                });
+                recordIdentityUnlessExited(
+                  child,
+                  (processToken) => {
+                    setClaimChild(claim, { pid, processToken });
+                    if (slot?.claim) setClaimChild(slot.claim, { pid, processToken });
+                  },
+                  (reason) => (recordFailure = reason),
+                );
               } else throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
             }
             child.stdout?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
@@ -170,7 +175,7 @@ export async function ensureIosRuntime({
       }
       signal?.throwIfAborted();
       return refuse(
-        `Xcode could not install iOS ${version}: ${(error instanceof Error ? error.message : String(error)).slice(-4000)}`,
+        `Xcode could not install iOS ${version}: ${recordFailure ? `Cannot record the Xcode runtime installer: ${recordFailure}. ` : ''}${(error instanceof Error ? error.message : String(error)).slice(-4000)}`,
         `Run \`${manual}\` on the simulator Mac for the full error. Xcode Settings > Components lists versions supported by its selected Xcode; update Xcode if the requested runtime is unsupported.`,
       );
     } finally {

@@ -244,8 +244,9 @@ async function deleteInBackground(trash: WorktreeTrash): Promise<'background' | 
         const again = child.pid === undefined ? null : captureProcessIdentity(child.pid);
         if (again?.ok && child.pid !== undefined) {
           setClaimChild(trash.claim, { pid: child.pid, processToken: again.token });
+          return 'background';
         }
-        return 'background';
+        if (child.exitCode === null && child.signalCode === null) return 'background';
       }
       release();
       return existsSync(trash.dir) ? 'left' : 'deleted';

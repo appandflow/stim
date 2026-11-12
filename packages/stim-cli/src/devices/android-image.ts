@@ -265,6 +265,7 @@ export async function installSystemImage({
     note(`installing ${pkg} with sdkmanager (about 2 GB)`);
     let output: string;
     markClaimChildPending(held);
+    let recordFailure: string | undefined;
     try {
       output = await getExecutor().runFileAsync(tool, [`--sdk_root=${sdk}`, '--install', pkg], {
         timeoutMs: IMAGE_INSTALL_TIMEOUT_MS,
@@ -277,7 +278,11 @@ export async function installSystemImage({
           if (captured.ok) setClaimChild(held, { pid: child.pid, processToken: captured.token });
           else if (captured.code === 'NOT_FOUND') {
             const pid = child.pid;
-            recordIdentityUnlessExited(child, (processToken) => setClaimChild(held, { pid, processToken }));
+            recordIdentityUnlessExited(
+              child,
+              (processToken) => setClaimChild(held, { pid, processToken }),
+              (reason) => (recordFailure = reason),
+            );
           } else throw new Error(`Cannot record the sdkmanager process: ${captured.reason}`);
         },
       });
@@ -290,7 +295,7 @@ export async function installSystemImage({
       const text = outputOf(error);
       if (LICENSE_NOT_ACCEPTED.test(text)) return licenses();
       return refuse(
-        `sdkmanager could not install ${pkg}: ${failureLine(text) || (error instanceof Error ? error.message : String(error))}`,
+        `sdkmanager could not install ${pkg}: ${recordFailure ? `Cannot record the sdkmanager process: ${recordFailure}. ` : ''}${failureLine(text) || (error instanceof Error ? error.message : String(error))}`,
         `Run \`${manual}\` on this machine to see the full error, then try again.`,
       );
     } finally {
