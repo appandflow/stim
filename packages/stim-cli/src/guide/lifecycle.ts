@@ -2614,8 +2614,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   default. They are estimates, not measurements. When free disk on the volume
   of the project is under that estimate plus the critical floor
   (disk.criticalFreeGb, or disk.hardFloorGb when higher), the ladder runs once,
-  in the build's own process with no daemon tick, from rung 2: every rung counts
-  that volume short under that target, and other volumes keep disk.minFreeGb.
+  in the build's own process with no daemon tick, rungs 2 to 8 and never rung 9
+  (a build does not clear the Gradle caches it is about to read): the level is
+  high while that volume, found by its device id, is under that target, and
+  other volumes keep disk.minFreeGb.
   The ladder holds a machine-wide claim, so a build that finds it held skips
   the ladder. The build then starts whatever the result. If the space is
   still short, one warning on stderr (also in --json mode) gives the bytes
