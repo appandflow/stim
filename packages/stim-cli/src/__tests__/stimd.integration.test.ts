@@ -338,6 +338,7 @@ describe('stimd on every platform', () => {
 
 describe.skipIf(process.platform === 'win32')('stimd', () => {
   test('a CI hold keeps a quiescent persistent daemon alive through off mode', async () => {
+    vi.stubEnv('CI', '');
     const running = runStimd({ mode: 'on', tickMs: 100 });
     await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
     const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
