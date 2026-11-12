@@ -166,6 +166,11 @@ export async function drainMacosOutput(
   ) {
     const failure = await drainOwnedMacos(root, env);
     operation?.signal.throwIfAborted();
-    if (failure !== null) throw new Error(`Could not drain macOS app output: ${failure}`);
+    if (failure !== null)
+      throw Object.assign(new Error(`Could not drain macOS app output: ${failure}`), {
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        remedy:
+          'Stop the process that still holds the app output, verify the app has exited, then run the command again.',
+      });
   }
 }

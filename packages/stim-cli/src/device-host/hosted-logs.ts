@@ -134,7 +134,13 @@ export async function pullHostedMacosLogs(
     )
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
     signal?.throwIfAborted();
-    await commitPage(root, placement.session, before, result.records, cursor, target);
+    const records =
+      target.platform === 'macos'
+        ? result.records.toSorted(
+            (a, b) => (typeof a.ts === 'number' ? a.ts : 0) - (typeof b.ts === 'number' ? b.ts : 0),
+          )
+        : result.records;
+    await commitPage(root, placement.session, before, records, cursor, target);
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
     if (!result.more) return nextCheckpoint;
     if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {

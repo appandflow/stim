@@ -101,17 +101,31 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     stream?.close();
     return true;
   };
-  const macos = async (dir: string | null, record: MacosAppRecord | null): Promise<void> => {
-    if (closed || !dir || !record?.app) return;
+  /** Follows the app `record` names in `dir`; false while another stimd holds the directory's tail. */
+  const macos = async (dir: string | null, record: MacosAppRecord | null): Promise<boolean> => {
+    if (closed || !dir || !record?.app) return true;
     const identity = inspectProcessIdentity(record.app);
-    if (identity === 'unknown') return;
-    if (identity !== 'same' && drained(dir, record.app)) return;
+    if (identity === 'unknown') return false;
+    if (identity !== 'same' && drained(dir, record.app)) return true;
     const key = `macos:${dir}`;
-    if (streams.get(key)?.token === record.app.processToken || ended.get(key) === record.app.processToken) return;
+    if (streams.get(key)?.token === record.app.processToken || ended.get(key) === record.app.processToken) return true;
     await replaced(key, record.app.processToken);
-    if (closed || streams.has(key)) return;
+    if (closed || streams.has(key)) return true;
     const tail = tailMacosApp(dir, record.app, record.product, record.launchId, record.runId);
     if (tail) keep(key, tail);
+    return tail !== null;
+  };
+  const retrying = new Set<string>();
+  const local = async (root: string): Promise<void> => {
+    retrying.delete(root);
+    const record = readMacosRecord(root);
+    if (record?.host) return;
+    let followed = false;
+    try {
+      followed = await macos(workspaceLogsDir(root), record);
+    } finally {
+      if (!followed && !closed) retrying.add(root);
+    }
   };
   const observeMacos = async (
     dir: string | null,
@@ -156,8 +170,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
   };
   const workspace = async (root: string, asked: boolean, webOnly = false): Promise<void> => {
     if (!webOnly) {
-      const record = readMacosRecord(root);
-      if (!record?.host) await macos(workspaceLogsDir(root), record);
+      await local(root);
     }
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return;
@@ -202,39 +215,24 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     });
     return stream.attached;
   };
-  const scan = (local: boolean) => {
+  const scan = () => {
     if (closed) return;
-    const follow = (what: string, dir: () => [string | null, MacosAppRecord | null]) => {
-      try {
-        const [logs, record] = dir();
-        void macos(logs, record).catch((error: unknown) =>
-          log('warn', 'owned_macos_failed', `${what}: ${error instanceof Error ? error.message : String(error)}`),
-        );
-      } catch (error) {
-        log('warn', 'owned_macos_failed', `${what}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    };
-    if (local)
-      try {
-        for (const root of Object.keys(loadConfig()?.projects ?? {}))
-          follow(root, () => {
-            const record = readMacosRecord(root);
-            return [record?.host ? null : workspaceLogsDir(root), record];
-          });
-      } catch (error) {
-        log('warn', 'owned_sync_failed', error instanceof Error ? error.message : String(error));
-      }
+    const warn = (what: string, error: unknown) =>
+      log('warn', 'owned_macos_failed', `${what}: ${error instanceof Error ? error.message : String(error)}`);
+    for (const root of [...retrying]) void local(root).catch((error: unknown) => warn(root, error));
     try {
       for (const session of readHostedSessions()) {
         if (session.platform !== 'macos') continue;
         const home = join(deviceHostArea(session.id), 'home');
-        follow(session.id, () => [hostedMacosLogsDir(home), readHostedMacosApp(home)]);
+        void macos(hostedMacosLogsDir(home), readHostedMacosApp(home)).catch((error: unknown) =>
+          warn(session.id, error),
+        );
       }
     } catch (error) {
       log('warn', 'owned_hosted_scan_failed', error instanceof Error ? error.message : String(error));
     }
   };
-  const timer = setInterval(() => scan(true), MACOS_SCAN_MS);
+  const timer = setInterval(scan, MACOS_SCAN_MS);
   timer.unref();
   return {
     async sync(root) {
@@ -261,7 +259,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
           log('warn', 'owned_sync_failed', `${path}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      scan(false);
+      scan();
       return null;
     },
     running,

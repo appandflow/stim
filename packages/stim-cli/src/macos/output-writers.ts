@@ -26,7 +26,7 @@ export async function outputWriters(files: readonly string[]): Promise<number[] 
   if (!present.length) return [];
   let stdout: string;
   try {
-    stdout = await getExecutor().runFileAsync('lsof', ['-t', '--', ...present], {
+    stdout = await getExecutor().runFileAsync('lsof', ['-w', '-t', '--', ...present], {
       timeoutMs: 10_000,
       killSignal: 'SIGKILL',
     });

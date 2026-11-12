@@ -238,6 +238,7 @@ export function tailMacosApp(
   };
   const buffer = Buffer.alloc(CHUNK_BYTES);
   const follow = (file: (typeof files)[number]): void => {
+    if (unsettled) state = resumeState(readMark(dir), app.processToken, sink);
     let size: number;
     try {
       size = statSync(file.path).size;
@@ -377,7 +378,10 @@ export function tailMacosApp(
       }
       reason = null;
       stop();
-      for (const file of files) rmSync(file.path, { force: true });
+      for (const file of files)
+        try {
+          rmSync(file.path, { force: true });
+        } catch {}
       return true;
     })().finally(() => {
       finishing = null;
