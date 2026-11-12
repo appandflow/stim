@@ -665,12 +665,14 @@ async function historyRung(context: RungContext): Promise<void> {
  * time. `stim gc --pressure critical` treats every volume as short.
  */
 async function unownedRung(context: RungContext): Promise<void> {
+  // @ref LLP 0003#rung-9-runs-only-at-critical -- at high it would wipe tool caches on every pass
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
   const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
   if (shortDevices?.size === 0) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
+    // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
     const result = onShortVolume(plan.cache.paths, shortDevices)
       ? await cleanToolCache(plan, context.act, context.operation)
       : {

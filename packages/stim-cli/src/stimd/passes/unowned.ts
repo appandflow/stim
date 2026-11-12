@@ -233,6 +233,7 @@ export async function surveyToolCaches(operation?: StimContext): Promise<ToolCac
   );
 }
 
+// @ref LLP 0002#machine-wide-deletion-refuses-in-a-scoped-home -- tests must not clean the real machine
 /**
  * Why a machine-wide cleanup must not act from here: a home STIM_HOME scopes, or the test runner, which acts only on
  * paths inside its own temporary directory and runs no command through the process executor.

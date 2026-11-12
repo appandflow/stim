@@ -471,6 +471,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. 0 turns the idle and dormant stages off',
   },
   {
+    // @ref LLP 0001#one-idle-day-reduces-a-workspace -- the maintainer chose one day
     key: 'idle.dormantDays',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,

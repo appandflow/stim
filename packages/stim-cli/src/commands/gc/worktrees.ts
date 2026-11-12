@@ -326,6 +326,7 @@ function removalBlocker(
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
+  // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
   const dirty = dirtyLines(facts.porcelain, facts.discovered);
   if (dirty.length) {
     const paths = dirty.slice(0, DIRTY_PATHS_SHOWN).flatMap((line) => porcelainPath(line) ?? []);

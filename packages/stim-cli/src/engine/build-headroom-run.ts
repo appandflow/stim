@@ -99,6 +99,7 @@ export function createBuildHeadroom({
         await makeRoom();
         before = (await space())?.freeMb ?? null;
       } catch (error) {
+        // @ref LLP 0006#a-build-never-refuses-for-headroom -- only a cancellation passes through
         if (signal.aborted) throw error;
       }
     },
