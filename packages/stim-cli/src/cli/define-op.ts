@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { removedFlagReplacement } from './removed-flags.ts';
 
 export interface OpOption {
   /**
@@ -338,6 +339,8 @@ function longFlags(op: Op): string[] {
 }
 
 function unknownOption(path: Op[], op: Op, flag: string): CliUsageError {
+  const removed = removedFlagReplacement(op.name, flag);
+  if (removed !== null) return new CliUsageError(`error: '${flag.split('=')[0]}' was removed: ${removed}`);
   let suggestion = '';
   if (flag.startsWith('--')) {
     const candidates: string[] = [];

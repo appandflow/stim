@@ -48,6 +48,26 @@ Known limit: stimd exits with status 0, so a service unit that restarts it
 (30 seconds under `KeepAlive` or `Restart=always`) relaunches it every 30 seconds
 until the old daemon ends.
 
+## Removed gc flags name their replacement
+
+`stim gc --delete`, `--older-than`, `--cache` and `--worktrees` were removed in
+2.0 (LLP 0001). A command line that carries one exits 1 with
+`error: '<flag>' was removed: <replacement>` and runs no pass, so a script written for
+1.40 never deletes something narrower or wider than it meant. The replacements
+are `--dry-run` (report; deleting is the default), `--pressure critical` for the
+caches (a pass cannot be narrowed to one cache), the maintenance settings for
+age (`maintenance.olderThanDays`, `idle.dormantDays`) and for worktrees
+(`maintenance.removeFinishedWorktrees`, `maintenance.removeIdleWorktrees`), and
+`stim worktree remove` for one worktree. The parser's unknown-option path looks
+them up in one table, `packages/stim-cli/src/cli/removed-flags.ts`: the lookup
+is C20 (permanent) and the gc entries are C32 (end 2.1.0). Any other unknown
+option keeps the generic message and its suggestion.
+
+The coordinator chose to name replacements in the #5621 lane brief, on
+2026-11-12, not the maintainer. LLP 0001 records the maintainer's "no need for
+replacement" about the flags; the table reads that as no replacement flags, not
+as no hint. The maintainer has not stated otherwise.
+
 ## Dev servers of another build keep running after an engine switch
 
 A stimd that starts after an engine switch does not stop supervisors or

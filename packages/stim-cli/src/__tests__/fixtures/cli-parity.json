@@ -1015,25 +1015,25 @@
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: unknown option '--delete'"
+    "error": "error: '--delete' was removed: stim gc deletes by default; use --dry-run to report what it would delete"
   },
   "[\"gc\",\"--cache\",\"workspaces\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: unknown option '--cache'"
+    "error": "error: '--cache' was removed: stim gc runs one pass at the measured level and empties the shared caches only at critical; use --pressure critical to run that level"
   },
   "[\"gc\",\"--older-than\",\"30\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: unknown option '--older-than'"
+    "error": "error: '--older-than' was removed: age limits are the maintenance.olderThanDays and idle.dormantDays settings"
   },
   "[\"gc\",\"--worktrees\"]": {
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: unknown option '--worktrees'"
+    "error": "error: '--worktrees' was removed: the maintenance.removeFinishedWorktrees and maintenance.removeIdleWorktrees settings decide which worktrees the pass removes; use stim worktree remove for one worktree"
   },
   "[\"device\"]": {
     "out": "",

@@ -465,6 +465,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   stim gc --pressure <level>    runs at normal, high or critical instead of the
                                 measured level (add --dry-run to preview it)
   stim gc --json                one payload (\`guide facts gc\`)
+  Stim 1.40's --delete, --older-than, --cache and --worktrees are refused with
+  their replacement named and run nothing.
   Agents suggest \`stim gc --dry-run\` first and run \`stim gc\` only when the
   user asks to free space. The CLI cannot pick one item to delete. Single
   items (one cache, the build outputs of idle workspaces, one archive or one

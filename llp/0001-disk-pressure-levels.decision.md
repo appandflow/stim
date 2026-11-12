@@ -25,7 +25,12 @@ specifying what to delete it should all be automatic based on pressure level",
 
 Maintainer decision: "no need for replacement we will release 2.0 I tihnk so
 can be breaking", 2026-11-11. The removed flags (`--delete`, `--cache`,
-`--older-than`, `--worktrees`) are unknown options with no replacement hint.
+`--older-than`, `--worktrees`) are not re-added as flags. They are refused with
+a message that names the setting or command that replaced each, and never run a
+pass ([LLP 0015](./0015-compatibility-removals.decision.md#removed-gc-flags-name-their-replacement)).
+An earlier version of this section read "no need for replacement" as "no
+replacement hint"; the coordinator chose the hint in #5621, and the maintainer
+has not stated whether it is wanted.
 
 ## Levels and defaults
 

@@ -94,6 +94,11 @@
       "loc": 60,
       "end": "2.1.0",
       "mechanism": "stimd adopts or stops, by its verified process identity, a managed tunnel an earlier CLI recorded without a claim"
+    },
+    "C32": {
+      "loc": 14,
+      "end": "2.1.0",
+      "mechanism": "the removed 1.40 gc flags name their replacements"
     }
   },
   "words": {
