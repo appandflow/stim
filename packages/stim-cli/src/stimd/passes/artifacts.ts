@@ -125,7 +125,7 @@ export function artifactWorktreesFor(
   return operation ? artifactWorktreesAsync(operation.signal, operation) : artifactWorktrees();
 }
 
-export async function artifactWorktreesAsync(
+export async function artifactCheckoutsAsync(
   signal: AbortSignal,
   operation?: StimContext,
 ): Promise<ArtifactWorktree[]> {
@@ -142,6 +142,14 @@ export async function artifactWorktreesAsync(
     const entry = artifactWorktree(root, entries, source);
     if (entry) found.set(entry.path, entry);
   }
+  return [...found.values()];
+}
+
+export async function artifactWorktreesAsync(
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<ArtifactWorktree[]> {
+  const found = new Map((await artifactCheckoutsAsync(signal, operation)).map((entry) => [entry.path, entry]));
   const checkouts = [...found.values()];
   if (checkouts.length) {
     const agents = await agentSessionUse(

@@ -33,6 +33,7 @@ import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
+import { prepareNpmInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
@@ -82,7 +83,7 @@ import {
   unpushedCommitsAsync,
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
-import type { WorktreeEntry } from '../workspace/worktree.ts';
+import type { StaleDependencies, WorktreeEntry } from '../workspace/worktree.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
@@ -217,7 +218,7 @@ function reportCarriedStateHealth(
   copied: string[],
   configuration: string,
   out: (line: string) => void,
-): void {
+): StaleDependencies[] {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
@@ -267,6 +268,7 @@ function reportCarriedStateHealth(
     const flavor = inspectPodsFlavor(join(root, iosDir), join(target, iosDir), configuration);
     if (flavor) out(chalk.yellow(phaseLine('carry', `carried ${rel}: ${flavor.detail} ${flavor.fix}`)));
   }
+  return outOfSync;
 }
 
 function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => void): void {
@@ -445,6 +447,10 @@ export async function warmWorktreeTarget(opts: {
             const releases: ((failures: readonly unknown[]) => void)[] = [];
             const failures: unknown[] = [];
             const nativeDir = checkNativeDir(root, generatedFrom, releases, failures, operation);
+            // Warming a repository with several apps from its root cannot establish which app's patch inputs apply.
+            const recordNpmInstall = workspace
+              ? prepareNpmInstallCarry(join(root, relative(target, workspace)), workspace)
+              : null;
             let result: Awaited<ReturnType<typeof cloneIgnoredEntries>>;
             try {
               result = await trace.spanAsync('carry ignored entries', () =>
@@ -492,7 +498,18 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
-              reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
+              const stale = reportCarriedStateHealth(
+                root,
+                target,
+                result.copied,
+                iosConfigurationSetting(settings) ?? 'Debug',
+                out,
+              );
+              recordNpmInstall?.(
+                result.copied
+                  .map((rel) => join(target, rel))
+                  .filter((path) => !stale.some(({ dir }) => path === join(target, dir, 'node_modules'))),
+              );
             }
             const noDependencies = sourceDependenciesNotice({
               root,

@@ -33,6 +33,7 @@ import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { isUncertain } from '../fingerprint/key.ts';
+import { fingerprintInstallProblem } from '../fingerprint/operation.ts';
 import { recordPrebuild } from '../engine/prebuild.ts';
 import { workspaceName } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -386,6 +387,111 @@ test('warm does not mention the source checkout dependencies when it has them', 
   const result = await runWarm(target);
   expect(result.code).toBe(0);
   expect(result.stderr).not.toMatch(/no installed/);
+}, 30_000);
+
+test.each([
+  'matching inputs',
+  'generated native directory after warm',
+  'changed lockfile',
+  'different npm config',
+  'stale source npm config',
+  'removed patch',
+  'patch deleted in source before warm',
+  'declared patch directory deleted in source before warm',
+  'default patch directory deleted in source before warm',
+  'stale source install',
+  'mismatched installed package',
+  'patch removed after warm',
+  'patch rewritten after warm',
+  'stamp replaced after warm',
+])(
+  'the cache gate checks the carried npm install with %s',
+  async (scenario) => {
+    const declaredDirectory = scenario === 'declared patch directory deleted in source before warm';
+    const removedDirectory = declaredDirectory || scenario === 'default patch directory deleted in source before warm';
+    const manifest = JSON.stringify({
+      name: 'warm-fixture',
+      dependencies: { 'react-native': '1.0.0' },
+      ...(declaredDirectory ? { scripts: { postinstall: 'patch-package' } } : {}),
+    });
+    const lockfile = 'package-lock.json';
+    const stamp = 'node_modules/.package-lock.json';
+    const patch = 'patches/react-native+1.0.0.patch';
+    const lock = '{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"1.0.0"}}}';
+    const installed = new Date(Date.now() - 60_000);
+    const beforeInstall = new Date(installed.getTime() - 60_000);
+    const checkout = new Date(Date.now() + 60_000);
+    write(root, 'package.json', manifest);
+    write(target, 'package.json', manifest);
+    write(root, lockfile, lock);
+    write(target, lockfile, scenario === 'changed lockfile' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
+    write(root, patch, 'patch applied in source');
+    if (scenario !== 'removed patch' && scenario !== 'patch deleted in source before warm' && !removedDirectory)
+      write(target, patch, 'patch applied in source');
+    if (scenario === 'different npm config' || scenario === 'stale source npm config') {
+      write(root, '.npmrc', 'ignore-scripts=true\n');
+      write(target, '.npmrc', scenario === 'different npm config' ? 'ignore-scripts=false\n' : 'ignore-scripts=true\n');
+      utimesSync(
+        join(root, '.npmrc'),
+        beforeInstall,
+        scenario === 'stale source npm config' ? checkout : beforeInstall,
+      );
+    }
+    write(root, stamp, scenario === 'mismatched installed package' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
+    utimesSync(join(root, 'package.json'), beforeInstall, beforeInstall);
+    utimesSync(join(root, stamp), installed, installed);
+    utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
+    utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);
+    const patchDir = join(root, dirname(patch));
+    utimesSync(patchDir, beforeInstall, beforeInstall);
+    utimesSync(root, beforeInstall, beforeInstall);
+    if (scenario === 'patch deleted in source before warm') rmSync(join(root, patch));
+    if (removedDirectory) rmSync(patchDir, { recursive: true });
+    utimesSync(join(target, lockfile), checkout, checkout);
+
+    expect((await runWarm(target)).code).toBe(0);
+    expect(existsSync(join(target, stamp))).toBe(true);
+    if (scenario === 'generated native directory after warm') {
+      write(target, 'android/app/build.gradle', '// Generated');
+      write(target, 'node_modules/.cache/metro/index', 'bundler cache');
+    }
+    if (scenario === 'patch removed after warm') rmSync(join(target, patch));
+    if (scenario === 'patch rewritten after warm') {
+      write(target, patch, 'patch applied in source');
+      utimesSync(join(target, patch), checkout, checkout);
+    }
+    if (scenario === 'stamp replaced after warm') write(target, stamp, lock);
+    const stale = expect.stringMatching(/package-lock.json changed after the last install/);
+    const matches = scenario === 'matching inputs' || scenario === 'generated native directory after warm';
+    expect(fingerprintInstallProblem(target)).toEqual(matches ? null : stale);
+  },
+  30_000,
+);
+
+test('warm does not certify an npm workspace with a pre-existing app-local dependency tree', async () => {
+  const app = 'apps/example';
+  const targetApp = join(target, app);
+  const stamp = 'node_modules/.package-lock.json';
+  const lock = JSON.stringify({
+    lockfileVersion: 3,
+    packages: { [`${app}/node_modules/react-native`]: { version: '1.0.0' } },
+  });
+  for (const checkout of [root, target]) {
+    write(checkout, 'package.json', '{"name":"monorepo","workspaces":["apps/*"]}');
+    write(checkout, `${app}/package.json`, '{"name":"app","dependencies":{"react-native":"1.0.0"}}');
+    write(checkout, 'package-lock.json', lock);
+  }
+  write(root, stamp, lock);
+  write(targetApp, 'node_modules/react-native/package.json', '{"version":"0.9.0"}');
+  const beforeInstall = new Date(Date.now() - 60_000);
+  for (const path of ['', 'package.json', 'package-lock.json', app, `${app}/package.json`])
+    utimesSync(join(root, path), beforeInstall, beforeInstall);
+  const checkoutTime = new Date(Date.now() + 60_000);
+  utimesSync(join(target, 'package-lock.json'), checkoutTime, checkoutTime);
+
+  expect((await runWarm(targetApp)).code).toBe(0);
+  expect(existsSync(join(target, stamp))).toBe(true);
+  expect(fingerprintInstallProblem(targetApp)).toMatch(/package-lock.json changed after the last install/);
 }, 30_000);
 
 test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {

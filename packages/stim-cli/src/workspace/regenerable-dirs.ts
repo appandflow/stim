@@ -132,11 +132,6 @@ function* exactTargetDirs(root: string): DirReads<string[]> {
   return (yield* realDirectory(path)) ? [path] : [];
 }
 
-/** The Cargo `target/` of the Exact app at `root` (beside its `exact.mjs`), or null. */
-export async function exactTargetDirAsync(root: string): Promise<string | null> {
-  return (await readAsync(exactTargetDirs(root)))[0] ?? null;
-}
-
 const CACHEDIR_TAG = 'CACHEDIR.TAG';
 
 function* cargoRootTargetDirs(root: string): DirReads<string[]> {
@@ -147,10 +142,22 @@ function* cargoRootTargetDirs(root: string): DirReads<string[]> {
     : [];
 }
 
+function* cargoTargetDirsReads(root: string): DirReads<string[]> {
+  return [...new Set([...(yield* exactTargetDirs(root)), ...(yield* cargoRootTargetDirs(root))])];
+}
+
+/**
+ * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`) or one that
+ * carries Cargo's `CACHEDIR.TAG` with its signature line. At most one, even when both rules match it.
+ */
+export function cargoTargetDirsAsync(root: string): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root));
+}
+
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
-  const cargo = [...new Set([...(yield* exactTargetDirs(root)), ...(yield* cargoRootTargetDirs(root))])];
+  const cargo = yield* cargoTargetDirsReads(root);
   return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
@@ -198,17 +205,13 @@ export function isBuildDirPath(path: string): boolean {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET)
-    return (
-      readSync(exactTargetDirs(dirname(path))).includes(path) ||
-      readSync(cargoRootTargetDirs(dirname(path))).includes(path)
-    );
+  if (name === CARGO_TARGET) return readSync(cargoTargetDirsReads(dirname(path))).includes(path);
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
 /**
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
- * directory inside `root` whose every file git ignores and, for an Exact app's `target/`, no other process runs from or
+ * directory inside `root` whose every file git ignores and, for a Cargo `target/`, no other process runs from or
  * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
  * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
@@ -240,8 +243,7 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    ((await readAsync(exactTargetDirs(dirname(path)))).includes(path) ||
-      (await readAsync(cargoRootTargetDirs(dirname(path)))).includes(path))
+    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
   ) {
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
