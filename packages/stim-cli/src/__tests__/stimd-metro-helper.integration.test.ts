@@ -11,7 +11,7 @@ import { inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/proce
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   adoptMetroChildren,
   closeMetroChildren,
@@ -21,6 +21,7 @@ import {
   stopManagedMetro,
 } from '../stimd/metro/children.ts';
 import { requestDevServerStop } from '../stimd/metro/stop-cause.ts';
+import { METRO_RUN_ACCEPT } from '../stimd/metro/child-server.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const SERVER = `
@@ -212,22 +213,51 @@ describe.skipIf(process.platform === 'win32')('the dev-server helper', () => {
     }
   }, 30_000);
 
-  test("Expo's tunnel URL is recorded once however often Expo prints it", async () => {
+  test("Expo's tunnel URL is recorded once, after stimd records the dev server, however often Expo prints it", async () => {
     mkdirSync(workspaceLogsDir(root), { recursive: true });
     const print =
-      "console.log('Waiting on exp://abc123.exp.direct'); console.log('Waiting on exp://abc123.exp.direct')";
+      "console.log('Waiting on exp://abc123.exp.direct'); console.log('Waiting on exp://abc123.exp.direct'); setTimeout(() => {}, 1500)";
     const helper = spawn(
       process.execPath,
       [spawnEntry('metro-run'), root, 'expo-child', '--tunnel', '--', process.execPath, '-e', print],
-      { cwd: root, env: { ...process.env, STIM_HOME: home }, stdio: 'ignore' },
+      { cwd: root, env: { ...process.env, STIM_HOME: home }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
     );
     spawned.push(helper);
+    const [message] = await once(helper, 'message');
+    const registered = identityOf(message);
+    await new Promise((done) => setTimeout(done, 600));
+    expect(records().filter((record) => record.event === 'expo_tunnel_ready')).toEqual([]);
+    writeWorkspaceState(root, {
+      supervisor: { ...registered, port: 8298, mode: 'expo-child', startedAt: new Date().toISOString() },
+    });
+    helper.send(METRO_RUN_ACCEPT);
     const [code] = (await once(helper, 'exit')) as [number];
     expect(code).toBe(0);
     expect(records().filter((record) => record.event === 'expo_tunnel_ready')).toMatchObject([
       { msg: 'Expo tunnel ready: https://abc123.exp.direct' },
     ]);
+    expect(readWorkspaceState(root)?.metroTunnel).toEqual({ kind: 'expo', url: 'https://abc123.exp.direct' });
     expect(JSON.parse(readFileSync(metroExitFile(root), 'utf8'))).toMatchObject({ code: 0, signal: null });
+  }, 30_000);
+
+  test('a stop that finds the dev server already exited records its exit, not a stop', async () => {
+    upsertProject(root, { metroPort: 8299 });
+    openMetroChildren();
+    try {
+      expect(await ensureMetro({ root, port: 8299 }, () => {})).toMatchObject({ op: 'metro', state: 'started' });
+      const supervisor = identityOf(readWorkspaceState(root)?.supervisor);
+      process.kill(supervisor.pid, 'SIGUSR2');
+      await vi.waitFor(() => expect(inspectProcessIdentity(supervisor)).not.toBe('same'), { timeout: 10_000 });
+      expect(await stopManagedMetro({ root, ...supervisor }, () => {})).toMatchObject({ state: 'stopped' });
+      expect(records().filter((record) => record.event === 'supervisor_stopped')).toMatchObject([
+        { level: 'error', stop: { reason: 'server-exited', code: 7 } },
+      ]);
+      expect(readWorkspaceState(root)?.devServerStop).toMatchObject({ reason: 'server-exited', code: 7 });
+      expect(claims().live).toEqual([]);
+      expect(existsSync(metroExitFile(root))).toBe(false);
+    } finally {
+      await closeMetroChildren();
+    }
   }, 30_000);
 
   test('a stopped dev server leaves no helper behind', async () => {

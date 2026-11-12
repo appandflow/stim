@@ -63,7 +63,9 @@ it shares the Windows hold.
 
 **Detaching.** On POSIX the helper starts `detached: true` (its own group and
 session) with stdio `ignore`, `metro-run.log`, `metro-run.log`, `ipc`, and stimd
-`unref`s it. A group signal to the dev server therefore never reaches the
+`unref`s it. The helper's own stdout and stderr, which hold only its crash
+output, go to `metro-run.log`, which stimd truncates at each helper start, so
+the file holds one helper run. A group signal to the dev server therefore never reaches the
 helper.
 
 **Claim and liveness.** stimd holds `metro.claim` as before. Its details also
@@ -106,7 +108,9 @@ description, each with the same port check.
   starts and appends raw chunks to them; `start` quotes the stderr tail. It turns
   lines into `metro.ndjson` records with `outputRecord(mode)`, Re.Pack's parser
   included. It also writes the Expo tunnel URL, once, into workspace state while
-  the recorded supervisor token is its dev server's. That is its only state write.
+  the recorded supervisor token is its dev server's, and tries again every
+  250 ms, at most 40 times, when stimd has not yet recorded the dev server. That
+  is its only state write.
 - Rotation: every writer appends each record in one `write` on an `O_APPEND`
   descriptor, so lines never interleave. Only the helper rotates `metro.ndjson`
   (at `LOG_ROTATE_BYTES`, by renaming it under `metro.ndjson.lock`), and, for a
@@ -116,6 +120,11 @@ description, each with the same port check.
   `stop`'s vanished line, and the injected Metro writers (`appendFileSync`). `gc`
   trims the log only while no dev server runs. No one rotates the raw files;
   the helper empties them per dev server, as stimd did.
+- Output limit: the dev server's stdout and stderr are pipes, because the
+  helper records lines and the exit together. On macOS a process that writes a
+  burst larger than the pipe buffer (64 KB) and then calls `process.exit()` loses
+  what is still buffered inside that process, since its pipe writes are
+  asynchronous. Everything the dev server wrote before it exited is recorded.
 - Exit: at the leader's `exit` the helper keeps the code or signal and reads on
   until the group is gone and both pipes close. While the group lives, that is
   the dev server still running, and a stop ends it. Once the group is gone, the
@@ -131,7 +140,10 @@ description, each with the same port check.
   file gets a `dev_server_exit_unclaimed` warn line with the code. Either way
   stimd deletes it. A matching exit file counts as an ended helper even before
   the helper process is gone. An ensure or a stop settles an ended helper first, so a
-  start right after a crash records the crash rather than a stop; otherwise an
+  start right after a crash records the crash rather than a stop. A stop that finds
+  the dev server's leader already exited, with its helper still draining, waits for
+  the helper to end (at most 5 s) and settles the exit the helper recorded, not a
+  stop; otherwise an
   adopted helper's exit waits for the tick, which took 42 to 45 s in the
   real-tool check. `status` (`metroLastStop`) reads a matching file before it
   calls a supervisor vanished, so it shows the code during that wait. stimd
@@ -159,7 +171,10 @@ description, each with the same port check.
 - Helper crash: the dev server likely dies of EPIPE on its next write. stimd
   finds the helper gone with no exit file, stops the group by the claim child,
   and logs at error that the helper ended without recording the exit. The next
-  ensure starts a new dev server. Output after the crash is lost.
+  ensure starts a new dev server. Output after the crash is lost. On Windows,
+  which has no process groups, stimd stops the recorded dev server by its own pid
+  after an identity check, and when that identity cannot be read it keeps the
+  claim and refuses with `STIM_CLAIM_UNAVAILABLE`.
 - Machine reboot: the claim's owner and child are gone and no exit file exists,
   so the stop reads as "gone and recorded no cause".
 
@@ -176,7 +191,12 @@ meaning: `supervisor.pid` is the dev server's pid. The heartbeat, `metro.stop`,
 `resolveProjectMetro`, `reclaim`, `machine-usage.ts` and Desktop
 (`Resources.swift`) use it. The helper's memory, one Node process, therefore
 falls outside the workspace's measured process tree. The stdout of `start` and
-`stop`, the error codes and `launched` do not change.
+`stop` and `launched` do not change. One error answer does: `metro.stop` for a
+workspace whose Metro claim is unresolved answers `STIM_CLAIM_REFUSED`, with the
+claim description and the port check and remove command as remedy, where it
+answered `not-owned` and `stim stop` then signalled the recorded dev server
+itself. Stim cannot tell whether that dev server still runs under an unresolved
+claim, so it refuses (LLP 0007); `stim stop` prints that message and remedy.
 
 **Migration, compat C30 until 2.1.0.** A claim without `helper` holds a dev
 server that a pre-helper stimd started. It is adopted as before (file tail, exit

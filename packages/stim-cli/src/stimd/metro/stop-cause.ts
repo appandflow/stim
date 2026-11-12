@@ -93,6 +93,12 @@ export function devServerStopLevel(record: DevServerStopRecord): 'info' | 'warn'
   return record.reason === 'signal' ? 'warn' : 'info';
 }
 
+/** The exit the helper recorded for this recorded supervisor, matched by pid and process token. */
+function recordedExit(root: string, record: { pid?: unknown; processToken?: unknown }) {
+  const exit = readMetroExit(root);
+  return exit && exit.pid === record.pid && exit.processToken === record.processToken ? exit : null;
+}
+
 /**
  * The log line for a recorded supervisor whose process is proven gone, or null while it may still run or when its
  * helper recorded how it ended, which the next stimd logs.
@@ -101,7 +107,7 @@ function vanishedSupervisorMessage(
   root: string,
   record: { pid?: unknown; processToken?: unknown; startedAt?: unknown } | null | undefined,
 ): string | null {
-  if (!record || typeof record.pid !== 'number' || readMetroExit(root)?.pid === record.pid) return null;
+  if (!record || typeof record.pid !== 'number' || recordedExit(root, record)) return null;
   const identity = inspectProcessIdentity(record);
   if (identity !== 'gone' && identity !== 'different') return null;
   const started = typeof record.startedAt === 'string' ? ` (started ${record.startedAt})` : '';
@@ -133,8 +139,8 @@ export function metroLastStop(
   const recorded = readDevServerStop(state);
   if (recorded) return recorded;
   if (supervisor?.status !== 'stale' || typeof supervisor.pid !== 'number') return null;
-  const exit = root ? readMetroExit(root) : null;
-  if (exit?.pid === supervisor.pid) {
+  const exit = root ? recordedExit(root, { pid: supervisor.pid, processToken: state?.supervisor?.processToken }) : null;
+  if (exit) {
     const request = readDevServerStopRequest(state);
     return devServerStopRecord(
       { kind: 'server-exit', mode: String(state?.supervisor?.mode), code: exit.code, signal: exit.signal },

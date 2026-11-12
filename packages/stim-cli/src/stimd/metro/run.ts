@@ -16,6 +16,8 @@ import { parseExpoWaitingOnUrl } from './server-expo.ts';
 const GROUPS = process.platform !== 'win32';
 const STOP_MS = 5000;
 const DRAIN_MS = 1000;
+const TUNNEL_RETRY_MS = 250;
+const TUNNEL_RETRIES = 40;
 const STREAMS = ['stdout', 'stderr'] as const;
 
 const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
@@ -80,18 +82,25 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
   try {
     const closed = new Promise<void>((done) => child.once('close', () => done()));
     let tunnelSeen = false;
-    const onTunnel = (record: NdjsonRecord) => {
-      const url = tunnelSeen || typeof record.msg !== 'string' ? null : parseExpoWaitingOnUrl(record.msg);
-      if (!url || !server) return;
-      tunnelSeen = true;
+    const publishTunnel = (url: string, retries: number) => {
+      if (tunnelSeen || !server) return;
       const token = server.processToken;
+      let written = false;
       try {
         withWorkspaceStateLock(root, () => {
-          if (readWorkspaceState(root)?.supervisor?.processToken === token)
-            writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+          if (readWorkspaceState(root)?.supervisor?.processToken !== token) return;
+          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+          written = true;
         });
       } catch {}
-      writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
+      if (written) {
+        tunnelSeen = true;
+        writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
+      } else if (retries > 0) setTimeout(() => publishTunnel(url, retries - 1), TUNNEL_RETRY_MS).unref();
+    };
+    const onTunnel = (record: NdjsonRecord) => {
+      const url = tunnelSeen || typeof record.msg !== 'string' ? null : parseExpoWaitingOnUrl(record.msg);
+      if (url) publishTunnel(url, TUNNEL_RETRIES);
     };
     const handle = superviseChildServer({
       mode,

@@ -487,8 +487,20 @@ function unverifiedChild(
   });
 }
 
+/** Windows has no process groups: stops the dev server's tree by its own pid, once its identity reads `same`. */
+async function stopTree(child: MetroChild): Promise<void> {
+  const status = inspectProcessIdentity(child);
+  if (status === 'unknown') throw new Error(`Could not verify dev-server pid ${child.pid}.`);
+  if (status !== 'same') return;
+  if (!(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' })))
+    throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+  if (!(await gone(() => inspectProcessIdentity(child) === 'same', STOP_MS)))
+    throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+}
+
 /** Stops what runs of the dev server's process group, checking the leader's identity before each signal. */
 async function stopGroup(child: MetroChild): Promise<void> {
+  if (!GROUPS) return stopTree(child);
   if (!processGroupAlive(child.pid)) return;
   const signal = (sig: NodeJS.Signals) => {
     if (inspectProcessIdentity(child) !== 'same')
@@ -531,6 +543,7 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   if (!child.stopping && helperEnded(child)) return settleHelperEnded(child);
   child.stopping = true;
   await child.roots?.beforeClose();
+  let selfExited = false;
   try {
     if (!GROUPS) {
       if (
@@ -541,7 +554,13 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
       if (!(await gone(() => running(child), STOP_MS)))
         throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
     } else {
-      if (child.helper) await stopHelper(child, child.helper);
+      if (child.helper) {
+        const leader = inspectProcessIdentity(child);
+        selfExited = leader === 'gone' || leader === 'different';
+        const helper = child.helper;
+        if (selfExited) await gone(() => inspectProcessIdentity(helper) === 'same', STOP_MS);
+        await stopHelper(child, helper);
+      }
       await stopGroup(child);
     }
   } catch (error) {
@@ -549,6 +568,16 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
     throw unverifiedChild(child.claim, child, error instanceof Error ? error.message : String(error));
   }
   await child.roots?.afterClose();
+  const exit = selfExited ? exitOf(child.root, child) : null;
+  if (exit) {
+    const stop = stopRecord(
+      child.root,
+      child.processToken,
+      { kind: 'server-exit', mode: child.mode, code: exit.code, signal: exit.signal },
+      exit.exitedAt,
+    );
+    return forget(child, endedMessage(child.mode, child.pid, stop), stop ? devServerStopLevel(stop) : 'warn', stop);
+  }
   const stop = stopRecord(child.root, child.processToken, null);
   forget(
     child,
@@ -637,7 +666,7 @@ function hostLaunch(
       msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   return {
-    command: 'node',
+    command: process.platform === 'win32' ? process.execPath : 'node',
     args: [
       join(injectedDir() ?? '', 'metro-host.cjs'),
       '--root',
@@ -837,7 +866,7 @@ async function spawnHelper(
   | { refusal: Answer }
 > {
   markClaimChildPending(claim);
-  const logFd = openSync(join(workspaceLogsDir(root), 'metro-run.log'), 'a', 0o600);
+  const logFd = openSync(join(workspaceLogsDir(root), 'metro-run.log'), 'w', 0o600);
   let helperProcess: ChildProcess;
   try {
     helperProcess = getExecutor().spawn(

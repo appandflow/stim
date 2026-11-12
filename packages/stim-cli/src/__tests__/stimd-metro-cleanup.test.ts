@@ -14,7 +14,8 @@ const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
   groupAlive: true,
   answers: true,
-  helper: 'same' as 'same' | 'gone' | 'unknown',
+  helper: 'same' as 'same' | 'gone' | 'different' | 'unknown',
+  helperReads: new Array<'same' | 'gone' | 'different' | 'unknown'>(),
   report: 'registered' as 'registered' | 'failed' | 'killed',
   extraEnv: new Array<Record<string, string>>(),
   kills: new Array<string>(),
@@ -35,7 +36,11 @@ vi.mock('../process-identity.ts', async (importOriginal) => {
     ...real,
     captureProcessToken: () => fixtures.token(),
     inspectProcessIdentity: (record: Parameters<typeof real.inspectProcessIdentity>[0]) =>
-      record?.pid === 515151 ? fixtures.helper : record?.pid === 424242 ? 'same' : real.inspectProcessIdentity(record),
+      record?.pid === 515151
+        ? (fixtures.helperReads.shift() ?? fixtures.helper)
+        : record?.pid === 424242
+          ? 'same'
+          : real.inspectProcessIdentity(record),
   };
 });
 vi.mock('../workspace/settings.ts', async (importOriginal) => ({
@@ -106,6 +111,7 @@ beforeEach(() => {
   fixtures.groupAlive = true;
   fixtures.answers = true;
   fixtures.helper = 'same';
+  fixtures.helperReads = [];
   fixtures.report = 'registered';
   fixtures.extraEnv = [];
   fixtures.kills = [];
@@ -223,6 +229,31 @@ test.skipIf(process.platform === 'win32')(
     expect(existsSync(String(path))).toBe(false);
     expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'metro', state: 'started' });
     await closeMetroChildren();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a stop signals the helper only while its identity reads same, and refuses when it cannot be read',
+  async () => {
+    expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
+    fixtures.groupAlive = false;
+    fixtures.helperReads = ['same', 'same'];
+    fixtures.helper = 'different';
+    expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject({
+      state: 'stopped',
+    });
+    expect(fixtures.kills).toEqual([]);
+
+    fixtures.groupAlive = true;
+    fixtures.helper = 'same';
+    expect(await ensureMetro({ root, port: 8182 }, log)).toMatchObject({ op: 'metro' });
+    fixtures.helper = 'unknown';
+    expect(await stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).toMatchObject({
+      op: 'error',
+      code: 'STIM_CLAIM_UNAVAILABLE',
+    });
+    expect(fixtures.kills).toEqual([]);
+    await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
   },
 );
 

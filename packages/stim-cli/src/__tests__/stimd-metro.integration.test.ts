@@ -765,10 +765,13 @@ socket.on('data', chunk => {
       );
       operation.destroy();
       await vi.waitFor(() => expect(processGroupAlive(supervisor.pid)).toBe(false), { timeout: 15_000, interval: 100 });
-      await vi.waitFor(() => {
-        const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
-        expect([...claims.live, ...claims.unresolved]).toEqual([]);
-      });
+      await vi.waitFor(
+        () => {
+          const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+          expect([...claims.live, ...claims.unresolved]).toEqual([]);
+        },
+        { timeout: 15_000, interval: 100 },
+      );
     } finally {
       operation.destroy();
     }
