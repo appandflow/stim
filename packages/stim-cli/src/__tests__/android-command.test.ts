@@ -7794,7 +7794,7 @@ describe('strict remote machine selection', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(choose.mock.calls[0]?.[0]).toHaveProperty('reactNativeArtifact');
-    expect(inputs).toMatchObject({ schema: 2 });
+    expect(inputs).toMatchObject({ schema: FINGERPRINT_SCHEMA });
     expect(counts).toEqual([2, 2]);
   });
 

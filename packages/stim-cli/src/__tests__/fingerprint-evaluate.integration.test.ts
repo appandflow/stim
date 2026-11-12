@@ -684,6 +684,60 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     expect(after.hash).not.toBe(before.hash);
     expect(indexedAfter).toMatchObject({ hash: after.hash, portable: false });
   });
+  function colorApp(copies: Record<string, string>, direct: boolean): string {
+    const root = bareApp({ ios: {} }, { ios: { sourceDir: 'ios' } });
+    write(join(root, 'node_modules', '.package-lock.json'), '{}');
+    write(join(root, 'node_modules/owner/package.json'), JSON.stringify({ name: 'owner', version: '1.0.0' }));
+    write(join(root, 'node_modules/owner/index.js'), "module.exports = require('color');\n");
+    for (const [dir, version] of Object.entries(copies)) {
+      write(join(root, dir, 'package.json'), JSON.stringify({ name: 'color', version }));
+      write(join(root, dir, 'index.js'), `module.exports = ${JSON.stringify(version)};\n`);
+    }
+    write(
+      join(root, 'node_modules/@react-native-community/cli/node_modules/@react-native-community/cli-config/index.js'),
+      `require('owner');${direct ? " require('color');" : ''} exports.loadConfig = ({ projectRoot }) => ({ root: projectRoot, platforms: { ios: {} }, project: { ios: { sourceDir: 'ios' } }, dependencies: {} });\n`,
+    );
+    return root;
+  }
+
+  test('two loaded versions of one content package are two inputs, each in the key', SLOW, async () => {
+    const root = colorApp({ 'node_modules/color': '1.0.0', 'node_modules/owner/node_modules/color': '2.0.0' }, true);
+    const compute = async () => {
+      const result = await fingerprint(
+        root,
+        { platform: 'ios' },
+        { env: baseEnv(), embedMode: 'development', index: 'skip' },
+      );
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      return result;
+    };
+    const first = await compute();
+    expect(first.inputs.filter((input) => input.name.startsWith('npm:color')).map((input) => input.name)).toEqual([
+      'npm:color@1.0.0/index.js',
+      'npm:color@2.0.0/index.js',
+    ]);
+    expect((await compute()).hash).toBe(first.hash);
+    write(join(root, 'node_modules/owner/node_modules/color/index.js'), 'module.exports = "nested edit";\n');
+    const nested = await compute();
+    expect(nested.hash).not.toBe(first.hash);
+    write(join(root, 'node_modules/color/index.js'), 'module.exports = "top edit";\n');
+    expect((await compute()).hash).not.toBe(nested.hash);
+  });
+
+  test('one loaded copy of a content package keys the same hoisted or nested', SLOW, async () => {
+    const keyOf = async (dir: string) => {
+      const result = await fingerprint(
+        colorApp({ [dir]: '1.0.0' }, false),
+        { platform: 'ios' },
+        { env: baseEnv(), embedMode: 'development', index: 'skip' },
+      );
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      expect(result.inputs.map((input) => input.name)).toContain('npm:color/index.js');
+      return result.hash;
+    };
+    expect(await keyOf('node_modules/owner/node_modules/color')).toBe(await keyOf('node_modules/color'));
+  });
+
   test(
     'a content dependency changes the full and indexed keys when its loaded plugin callback changes',
     SLOW,

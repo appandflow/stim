@@ -195,6 +195,7 @@ export function pathForm(path: string, roots: Roots): string {
   const inside = within(path, roots.install);
   const segments = toPosix(inside ? relative(roots.install, path) : path).split('/');
   const modules = segments.lastIndexOf('node_modules');
+  // @ref LLP 0022#packages-the-config-evaluation-loads-are-inputs -- the npm form ignores the install layout
   if (modules !== -1 && segments[modules + 1]) return `npm:${segments.slice(modules + 1).join('/')}`;
   if (within(path, roots.project)) return toPosix(relative(roots.project, path)) || '.';
   if (inside) return `<install>/${toPosix(relative(roots.install, path))}`;

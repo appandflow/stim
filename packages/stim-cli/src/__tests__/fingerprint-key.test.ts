@@ -7,6 +7,7 @@ import {
   diffInputs,
   FINGERPRINT_SCHEMA,
   isUncertain,
+  mergeInputs,
   preimage,
   preimageHash,
   type Input,
@@ -30,6 +31,12 @@ const GOLDEN: Record<number, Record<'preimage' | 'cng' | 'bare' | 'monorepo', st
     cng: '5d5ed18489cfb8c72f7dbece65ba0c92d64a4c8b03f1ecd677199ab5f359383e',
     bare: 'dc67d949fa858c081d157332fd7c9ce98751962baa909231bb2b4b30c81e3105',
     monorepo: '9ffaf874910d7278ad17ec3edeec429d4e78a3d1f5db2b9235cc5a059c65c477',
+  },
+  3: {
+    preimage: '2b2a001dce1e1312d994039301df296f1793f884864bab973c24b6441d0b9b0e',
+    cng: '27c79c91684e9de01acd3e04b3eb29f1d1a8ce7861c4e5e4c5d2dead268f1ffc',
+    bare: '7f8dd29221e7a5f28f1e9d8ac391713b8b8bbc44c6d47f5082759cce8613fb77',
+    monorepo: 'bbd47b37ce4d3b1378a57d9bb8b715d37f528b46cf7a1e7077eceefefa1e30d7',
   },
 };
 
@@ -206,6 +213,32 @@ describe('fingerprint key', () => {
     expect(preimageHash(preimage('ios', 'tracked', layout, [row]))).not.toBe(
       preimageHash(preimage('ios', 'generated', layout, [row])),
     );
+  });
+
+  test('installed copies of one package are named by version only when versions differ', () => {
+    const copy = (name: string, version: string, hash: string): Input => ({ name, kind: 'file', hash, version });
+    const names = (inputs: Input[]) => mergeInputs(inputs).map((input) => [input.name, input.hash]);
+    const v5 = copy('npm:@scope/color/index.js', '5.5.0', 'a'.repeat(64));
+    const v7 = copy('npm:@scope/color/index.js', '7.2.0', 'b'.repeat(64));
+    const only7 = copy('npm:@scope/color/lib/extra.js', '7.2.0', 'c'.repeat(64));
+    expect(names([v7, only7])).toEqual([
+      ['npm:@scope/color/index.js', 'b'.repeat(64)],
+      ['npm:@scope/color/lib/extra.js', 'c'.repeat(64)],
+    ]);
+    expect(names([only7, v7, v5])).toEqual([
+      ['npm:@scope/color@5.5.0/index.js', 'a'.repeat(64)],
+      ['npm:@scope/color@7.2.0/index.js', 'b'.repeat(64)],
+      ['npm:@scope/color@7.2.0/lib/extra.js', 'c'.repeat(64)],
+    ]);
+    const patched = { ...v7, hash: 'd'.repeat(64) };
+    const shared = names([v5, v7, patched]);
+    expect(names([patched, v5, v7])).toEqual(shared);
+    expect(shared.map(([name]) => name)).toEqual([
+      'npm:@scope/color@5.5.0/index.js',
+      'npm:@scope/color@7.2.0/index.js',
+    ]);
+    expect(shared[1]?.[1]).not.toBe(names([v5, v7, { ...v7, hash: 'e'.repeat(64) }])[1]?.[1]);
+    expect(shared[1]?.[1]).not.toBe(names([v5, v7, v7])[1]?.[1]);
   });
 
   test('diffInputs reports added, removed and changed rows in name order whatever the input order', () => {
