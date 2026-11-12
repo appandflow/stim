@@ -11,9 +11,9 @@ Everything below is planned for #5579 (fixes 1 and 2) and is not on `main`. The
 maintainer approved the fixes; every mechanism, number and exit code below was
 chosen by the agent and awaits the coordinator's answer.
 
-Maintainer decision: "I approve of all fixes", 2026-11-12.
+Maintainer decision: "I approve of all fixes", 2026-11-12 (#5579).
 
-The fixes as approved: (1) commands and Desktop probe stimd and, when it does
+The fixes as proposed to the maintainer, paraphrased: (1) commands and Desktop probe stimd and, when it does
 not answer, verify the recorded owner's identity, stop it and start a new one,
 without killing a stimd that is only slow, with a detached shutdown watchdog
 and a socket-presence check; (2) stimd runs as a job the operating system
@@ -23,7 +23,9 @@ does not respawn.
 ## Planned (#5579): stimd judges its own main thread
 
 A watchdog worker thread in stimd writes `run/stimd.alive.json` atomically every
-5 s: `{pid, processToken, instance, seq, mainLagMs, closingSinceMs, holds}`.
+5 s:
+`{pid, processToken, instance, socket, seq, mainLagMs, tickStartedMs, closingSinceMs, holds}`.
+It keeps writing while stimd closes, after `run/stimd.json` is gone.
 `seq` increases on every write. The main thread stores the monotonic time of its
 latest turn (a 1 s timer) in a `SharedArrayBuffer`; the worker reads it.
 `mainLagMs` counts only time during which the worker's own timer fired on
@@ -37,9 +39,14 @@ hosted native work; it logs `stimd_main_stalled` once a minute instead.
 Reason: the field log has main-thread stalls of 10 to 90 s under load, and the
 audit could not tell blocking from CPU starvation. A hello with a short timeout
 cannot tell them apart either. A sibling thread that keeps its own schedule
-can: under starvation it is late too, and no lag accrues. Every synchronous
-child call on the main thread has a timeout of 12 s or less, so 300 s of lag
-while a sibling thread runs is a hang, not slowness. Monotonic clocks
+can: under starvation it is late too, and no lag accrues. The audit's
+inventory (unverified) puts every synchronous child call on the main thread at
+a timeout of 12 s or less per call; several can chain in one turn (one `git`
+call per project), so 300 s is a starting value the stimd PR checks against
+that inventory, not a proven bound. A tick that never ends while the main
+thread turns, such as a hung volume `stat` (audit), accrues no lag:
+`tickStartedMs` makes it visible in `status` and `doctor`, and its time limit
+is fix 5's. Monotonic clocks
 (`performance.now`, `hrtime`) stop during system sleep on macOS and Linux, so
 the 900 to 1014 s sleep gaps in the field log accrue no lag. Signalling its own
 pid needs no identity check.
@@ -65,21 +72,26 @@ owner is live. The command then reads the alive file and decides:
 | A hello answers during the window                                                      | slow: continue as today                                                               |
 | `seq` advances                                                                         | the process runs; its watchdog owns the main-thread case: wait, or report its `holds` |
 | `seq` does not advance for 30 s and `ps` reports the owner stopped (`T`)               | replace                                                                               |
-| `seq` does not advance for 120 s of the command's own on-schedule time                 | replace                                                                               |
+| `seq` does not advance for 300 s of the command's own on-schedule time                 | replace                                                                               |
 | `closingSinceMs` set and `seq` advances                                                | wait for the shutdown watchdog                                                        |
 | No alive file (a build from before this change), attached stimd, or identity `unknown` | refuse: report the pid and the remedy, as today                                       |
 
 The window is measured with the command's monotonic clock and its own timer
 lateness, as in the stimd watchdog, so a command that was itself starved or
 asleep does not count that time. Any `seq` change, including a new `instance`
-or `processToken`, resets the window.
+or `processToken`, resets the window. The frozen-process window matches the
+internal 300 s because the command's own lateness is only a proxy for the
+starvation stimd sees. A command blocks for at most that window, printing to
+stderr that it waits for an unresponsive stimd and its pid; any reply ends the
+wait. Today a command carries on after 250 ms without a stimd, and an op
+admission waits 30 s.
 
 Stopping it is one synchronous function: `inspectProcessIdentity(owner)` reads
 `same`, then SIGTERM, a wait of up to 10 s, `inspectProcessIdentity` again, then
 SIGKILL and up to 5 s more. `unknown` at any step ends in
 `STIM_CLAIM_UNAVAILABLE` naming the claim. The owner comes from the claim and
-must match `run/stimd.json`'s pid and the alive file's `processToken`; never a
-pid or a name alone. Once the owner is proven gone, its claim is dead and the
+must match the alive file's pid and `processToken` (and `run/stimd.json` when it
+still exists; shutdown removes it first); never a pid or a name alone. Once the owner is proven gone, its claim is dead and the
 normal `takeClaim` recovery applies. The replacer logs `stimd_replaced` with the
 evidence before it signals. Concurrent replacers need no lock: a second
 replacer reads `gone` or `different` and signals nothing, and the exclusive
@@ -91,7 +103,7 @@ removal), `stim doctor --fix`, and Desktop through the launch entry below.
 Read-only commands (`status`, `doctor` without `--fix`, `logs`) never replace;
 `status` says "not answering for <n> s" instead of "running".
 
-Worst case before a replacement: about 30 s for a stopped process, 120 s for a
+Worst case before a replacement: about 30 s for a stopped process, 300 s for a
 frozen one, 300 s plus a restart for a hung main thread, 60 s plus grace for a
 stuck shutdown, 30 s for a removed socket.
 
@@ -100,7 +112,7 @@ stuck shutdown, 30 s for a removed socket.
 LLP 0015 refuses to signal the holder of the daemon claim because that holder is
 a Stim 1.40 to 1.42 stim-daemon: Stim did not start it in this release line, and
 it exits by itself once its workspaces stop. This rule signals only the owner of
-the `run/stimd` claim whose identity, `run/stimd.json` and alive file agree, a
+the `run/stimd` claim whose identity and alive file agree, a
 stimd of this release line that will not exit by itself, and only on positive
 evidence of a freeze. The legacy-holder refusal stays unchanged.
 
@@ -111,17 +123,18 @@ which recovery is identity-only. This reading was chosen by the agent.
 
 ### What a forced stop costs
 
-| Running at the time                         | Today's main                                                    | With LLP 0018's helpers and #5575              |
-| ------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- |
-| Metro, Unix                                 | survives, re-adopted; exit code and output until adoption lost  | helper keeps recording; nothing lost           |
-| Metro and tunnel, Windows                   | stopped with stimd                                              | unchanged (#5571's Windows check)              |
-| Managed tunnel, Unix                        | taken over by claim (LLP 0016)                                  | same                                           |
-| Device log streams                          | end; not resumed                                                | resumed by #5575; gap during the restart       |
-| Physical iOS console                        | lost until the next command                                     | helper planned (LLP 0018)                      |
-| Phone, Desktop connections, hosted sessions | dropped; hosted sessions resume per LLP 0010, clients reconnect | same                                           |
-| `stim share` from a share-only net thread   | dropped; not restored (LLP 0011)                                | same                                           |
-| Offloaded build running on this worker      | job ends at stdin EOF; the client builds locally                | same; the stimd watchdog refuses while it runs |
-| Engine switch or handover in progress       | the shutdown watchdog applies, not a replacement                | same                                           |
+| Running at the time                       | Today's main                                                                                                           | With LLP 0018's helpers and #5575              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Metro, Unix                               | survives, re-adopted; exit code and output until adoption lost                                                         | helper keeps recording; nothing lost           |
+| Metro and tunnel, Windows                 | stopped with stimd                                                                                                     | unchanged (#5571's Windows check)              |
+| Managed tunnel, Unix                      | taken over by claim (LLP 0016)                                                                                         | same                                           |
+| Device log streams                        | end; not resumed                                                                                                       | resumed by #5575; gap during the restart       |
+| Physical iOS console                      | lost until the next command                                                                                            | helper planned (LLP 0018)                      |
+| Phone and Desktop connections             | dropped; clients reconnect                                                                                             | same                                           |
+| Hosted sessions                           | a ready iOS or Android session resumes (LLP 0010); a macOS one, or one with native work in flight, takes the stop path | same                                           |
+| `stim share` from a share-only net thread | dropped; not restored (LLP 0011)                                                                                       | same                                           |
+| Offloaded build running on this worker    | job ends at stdin EOF; the client builds locally                                                                       | same; the stimd watchdog refuses while it runs |
+| Engine switch or handover in progress     | the shutdown watchdog applies, not a replacement                                                                       | same                                           |
 
 ## Planned (#5579): the operating system restarts stimd
 
@@ -145,6 +158,20 @@ Any other code or a signal means restart.
 | A job-started stimd whose `run/` is missing at start: it never creates it                         | 0                              |
 | Shutdown watchdog fired                                                                           | 75                             |
 | Crash, uncaught error, watchdog SIGKILL, OOM                                                      | nonzero or signal              |
+
+Only an entry that honours this contract runs under `KeepAlive`. A build from
+before this change exits 1 on refusals and on the crash-hold stop, so it would
+respawn every 10 s. The launcher therefore keeps `KeepAlive` false whenever it
+starts another build's entry: the crash-hold rollback (`main.ts`
+`launchStimd` of the previous build), a relaunch after `stim engine use` of an
+older version, and an in-place npm handover to an older build. The launcher
+knows only its own build, so a successor's build records the contract it
+honours (one field in the engine store's build record or in `package.json`),
+and any other entry starts unsupervised, as today.
+
+A deliberate SIGTERM (`kill <pid>`, the remedies in LLP 0007, the test
+teardown) still ends in a clean exit 0 and stays down. A second SIGTERM during
+shutdown, or a SIGKILL, now respawns the same build.
 
 Handover keeps today's shape: the old stimd launches the successor in a new job,
 then exits 0 and removes its own job. Two jobs exist only during a handover,
@@ -178,9 +205,26 @@ after that.
 
 Cleanup: a clean exit removes the job. Removing a Stim home ends its stimd with
 code 0 through the run-directory watch, and a respawn into a missing `run/`
-exits 0. `stim engine uninstall` removes this user's `dev.stim.stimd.*` jobs
+exits 0. That last guarantee is unproven: the plist sets `WorkingDirectory`
+and the log paths inside `run/`, and launchd may fail before exec or create
+the log file. The fallback is a `WorkingDirectory` and log path outside the
+home (the per-user temporary directory) with stimd's own log redirection; the
+manual run decides. `stim engine uninstall` removes this user's `dev.stim.stimd.*` jobs
 that are not running and whose program lies under the engine root. `stim stop`
 and `gc` change nothing. Logout or reboot removes every job.
+
+Where no supervisor exists, behaviour stays as today:
+
+- Attached mode (the command hosts stimd): no job, no restart; its host
+  command's watchdog applies.
+- A runner that kills descendants (#5084): the launchd job or systemd unit
+  already escapes it; supervision adds nothing there.
+- CI: the same job is created when the user domain answers. A CI runner
+  without a GUI session or user manager falls back to the detached process,
+  unsupervised.
+- No user launchd domain or systemd manager (`XDG_RUNTIME_DIR` unset, SSH
+  without a login session): detached, unsupervised; the next command starts
+  one.
 
 No new user-facing command, flag or setting. Internal additions: the `--launch`
 argument of `__stimd`, exit code 75, and `run/stimd.alive.json`.
@@ -231,8 +275,11 @@ active. #5575 (`stimd/logs`) does not conflict.
   (and can roll the engine back) or is recorded as a separate kind. Question for
   the 0021 lane.
 - Stable label (as the brief proposed) or per-start labels (as chosen above).
-- The numbers: 300 s main lag, 120 s and 30 s windows, 60 s detached shutdown
-  wait, throttle 10 s, `RestartSec` 2, Desktop backoff steps.
+- The numbers: 300 s main lag, 300 s and 30 s windows, 60 s detached shutdown
+  wait, throttle 10 s, `RestartSec` 2, Desktop backoff steps. Also whether a
+  command should wait the full 300 s window or give up earlier with a remedy.
+- Whether a job-started stimd survives the deletion of its home's `run/`
+  (above), and where the build's exit-contract marker lives.
 - launchd semantics, verify on the manual run: that `SuccessfulExit: false`
   respawns after a signal death; throttle timing after a long run;
   `launchctl remove` of its own label while `KeepAlive` is set; what launchd
