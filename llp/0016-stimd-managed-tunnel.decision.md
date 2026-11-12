@@ -27,7 +27,9 @@ stimd owns three things for the tunnel:
   and the claim is what says a tunnel runs. Its details name the port and the
   provider before the provider is spawned. `tunnel.stop`, `stop`, reclaim and
   `worktree remove` stop the tunnel a claim holds by the claim's verified child
-  identity, whether or not the workspace records it. A stimd restart takes the
+  identity, whether or not the workspace records it; while another live process
+  still holds the claim (a stimd that is exiting), `tunnel.stop` refuses naming
+  that process, so `stop` exits non-zero rather than report the tunnel gone. A stimd restart takes the
   tunnel over by its claim, as it does Metro; one that ended before the tunnel
   printed its URL leaves a claim without a URL, which the successor stops. On
   Windows, where children stop with stimd, a running tunnel holds an in-place
@@ -68,9 +70,11 @@ The maintainer decided on 2026-11-12 to move the tunnel into stimd, as relayed
 by the coordinating session; the words are not on the issue. The rules above
 that the maintainer did not state were chosen by the coordinating session and
 the implementing agent: that the provider order moves into stimd, that the CLI
-keeps no direct tunnel stop and no compatibility branch beyond adoption by
-verified identity, and that a different running tunnel refuses instead of being
-replaced.
+keeps no tunnel stop of its own and no compatibility branch beyond adoption by
+verified identity (it still clears the record and log of a dead tunnel that has
+no claim, compat C29), and that a different running tunnel refuses instead of
+being replaced. A review of the first version added the rule that the claim,
+not the record, says what runs.
 
 Related: #5421, #5384, #5426.
 

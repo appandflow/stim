@@ -1318,7 +1318,11 @@ export function ensureTunnel(
     const adopted = owned ? { tunnel: owned } : adoptRecordedTunnel(root);
     // compat end
     if (adopted && 'refusal' in adopted) return adopted.refusal;
-    const known = adopted?.tunnel;
+    let known = adopted?.tunnel;
+    if (known && !known.url) {
+      await stopTunnel(root, known);
+      known = undefined;
+    }
     if (known && inspectProcessIdentity(known) === 'same') {
       const reusable =
         known.claim.details.port === port &&
@@ -1439,7 +1443,15 @@ async function stopTunnelFor(root: string, log: Log, pid?: unknown, processToken
     await stopTunnel(root, owned);
     return { op: 'tunnel.stopped', state: 'stopped' };
   }
-  const unresolved = readClaimSet(claimRoot(root, 'tunnel')).unresolved[0];
+  const claims = readClaimSet(claimRoot(root, 'tunnel'));
+  const other = claims.live[0];
+  if (other)
+    return {
+      op: 'tunnel.stopped',
+      state: 'failed',
+      reason: `process ${other.owner.pid} still holds ${claimRoot(root, 'tunnel')}, which runs a tunnel; retry when it exits.`,
+    };
+  const unresolved = claims.unresolved[0];
   if (unresolved)
     return {
       op: 'tunnel.stopped',

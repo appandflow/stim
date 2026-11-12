@@ -26,7 +26,7 @@
       "mechanism": "a Metro claim records the injected bundle digest; another digest is foreign until restart"
     },
     "C7": {
-      "loc": 60,
+      "loc": 70,
       "end": "permanent",
       "mechanism": "Stim Desktop's API integer in hello, each way"
     },

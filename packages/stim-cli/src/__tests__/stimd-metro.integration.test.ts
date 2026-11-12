@@ -21,6 +21,7 @@ import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from 
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -1013,6 +1014,58 @@ require('node:http')
         url: 'https://fixture-tunnel.exp.direct',
       }),
     );
+  }, 30_000);
+
+  test('stim stop exits non-zero while another live process or an unresolved claim holds a tunnel', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    upsertProject(root, { metroPort: port });
+    const claimRoot = join(workspaceDir(root), 'tunnel.claim');
+    const sleeper = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    sleeper.unref();
+    const sleeperPid = sleeper.pid;
+    if (!sleeperPid) throw new Error('fixture did not start');
+    try {
+      await startStimd();
+      plantClaim(claimRoot, 'exclusive', goneClaimOwner(process.pid), {
+        details: { port, provider: 'cloudflared' },
+        child: { record: { pid: sleeperPid, processToken: captureProcessToken(sleeperPid) } },
+      });
+      const live = await cliRun(root, ['stop']);
+      expect(live.code).not.toBe(0);
+      expect(live.out).toContain(`process ${process.pid} still holds`);
+      expect(alive(sleeperPid)).toBe(true);
+
+      rmSync(claimRoot, { recursive: true, force: true });
+      plantClaim(claimRoot, 'exclusive', goneClaimOwner(), { details: { port }, child: { record: null } });
+      const unresolved = await cliRun(root, ['stop']);
+      expect(unresolved.code).not.toBe(0);
+      expect(unresolved.out).toContain('tunnel.claim');
+    } finally {
+      process.kill(-sleeperPid, 'SIGKILL');
+    }
+  }, 60_000);
+
+  test('a url-less claim first adopted by tunnel.ensure is stopped and replaced, not reused', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    const sleeper = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
+    sleeper.unref();
+    const sleeperPid = sleeper.pid;
+    if (!sleeperPid) throw new Error('fixture did not start');
+    try {
+      await startStimd();
+      plantClaim(join(workspaceDir(root), 'tunnel.claim'), 'exclusive', goneClaimOwner(), {
+        details: { port, provider: 'cloudflared' },
+        child: { record: { pid: sleeperPid, processToken: captureProcessToken(sleeperPid) } },
+      });
+      const answer = await ask('tunnel.ensure', { root, mode: 'cloudflared', port, requireReachable: false });
+      expect(answer).toMatchObject({ op: 'tunnel', reused: false });
+      expect(answer.pid).not.toBe(sleeperPid);
+      expect(alive(sleeperPid)).toBe(false);
+    } finally {
+      if (alive(sleeperPid)) process.kill(-sleeperPid, 'SIGKILL');
+    }
   }, 30_000);
 
   test('a named provider that fails is refused with its reason and no other provider runs', async () => {
