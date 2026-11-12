@@ -154,6 +154,7 @@ reuse the job's paths. Detection requires `GITHUB_ACTIONS=true`,
 
 An explicit `--home` or `STIM_HOME` keeps the selected home and normal cache
 configuration; `--build-cache` or `STIM_BUILD_CACHE` overrides the cache path.
+From `runCI` and `buildCI`, the matching options are `home` and `buildCacheDir`.
 Self-hosted runners and local runs retain their normal Stim home and capacity
 limits. For other disposable providers, set job-local paths explicitly.
 Persist only compatible cache entries, never runtime state or device ledgers.

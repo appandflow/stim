@@ -186,7 +186,8 @@ run takes platform plus its options:
   web:     headed (default false)
 iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, remote,
 device, waitSeconds and easProfile. device: true auto-selects a physical device; a
-string pins its UDID or serial. waitSeconds takes a number of seconds, such as 30.
+string pins its UDID or serial. waitSeconds takes a whole number of seconds
+above 0, such as 30.
 waitSeconds: false refuses a full owned-device slot immediately; on a physical device
 it bypasses another workspace's lease and can replace its running app, as CLI
 --no-wait does. easProfile downloads an existing compatible development build;
@@ -313,7 +314,7 @@ admission option, which serve Stim Desktop and stim-server.
 
 Within 2.x, --json payloads, logs --json records and API results only gain
 fields and enum values; ignore what you do not know. No compatibility covers
-status --json maintenance and daemon, the per-workspace idleStage,
+status --json and doctor --json maintenance and daemon, the per-workspace idleStage,
 dormantStage, sourceDependenciesCleared and idleShutdown records, tutorial,
 gitChip, agentDevice.stateDir, or paths and pids of Stim's own state (a device
 lease's path and parsed, a build's waitingOn.path, gc --json lock path and pid).

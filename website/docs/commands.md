@@ -3068,7 +3068,8 @@ API result only gain fields and enum values: a field keeps its name, type and
 meaning, and no value of an enum disappears. Ignore fields and values you do not
 know. These parts carry no compatibility and can change in any release:
 
-- in `status --json`: the `maintenance` and `daemon` objects, the per-workspace
+- in `status --json` and `doctor --json`: the `maintenance` and `daemon`
+  objects; in `status --json` also the per-workspace
   `idleStage`, `dormantStage`, `sourceDependenciesCleared` and `idleShutdown`
   records, `tutorial`, `gitChip` and `agentDevice.stateDir`;
 - file paths and process ids that describe Stim's own state, such as a device

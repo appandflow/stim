@@ -44,6 +44,12 @@ doc comment starts with `@internal` (`identity()`, `deviceTool()`,
 `requestMachineAccess()`, `deleteGarbageItem()` and the `admission` option)
 serve Stim Desktop and stim-server and may change in any release.
 
+Until 2026-12-12, the names these options and methods had in the 2.0
+prereleases refuse with `STIM_BAD_ARG` and name the new one: `buildCache` on
+`createStim` (now `buildCacheDir`), `wait` on `run` (now `waitSeconds`),
+`errors` on `diagnostics` (now `errorsOnly`) and `gc()` (now
+`previewGarbage()`).
+
 ## Client context
 
 `createStim` resolves `projectRoot` to its canonical path once. It accepts
@@ -143,7 +149,7 @@ cleanup cannot be confirmed.
 The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
 `remoteBuild`, `remote`, `device`, `waitSeconds`, and `easProfile`. `device: true` selects a
 physical device automatically; a string pins its UDID or serial. `waitSeconds` takes
-a number of seconds, such as `30`. `waitSeconds: false` refuses an owned-device slot
+a whole number of seconds above 0, such as `30`. `waitSeconds: false` refuses an owned-device slot
 wait immediately; for a physical device it bypasses another workspace's lease
 and can replace that workspace's running app, as CLI `--no-wait` does.
 `easProfile` downloads an existing compatible development build, never starts
