@@ -55,6 +55,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
         build: boot.build,
         pid: boot.pid,
         reason: boot.reason ?? 'unknown',
+        cause: boot.cause ?? 'engine',
       };
       return boot.home ? Object.assign(exit, { home: boot.home }) : exit;
     });
@@ -75,7 +76,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
             build: loop.build,
             count: loop.count,
             until: new Date(loop.until).toISOString(),
-            remedy: crashHoldRemedy(loop, loop.build, ownStoreEngine() !== null),
+            remedy: crashHoldRemedy(loop, ownStoreEngine() !== null),
           },
         }
       : {}),
@@ -196,7 +197,7 @@ export function daemonFindings(
       level: 'cost',
       title: 'stimd is held after a crash loop',
       detail: `${status.crashHold.remedy} Until then no stimd starts in this Stim home, so no maintenance, idle stop or log capture runs.`,
-      fix: `Fix the cause named in ${daemonNdjsonFile()}, or wait until ${status.crashHold.until}.`,
+      fix: `Run \`stim doctor --fix\` to clear the hold, fix the cause named in ${daemonNdjsonFile()}, or wait until ${status.crashHold.until}.`,
     });
   else if (status.abnormalExits?.length) {
     const last = status.abnormalExits[status.abnormalExits.length - 1];

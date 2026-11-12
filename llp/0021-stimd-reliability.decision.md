@@ -28,37 +28,59 @@ crash loop made of them was invisible to the hold and to a person reading the lo
 
 The abnormal boots of this home live in `run/stimd-boots.json`, written by stimd
 under a directory lock and read through core, not in the stimd claim. A clean exit
-in between does not erase them, a startup failure after the claim is taken (a
-detached boot only) is counted, and `stim status` reads the file. Three abnormal
-boots of one build among those started in the last 10 minutes hold the next
-start. Reason: the history in the claim vanished with the claim on a clean exit
-and on the first startup cleanup, so a corrupt `config.json` looped forever.
+in between does not erase them, and a startup failure after the claim is taken (a
+detached boot only) is counted. Reasons kept in the file are bounded to 500
+characters; the stack an uncaught exception writes to `daemon.ndjson` to 8000.
 
-A failure that comes from the Stim home (a `config.json` that does not parse, ENOSPC
-or EDQUOT, EACCES or EROFS on a path inside the home) is recorded with what to fix.
-Such boots count toward the hold but not toward a rollback: the build is not marked
-bad and the engine does not go back, and stimd stops naming the file or the disk.
-Only three boots not attributable to the home roll the engine back.
+## Every abnormal boot has a cause
 
-The hold covers every build and launch mode: a store engine rolls back when it
-can, and a stimd without a previous engine (an npm or global install, an attached
-stimd, which refuses to host while the hold stands) stops restarts with a remedy
-until the boots leave the 10-minute window, or the person removes the file. No
-rollback is invented for them.
+Each abnormal boot carries a cause, and only some can blame a build.
 
-Three rules for what supervises stimd (an OS job restarts it on any exit but 0):
+- `engine`: an uncaught exception, a non-zero exit, a failBackground, or a tick that
+  threw for a reason below. Three of them in the last 10 minutes hold the next
+  start; on a store engine they roll the engine back and mark the build bad.
+- `home`: a fault of the Stim home, with what to fix: a `config.json` that does not
+  parse, or ENOSPC, EDQUOT, EACCES, EPERM, EROFS, EISDIR or ENOTDIR on a path inside the
+  home (compared by real path at a path separator, so `~/.stim-agent` is not inside
+  `~/.stim`). The remedy names that path, and so the volume to free. These boots count
+  toward the three that hold, but never toward a rollback: the build is not marked
+  bad and stimd stops naming the file or the disk. ENOSPC outside the home blames the
+  build.
+- `unknown`: the predecessor died with no record (SIGKILL, out of memory, a logout,
+  a harness killing the process group) or was force-exited after a second signal.
+  Nothing says the build is to blame, so these are logged and shown, never roll back
+  and never mark a build bad. As a loop guard five of them in 10 minutes hold the
+  next start, with a remedy that says stimd was killed or ran out of memory, cause
+  unknown. A logout that kills a stimd within its boot session cannot be told from a
+  kill and is `unknown` too.
+- A refusal is no crash and is not recorded: a claim another stimd holds, the
+  engine-follow claim error, an engine switch, the socket directory or "another
+  process answers" refusals, a socket EACCES or EPERM outside the home, a sandbox
+  denial. They log `startup_refused` and count toward nothing.
 
-- A stimd that stops because of the hold exits with code 0, so a supervised job
-  stays down. Any other code or a signal is a restart. Code 75 is reserved for a
+A full home may be unable to record the boot. The write never throws; such a loop is
+then visible only through the log writer's line on stderr.
+
+The hold stops automatic detached restarts for every build and launch mode. On a
+store engine with three `engine` boots the engine goes back; otherwise stimd exits
+without starting, and a command that needs it falls back to the attached host as
+when a detached start fails, printing one line that names the hold and its remedy. An
+attached stimd is never refused by the hold. `stim doctor --fix` clears the hold by
+removing the boots file, as a person's `rm` does, and the remedy names it first; no
+new flag. `stim status`, `status --json` (`crashHold`, `abnormalExits` with their
+cause, additive) and `stim doctor` show the hold and the last abnormal exits.
+
+Rules for what supervises stimd (an OS job restarts it on any exit but 0):
+
+- A stimd that stops because of the hold exits with code 0, so a supervised job stays
+  down; so does every clean exit. Every abnormal shutdown, detached or attached, exits
+  1, a tick failure and a failBackground included. Code 75 is reserved for a
   shutdown watchdog.
-- Every abnormal boot carries a free-text `reason` and is classified like any other
-  one: a later watchdog self-kill or a forced replacement of a stimd that does not
-  answer records its boot through the same call (`recordAbnormalBoot(boot, reason,
-cause)`), and counts toward the hold.
-- Silent exits (SIGKILL, out of memory, SIGHUP on a stimd that did not handle it)
-  count through `stimd_predecessor_lost`. `stim status`,
-  `status --json` (`crashHold`, `abnormalExits`, additive) and `stim doctor` show the
-  hold and the last abnormal exits.
+- Every abnormal boot carries a free-text `reason`, and `recordAbnormalBoot(boot,
+reason, cause)` is the call a later watchdog self-kill or forced replacement of a
+  stimd that does not answer uses to record its boot.
+- Silent exits count through `stimd_predecessor_lost`, as `unknown`. On Windows the
+  boot id cannot be compared, so silent exits are not counted there.
 
 ## A handover with no successor
 
@@ -82,7 +104,11 @@ home-state faults and is shown in `stim status` and `stim doctor`; a handover th
 ends with no successor is logged and makes the client start one. How they are built
 was chosen by the implementing lane and the coordinating session: the history file,
 the `kept` mark on the claim, the boot-id comparison, the forced exit 5 s after a
-second signal, the classification of home faults, the stop-with-remedy hold for
-non-store and attached stimds, and the marker file.
+second signal, the classification of home faults, and the marker file. A review of
+the first version and the coordinating session added the cause classes, the
+threshold of five for unknown deaths, the rule that a refusal is no crash, the
+hold that never refuses an attached stimd and lets commands fall back, `doctor
+--fix`, and the exit code 1 for every abnormal shutdown; none of these is the
+maintainer's wording.
 
 Related: #5579.

@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
   appendFileSync,
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -12,12 +13,13 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { stimBuildId } from '@stim-cli/core/state';
+import { stimBuildId, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 import { machineCopy } from './fixtures/machine-copy.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
@@ -44,7 +46,7 @@ const logged = (): { event: string; msg: string; pid?: number; level: string }[]
         .map((line) => JSON.parse(line))
     : [];
 };
-const boots = (): { pid: number; abnormal?: true; reason?: string }[] => {
+const boots = (): { pid: number; abnormal?: true; reason?: string; cause?: string }[] => {
   try {
     return JSON.parse(readFileSync(join(home, 'run', 'stimd-boots.json'), 'utf8')).boots;
   } catch {
@@ -88,6 +90,23 @@ beforeEach(() => {
   };
 });
 
+/** The stimd launchd jobs of `home` that `launchctl` lists. */
+function launchdJobs(): string[] {
+  if (process.platform !== 'darwin') return [];
+  const prefix = `dev.stim.stimd.${createHash('sha256').update(stimdRunDir(home)).digest('hex').slice(0, 12)}.`;
+  const listed = spawnSync('/bin/launchctl', ['list'], { encoding: 'utf8' }).stdout;
+  return listed.split('\n').filter((line) => line.includes(prefix));
+}
+
+/** A tick request, which makes a stimd with a corrupt config fail its tick. */
+function tick(child: ChildProcess): void {
+  const socket = connect(JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).socket);
+  socket.on('error', () => {});
+  const build = JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).build;
+  socket.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'tick' })}\n`);
+  child.once('exit', () => socket.destroy());
+}
+
 afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -95,7 +114,9 @@ afterEach(async () => {
       await once(child, 'exit');
     }
   }
+  const leaked = launchdJobs();
   rmSync(dir, { recursive: true, force: true });
+  if (leaked.length > 0) throw new Error(`left launchd jobs behind: ${leaked.join('; ')}`);
 });
 
 describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record', () => {
@@ -164,7 +185,7 @@ describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record'
     const status = spawnSync(process.execPath, [cli, 'status', '--json'], { env, encoding: 'utf8' });
     const { daemon } = JSON.parse(status.stdout);
     expect(daemon.crashHold).toMatchObject({ count: 3 });
-    expect(daemon.crashHold.remedy).toContain('no previous engine');
+    expect(daemon.crashHold.remedy).toContain('stim doctor --fix');
     expect(daemon.abnormalExits).toHaveLength(3);
   }, 120_000);
 
@@ -173,13 +194,20 @@ describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record'
     const child = start();
     expect(await exited(child)).toBe(1);
     expect(boots().filter((boot) => boot.abnormal)).toMatchObject([{ pid: child.pid }]);
+    expect(boots()[0]).toMatchObject({ cause: 'home' });
     expect(boots()[0]?.reason).toContain('cannot listen');
   }, 60_000);
 
   test('a handover whose successor cannot start logs successor_missing and leaves the marker a client starts a stimd for', async () => {
     const dist = join(machineCopy(PACKAGE, join(dir, 'prefix')), 'dist');
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['launchctl', 'systemd-run']) {
+      writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n');
+      chmodSync(join(bin, tool), 0o755);
+    }
     const old = spawn(process.execPath, [join(dist, 'cli.mjs'), '__stimd', '--mode', 'report'], {
-      env,
+      env: { ...env, PATH: `${bin}:${process.env.PATH}` },
       stdio: 'ignore',
     });
     children.push(old);
@@ -204,4 +232,72 @@ describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record'
       reason: expect.stringContaining('did not bind'),
     });
   }, 90_000);
+
+  test('a stimd killed with no record counts only as an unknown cause: three kills hold nothing, five hold with a remedy that blames no build, and an attached stimd is never refused', async () => {
+    const kill = async () => {
+      const child = start();
+      await bound(child);
+      child.kill('SIGKILL');
+      await exited(child);
+    };
+    for (let each = 0; each < 3; each++) await kill();
+    const fourth = start();
+    await bound(fourth);
+    expect(logged().some((entry) => entry.event === 'engine_crash_hold')).toBe(false);
+    fourth.kill('SIGKILL');
+    await exited(fourth);
+    const fifth = start();
+    await bound(fifth);
+    fifth.kill('SIGKILL');
+    await exited(fifth);
+    expect(boots().filter((boot) => boot.cause === 'unknown')).toHaveLength(4);
+
+    const held = start();
+    expect(await exited(held)).toBe(0);
+    const hold = logged().find((entry) => entry.event === 'engine_crash_hold');
+    expect(hold?.msg).toContain('killed or ran out of memory 5 times');
+    expect(hold?.msg).toContain('cause unknown');
+    expect(hold?.msg).not.toMatch(/reinstall|downgrade/);
+
+    const attached = spawn(process.execPath, [cli, '__stimd', '--attached', '--no-handover'], {
+      env,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    children.push(attached);
+    await bound(attached);
+    await vi.waitFor(() =>
+      expect(logged().some((entry) => entry.event === 'daemon_started' && entry.pid === attached.pid)).toBe(true),
+    );
+    attached.stdin?.end();
+    expect(await exited(attached)).toBe(0);
+  }, 120_000);
+
+  test('a refusal is no crash: a socket another process answers on never holds stimd', async () => {
+    mkdirSync(join(home, 'run'), { recursive: true });
+    const occupant = createServer();
+    const socketPath = stimdSocket(home);
+    mkdirSync(join(socketPath, '..'), { recursive: true });
+    await new Promise<void>((done) => occupant.listen(socketPath, done));
+    try {
+      for (let each = 0; each < 3; each++) expect(await exited(start())).toBe(1);
+    } finally {
+      occupant.close();
+    }
+    expect(boots().some((boot) => boot.abnormal)).toBe(false);
+    expect(logged().filter((entry) => entry.event === 'startup_refused')).toHaveLength(3);
+    const free = start();
+    await bound(free);
+    expect(logged().some((entry) => entry.event === 'engine_crash_hold')).toBe(false);
+  }, 60_000);
+
+  test('a tick that fails on a corrupt config.json exits 1, is a fault of the home, and does not blame the build', async () => {
+    writeFileSync(join(home, 'config.json'), '{bad');
+    const child = start();
+    await bound(child);
+    tick(child);
+    expect(await exited(child)).toBe(1);
+    expect(boots().filter((boot) => boot.abnormal)).toMatchObject([
+      { pid: child.pid, cause: 'home', reason: expect.stringContaining('config.json') },
+    ]);
+  }, 60_000);
 });

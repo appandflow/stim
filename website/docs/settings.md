@@ -735,13 +735,17 @@ same update from its machine with `stim remote update <mac>`. A build whose
 stimd exits abnormally three times within 10 minutes is marked bad and the
 engine goes back to the previous build on its own; `stim engine status` then
 shows `crash loop in <version>`, and the next newer release resumes updates.
-The count keeps abnormal exits across clean ones, includes a stimd that was
-killed or ran out of memory (the next stimd logs `stimd_predecessor_lost`) and a
-startup failure after it took the home, and leaves out an exit that a reboot
-caused. A fault of the Stim home, such as a `config.json` that does not parse or
-a full disk, does not mark the build bad: stimd stops with the file or disk to
-fix. An npm or global install and an attached stimd have no previous build; the
-hold there only stops restarts until the exits leave the 10-minute window.
+The count keeps abnormal exits across clean ones and includes a startup failure
+after stimd took the home. A fault of the Stim home, such as a `config.json` that
+does not parse or a full disk, does not mark the build bad: stimd stops with the
+file or disk to fix. A stimd that was killed or ran out of memory (the next stimd
+logs `stimd_predecessor_lost`) has an unknown cause: it never blames the build and
+holds only after five in 10 minutes. Silent exits are not counted on Windows, and
+an exit that a reboot caused is not counted anywhere. A refusal (another stimd or
+process holds the home or the socket) is no crash. An npm or global install has no
+previous build; the hold there only stops automatic restarts, a command falls back
+to a stimd of its own, and an attached stimd is never refused.
+`stim doctor --fix` clears the hold.
 `stim status` and `stim doctor` show the hold and the last abnormal exits.
 `engine.autoUpdate` decides whether the engine checks for updates by itself
 (on for an engine Stim Desktop installed or a service runs).

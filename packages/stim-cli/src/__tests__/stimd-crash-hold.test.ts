@@ -1,16 +1,20 @@
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { autoUpdateOn } from '../stimd/auto-update.ts';
 import { crashLoop, keptBoots, type Boot } from '@stim-cli/core/state';
-import { crashLoopAction } from '../stimd/crash-hold.ts';
+import { classifyFailure, crashLoopAction } from '../stimd/crash-hold.ts';
 
 const MINUTE = 60_000;
 const now = 100 * MINUTE;
-const boot = (minutesAgo: number, build = 'b', abnormal = true, home?: string): Boot => ({
+const boot = (minutesAgo: number, build = 'b', abnormal = true, home?: string, cause?: Boot['cause']): Boot => ({
   at: now - minutesAgo * MINUTE,
   build,
   pid: 1,
   ...(abnormal ? { abnormal: true as const } : {}),
-  ...(home ? { home } : {}),
+  ...(home ? { home, cause: 'home' as const } : {}),
+  ...(cause ? { cause } : {}),
 });
 
 describe('crash counter', () => {
@@ -32,6 +36,17 @@ describe('crash counter', () => {
     expect(keptBoots([boot(9.5), ...clean], now)).toHaveLength(21);
     const old = Array.from({ length: 12 }, (_, index) => boot(60 + index));
     expect(keptBoots(old, now)).toHaveLength(10);
+  });
+
+  it('counts boots of unknown cause only toward a higher threshold, and never as the build', () => {
+    const unknown = (minutes: number) => boot(minutes, 'b', true, undefined, 'unknown');
+    expect(crashLoop([unknown(5), unknown(4), unknown(3), unknown(2)], 'b', now)).toBeNull();
+    expect(crashLoop([unknown(5), unknown(4), unknown(3), unknown(2), unknown(1)], 'b', now)).toMatchObject({
+      count: 5,
+      unknownOnly: true,
+      engineCaused: false,
+    });
+    expect(crashLoop([unknown(5), unknown(4), boot(2), boot(1)], 'b', now)).toBeNull();
   });
 
   it('holds until the abnormal boot that makes it three leaves the window, and says whether the build is to blame', () => {
@@ -78,5 +93,45 @@ describe('engine.autoUpdate', () => {
     ['the setting turned off for a Desktop install', 'off', 'install:desktop', true, false],
   ])('%s', (_name, setting, installedBy, service, on) => {
     expect(autoUpdateOn(setting, installedBy, service)).toBe(on);
+  });
+});
+
+describe('failure classification', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-classify-'));
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  const fault = (code: string, path?: string, extra: object = {}) =>
+    Object.assign(new Error(`${code} failed`), { code, ...(path ? { path } : {}), ...extra });
+
+  it.each<[string, unknown, string]>([
+    ['a config.json that does not parse', fault('STIM_CONFIG_CORRUPT'), 'home'],
+    ['a full disk under the home', fault('ENOSPC', join(home, 'run', 'x.tmp')), 'home'],
+    ['a full disk elsewhere, such as the temp volume', fault('ENOSPC', '/private/tmp/x'), 'engine'],
+    ['a full disk with no path', fault('ENOSPC'), 'engine'],
+    ['EPERM on a state file in the home', fault('EPERM', join(home, 'config.json')), 'home'],
+    ['EISDIR on a state file in the home', fault('EISDIR', join(home, 'run', 'stimd.json')), 'home'],
+    ['a sibling directory that only shares the home path as a prefix', fault('EACCES', `${home}-agent/x`), 'engine'],
+    ['a claim another stimd holds', fault('STIM_CLAIM_REFUSED'), 'refusal'],
+    ['a socket another process answers on', fault('STIM_SOCKET_REFUSED'), 'refusal'],
+    [
+      'a socket denied outside the home',
+      fault('EACCES', undefined, { syscall: 'listen', address: '/x/s.sock' }),
+      'refusal',
+    ],
+    ['an uncaught error of the build', new Error('boom'), 'engine'],
+  ])('%s', (_name, error, kind) => {
+    expect(classifyFailure(error, home).kind).toBe(kind);
+  });
+
+  it('names the failing path for a full disk, and finds a path through a symlink', () => {
+    const link = join(tmpdir(), `stim-classify-link-${process.pid}`);
+    symlinkSync(home, link);
+    try {
+      expect(classifyFailure(fault('ENOSPC', join(link, 'run', 'x')), home)).toMatchObject({
+        kind: 'home',
+        remedy: expect.stringContaining(join(link, 'run', 'x')),
+      });
+    } finally {
+      rmSync(link);
+    }
   });
 });

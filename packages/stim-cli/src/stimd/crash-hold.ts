@@ -1,7 +1,7 @@
-import { renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
-import { readClaimSet, type ClaimHolder } from '@stim-cli/core/ownership-claim';
+import { isClaimRefusal, isClaimUnavailable, readClaimSet, type ClaimHolder } from '@stim-cli/core/ownership-claim';
 import { captureProcessToken, processTokenBootId } from '@stim-cli/core/process-identity';
 import {
   readDaemonSnapshot,
@@ -9,6 +9,7 @@ import {
   readStimdBoots,
   stimdBootsFile,
   type Boot,
+  type BootCause,
   type CrashLoop,
 } from '@stim-cli/core/state';
 import { buildClaimRoot, readBuildClaims } from '../engine-store/claims.ts';
@@ -21,23 +22,63 @@ import { getConfigDir } from '../workspace/config.ts';
 
 const SELECT_TIMEOUT_MS = 10 * 60_000;
 const REASON_CHARS = 500;
+const STACK_CHARS = 8000;
+const REFUSAL_CODES = [
+  'STIM_ENGINE_SWITCHED',
+  'STIM_ENGINE_UNAVAILABLE',
+  'STIM_SANDBOX_BLOCKED',
+  'STIM_SOCKET_REFUSED',
+];
+const HOME_CODES = ['EACCES', 'EPERM', 'EROFS', 'EISDIR', 'ENOTDIR'];
 
-const bounded = (text: string): string => (text.length > REASON_CHARS ? `${text.slice(0, REASON_CHARS)}...` : text);
+const bounded = (text: string, max = REASON_CHARS): string => (text.length > max ? `${text.slice(0, max)}...` : text);
+
+/** `path` with its nearest existing ancestor resolved, so a symlinked or not yet created path compares by where it is. */
+function resolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(resolved(parent), basename(path));
+  }
+}
+
+/** Whether `path` is `home` or below it, compared by real path and at a path separator. */
+function insideHome(path: string, home: string): boolean {
+  const from = relative(resolved(home), resolved(path));
+  return from === '' || (!from.startsWith('..') && !isAbsolute(from));
+}
 
 /**
- * What to fix when `error` comes from the Stim home rather than from the build: a `config.json` that does not parse, a
- * full disk, or a state file that cannot be written. Null for any other failure.
+ * How a failure that ended a boot counts. `refusal`: stimd was refused or could not take the home (a claim, the socket
+ * directory, another process answering, a socket denied outside the home, a sandbox, an engine switch), which is no
+ * crash. `home`: the Stim home is at fault, with what to fix: a `config.json` that does not parse, or an ENOSPC, EDQUOT,
+ * EACCES, EPERM, EROFS, EISDIR or ENOTDIR on a path inside the home. Anything else is `engine`.
  */
-function homeStateFault(error: unknown, home: string = getConfigDir()): string | null {
-  if (!(error instanceof Error)) return null;
+export function classifyFailure(
+  error: unknown,
+  home: string = getConfigDir(),
+): { kind: 'refusal' | 'engine' } | { kind: 'home'; remedy: string } {
+  if (!(error instanceof Error)) return { kind: 'engine' };
   const code: unknown = Reflect.get(error, 'code');
-  const path: unknown = Reflect.get(error, 'path');
-  if (code === 'STIM_CONFIG_CORRUPT') return bounded(error.message.replaceAll('\n', ' '));
-  if (code === 'ENOSPC' || code === 'EDQUOT')
-    return `a write to ${path ?? home} failed with ${code}; free disk space on the volume that holds ${home}`;
-  if ((code === 'EACCES' || code === 'EROFS') && typeof path === 'string' && path.startsWith(home))
-    return `${path} cannot be written (${code}); fix its permissions or its mount`;
-  return null;
+  const raw: unknown = Reflect.get(error, 'path') ?? Reflect.get(error, 'address');
+  const path = typeof raw === 'string' ? raw : null;
+  if (code === 'STIM_CONFIG_CORRUPT') return { kind: 'home', remedy: bounded(error.message.replaceAll('\n', ' ')) };
+  const inside = path !== null && insideHome(path, home);
+  if ((code === 'ENOSPC' || code === 'EDQUOT') && inside)
+    return {
+      kind: 'home',
+      remedy: `a write to ${path} failed with ${code}; free disk space on the volume that holds it`,
+    };
+  if (typeof code === 'string' && HOME_CODES.includes(code) && inside)
+    return { kind: 'home', remedy: `${path} cannot be used (${code}); fix its permissions, its type or its mount` };
+  const listening = Reflect.get(error, 'syscall') === 'listen';
+  const refused =
+    isClaimRefusal(error) ||
+    isClaimUnavailable(error) ||
+    (typeof code === 'string' &&
+      (REFUSAL_CODES.includes(code) || (listening && ['EADDRINUSE', 'EACCES', 'EPERM'].includes(code))));
+  return { kind: refused ? 'refusal' : 'engine' };
 }
 
 /** The boot `at` of `pid` in `stimd-boots.json`, changed by `change` under the file's lock, which also prunes the file. */
@@ -52,8 +93,8 @@ export function updateBoot(at: number, pid: number, change: (boot: Boot | undefi
       else boots.push(changed);
     }
     const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ format: 1, boots: keptBoots(boots, Date.now()) })}\n`, { mode: 0o600 });
     try {
+      writeFileSync(tmp, `${JSON.stringify({ format: 1, boots: keptBoots(boots, Date.now()) })}\n`, { mode: 0o600 });
       renameSync(tmp, file);
     } catch (error) {
       rmSync(tmp, { force: true });
@@ -62,31 +103,61 @@ export function updateBoot(at: number, pid: number, change: (boot: Boot | undefi
   });
 }
 
-/** Records the boot `at` of `pid` as abnormal, keeping the first reason it was given. */
-export function recordAbnormalBoot(boot: Pick<Boot, 'at' | 'pid' | 'build'>, reason: string, cause?: unknown): void {
-  updateBoot(boot.at, boot.pid, (found) => {
-    if (found?.abnormal) return found;
-    const home = homeStateFault(cause);
-    return {
-      ...boot,
-      ...found,
-      abnormal: true,
-      reason: bounded(reason),
-      exitedAt: Date.now(),
-      ...(home ? { home } : {}),
-    };
+/** Removes the boots file, which ends a crash hold: what `stim doctor --fix` does, and what a person's `rm` does. */
+export function clearCrashHold(): boolean {
+  const file = stimdBootsFile();
+  return withDirLock(`${file}.lock`, () => {
+    const had = readStimdBoots().length > 0;
+    rmSync(file, { force: true });
+    return had;
   });
 }
 
-export const errorText = (error: unknown): string =>
-  bounded(error instanceof Error ? (error.stack ?? error.message) : String(error));
+/**
+ * Records the boot `at` of `pid` as abnormal with its cause, keeping the first reason it was given. Never throws: a
+ * full or unwritable home cannot record its own loop, which then shows only in the log writer's line on stderr.
+ * Returns whether the boot was recorded.
+ */
+export function recordAbnormalBoot(
+  boot: Pick<Boot, 'at' | 'pid' | 'build'>,
+  reason: string,
+  cause: BootCause,
+  home?: string,
+): boolean {
+  try {
+    updateBoot(boot.at, boot.pid, (found) =>
+      found?.abnormal
+        ? found
+        : {
+            ...boot,
+            ...found,
+            abnormal: true,
+            reason: bounded(reason),
+            exitedAt: Date.now(),
+            cause,
+            ...(home ? { home } : {}),
+          },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const errorText = (error: unknown, max: number = REASON_CHARS): string =>
+  bounded(error instanceof Error ? (error.stack ?? error.message) : String(error), max);
+
+/** The stack an uncaught exception writes to the daemon log, which is longer than the reason a boot keeps. */
+export const stackText = (error: unknown): string => errorText(error, STACK_CHARS);
 
 type Log = (level: 'error', event: string, msg: string, fields?: Record<string, unknown>) => unknown;
 
 /**
  * Logs `stimd_predecessor_lost` for each dead holder of the stimd claim that did not end through an exit path of its own
- * (those mark their claim `kept`) and records its boot as abnormal. A holder that died in an earlier system boot is not
- * counted: a reboot or a logout is no crash, and a boot id that cannot be compared counts as different.
+ * (those mark their claim `kept`) and records its boot as abnormal with cause `unknown`. A holder that died in an
+ * earlier system boot is not counted, and neither is one whose boot id cannot be compared with this process's (always
+ * the case on Windows). A logout that kills a stimd within its boot session cannot be told from a kill: that boot is
+ * `unknown` too, which holds only after five of them.
  */
 // @ref LLP 0021#every-exit-leaves-a-record -- a dead claim without kept is a lost predecessor, unless the system rebooted
 export function recordLostPredecessors(leftover: readonly ClaimHolder[], log: Log): void {
@@ -105,27 +176,29 @@ export function recordLostPredecessors(leftover: readonly ClaimHolder[], log: Lo
       `the stimd pid ${pid} (build ${build}), started ${holder.startedAt}, ended without a clean exit; its last tick was ${lastTickAt ?? 'never written'}`,
       { pid, build, version: holder.details.version, startedAt: holder.startedAt, lastTickAt },
     );
-    try {
-      recordAbnormalBoot(
-        { at: bootAt, pid, build },
-        'the process ended without a clean exit: killed, out of memory or crashed',
-      );
-    } catch {}
+    recordAbnormalBoot(
+      { at: bootAt, pid, build },
+      'the process ended with no record: killed, out of memory or a logout',
+      'unknown',
+    );
   }
 }
 
-/** What a stimd that does not start because of a crash loop prints and logs: why, until when, and what to do. */
+/**
+ * What a stimd that does not start because of a crash loop prints and logs, on one line: why, until when, and what to
+ * do, naming `stim doctor --fix` first. A hold of boots with an unknown cause says what is known and blames no build.
+ */
 // @ref LLP 0021#the-crash-hold-keeps-its-history -- no previous engine: stop with a remedy, never invent a rollback
-export function crashHoldRemedy(loop: CrashLoop, version: string, store: boolean): string {
+export function crashHoldRemedy(loop: CrashLoop, store: boolean): string {
   const until = new Date(loop.until).toISOString();
-  const file = stimdBootsFile();
+  const clear = `run stim doctor --fix to clear the hold now, or wait until ${until}`;
+  if (loop.unknownOnly)
+    return `stimd was killed or ran out of memory ${loop.count} times in 10 minutes, cause unknown, so it is not restarted automatically; check what stops it (daemon.ndjson has stimd_predecessor_lost records), then ${clear}.`;
   if (loop.home)
-    return `stimd exited abnormally ${loop.count} times in 10 minutes because of this Stim home, not engine ${version}: ${loop.home}. It starts again after ${until}, or at once when ${file} is removed.`;
-  const last = loop.reason ? ` (last: ${loop.reason})` : '';
-  const fix = store
-    ? 'run stim engine use <version> or stim engine update'
-    : 'reinstall or downgrade stim, or fix what the daemon log names';
-  return `stimd of ${version} exited abnormally ${loop.count} times in 10 minutes${last} and has no previous engine to go back to; it starts again after ${until}. To change that, ${fix}; remove ${file} to try again now.`;
+    return `stimd exited abnormally ${loop.count} times in 10 minutes because of this Stim home, not build ${loop.build}: ${loop.home}; ${clear}.`;
+  const last = loop.reason ? ` (last: ${loop.reason.split('\n')[0]})` : '';
+  const fix = store ? 'stim engine use <version> or stim engine update' : 'reinstalling or downgrading stim';
+  return `stimd of build ${loop.build} exited abnormally ${loop.count} times in 10 minutes${last}, so it is not restarted automatically; ${clear}, or change the build with ${fix}.`;
 }
 
 /** A Stim home, or `~/.stim/machine`, and the schema its marker records (1 without one). */

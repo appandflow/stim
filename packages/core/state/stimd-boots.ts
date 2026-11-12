@@ -6,6 +6,7 @@ const BOOT_WINDOW_MS = 10 * 60_000;
 const BOOTS_KEPT = 20;
 const ABNORMAL_KEPT = 10;
 const CRASHES = 3;
+const UNKNOWN_DEATHS = 5;
 
 /** One stimd start in a Stim home: when, from which build, and whether that stimd exited abnormally. */
 export type Boot = {
@@ -16,9 +17,17 @@ export type Boot = {
   /** Why the exit was abnormal, and when it was found out. */
   reason?: string;
   exitedAt?: number;
-  /** For a fault of the Stim home rather than of the build: what to fix. Such a boot does not count toward a rollback. */
+  /**
+   * Who is to blame: `engine` (the build threw, exited non-zero or could not clean up), `home` (the Stim home: see
+   * `home`) or `unknown` (the stimd died with no record: killed, out of memory, a forced exit). Only `engine` boots can
+   * mark a build bad.
+   */
+  cause?: BootCause;
+  /** For a `home` boot: what to fix. */
   home?: string;
 };
+
+export type BootCause = 'engine' | 'home' | 'unknown';
 
 /** `run/stimd-boots.json`: the boots of this home's stimds, written by stimd while it holds the home. */
 export function stimdBootsFile(home?: string): string {
@@ -34,6 +43,7 @@ export function parseBoots(value: unknown): Boot[] {
     if (typeof boot.reason === 'string') parsed.reason = boot.reason;
     if (typeof boot.exitedAt === 'number') parsed.exitedAt = boot.exitedAt;
     if (typeof boot.home === 'string') parsed.home = boot.home;
+    if (boot.cause === 'engine' || boot.cause === 'home' || boot.cause === 'unknown') parsed.cause = boot.cause;
     return [parsed];
   });
 }
@@ -66,26 +76,38 @@ export type CrashLoop = {
   count: number;
   /** When the oldest boot that keeps the hold in force leaves the 10-minute window. */
   until: number;
-  /** Whether three of them are not faults of the Stim home, which is what a rollback needs. */
+  /** Whether three of them are the build's fault, which is what a rollback needs. */
   engineCaused: boolean;
+  /** Whether only boots of unknown cause (five of them) hold: nothing says the build is to blame. */
+  unknownOnly: boolean;
   /** What to fix, for the newest boot that a fault of the Stim home ended. */
   home?: string;
   /** Why the newest of them ended. */
   reason?: string;
 };
 
-/** The crash loop of `build` at `now`: three abnormal boots of it among those of the last 10 minutes. */
+const isKnown = (boot: Boot): boolean => boot.cause !== 'unknown';
+
+/**
+ * The crash loop of `build` at `now`: three abnormal boots of it among those of the last 10 minutes whose cause is
+ * known (the build's or the home's), or five whose cause is not, which guard against a loop nothing explains.
+ */
 export function crashLoop(boots: readonly Boot[], build: string, now: number): CrashLoop | null {
   const abnormal = recentAbnormal(boots, build, now);
-  if (abnormal.length < CRASHES) return null;
-  const homeFault = abnormal.findLast((boot) => boot.home);
+  const known = abnormal.filter(isKnown);
+  const unknown = abnormal.filter((boot) => !isKnown(boot));
+  const held = known.length >= CRASHES ? known : unknown.length >= UNKNOWN_DEATHS ? unknown : null;
+  if (!held) return null;
+  const need = held === known ? CRASHES : UNKNOWN_DEATHS;
+  const homeFault = held.findLast((boot) => boot.home);
   return {
     build,
-    count: abnormal.length,
-    until: (abnormal[abnormal.length - CRASHES]?.at ?? now) + BOOT_WINDOW_MS,
-    engineCaused: abnormal.filter((boot) => !boot.home).length >= CRASHES,
+    count: held.length,
+    until: (held[held.length - need]?.at ?? now) + BOOT_WINDOW_MS,
+    engineCaused: held === known && known.filter((boot) => boot.cause !== 'home').length >= CRASHES,
+    unknownOnly: held !== known,
     ...(homeFault?.home ? { home: homeFault.home } : {}),
-    ...(abnormal.at(-1)?.reason ? { reason: abnormal.at(-1)?.reason } : {}),
+    ...(held.at(-1)?.reason ? { reason: held.at(-1)?.reason } : {}),
   };
 }
 

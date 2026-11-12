@@ -26,7 +26,9 @@ test.each<[string, DaemonStatus, string[], string[]]>([
   ],
   [
     'an abnormal exit with no hold',
-    status({ abnormalExits: [{ at: '2026-11-02T10:00:00.000Z', build: 'b', pid: 1, reason: 'killed' }] }),
+    status({
+      abnormalExits: [{ at: '2026-11-02T10:00:00.000Z', build: 'b', pid: 1, reason: 'killed', cause: 'unknown' }],
+    }),
     [],
     ['stimd exited abnormally once in the last day'],
   ],

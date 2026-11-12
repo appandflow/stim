@@ -124,8 +124,10 @@ import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
 import {
+  classifyFailure,
   crashHoldRemedy,
   errorText,
+  stackText,
   holdCrashLoop,
   recordAbnormalBoot,
   recordLostPredecessors,
@@ -161,7 +163,6 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
-const STACK_CHARS = 8000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -180,8 +181,8 @@ let launchedByLaunchd = false;
 
 function launcherKind(attached: boolean, service: boolean, desktop: boolean): string {
   if (attached) return 'attached';
-  if (service) return 'service';
   if (desktop) return 'desktop';
+  if (service) return 'service';
   if (launchedByLaunchd) return 'launchd';
   return process.env.INVOCATION_ID ? 'systemd' : 'direct';
 }
@@ -198,7 +199,7 @@ function previousRunId(file: string): string | null {
 }
 
 /** Records this stimd's boot as abnormal and keeps its home claim; set while `runStimd` holds that claim. */
-let markAbnormal: ((reason: string, cause?: unknown) => void) | null = null;
+let markAbnormal: ((reason: string, cause?: unknown, kind?: 'engine' | 'unknown') => void) | null = null;
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
@@ -253,10 +254,20 @@ async function listen(path: string, server: Server): Promise<void> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const owner = lstatSync(dir);
   if (!owner.isDirectory() || (process.getuid && owner.uid !== process.getuid()))
-    throw new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`);
+    throw Object.assign(
+      new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`),
+      {
+        code: 'STIM_SOCKET_REFUSED',
+        remedy: 'Remove that directory or fix its owner, then run the command again.',
+      },
+    );
   chmodSync(dir, 0o700);
   if (existsSync(path)) {
-    if (await answers(path)) throw new Error(`another process answers on ${path}`);
+    if (await answers(path))
+      throw Object.assign(new Error(`another process answers on ${path}`), {
+        code: 'STIM_SOCKET_REFUSED',
+        remedy: 'Stop the process that answers on that socket, then run the command again.',
+      });
     rmSync(path, { force: true });
   }
   await new Promise<void>((done, fail) => {
@@ -382,8 +393,8 @@ function markDaemonFailure(
   cause?: unknown,
 ): void {
   if (level !== 'error') return;
-  if (attached) process.exitCode = 1;
-  else mark?.(why, cause);
+  process.exitCode = 1;
+  if (!attached) mark?.(why, cause);
 }
 
 function refreshRetention(retention: ReturnType<typeof followEngine>): string | null {
@@ -671,7 +682,7 @@ async function runCrashHold(
       ? `engine ${version} crashes; going back to the previous build waits for other homes' stimds to drain`
       : held && 'stop' in held
         ? held.stop
-        : crashHoldRemedy(loop, version, store !== null);
+        : crashHoldRemedy(loop, store !== null);
   console.error(`stimd: ${message}`);
   log('error', 'engine_crash_hold', message);
   let checked = checkedAt;
@@ -782,14 +793,27 @@ async function runStimdInner(
   const thisBoot = { at: bootAt, pid: process.pid, build };
   const keepClaim = () => {
     keepOwn = true;
-    if (own) own = updateClaimDetails(own, { ...details, kept: true }) ?? own;
-  };
-  const recordBoot = (reason: string, cause?: unknown) => {
     try {
-      recordAbnormalBoot(thisBoot, reason, cause);
+      if (own) own = updateClaimDetails(own, { ...details, kept: true }) ?? own;
     } catch (error) {
-      log('warn', 'stimd_boots_failed', error instanceof Error ? error.message : String(error));
+      log('warn', 'stimd_claim_keep_failed', errorText(error));
     }
+  };
+  // @ref LLP 0021#every-abnormal-boot-has-a-cause -- a refusal is no crash, and a death with no evidence blames no build
+  const recordBoot = (
+    reason: string,
+    cause?: unknown,
+    kind: 'engine' | 'unknown' = 'engine',
+  ): 'recorded' | 'refusal' => {
+    const failure = classifyFailure(cause);
+    if (failure.kind === 'refusal') {
+      log('warn', 'startup_refused', reason);
+      return 'refusal';
+    }
+    const home = failure.kind === 'home' ? failure.remedy : undefined;
+    if (!recordAbnormalBoot(thisBoot, reason, home ? 'home' : kind, home))
+      log('warn', 'stimd_boots_failed', 'the boot could not be recorded in the boots file');
+    return 'recorded';
   };
   startup.cleanup = async (error) => {
     startupRetention?.release();
@@ -803,16 +827,15 @@ async function runStimdInner(
     markAbnormal = null;
     await writer.close();
   };
-  markAbnormal = (reason, cause) => {
+  markAbnormal = (reason, cause, kind) => {
     if (!own || keepOwn) return;
-    recordBoot(reason, cause);
-    keepClaim();
+    if (recordBoot(reason, cause, kind) === 'recorded') keepClaim();
   };
   rmSync(stimdSuccessorMissingFile(), { force: true });
   recordLostPredecessors(leftover, log);
   const history = readStimdBoots();
   const loop = crashLoop(history, build, bootAt);
-  if (loop) {
+  if (loop && attached === undefined) {
     const held = await runCrashHold(loop, {
       store: lifetime.detachedOnly(ownStoreEngine),
       version: identity.version,
@@ -1545,6 +1568,7 @@ async function runStimdInner(
     );
     setTimeout(() => {
       log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
+      markAbnormal?.(`forced exit after a second ${signal}`, undefined, 'unknown');
       process.exit(1);
     }, SECOND_SIGNAL_GRACE_MS).unref();
   };
@@ -1971,15 +1995,19 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   }
   const at = argv.indexOf('--mode');
   process.once('uncaughtException', (error, origin) => {
-    markAbnormal?.(`uncaught exception: ${errorText(error)}`, error);
-    console.error(error);
+    try {
+      markAbnormal?.(`uncaught exception: ${errorText(error)}`, error);
+    } catch {}
+    try {
+      console.error(error);
+    } catch {}
     try {
       const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
       writer.write({
         src: 'stimd',
         level: 'error',
         event: 'daemon_exited',
-        msg: `exiting: ${origin}: ${errorText(error).slice(0, STACK_CHARS)}`,
+        msg: `exiting: ${origin}: ${stackText(error)}`,
       });
       writer.close();
     } catch {}

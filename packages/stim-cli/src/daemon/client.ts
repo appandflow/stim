@@ -10,6 +10,7 @@ import type { StreamSpec } from '../stimd/logs/streams.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
+  crashLoop,
   daemonClaimRoot,
   isJsonObject,
   parseUnverifiedCleanups,
@@ -17,6 +18,7 @@ import {
   stimBuildId,
   readJsonObject,
   stimdClaimRoot,
+  readStimdBoots,
   readSuccessorMissing,
   stimdRecordFile,
   stimdRunDir,
@@ -161,6 +163,7 @@ export function stimdBuildId(): string {
 
 let refusedBuild: string | null = null;
 let successorMissed = false;
+let holdAnnounced = false;
 let refusal: {
   version: string;
   pid: number | null;
@@ -909,8 +912,16 @@ export async function ensureStimd(
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
+    const hold = ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
     try {
-      launched = launchStimd(env, daemonMode(env), platform);
+      if (hold) {
+        if (!holdAnnounced) {
+          holdAnnounced = true;
+          const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+          console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
+        }
+        launched = { settled: Promise.resolve(), exited: () => true };
+      } else launched = launchStimd(env, daemonMode(env), platform);
     } catch (error) {
       if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
         throw error;
