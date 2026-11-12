@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { delimiter, join, sep } from 'node:path';
 
 const LAUNCHCTL = '/bin/launchctl';
@@ -19,8 +19,13 @@ export function installRefusingLaunchctl(directory: string): void {
   const bin = join(directory, 'stim-test-launchctl');
   mkdirSync(bin, { recursive: true });
   const stub = join(bin, 'launchctl');
-  writeFileSync(stub, '#!/bin/sh\necho "launchctl is not available to tests" >&2\nexit 1\n');
-  chmodSync(stub, 0o755);
+  const script = '#!/bin/sh\necho "launchctl is not available to tests" >&2\nexit 1\n';
+  if (!existsSync(stub) || readFileSync(stub, 'utf8') !== script) {
+    const temporary = join(bin, `launchctl.${process.pid}.${Date.now()}`);
+    writeFileSync(temporary, script);
+    chmodSync(temporary, 0o755);
+    renameSync(temporary, stub);
+  }
   process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ''}`;
 }
 
