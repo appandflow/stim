@@ -32,9 +32,9 @@ export function warmedNpmInstallFile(project: string): string {
   return join(workspaceStateDir(project), 'warmed-npm-install.json');
 }
 
-export function readWarmedNpmInstall(project: string): { stamp: string; inputs: string } | null {
+export function readWarmedNpmInstall(project: string): { stamp: string; inputStats: string } | null {
   const record = readJsonObject(warmedNpmInstallFile(project));
-  return typeof record?.stamp === 'string' && typeof record.inputs === 'string'
-    ? { stamp: record.stamp, inputs: record.inputs }
+  return typeof record?.stamp === 'string' && typeof record.inputStats === 'string'
+    ? { stamp: record.stamp, inputStats: record.inputStats }
     : null;
 }

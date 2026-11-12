@@ -83,7 +83,7 @@ import {
   unpushedCommitsAsync,
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
-import type { WorktreeEntry } from '../workspace/worktree.ts';
+import type { StaleDependencies, WorktreeEntry } from '../workspace/worktree.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
@@ -216,7 +216,7 @@ function reportCarriedStateHealth(
   copied: string[],
   configuration: string,
   out: (line: string) => void,
-): void {
+): StaleDependencies[] {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
@@ -266,6 +266,7 @@ function reportCarriedStateHealth(
     const flavor = inspectPodsFlavor(join(root, iosDir), join(target, iosDir), configuration);
     if (flavor) out(chalk.yellow(phaseLine('carry', `carried ${rel}: ${flavor.detail} ${flavor.fix}`)));
   }
+  return outOfSync;
 }
 
 function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => void): void {
@@ -491,10 +492,20 @@ export async function warmWorktreeTarget(opts: {
               for (const release of releases) release(failures);
             }
             if (result.copied.length) {
-              recordNpmInstall?.(result.copied.map((rel) => join(target, rel)));
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
-              reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
+              const stale = reportCarriedStateHealth(
+                root,
+                target,
+                result.copied,
+                iosConfigurationSetting(settings) ?? 'Debug',
+                out,
+              );
+              recordNpmInstall?.(
+                result.copied
+                  .map((rel) => join(target, rel))
+                  .filter((path) => !stale.some(({ dir }) => path === join(target, dir, 'node_modules'))),
+              );
             }
             out(
               phaseLine(

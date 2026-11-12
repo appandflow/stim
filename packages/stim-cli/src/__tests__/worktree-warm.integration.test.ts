@@ -357,7 +357,9 @@ test.each([
   'stale source npm config',
   'removed patch',
   'stale source install',
+  'mismatched installed package',
   'patch removed after warm',
+  'patch rewritten after warm',
   'stamp replaced after warm',
 ])(
   'the cache gate checks the carried npm install with %s',
@@ -385,7 +387,7 @@ test.each([
         scenario === 'stale source npm config' ? checkout : beforeInstall,
       );
     }
-    write(root, stamp, lock);
+    write(root, stamp, scenario === 'mismatched installed package' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
     utimesSync(join(root, 'package.json'), beforeInstall, beforeInstall);
     utimesSync(join(root, stamp), installed, installed);
     utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
@@ -395,6 +397,10 @@ test.each([
     expect((await runWarm(target)).code).toBe(0);
     expect(existsSync(join(target, stamp))).toBe(true);
     if (scenario === 'patch removed after warm') rmSync(join(target, patch));
+    if (scenario === 'patch rewritten after warm') {
+      write(target, patch, 'patch applied in source');
+      utimesSync(join(target, patch), checkout, checkout);
+    }
     if (scenario === 'stamp replaced after warm') write(target, stamp, lock);
     const stale = expect.stringMatching(/package-lock.json changed after the last install/);
     expect(fingerprintInstallProblem(target)).toEqual(scenario === 'matching inputs' ? null : stale);

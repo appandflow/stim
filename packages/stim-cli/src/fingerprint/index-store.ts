@@ -530,6 +530,11 @@ function installInputDigest(roots: Roots, inputs: string[]): string {
   return sha256(canonicalJson(Object.fromEntries(rows)));
 }
 
+function installInputStats(roots: Roots, inputs: string[]): string {
+  const rows = inputs.map((path) => [relocate(path, roots), statKey(path)?.key ?? null]);
+  return sha256(canonicalJson(Object.fromEntries(rows)));
+}
+
 /** Records matching inputs and the exact install stamp only when warm copied the source's node_modules. */
 export function prepareNpmInstallCarry(sourceProject: string, project: string): ((copied: string[]) => void) | null {
   const source = { project: sourceProject, install: installRoot(sourceProject) };
@@ -554,10 +559,12 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
         const targetInputs = installInputs(target);
         if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
         const currentSourceFiles = npmInstallInputs(source, sourceInputs);
+        const targetFiles = npmInstallInputs(target, targetInputs);
+        const inputStats = installInputStats(target, targetFiles);
         if (currentSourceFiles.some((path) => (mtime(path) ?? 0) > installedAt)) return;
         if (
           installInputDigest(source, currentSourceFiles) !== digest ||
-          installInputDigest(target, npmInstallInputs(target, targetInputs)) !== digest
+          installInputDigest(target, targetFiles) !== digest
         )
           return;
         const targetStampPath = npmStamp(target);
@@ -567,7 +574,7 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
         if (statKey(sourceStampPath)?.key !== sourceStamp.key || statKey(targetStampPath)?.key !== stamp.key) return;
         const record = warmedNpmInstallFile(target.project);
         ensurePrivateDir(dirname(record));
-        writePrivate(record, JSON.stringify({ stamp: stamp.key, inputs: digest }));
+        writePrivate(record, JSON.stringify({ stamp: stamp.key, inputStats }));
       } catch {}
     };
   } catch {
@@ -599,7 +606,7 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
       stamp &&
       mtime(stampPath) === installed &&
       record.stamp === stamp.key &&
-      record.inputs === installInputDigest(roots, npmInstallInputs(roots, inputs)) &&
+      record.inputStats === installInputStats(roots, npmInstallInputs(roots, inputs)) &&
       statKey(stampPath)?.key === stamp.key
     )
       return null;
