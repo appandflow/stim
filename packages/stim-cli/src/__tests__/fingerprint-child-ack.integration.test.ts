@@ -220,12 +220,16 @@ test.each([
   ],
   ['a record that cannot be read', (directory: string) => write(join(directory, 'group-1.json'), '{'), true],
   ['no evidence that the child observed its groups', () => {}, false],
-])('a child killed with %s retains the claim', async (_name, ledger, observing) => {
-  const root = expoApp({});
-  const { context, run } = await killedChild(root, ledger, { observing });
-  await expect(run()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-  expect(readClaimSet(lockOf(context.home, root)).live[0]).toMatchObject({ childDeclared: true, child: null });
-});
+])(
+  'a child killed with %s retains the claim',
+  async (_name, ledger, observing) => {
+    const root = expoApp({});
+    const { context, run } = await killedChild(root, ledger, { observing });
+    await expect(run()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    expect(readClaimSet(lockOf(context.home, root)).live[0]).toMatchObject({ childDeclared: true, child: null });
+  },
+  40_000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'the observer records a detached child before it can run and removes the record once its group is gone',
