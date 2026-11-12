@@ -1,4 +1,4 @@
-# LLP 0017: stimd keeps device log streams across a gap
+# LLP 0019: stimd keeps device log streams across a gap
 
 **Type:** Decision
 **Status:** Active
@@ -99,13 +99,7 @@ its observer until stimd restarted (#5386).
 
 ## Provenance
 
-The maintainer decided on 2026-11-12 to fix the device log regressions in stimd,
-as relayed by the coordinating session: "Bring back helper for both and fix 3 to
-6 in stimd" (items 3, 5 and 6 of the regression audit). The words are not on the
-issue. The rules above (the claim proof, the owned and booted check, `warn` and
-the record's shape, backfill from the last written line, per-root unverified
-state, report-once for a failed web writer) were chosen by the coordinating
-session and the implementing lane.
+Maintainer decision: "Bring back helper for both and fix 3 to 6 in stimd", 2026-11-12 ([#5572](https://github.com/appandflow/stim/issues/5572#issuecomment-6834812204)). Items 3, 5 and 6 of the regression audit are this decision. How they are fixed (the claim proof, the owned and booted check, `warn` and the record's shape, backfill from the last written line, per-root unverified state, report-once for a failed web writer) was chosen by the coordinating session and the implementing lane.
 
 Related: #5572, #5462, #5465, #5386.
 

@@ -66,7 +66,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
   let closed = false;
   const keep = (key: string, stream: Stream, retry?: () => boolean) => {
     streams.set(key, stream);
-    // @ref LLP 0017#owned-web-streams-and-the-worker -- a failed writer is reported once, then dropped
+    // @ref LLP 0019#owned-web-streams-and-the-worker -- a failed writer is reported once, then dropped
     failures.delete(key);
     changed(true);
     void stream.ended.then(() => {

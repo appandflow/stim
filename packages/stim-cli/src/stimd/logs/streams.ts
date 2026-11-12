@@ -1057,7 +1057,7 @@ export function createStreams(
     sink.writer.write(record);
     await sink.closed();
   };
-  // @ref LLP 0017#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
+  // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
   const resumeIn = async (
     root: string,
     env: Record<string, string>,
