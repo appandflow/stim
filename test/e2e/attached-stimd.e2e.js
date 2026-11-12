@@ -29,6 +29,7 @@ const store = mkdtempSync(join(PACKAGE, '.e2e-store-'));
 let home = join(tmp, 'home');
 const project = join(tmp, 'project');
 mkdirSync(project);
+writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '*' } }));
 let env = {
   ...process.env,
   HOME: tmp,
@@ -75,9 +76,9 @@ const until = async (what, check, ms = 20_000) => {
 const daemonLog = () => readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8');
 
 /** An agent's command with the detached start blocked, as a sandbox that kills detached children does. */
-function agent(cli, args, extra = {}, preload = PRELOAD) {
+function agent(cli, args, extra = {}, preload = PRELOAD, cwd = project) {
   const child = spawn(process.execPath, ['--import', preload, cli, ...args], {
-    cwd: project,
+    cwd,
     env: { ...env, ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -298,7 +299,16 @@ test(
   async () => {
     useHome('failure-home');
     const release = join(tmp, 'release-failure');
-    const first = agent(join(PACKAGE, 'dist', 'cli.mjs'), ['start'], { STIM_E2E_HOLD_UNTIL: release });
+    const swiftPackage = join(tmp, 'swift-package');
+    mkdirSync(swiftPackage);
+    writeFileSync(join(swiftPackage, 'Package.swift'), '// swift-tools-version:5.9\n');
+    const first = agent(
+      join(PACKAGE, 'dist', 'cli.mjs'),
+      ['start'],
+      { STIM_E2E_HOLD_UNTIL: release },
+      PRELOAD,
+      swiftPackage,
+    );
     const host = await until('the attached stimd', () => record());
     await until('start to reach its failure', () => existsSync(`${release}.reached`));
     const other = await holdOp(host.build);
