@@ -166,7 +166,9 @@ describe('an exclusive holder of the daemon claim', () => {
         label: 'stim-daemon',
         details: makeDetails(),
       }).acquired;
-      onTestFinished(() => releaseClaim(claim));
+      onTestFinished(() => {
+        releaseClaim(claim);
+      });
       mkdirSync(daemonDir(), { recursive: true });
       writeFileSync(
         daemonSnapshotFile(),
@@ -198,7 +200,9 @@ describe('an exclusive holder of the daemon claim', () => {
   test('beside a live shared claim, which a pending 1.40 attempt leaves, the shared claim is the running daemon', () => {
     home();
     const shared = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'shared', label: 'stimd' }).acquired;
-    onTestFinished(() => releaseClaim(shared));
+    onTestFinished(() => {
+      releaseClaim(shared);
+    });
     const attempt = tryAcquireClaim({
       root: daemonClaimRoot(),
       mode: 'exclusive',
@@ -206,7 +210,9 @@ describe('an exclusive holder of the daemon claim', () => {
       details: { socket: legacyDaemonSocket(), mode: 'on' },
     });
     expect(attempt.pending).toBeDefined();
-    onTestFinished(() => releaseClaim(attempt.pending));
+    onTestFinished(() => {
+      releaseClaim(attempt.pending);
+    });
 
     expect(daemonStatus({})).toMatchObject({ running: { pid: process.pid } });
     expect(daemonStatus({})).not.toHaveProperty('older');
