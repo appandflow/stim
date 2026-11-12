@@ -58,10 +58,14 @@ the stimd that gave it. When that stimd goes away while the command waits on it
 command again with the stimd that replaces it, the way it was first admitted,
 starting one where the command would have started one. It then repeats the
 step it was waiting on and continues, printing one stderr line that stimd
-restarted. It does this once per operation, within 30 seconds; with no stimd
-admitting it again, the command fails with `STIM_DAEMON_UNAVAILABLE`, a
-message that says stimd stopped while the command waited on it, or the
-other-build refusal. It never re-runs the whole command on another engine
+restarted. It does this once per operation, and the whole resume (every wait in
+it) takes at most 30 seconds. A cancelled operation stops resuming at once and
+is not admitted again. With no stimd admitting it again, or when the stimd that
+replaced the first one also goes away under the repeated step, the command
+fails with `STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped while
+the command waited on it, or with the other-build refusal. When a stimd of
+another build ended the connection, the resume reports that refusal and starts
+no stimd of this build. It never re-runs the whole command on another engine
 mid-way, and it does not continue on an attached stimd, which ends with the
 command that hosts it.
 
@@ -71,7 +75,8 @@ its own budget:
 - `lease.prepare`/`lease.acquire`: the successor finds a lease the dead stimd
   granted by the workspace's holder record and its token and raises it; a lease
   it cannot prove its own refuses as before. A lease whose issuing stimd went
-  away is released by its token in the CLI.
+  away is released by its token in the CLI, also when the operation is
+  cancelled.
 - `metro.prepare`/`metro.wait`: the successor adopts a running Metro by its
   claim, so ensuring it again reuses it (on Windows Metro ends with stimd and
   starts again).
@@ -82,7 +87,9 @@ its own budget:
   the stream.
 - A CI hold of a persistent stimd that is ending when it asks, or that stops
   while it holds, waits for it to go and pins the stimd that replaces it,
-  starting one when none did. A stimd that decided to exit idle exits only if
+  starting one when none did; a stimd of another build, or one an attached
+  command hosts, is refused at once, and a failed replacement is printed on
+  stderr. A stimd that decided to exit idle exits only if
   no command was admitted while it checked the engine.
 
 Build, boot and test slot waits already resume, since their queue is claim

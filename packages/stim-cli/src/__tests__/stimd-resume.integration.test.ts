@@ -69,7 +69,7 @@ function workspace(name: string): string {
   return realpathSync(root);
 }
 
-function context(root: string): StimContext {
+function context(root: string, signal: AbortSignal = new AbortController().signal): StimContext {
   const operation: StimContext = {
     home,
     buildCache: null,
@@ -77,11 +77,28 @@ function context(root: string): StimContext {
     cwd: root,
     env: process.env,
     runId: 'resume-test',
-    signal: new AbortController().signal,
+    signal,
     output: () => {},
   };
   operationState(operation).takesSignals = true;
   return operation;
+}
+
+/** A stimd entry that starts the real one `delayMs` after it ran, so a resume is in progress meanwhile. */
+function delayedEntry(delayMs: number): { path: string; marker: string } {
+  const path = join(dir, 'delayed-entry.mjs');
+  const marker = join(dir, 'delayed-entry.started');
+  writeFileSync(
+    path,
+    `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(marker)}, 'started');
+setTimeout(() => {
+  process.argv[1] = ${JSON.stringify(entry)};
+  import(${JSON.stringify(entry)});
+}, ${delayMs});
+`,
+  );
+  return { path, marker };
 }
 
 async function admitCli(root: string): Promise<void> {
@@ -174,6 +191,64 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     first.kill('SIGKILL');
     await releaseDeviceTicket(String(result.ticket), operation);
     expect(listLeaseFiles()).toEqual([]);
+  }, 60_000);
+
+  test('a second stimd that dies under the repeated step fails with the unavailable-daemon error after one retry', async () => {
+    const other = workspace('other');
+    const root = workspace('app');
+    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
+    const first = await startStimd();
+    await admitCli(root);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let second: number | null = null;
+    await expect(
+      acquireDeviceTicket(leaseParams(root), context(root), (line) => {
+        if (!line.startsWith('waiting for')) return;
+        const pid = stimdPid();
+        if (second === null && pid === first.pid) first.kill('SIGKILL');
+        else if (second === null && pid !== null) {
+          second = pid;
+          process.kill(pid, 'SIGKILL');
+        }
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      message: expect.stringContaining('already continued after one restart'),
+    });
+    expect(second).not.toBeNull();
+    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
+    expect(stimdPid()).toBe(second);
+    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
+  }, 60_000);
+
+  test('a lease wait cancelled during the resume stops at once and is not admitted again', async () => {
+    const other = workspace('other');
+    const root = workspace('app');
+    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
+    const first = await startStimd();
+    await admitCli(root);
+    const delayed = delayedEntry(3000);
+    vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const controller = new AbortController();
+    let killed = false;
+    const waiting = acquireDeviceTicket(leaseParams(root), context(root, controller.signal), (line) => {
+      if (killed || !line.startsWith('waiting for')) return;
+      killed = true;
+      first.kill('SIGKILL');
+    });
+    const outcome = waiting.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(() => readFileSync(delayed.marker)).not.toThrow(), { timeout: 20_000, interval: 50 });
+    const aborted = Date.now();
+    controller.abort();
+    await expect(outcome).resolves.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(Date.now() - aborted).toBeLessThan(2000);
+    await vi.waitFor(() => expect(stimdPid()).not.toBe(first.pid), { timeout: 20_000, interval: 50 });
+    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
+    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
   }, 60_000);
 
   test('a wait whose stimd does not come back fails within the bound with the unavailable-daemon error', async () => {
@@ -278,6 +353,37 @@ describe.skipIf(process.platform === 'win32')('Metro across a stimd restart', ()
       expect(stimdPid()).not.toBe(first);
       expect(metroChildren(root)).toEqual([metro]);
       expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
+    } finally {
+      await stopStimd();
+      await stopMetro(root);
+    }
+  }, 90_000);
+});
+
+describe.skipIf(process.platform === 'win32')('an operation held through the API', () => {
+  test('cancelled during a resume, it stops at once and is not admitted again', async () => {
+    const root = slowMetroProject(4000);
+    const port = await freePort();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const delayed = delayedEntry(3000);
+    const controller = new AbortController();
+    try {
+      const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
+      await vi.waitFor(() => expect(metroChildren(root)[0]).toBeDefined(), { timeout: 20_000, interval: 50 });
+      const first = stimdPid();
+      expect(first).not.toBeNull();
+      vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
+      process.kill(Number(first), 'SIGKILL');
+      await vi.waitFor(() => expect(() => readFileSync(delayed.marker)).not.toThrow(), {
+        timeout: 20_000,
+        interval: 50,
+      });
+      const aborted = Date.now();
+      controller.abort();
+      await answer;
+      expect(Date.now() - aborted).toBeLessThan(2000);
+      await vi.waitFor(() => expect(stimdPid()).not.toBe(first), { timeout: 20_000, interval: 50 });
+      expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     } finally {
       await stopStimd();
       await stopMetro(root);
