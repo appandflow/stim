@@ -188,9 +188,9 @@ export async function runMacos(
               signal.throwIfAborted();
               const refusal = operationState(context).refusal;
               if (refusal !== null) throw new Error(refusal);
+              launched();
               if (inspectProcessIdentity(owned) !== 'same')
                 throw new Error('The macOS app exited or its identity could not be verified during launch.');
-              launched();
               return here;
             } catch (error) {
               await cleanupFailedMacosLaunch(context, root, record, owned, error);

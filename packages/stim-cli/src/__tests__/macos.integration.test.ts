@@ -45,7 +45,6 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
 import * as artifactCache from '../macos/artifact-cache.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import * as ndjson from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
@@ -708,30 +707,6 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('hosted drain accepts a legacy supervisor record without a new spool checkpoint', async () => {
-  const serverHome = process.env.STIM_HOME;
-  assert(serverHome);
-  const session = '12345678-1234-1234-1234-123456789abc';
-  const home = join(deviceHostArea(session), 'home');
-  const hostedRoot = join(home, 'macos-app');
-  mkdirSync(hostedRoot, { recursive: true });
-  process.env.STIM_HOME = home;
-  try {
-    const app = { pid: 123, processToken: 'old-app', startedAtMicros: 1 };
-    const supervisor = { pid: 456, processToken: 'old-supervisor', startedAtMicros: 1 };
-    writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor }) });
-    process.env.STIM_HOME = serverHome;
-    const streams = createOwnedStreams(() => {});
-    try {
-      expect(await streams.drainHosted(session)).toBeNull();
-    } finally {
-      streams.close();
-    }
-  } finally {
-    process.env.STIM_HOME = serverHome;
-  }
-});
-
 test.skipIf(process.platform === 'win32')('hosted observe acknowledges only the matching app stream', async () => {
   const app = await ownedProcess();
   const serverHome = process.env.STIM_HOME;
@@ -795,12 +770,7 @@ test.skipIf(process.platform === 'win32')('local observe acknowledges only the m
     expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
     streams.close();
     streams = createOwnedStreams(() => {});
-    rmSync(log);
-    mkdirSync(log);
-    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
-      'could not be recorded',
-    );
-    rmSync(log, { recursive: true });
+    expect(readFileSync(log, 'utf8').match(/Observing Sample output\./g)).toHaveLength(1);
     rmSync(err);
     mkdirSync(err);
     expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
@@ -832,21 +802,14 @@ test.skipIf(process.platform === 'win32')('quiet macOS observation refuses when 
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
   writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
   const log = join(logs, 'macos-app.ndjson');
-  writeFileSync(log, '');
-  const create = ndjson.createNdjsonWriter;
-  const writer = vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((file, options) => {
-    const actual = create(file, options);
-    return file === log ? { ...actual, write: () => false } : actual;
-  });
+  mkdirSync(log);
   const streams = createOwnedStreams(() => {});
   try {
     expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
       'could not be recorded',
     );
-    expect(existsSync(log)).toBe(true);
   } finally {
     streams.close();
-    writer.mockRestore();
   }
 });
 

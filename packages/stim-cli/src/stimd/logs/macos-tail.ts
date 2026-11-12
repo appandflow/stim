@@ -34,6 +34,8 @@ interface TailState {
   errPending: string;
   observed: boolean;
   exited: boolean;
+  /** Raw output was cut while the sink could not take it; the next append warns. */
+  dropped: boolean;
 }
 
 interface Mark extends TailState {
@@ -49,6 +51,7 @@ const EMPTY: TailState = {
   errPending: '',
   observed: false,
   exited: false,
+  dropped: false,
 };
 
 function readMark(dir: string): Record<string, unknown> | null {
@@ -74,6 +77,7 @@ function tailState(value: unknown): TailState {
     errPending: typeof value.errPending === 'string' ? value.errPending : '',
     observed: value.observed === true,
     exited: value.exited === true,
+    dropped: value.dropped === true,
   };
 }
 
@@ -158,6 +162,8 @@ export interface MacosTail {
   drain(): Promise<boolean>;
   /** Why the last drain did not end the tail. */
   blocked(): string | null;
+  /** Whether the last drain waited only on the app's group or another process holding its output. */
+  waiting(): boolean;
   ready(): string | null;
   close(): void;
 }
@@ -204,7 +210,7 @@ export function tailMacosApp(
     writeFileSync(staging, JSON.stringify(mark), { mode: 0o600 });
     renameSync(staging, markPath);
   };
-  let state: TailState;
+  let state = resumeState(readMark(dir), app.processToken, sink);
   let unsettled = true;
   const settle = () => {
     state = resumeState(readMark(dir), app.processToken, sink);
@@ -231,59 +237,73 @@ export function tailMacosApp(
     unsettled = false;
   };
   const buffer = Buffer.alloc(CHUNK_BYTES);
-  const pump = (): boolean => {
+  const follow = (file: (typeof files)[number]): void => {
+    let size: number;
     try {
-      if (unsettled) settle();
-      for (const file of files) {
-        let size: number;
+      size = statSync(file.path).size;
+    } catch (error) {
+      if (missing(error)) return;
+      throw error;
+    }
+    try {
+      if (size < state[file.key]) commit([record('warn', DROPPED)], { ...state, [file.key]: 0, [file.pending]: '' });
+      if (state[file.key] < size) {
+        const fd = openSync(file.path, 'r');
         try {
-          size = statSync(file.path).size;
-        } catch (error) {
-          if (missing(error)) continue;
-          return false;
-        }
-        if (size < state[file.key])
-          commit([record('warn', DROPPED)], {
-            ...state,
-            [file.key]: 0,
-            [file.pending]: '',
-          });
-        if (state[file.key] < size) {
-          const fd = openSync(file.path, 'r');
-          try {
-            while (state[file.key] < size) {
-              const at = state[file.key];
-              const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, size - at), at);
-              if (n === 0) break;
-              const split = splitLines(Buffer.from(state[file.pending], 'base64'), buffer.subarray(0, n), false);
-              commit(
-                split.lines.map((line) => record(file.level, line)),
-                {
-                  ...state,
-                  [file.key]: at + n,
-                  [file.pending]: split.rest.toString('base64'),
-                },
-              );
-            }
-          } finally {
-            closeSync(fd);
+          while (state[file.key] < size) {
+            const at = state[file.key];
+            const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, size - at), at);
+            if (n === 0) break;
+            const split = splitLines(Buffer.from(state[file.pending], 'base64'), buffer.subarray(0, n), false);
+            commit(
+              split.lines.map((line) => record(file.level, line)),
+              { ...state, [file.key]: at + n, [file.pending]: split.rest.toString('base64') },
+            );
           }
-        }
-        if (size >= LOG_ROTATE_BYTES && state[file.key] === size) {
-          const split = splitLines(Buffer.from(state[file.pending], 'base64'), Buffer.alloc(0), true);
-          commit(
-            split.lines.map((line) => record(file.level, line)),
-            { ...state, [file.pending]: '' },
-          );
-          truncateSync(file.path);
-          commit([record('warn', DROPPED)], { ...state, [file.key]: 0 });
+        } finally {
+          closeSync(fd);
         }
       }
-      return true;
+      if (size >= LOG_ROTATE_BYTES && state[file.key] === size) {
+        const split = splitLines(Buffer.from(state[file.pending], 'base64'), Buffer.alloc(0), true);
+        commit(
+          split.lines.map((line) => record(file.level, line)),
+          { ...state, [file.pending]: '' },
+        );
+        truncateSync(file.path);
+        commit([record('warn', DROPPED)], { ...state, [file.key]: 0 });
+      }
+    } catch (error) {
+      unsettled = true;
+      if (size >= LOG_ROTATE_BYTES) {
+        state = resumeState(readMark(dir), app.processToken, sink);
+        truncateSync(file.path);
+        state = { ...state, [file.key]: 0, [file.pending]: '', dropped: true };
+        unsettled = false;
+        try {
+          writeMark({ processToken: app.processToken, ...state });
+        } catch {}
+      }
+      throw error;
+    }
+  };
+  const pump = (): boolean => {
+    let complete = true;
+    try {
+      if (unsettled) settle();
+      if (state.dropped) commit([record('warn', DROPPED)], { ...state, dropped: false });
     } catch {
       unsettled = true;
-      return false;
+      complete = false;
     }
+    for (const file of files) {
+      try {
+        follow(file);
+      } catch {
+        complete = false;
+      }
+    }
+    return complete;
   };
   let end!: () => void;
   const ended = new Promise<void>((resolve) => {
@@ -291,6 +311,7 @@ export function tailMacosApp(
   });
   let done = false;
   let reason: string | null = null;
+  let waiting = false;
   let probedAt = 0;
   let finishing: Promise<boolean> | null = null;
   const stop = () => {
@@ -303,6 +324,7 @@ export function tailMacosApp(
   const finish = (force: boolean): Promise<boolean> => {
     if (done) return Promise.resolve(state.exited);
     finishing ??= (async () => {
+      waiting = false;
       if (!pump()) {
         reason = 'the macOS app output could not be read or recorded';
         return false;
@@ -315,6 +337,7 @@ export function tailMacosApp(
       }
       if (processGroupAlive(app.pid)) {
         reason = `the macOS app exited but process group ${app.pid} remains`;
+        waiting = true;
         return false;
       }
       if (!force && Date.now() - probedAt < WRITERS_PROBE_MS) return false;
@@ -327,6 +350,7 @@ export function tailMacosApp(
       }
       if (writers.length) {
         reason = `the macOS app exited but pid ${writers.join(', ')} still holds its output open`;
+        waiting = true;
         return false;
       }
       if (!pump()) {
@@ -363,8 +387,7 @@ export function tailMacosApp(
   try {
     settle();
   } catch {
-    releaseClaim(claim);
-    throw new Error('the macOS app output tail could not record its position');
+    unsettled = true;
   }
   const timer = setInterval(() => void finish(false), TAIL_MS);
   timer.unref();
@@ -373,10 +396,11 @@ export function tailMacosApp(
     ended,
     drain: () => finish(true),
     blocked: () => reason,
+    waiting: () => waiting,
     ready() {
       try {
         for (const file of files) closeSync(openSync(file.path, 'r+'));
-        if (!pump()) return 'the macOS output could not be read or recorded';
+        if (!pump()) return 'the macOS output is unavailable or could not be recorded';
         if (!state.observed)
           commit([record('info', `Observing ${product} output.`)], {
             ...state,
@@ -385,7 +409,7 @@ export function tailMacosApp(
         return null;
       } catch (error) {
         unsettled = true;
-        return `the macOS output is unavailable: ${error instanceof Error ? error.message : String(error)}`;
+        return `the macOS output is unavailable or could not be recorded: ${error instanceof Error ? error.message : String(error)}`;
       }
     },
     close: stop,

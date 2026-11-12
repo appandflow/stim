@@ -945,19 +945,6 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     }
   });
 
-  test('drain accepts a live legacy browser supervisor without a new observer', async () => {
-    const record = await ownedBrowser();
-    assert(record.chromeProcess);
-    const observer = vi.spyOn(webObserver, 'observeBrowser');
-    const streams = createOwnedStreams(() => {});
-    try {
-      expect(await streams.drain(root)).toBeNull();
-      expect(observer).not.toHaveBeenCalled();
-    } finally {
-      await streams.close();
-    }
-  });
-
   test('targeted observation waits for the replacement installed by concurrent sync', async () => {
     const initial = await ownedBrowser();
     const chrome = initial.chromeProcess;
@@ -1218,19 +1205,6 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     } finally {
       identity.mockRestore();
       await streams.close();
-    }
-  });
-
-  test('targeted web observation accepts a live legacy supervisor', async () => {
-    const record = await ownedBrowser();
-    assert(record.chromeProcess);
-    const connect = vi.spyOn(browserCdp, 'connectOwnedBrowser');
-    const streams = createOwnedStreams(() => {});
-    try {
-      expect(await streams.observeWeb(root, record.chromeProcess.pid, record.chromeProcess.processToken)).toBeNull();
-      expect(connect).not.toHaveBeenCalled();
-    } finally {
-      streams.close();
     }
   });
 

@@ -31,6 +31,7 @@ interface Stream {
   ready?(): string | null;
   drain?(): Promise<boolean>;
   blocked?(): string | null;
+  waiting?(): boolean;
 }
 
 /**
@@ -147,8 +148,8 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         await stream.ended;
         break;
       }
-      if (Date.now() >= deadline)
-        return `the macOS app output could not be drained: ${stream.blocked?.() ?? 'its writers are not proven gone'}`;
+      if (!stream.waiting?.() || Date.now() >= deadline)
+        return `the macOS app output could not be drained or its process group could not be verified stopped: ${stream.blocked?.() ?? 'its writers are not proven gone'}`;
       await new Promise((resolve) => setTimeout(resolve, MACOS_DRAIN_POLL_MS));
     }
     return drained(dir, record.app) ? null : 'the macOS app output could not be drained';
@@ -321,11 +322,6 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         drainEpoch.set(webKey, (drainEpoch.get(webKey) ?? 0) + 1);
       }
       try {
-        const record = readMacosRecord(root);
-        if (!record?.host) {
-          const failure = await drainMacos(workspaceLogsDir(root), record);
-          if (failure) return failure;
-        }
         const webRecord = !macosOnly ? readWebRecord(root) : null;
         const webProcess = webRecord?.chromeProcess;
         const webToken = webProcess?.processToken;
@@ -354,6 +350,11 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
           const latest = readWebRecord(root)?.chromeProcess?.processToken;
           if (latest && latest !== webToken) return 'the browser record changed while its output was draining';
           if (webToken && (webStream || ended.get(webKey) === webToken)) ended.set(webKey, webToken);
+        }
+        const record = readMacosRecord(root);
+        if (record?.app && !record.host) {
+          const failure = await drainMacos(workspaceLogsDir(root), record);
+          if (failure) return failure;
         }
         changed(running());
         return null;
