@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { TestProject } from 'vitest/node';
 import { killRunProcesses } from './vitest.kill-run-processes.ts';
 
 // Directories Stim's own tests, and the tools they run, create in TMPDIR.
@@ -20,13 +21,13 @@ const TMP_KEYS = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
 // it. macOS gets /tmp because its default TMPDIR is long enough that tests
 // binding Unix sockets under it exceed the 104-byte sun_path limit (macOS
 // unix(4)).
-export default function setup(): () => void {
+export default function setup(project: TestProject): () => void {
   const previous = TMP_KEYS.map((key) => [key, process.env[key]] as const);
   const root = mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'stim-vitest-'));
   for (const key of TMP_KEYS) process.env[key] = root;
 
   return () => {
-    const stimds = killRunProcesses(root);
+    const { survivors: stimds, checked } = killRunProcesses(root);
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -42,11 +43,20 @@ export default function setup(): () => void {
     try {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     } catch {}
+    if (!checked)
+      process.stderr.write('Leftover stimd processes could not be checked: the process table was unreadable.\n');
     if (stimds.length > 0) {
       const list = stimds.map(({ pid, home }) => `${pid} serving ${home}`).join('; ');
-      throw new Error(
+      const message =
         `The test run left ${stimds.length} stimd ${stimds.length === 1 ? 'process' : 'processes'} running (${list}); the run stopped them. ` +
-          `Stop the daemon a test starts in afterEach, afterAll or onTestFinished.`,
+        `Stop the daemon a test starts in afterEach, afterAll or onTestFinished.`;
+      let failed: number | undefined;
+      try {
+        failed = project.vitest.state.getCountOfFailedTests();
+      } catch {}
+      if (failed === 0) throw new Error(message);
+      process.stderr.write(
+        `${message}${failed === undefined ? ' The failed-test count could not be read, so the run does not fail for it.' : ` ${failed} tests failed, which may have left them; the run does not fail for them.`}\n`,
       );
     }
     if (leaked.length === 0) return;

@@ -1,3 +1,4 @@
+import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
@@ -140,6 +141,7 @@ import {
 
 const TICK_MS = 60_000;
 const HOME_WATCH_MS = 15_000;
+const HOME_WATCH_MISSES = 2;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
 const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
@@ -631,7 +633,7 @@ interface RunStimdOptions {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
-  /** How often a detached stimd checks that its `run/` directory still exists: 15 seconds. */
+  /** How often a detached stimd checks that its `run/` directory still exists: 15 seconds, and it stops after two misses. */
   homeWatchMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
@@ -1570,10 +1572,12 @@ async function runStimdInner(
   const syncOwned = () => {
     if (!closing) void logs.ownedSync();
   };
+  let runDirMisses = 0;
   const homeWatch = attached
     ? undefined
     : setInterval(() => {
-        if (!closing && runDirRemoved(stimdRunDir())) shutdown('its run directory was removed');
+        runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
+        if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
   homeWatch?.unref();
   for (;;) {
@@ -1934,10 +1938,6 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
 }
 
 /** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */
-function runDirRemoved(run: string): boolean {
-  return !existsSync(run) && existsSync(dirname(run));
-}
-
 function removeExitedJobs(own: string): void {
   try {
     const executor = getExecutor();

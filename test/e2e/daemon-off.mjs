@@ -11,8 +11,10 @@ if (process.platform !== 'win32') {
   const root = mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'stim-e2e-run-'));
   process.env.TMPDIR = root;
   process.on('exit', () => {
-    const stimds = killRunProcesses(root);
+    const { survivors: stimds, checked } = killRunProcesses(root);
     rmSync(root, { recursive: true, force: true });
+    if (!checked)
+      process.stderr.write('Leftover stimd processes could not be checked: the process table was unreadable.\n');
     if (stimds.length === 0) return;
     process.stderr.write(
       `This test file left ${stimds.length} stimd running (${stimds.map(({ pid, home }) => `${pid} serving ${home}`).join('; ')}); it stopped them.\n`,
