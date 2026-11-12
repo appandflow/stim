@@ -2488,7 +2488,6 @@ describe('setup approval', () => {
 
   test('a test ticket records test access alone, which a build client and this machine never get', async () => {
     const port = await start();
-    expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({ busy: { tests: 0 } });
     const ticket = newSecret();
     storeSetupSecret(Buffer.from(ticket, 'base64url'), ['test'], new Date(Date.now() + 60_000).toISOString());
     const keyPair = generateNoiseKeyPair();
@@ -4835,7 +4834,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       protocol: 2,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
-      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, resumes: true },
+      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, tests: 0, resumes: true },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
       keepAwake: { setting: false, held: false, reason: 'off' },
