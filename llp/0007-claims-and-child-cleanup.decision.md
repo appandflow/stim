@@ -61,20 +61,33 @@ failure retained are released. Any other unverified cleanup, a thread that
 crashes, and a net thread failure end stimd; its home, daemon and engine claims
 stay complete, so the next start recovers them once that stimd is gone.
 
-A thread job's check stays on that thread, which also releases the claims the
-job retained. Only the child's pid and identity token cross to stimd's main
-thread, with a flag the thread updates when stimd asks it to check again. The
-thread does not end on idle while it watches a child, and a thread that ends
-while it watches one ends stimd, since nothing can release what that child held
-any more. Reason: the checks are functions that cannot be posted between
-threads, and a check rebuilt from the child's pid alone would release a claim
-that another child of the same job may still need (#5510).
+A thread job's refusal is watched only when no other child its operation
+declared is still running. #5510 kept every thread refusal fatal because a
+claim must stay held until every child of the operation has stopped, and an
+error from exec carries every claim the operation declared while naming only
+the child that refused; a second running child would be invisible to the
+check. With other children running, the refusal still ends stimd.
+
+A watched job's check stays on its thread, which also releases the claims the
+job retained, since the checks are functions that cannot be posted between
+threads. The failure crosses to stimd's main thread as its message, code,
+remedy and the child's pid and identity token, and stimd's main thread reads a
+flag the thread updates when stimd asks it to check again. The thread does not
+end on idle while it watches a child, and a thread that ends while it watches
+one ends stimd, since nothing can release what that child held any more.
+
+The tick's own containment has no such operation check: the tick's errors reach
+stimd's main loop without their operation.
 
 While stimd waits, `stim status` (and `daemon.unverified` in its JSON) and
-`stim doctor` list each child with when it started to wait and its remedy,
-which names the commands that remove the claims the child retained. The wait
-has no time limit: no clock proves that a child stopped, and a stimd that ended
-for it would only move the wait to the claims.
+`stim doctor` list each child with its pid, when the wait started and its
+remedy. The remedy says that the wait ends when that child's process group has
+stopped, and that stopping this stimd (`kill <pid>`, `taskkill /PID <pid> /F`
+on Windows) is safe: its home and daemon claims stay complete, the boot is not
+marked abnormal, and the next command starts a new stimd. A command of another
+build that this stimd refuses names the children it waits for. The wait has no
+time limit: no clock proves that a child stopped, and a stimd that ended for it
+would only move the wait to the claims.
 
 This rule was chosen by the coordinator and the lane that implemented #5499,
 not by the maintainer. The maintainer's requirement it serves, from #5499:

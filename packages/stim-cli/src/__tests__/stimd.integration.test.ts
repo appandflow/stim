@@ -73,6 +73,7 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { daemonFindings, daemonStatus } from '../daemon/status.ts';
+import { parseBoots } from '../stimd/crash-hold.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -934,12 +935,13 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         expect(waiting.unverified).toEqual([
           {
             since: expect.any(String),
+            child: 4242,
             message: 'Report child 4242 did not close within the cleanup budget.',
-            remedy: 'Inspect fixture child.',
+            remedy: expect.stringMatching(/^Inspect fixture child\. The wait ends once child 4242 .*`kill \d+`/),
           },
         ]);
         expect(daemonFindings(waiting, { serving: () => [] })).toContainEqual(
-          expect.objectContaining({ fix: 'Inspect fixture child.' }),
+          expect.objectContaining({ fix: waiting.unverified?.[0]?.remedy }),
         );
         stopped = true;
         void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
@@ -961,6 +963,62 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     },
     30_000,
   );
+
+  test('stopping stimd while it waits for a child is safe: its claims stay complete, the boot is not abnormal, and the next stimd starts', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+      run: async (name) => {
+        if (name !== 'measure') return [];
+        throw Object.assign(new Error('Report child 4242 did not close within the cleanup budget.'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          remedy: 'Inspect fixture child.',
+          reportCleanup: true,
+          reportChild: { pid: 4242, processToken: 'fixture' },
+          cleanupSettled: () => false,
+        });
+      },
+      abort: () => {},
+      settle: () => {},
+      close: async () => {},
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
+      await vi.waitFor(() => expect(daemonEvents()).toContain('daemon_cleanup_unverified'), {
+        timeout: 10_000,
+        interval: 20,
+      });
+      stopInProcess(before);
+      await running;
+      for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
+        expect(readClaimSet(claimRoot)).toMatchObject({ live: [{ childDeclared: false }], unresolved: [] });
+      const [own] = readClaimSet(stimdClaimRoot()).live;
+      expect(parseBoots(own?.details.boots).some((boot) => boot.abnormal)).toBe(false);
+      threads.mockRestore();
+      const gone = goneClaimOwner();
+      for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
+        for (const holder of readClaimSet(claimRoot).live) {
+          const record: Record<string, unknown> = JSON.parse(readFileSync(holder.path, 'utf8'));
+          writeFileSync(holder.path, JSON.stringify({ ...record, owner: gone }));
+        }
+      const starts = () => daemonEvents().filter((event) => event === 'daemon_started').length;
+      const startedBefore = starts();
+      const restarted = new Set(process.listeners('SIGTERM'));
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(starts()).toBe(startedBefore + 1), {
+        timeout: 10_000,
+        interval: 20,
+      });
+      stopInProcess(restarted);
+      await running;
+    } finally {
+      stopInProcess(before);
+      threads.mockRestore();
+      await running?.catch(() => {});
+    }
+  }, 30_000);
 
   test.each(['passes', 'measure'])(
     'a %s cleanup refusal that names no child ends stimd, leaves every stimd claim recoverable, and the next stimd starts',

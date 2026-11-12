@@ -12,6 +12,7 @@ import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
   daemonClaimRoot,
   isJsonObject,
+  parseUnverifiedCleanups,
   SETTINGS,
   stimBuildId,
   readJsonObject,
@@ -213,6 +214,17 @@ function noteRefusal(message: Record<string, unknown>): void {
   };
 }
 
+/** The pids of the children the running stimd waits for, from its daemon claim. */
+function waitingChildren(): number[] {
+  try {
+    return readClaimSet(daemonClaimRoot()).live.flatMap((holder) =>
+      parseUnverifiedCleanups(holder.details.unverified).map((entry) => entry.child),
+    );
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
  * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
@@ -225,6 +237,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
       ? `run \`npx stim@${version} stop\` in each workspace whose dev server it runs, then stop that stimd${pid === null ? '' : ` with \`taskkill /PID ${pid} /F\``}, which also ends the builds and shares it serves`
       : `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and shares it serves; its dev servers keep running and the next stimd takes them over`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
+  const waiting = waitingChildren();
   const [why, remedy] = refusedByAttached
     ? [
         `${stimd} runs Stim ${version} as the child of another command.`,
@@ -245,15 +258,20 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
               `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
               `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
             ]
-          : handover
+          : waiting.length > 0
             ? [
-                `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
-                'Run the command again once those commands end.',
+                `${stimd} runs Stim ${version} and waits for ${waiting.length === 1 ? 'child' : 'children'} ${waiting.join(', ')}, whose cleanup it could not verify; it restarts on this build once ${waiting.length === 1 ? 'that child has' : 'they have'} stopped.`,
+                `Check ${waiting.length === 1 ? 'that child' : 'those children'} (\`stim status\` shows the remedy) and end ${waiting.length === 1 ? 'it' : 'them'}, or ${kill}; the next stim command starts one of this build.`,
               ]
-            : [
-                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
-              ];
+            : handover
+              ? [
+                  `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+                  'Run the command again once those commands end.',
+                ]
+              : [
+                  `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                  `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+                ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 

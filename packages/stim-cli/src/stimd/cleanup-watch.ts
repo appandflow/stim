@@ -91,11 +91,16 @@ export function createCleanupWatch(log: Log): CleanupWatch {
     errors: () => unsettled.map((entry) => entry.error),
     keys: () => unsettled.flatMap((entry) => childKey(entry.error) ?? []),
     entries: () =>
-      unsettled.map((entry) => ({
-        since: entry.since,
-        message: entry.error.message,
-        remedy: entry.error.remedy ?? 'Check that the child and its descendants have stopped.',
-      })),
+      unsettled.map((entry) => {
+        const child = reportChildOf(entry.error)?.pid ?? 0;
+        const stop = process.platform === 'win32' ? `taskkill /PID ${process.pid} /F` : `kill ${process.pid}`;
+        return {
+          since: entry.since,
+          child,
+          message: entry.error.message,
+          remedy: `${entry.error.remedy ?? 'Check that the child and its descendants have stopped.'} The wait ends once child ${child} and its process group have stopped. Stopping this stimd is also safe: run \`${stop}\`, and the next stim command starts a new one.`,
+        };
+      }),
   };
 }
 

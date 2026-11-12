@@ -1362,6 +1362,7 @@
 [*] interface TunnelOutcome { | reason?: string;
 [*] interface TunnelOutcome { | status: string;
 [*] interface UnverifiedCleanup {
+[*] interface UnverifiedCleanup { | child: number;
 [*] interface UnverifiedCleanup { | message: string;
 [*] interface UnverifiedCleanup { | remedy: string;
 [*] interface UnverifiedCleanup { | since: string;

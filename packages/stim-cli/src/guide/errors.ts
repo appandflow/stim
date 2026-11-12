@@ -523,7 +523,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   child of a detached stimd that names itself does not stop that stimd, for up
   to 8 such children at once: it logs daemon_cleanup_unverified, stays running
   and releases what that child held once the child has stopped. stim status and
-  stim doctor list each such child with its remedy while the daemon waits. An attached
+  stim doctor list each such child with its remedy while the daemon waits;
+  stopping that stimd is safe, and the next command starts a new one. An attached
   stimd still ends. A stimd that
   cannot start names every unresolved home, daemon and engine claim at once,
   with the Stim home that holds each.
