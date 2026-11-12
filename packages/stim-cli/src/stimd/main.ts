@@ -831,7 +831,15 @@ async function runStimdInner(
     const unverified = cleanups.entries();
     if (!claim || JSON.stringify(unverified) === JSON.stringify(claim.details.unverified ?? [])) return;
     const kept = Object.fromEntries(Object.entries(claim.details).filter(([field]) => field !== 'unverified'));
-    claim = updateClaimDetails(claim, unverified.length ? { ...kept, unverified } : kept) ?? claim;
+    try {
+      claim = updateClaimDetails(claim, unverified.length ? { ...kept, unverified } : kept) ?? claim;
+    } catch (error) {
+      log(
+        'warn',
+        'daemon_cleanup_report_failed',
+        `could not record the children stimd waits for in its claim: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   };
   const contain = (error: unknown): boolean => {
     if (!cleanups.contain(error, endingNow())) return false;
