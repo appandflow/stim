@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import type { FingerprintSource } from '@expo/fingerprint';
-import { runCacheProviderContract } from '@stim-cli/cache';
+import { runCacheProviderContract, type BuildCacheCapability, type LocalBuildCache } from '@stim-cli/cache';
 import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import {
@@ -409,10 +409,15 @@ describe('untracked native files on a first miss', () => {
   });
 });
 
+const asyncCapability = (local: LocalBuildCache): BuildCacheCapability => ({
+  resolve: async (input) => local.resolve(input),
+  store: async (input) => local.store(input),
+});
+
 test('the built-in filesystem build cache satisfies the provider contract', async () => {
   for (const platform of ['ios', 'android'] as const) {
     const results = await runCacheProviderContract({
-      provider: { builds: filesystemBuildCapability({ root: join(root, `contract-${platform}`) }) },
+      provider: { builds: asyncCapability(filesystemBuildCapability({ root: join(root, `contract-${platform}`) })) },
       projectRoot: root,
       workDir: root,
       platform,

@@ -742,7 +742,9 @@ test('logs clients read independent homes with bounded tails and reject invalid 
       { minLevel: 'loud' },
       { since: '5m', grep: '(' },
     ])
-      await expect(stim.logs(options)).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+      await expect(stim.logs(options as Parameters<typeof stim.logs>[0])).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+      });
     expect(await stim.logs({ tail: 0 })).toEqual([]);
     const abort = new AbortController();
     abort.abort();

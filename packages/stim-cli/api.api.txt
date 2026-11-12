@@ -10,6 +10,8 @@
 [*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
 [*] declare const GRADLE_DAEMONS_KIND;
 [*] declare const HOST_CAPABILITIES: readonly ["physical-ios", "physical-android", "macos-window", "macos-windows", "macos-window-select", "macos-window-control", "macos-keyboard-extended", "duo-frames", "native-xcode-build", "native-xcode-toolchain"];
+[*] declare const LOG_LEVELS: readonly ["debug", "info", "warn", "error", "fatal"];
+[*] declare const LOG_SOURCES: readonly ["metro", "client", "device", "build", "agent", "maintenance", "placement"];
 [*] declare const PLACEMENT_DECISIONS: readonly ["here", "offloaded", "fell-back"];
 [*] declare const STIM_API_VERSION: 1;
 [*] declare const WATCHMAN_KIND;
@@ -1222,11 +1224,11 @@
 [*] interface StimLogsOptions {
 [*] interface StimLogsOptions { | errorsOnly?: boolean;
 [*] interface StimLogsOptions { | grep?: string;
-[*] interface StimLogsOptions { | minLevel?: string;
+[*] interface StimLogsOptions { | minLevel?: LogLevel;
 [*] interface StimLogsOptions { | signal?: AbortSignal;
 [*] interface StimLogsOptions { | since?: string;
 [*] interface StimLogsOptions { | slot?: string;
-[*] interface StimLogsOptions { | sources?: string[];
+[*] interface StimLogsOptions { | sources?: LogSource[];
 [*] interface StimLogsOptions { | tail?: number;
 [*] interface StimMachineAccessOptions extends StimReadOptions {
 [*] interface StimMachineAccessOptions extends StimReadOptions { | ticket?: string;
@@ -1523,6 +1525,8 @@
 [*] type KeyConfirmer = (machine: string, serverKey: string) => Promise<boolean>;
 [*] type LaunchStatus = boolean | "unverified" | "bundling";
 [*] type LeasePlatform = "ios" | "android";
+[*] type LogLevel = (typeof LOG_LEVELS)[number];
+[*] type LogSource = (typeof LOG_SOURCES)[number];
 [*] type MachineAuth = {
 [*] type MachineAuth = { | access: Access;
 [*] type MachineAuth = { | serverKey: string;
@@ -1690,7 +1694,7 @@
 [*] } | { || bundleId: string;
 [*] } | { || code: string;
 [*] } | { || executable: string;
-[*] } | { || launched: boolean | "unverified";
+[*] } | { || launched: LaunchStatus;
 [*] } | { || logs: {
 [*] } | { || message: string;
 [*] } | { || pid: number | null;

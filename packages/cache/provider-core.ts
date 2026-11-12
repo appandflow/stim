@@ -64,9 +64,15 @@ export interface BuildStoreInput extends BuildCacheContext {
  * Stim owns fingerprints and cache keys; the capability owns transport,
  * archive format, authentication, and retention.
  */
-export interface BuildCacheCapability {
+/** Stim's own local build cache, which the tiers consult before a provider; unlike a provider's, it may answer synchronously. */
+export interface LocalBuildCache {
   resolve(input: BuildResolveInput): string | null | Promise<string | null>;
   store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+}
+
+export interface BuildCacheCapability {
+  resolve(input: BuildResolveInput): Promise<string | null>;
+  store(input: BuildStoreInput): Promise<string | null | void>;
 }
 
 export interface FileCacheResolveInput {

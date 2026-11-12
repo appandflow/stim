@@ -13,13 +13,13 @@ import type { MacosBuildFacts, MacosBuildOptions } from '../commands/macos-build
 import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
 import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
-import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
+import type { AndroidFacts, IosFacts, LaunchStatus } from '../engine/build-facts.ts';
 import type { DoctorReport } from '../commands/doctor.ts';
 import type { RemoteListing } from '../commands/remote.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
 import type { StartFacts } from '../stimd/metro/start-facts.ts';
-import type { DeviceToolRequest, PlatformRunOptions } from '@stim-cli/core/protocol';
+import type { DeviceToolRequest, LogLevel, LogSource, PlatformRunOptions } from '@stim-cli/core/protocol';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';
 
@@ -99,7 +99,7 @@ export type StimRunResult =
         bundleId: string;
         executable: string;
         pid: number | null;
-        launched: boolean | 'unverified';
+        launched: LaunchStatus;
         build: MacosBuild;
         logs: { dir: string };
       };
@@ -166,8 +166,8 @@ export interface StimDiagnostics {
 
 export interface StimLogsOptions {
   slot?: string;
-  sources?: string[];
-  minLevel?: string;
+  sources?: LogSource[];
+  minLevel?: LogLevel;
   since?: string;
   grep?: string;
   tail?: number;

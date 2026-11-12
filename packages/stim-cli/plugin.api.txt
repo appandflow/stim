@@ -192,8 +192,8 @@
 [cache-provider] export type FileCacheStoreInput
 [cache-provider] export type LoadCacheProviderResult
 [cache-provider] interface BuildCacheCapability {
-[cache-provider] interface BuildCacheCapability { | resolve(input: BuildResolveInput): string | null | Promise<string | null>;
-[cache-provider] interface BuildCacheCapability { | store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+[cache-provider] interface BuildCacheCapability { | resolve(input: BuildResolveInput): Promise<string | null>;
+[cache-provider] interface BuildCacheCapability { | store(input: BuildStoreInput): Promise<string | null | void>;
 [cache-provider] interface BuildCacheContext extends BuildCacheTarget {
 [cache-provider] interface BuildCacheContext extends BuildCacheTarget { | signal: AbortSignal;
 [cache-provider] interface BuildCacheTarget {
