@@ -739,7 +739,7 @@ run waiting to boot, and automatic maintenance.
           command starts its own build's stimd. A stim-daemon from Stim
           1.40 to 1.42 holds the daemon claim exclusively and does not
           exit when its workspaces stop; stimd checks its process identity
-          and stops it with SIGTERM, which leaves the dev servers and
+          and stops it with SIGTERM, in every daemon.mode, which leaves the dev servers and
           devices it did not own running. A holder that is not a verified
           stim-daemon, or that does not stop, makes stim start and the
           commands that need Metro or a managed tunnel exit with its PID
