@@ -26,7 +26,7 @@ export default function setup(): () => void {
   for (const key of TMP_KEYS) process.env[key] = root;
 
   return () => {
-    killRunProcesses(root);
+    const stimds = killRunProcesses(root);
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -42,6 +42,13 @@ export default function setup(): () => void {
     try {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     } catch {}
+    if (stimds.length > 0) {
+      const list = stimds.map(({ pid, home }) => `${pid} serving ${home}`).join('; ');
+      throw new Error(
+        `The test run left ${stimds.length} stimd ${stimds.length === 1 ? 'process' : 'processes'} running (${list}); the run stopped them. ` +
+          `Stop the daemon a test starts in afterEach, afterAll or onTestFinished.`,
+      );
+    }
     if (leaked.length === 0) return;
     const counts = new Map<string, number>();
     for (const name of leaked) {
