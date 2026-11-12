@@ -1,6 +1,6 @@
 ---
-title: "Native macOS prototype"
-description: "Develop an owned Swift Package Debug app in Stim Desktop"
+title: 'Native macOS prototype'
+description: 'Develop an owned Swift Package Debug app in Stim Desktop'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';

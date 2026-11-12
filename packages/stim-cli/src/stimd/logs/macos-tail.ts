@@ -9,29 +9,23 @@ import {
   statSync,
   truncateSync,
   writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-import { LOG_ROTATE_BYTES, ensurePrivateDir, rotateLog } from "@stim-cli/core";
-import { isJsonObject, type MacosProcess } from "@stim-cli/core/state";
-import { macosAppLogName } from "../../macos/state.ts";
-import { outputWriters } from "../../macos/output-writers.ts";
-import { inspectProcessIdentity } from "../../process-identity.ts";
-import {
-  processGroupAlive,
-  releaseClaim,
-  tryAcquireClaim,
-  type ClaimHandle,
-} from "../../ownership-claim.ts";
+} from 'node:fs';
+import { join } from 'node:path';
+import { LOG_ROTATE_BYTES, ensurePrivateDir, rotateLog } from '@stim-cli/core';
+import { isJsonObject, type MacosProcess } from '@stim-cli/core/state';
+import { macosAppLogName } from '../../macos/state.ts';
+import { outputWriters } from '../../macos/output-writers.ts';
+import { inspectProcessIdentity } from '../../process-identity.ts';
+import { processGroupAlive, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../../ownership-claim.ts';
 
 const TAIL_MS = 250;
 const WRITERS_PROBE_MS = 2000;
 const CHUNK_BYTES = 64 * 1024;
 const LINE_BYTES = 65536;
-const TAIL_MARK = "macos-app.tail.json";
-const TAIL_CLAIM = "macos-app.tail.lock";
-export const MACOS_APP_SINK = "macos-app.ndjson";
-const DROPPED =
-  "macOS app output may have been dropped when its raw log reached the size limit.";
+const TAIL_MARK = 'macos-app.tail.json';
+const TAIL_CLAIM = 'macos-app.tail.lock';
+export const MACOS_APP_SINK = 'macos-app.ndjson';
+const DROPPED = 'macOS app output may have been dropped when its raw log reached the size limit.';
 
 interface TailState {
   out: number;
@@ -51,34 +45,33 @@ interface Mark extends TailState {
 const EMPTY: TailState = {
   out: 0,
   err: 0,
-  outPending: "",
-  errPending: "",
+  outPending: '',
+  errPending: '',
   observed: false,
   exited: false,
 };
 
 function readMark(dir: string): Record<string, unknown> | null {
   try {
-    const saved: unknown = JSON.parse(
-      readFileSync(join(dir, TAIL_MARK), "utf8"),
-    );
+    const saved: unknown = JSON.parse(readFileSync(join(dir, TAIL_MARK), 'utf8'));
     return isJsonObject(saved) ? saved : null;
   } catch {
     return null;
   }
 }
 
+const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+const offset = (field: unknown): number =>
+  typeof field === 'number' && Number.isSafeInteger(field) && field >= 0 ? field : 0;
+
 function tailState(value: unknown): TailState {
   if (!isJsonObject(value)) return EMPTY;
-  const offset = (field: unknown) =>
-    typeof field === "number" && Number.isSafeInteger(field) && field >= 0
-      ? field
-      : 0;
   return {
     out: offset(value.out),
     err: offset(value.err),
-    outPending: typeof value.outPending === "string" ? value.outPending : "",
-    errPending: typeof value.errPending === "string" ? value.errPending : "",
+    outPending: typeof value.outPending === 'string' ? value.outPending : '',
+    errPending: typeof value.errPending === 'string' ? value.errPending : '',
     observed: value.observed === true,
     exited: value.exited === true,
   };
@@ -87,11 +80,7 @@ function tailState(value: unknown): TailState {
 /** Whether a tail already copied all of the exited app's output, saw every writer of it gone and wrote its exit. */
 export function drained(dir: string, app: MacosProcess): boolean {
   const mark = readMark(dir);
-  return (
-    mark?.processToken === app.processToken &&
-    mark.exited === true &&
-    mark.pending === undefined
-  );
+  return mark?.processToken === app.processToken && mark.exited === true && mark.pending === undefined;
 }
 
 function sinkIdentity(sink: string): { ino: string; size: number } | null {
@@ -99,7 +88,7 @@ function sinkIdentity(sink: string): { ino: string; size: number } | null {
     const stat = statSync(sink, { bigint: true });
     return { ino: stat.ino.toString(), size: Number(stat.size) };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (missing(error)) return null;
     throw error;
   }
 }
@@ -108,47 +97,35 @@ function sinkIdentity(sink: string): { ino: string; size: number } | null {
  * The state a tail resumes from: the committed one, or the one after an append whose landing the sink proves. Only
  * this tail appends to its sink and rotates it, so a grown sink with the recorded identity holds the append.
  */
-export function resumeState(
-  mark: Record<string, unknown> | null,
-  token: string,
-  sink: string,
-): TailState {
+function resumeState(mark: Record<string, unknown> | null, token: string, sink: string): TailState {
   if (mark?.processToken !== token) return EMPTY;
   const pending = mark.pending;
   if (!isJsonObject(pending)) return tailState(mark);
   const now = sinkIdentity(sink);
-  const before = typeof pending.size === "number" ? pending.size : 0;
-  const landed =
-    now !== null &&
-    (pending.ino === null
-      ? now.size > 0
-      : now.ino === pending.ino && now.size > before);
+  const before = typeof pending.size === 'number' ? pending.size : 0;
+  const landed = now !== null && (pending.ino === null ? now.size > 0 : now.ino === pending.ino && now.size > before);
   return landed ? tailState(pending.next) : tailState(mark);
 }
 
 /** Complete lines of `pending` + `chunk`, each at most LINE_BYTES, and the rest; `final` also ends the rest. */
-export function splitLines(
-  pending: Buffer,
-  chunk: Buffer,
-  final: boolean,
-): { lines: string[]; rest: Buffer } {
+function splitLines(pending: Buffer, chunk: Buffer, final: boolean): { lines: string[]; rest: Buffer } {
   let rest = pending.length ? Buffer.concat([pending, chunk]) : chunk;
   const lines: string[] = [];
   for (;;) {
     const newline = rest.indexOf(10);
     if (newline >= 0 && newline <= LINE_BYTES) {
-      lines.push(rest.subarray(0, newline).toString("utf8").replace(/\r$/, ""));
+      lines.push(rest.subarray(0, newline).toString('utf8').replace(/\r$/, ''));
       rest = rest.subarray(newline + 1);
     } else if (rest.length > LINE_BYTES) {
       let end = LINE_BYTES;
       while (end > 0 && (rest.readUInt8(end) & 0xc0) === 0x80) end--;
       if (end === 0) end = LINE_BYTES;
-      lines.push(rest.subarray(0, end).toString("utf8"));
+      lines.push(rest.subarray(0, end).toString('utf8'));
       rest = rest.subarray(end);
     } else break;
   }
   if (final && rest.length) {
-    lines.push(rest.toString("utf8").replace(/\r$/, ""));
+    lines.push(rest.toString('utf8').replace(/\r$/, ''));
     rest = Buffer.alloc(0);
   }
   return { lines, rest: Buffer.from(rest) };
@@ -162,19 +139,14 @@ function takeTailClaim(root: string): ClaimHandle | null {
   for (let attempt = 0; attempt < 2; attempt++) {
     const taken = tryAcquireClaim({
       root,
-      mode: "exclusive",
-      label: "macOS app output tail",
+      mode: 'exclusive',
+      label: 'macOS app output tail',
     });
     if (taken.pending) releaseClaim(taken.pending);
     if (taken.acquired) return taken.acquired;
     const held = taken.held;
-    if (
-      !held ||
-      held.owner.pid !== process.pid ||
-      inspectProcessIdentity(held.owner) !== "same"
-    )
-      return null;
-    releaseClaim({ ...held, root, label: "macOS app output tail" });
+    if (!held || held.owner.pid !== process.pid || inspectProcessIdentity(held.owner) !== 'same') return null;
+    releaseClaim({ ...held, root, label: 'macOS app output tail' });
   }
   return null;
 }
@@ -213,20 +185,20 @@ export function tailMacosApp(
   const markPath = join(dir, TAIL_MARK);
   const files = [
     {
-      key: "out" as const,
-      pending: "outPending" as const,
-      level: "info",
-      path: join(dir, macosAppLogName(launchId, "out")),
+      key: 'out' as const,
+      pending: 'outPending' as const,
+      level: 'info',
+      path: join(dir, macosAppLogName(launchId, 'out')),
     },
     {
-      key: "err" as const,
-      pending: "errPending" as const,
-      level: "warn",
-      path: join(dir, macosAppLogName(launchId, "err")),
+      key: 'err' as const,
+      pending: 'errPending' as const,
+      level: 'warn',
+      path: join(dir, macosAppLogName(launchId, 'err')),
     },
   ];
   const record = (level: string, msg: string) =>
-    `${JSON.stringify({ src: "client", platform: "macos", level, msg, ts: Date.now(), ...(runId ? { runId } : {}) })}\n`;
+    `${JSON.stringify({ src: 'client', platform: 'macos', level, msg, ts: Date.now(), ...(runId ? { runId } : {}) })}\n`;
   const writeMark = (mark: Mark) => {
     const staging = `${markPath}.tmp`;
     writeFileSync(staging, JSON.stringify(mark), { mode: 0o600 });
@@ -252,7 +224,7 @@ export function tailMacosApp(
         pending: { ino: before?.ino ?? null, size: before?.size ?? 0, next },
       });
       ensurePrivateDir(dir);
-      appendFileSync(sink, lines.join(""), { mode: 0o600 });
+      appendFileSync(sink, lines.join(''), { mode: 0o600 });
     }
     writeMark({ processToken: app.processToken, ...next });
     state = next;
@@ -267,39 +239,29 @@ export function tailMacosApp(
         try {
           size = statSync(file.path).size;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          if (missing(error)) continue;
           return false;
         }
         if (size < state[file.key])
-          commit([record("warn", DROPPED)], {
+          commit([record('warn', DROPPED)], {
             ...state,
             [file.key]: 0,
-            [file.pending]: "",
+            [file.pending]: '',
           });
         if (state[file.key] < size) {
-          const fd = openSync(file.path, "r");
+          const fd = openSync(file.path, 'r');
           try {
             while (state[file.key] < size) {
               const at = state[file.key];
-              const n = readSync(
-                fd,
-                buffer,
-                0,
-                Math.min(CHUNK_BYTES, size - at),
-                at,
-              );
+              const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, size - at), at);
               if (n === 0) break;
-              const split = splitLines(
-                Buffer.from(state[file.pending], "base64"),
-                buffer.subarray(0, n),
-                false,
-              );
+              const split = splitLines(Buffer.from(state[file.pending], 'base64'), buffer.subarray(0, n), false);
               commit(
                 split.lines.map((line) => record(file.level, line)),
                 {
                   ...state,
                   [file.key]: at + n,
-                  [file.pending]: split.rest.toString("base64"),
+                  [file.pending]: split.rest.toString('base64'),
                 },
               );
             }
@@ -308,17 +270,13 @@ export function tailMacosApp(
           }
         }
         if (size >= LOG_ROTATE_BYTES && state[file.key] === size) {
-          const split = splitLines(
-            Buffer.from(state[file.pending], "base64"),
-            Buffer.alloc(0),
-            true,
-          );
+          const split = splitLines(Buffer.from(state[file.pending], 'base64'), Buffer.alloc(0), true);
           commit(
             split.lines.map((line) => record(file.level, line)),
-            { ...state, [file.pending]: "" },
+            { ...state, [file.pending]: '' },
           );
           truncateSync(file.path);
-          commit([record("warn", DROPPED)], { ...state, [file.key]: 0 });
+          commit([record('warn', DROPPED)], { ...state, [file.key]: 0 });
         }
       }
       return true;
@@ -346,15 +304,13 @@ export function tailMacosApp(
     if (done) return Promise.resolve(state.exited);
     finishing ??= (async () => {
       if (!pump()) {
-        reason = "the macOS app output could not be read or recorded";
+        reason = 'the macOS app output could not be read or recorded';
         return false;
       }
       const identity = inspectProcessIdentity(app);
-      if (identity !== "gone" && identity !== "different") {
+      if (identity !== 'gone' && identity !== 'different') {
         reason =
-          identity === "unknown"
-            ? "the macOS app identity cannot be verified"
-            : `the macOS app (pid ${app.pid}) runs`;
+          identity === 'unknown' ? 'the macOS app identity cannot be verified' : `the macOS app (pid ${app.pid}) runs`;
         return false;
       }
       if (processGroupAlive(app.pid)) {
@@ -366,38 +322,33 @@ export function tailMacosApp(
       const writers = await outputWriters(files.map((file) => file.path));
       if (done) return state.exited;
       if (writers === null) {
-        reason =
-          "lsof could not establish which processes hold the macOS app output open";
+        reason = 'lsof could not establish which processes hold the macOS app output open';
         return false;
       }
       if (writers.length) {
-        reason = `the macOS app exited but pid ${writers.join(", ")} still holds its output open`;
+        reason = `the macOS app exited but pid ${writers.join(', ')} still holds its output open`;
         return false;
       }
       if (!pump()) {
-        reason = "the macOS app output could not be read or recorded";
+        reason = 'the macOS app output could not be read or recorded';
         return false;
       }
       try {
         const lines: string[] = [];
         for (const file of files) {
-          const split = splitLines(
-            Buffer.from(state[file.pending], "base64"),
-            Buffer.alloc(0),
-            true,
-          );
+          const split = splitLines(Buffer.from(state[file.pending], 'base64'), Buffer.alloc(0), true);
           lines.push(...split.lines.map((line) => record(file.level, line)));
         }
-        lines.push(record("info", `Exited ${product}.`));
+        lines.push(record('info', `Exited ${product}.`));
         commit(lines, {
           ...state,
-          outPending: "",
-          errPending: "",
+          outPending: '',
+          errPending: '',
           exited: true,
         });
       } catch {
         unsettled = true;
-        reason = "the macOS app output could not be recorded";
+        reason = 'the macOS app output could not be recorded';
         return false;
       }
       reason = null;
@@ -413,7 +364,7 @@ export function tailMacosApp(
     settle();
   } catch {
     releaseClaim(claim);
-    throw new Error("the macOS app output tail could not record its position");
+    throw new Error('the macOS app output tail could not record its position');
   }
   const timer = setInterval(() => void finish(false), TAIL_MS);
   timer.unref();
@@ -424,10 +375,10 @@ export function tailMacosApp(
     blocked: () => reason,
     ready() {
       try {
-        for (const file of files) closeSync(openSync(file.path, "r+"));
-        if (!pump()) return "the macOS output could not be read or recorded";
+        for (const file of files) closeSync(openSync(file.path, 'r+'));
+        if (!pump()) return 'the macOS output could not be read or recorded';
         if (!state.observed)
-          commit([record("info", `Observing ${product} output.`)], {
+          commit([record('info', `Observing ${product} output.`)], {
             ...state,
             observed: true,
           });
