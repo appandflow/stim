@@ -64,6 +64,7 @@ import { newSecret, secretValues } from '@stim-cli/core/noise-session';
 import { localConnect, setupClient, type Client } from './noise-client.ts';
 import { captureProcessToken, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { waitForPid } from '../../stim-cli/src/__tests__/_pid-file.ts';
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -835,8 +836,7 @@ if (delayed) {
         platform: stage === 'CMake safety' ? 'android' : 'ios',
       });
       assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
-      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 4000 });
-      const pid = Number(readFileSync(ready, 'utf8'));
+      const pid = await waitForPid(ready, 4000);
       const processToken = captureProcessToken(pid);
       assert(processToken);
       const record = { pid, processToken };

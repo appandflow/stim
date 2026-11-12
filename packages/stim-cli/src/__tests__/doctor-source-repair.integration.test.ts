@@ -12,6 +12,7 @@ import { captureProcessIdentity, inspectProcessIdentity } from '../process-ident
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { makeChildProcess } from './_factories.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const CONFLICT = [
   '[!] CocoaPods could not find compatible versions for pod "FirebaseCoreExtension":',
@@ -214,10 +215,10 @@ test.skipIf(process.platform === 'win32')(
       await expect(repair(source)).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
       expect(podCommands()).toEqual(['install']);
       expect(spawned.some(({ cmd }) => cmd !== 'pod')).toBe(false);
-      expect(existsSync(marker)).toBe(true);
-      const identity = captureProcessIdentity(Number(readFileSync(marker, 'utf8')));
+      const descendantPid = await waitForPid(marker);
+      const identity = captureProcessIdentity(descendantPid);
       if (!identity.ok) throw new Error('could not identify owned pod descendant');
-      descendant = { pid: Number(readFileSync(marker, 'utf8')), processToken: identity.token };
+      descendant = { pid: descendantPid, processToken: identity.token };
       expect(readClaimSet(warmClaimPath(app)).live).toEqual(
         expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
       );
