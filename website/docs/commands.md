@@ -2445,19 +2445,22 @@ manager's stamp; a 10-minute window after the stamp counts as install output
 only when the root `package.json` declares `preinstall`, `install`,
 `postinstall` or `prepare`. An edit found once stays an edit while the file is
 unchanged, and a later install does not hide it unless it reinstalled that
-package. Gradle, CMake and Xcode output (`node_modules/.cache`, `.gradle`,
+package. Tool caches (dot-directories at the `node_modules` root other than `.pnpm`,
+`.bun` and `.bin`, such as `.cache` and `.vite`) and Gradle, CMake and Xcode
+output (`.gradle`,
 `.kotlin`, `.cxx` and Gradle's `build` in a package's `android` directory or
 beside a Gradle build script, a package's `ios/build`, Pods' `xcuserdata`)
 does not count. At normal and high such a tree is kept, and `gc --dry-run`,
 `stim status` and `stim doctor` name the files. At critical the files are
 copied to `$STIM_HOME/archive/worktrees/` first and the tree is deleted; the
 action prints the `cp -R` command that puts them back after a reinstall, and
-`stim status`, `stim doctor` and `stim worktree warm` name the copy until it is
-restored or archive retention (`archive.maxAgeDays`, 30 days) removes it. A
+`stim status`, `stim doctor` and `stim worktree warm` name the copy until
+archive retention (`archive.maxAgeDays`, 30 days) or you remove it. A
 tree with more than 1000 changed files or 64 MB, or a directory that cannot be
 read, is kept even at critical. Not seen: an edit that keeps an older
-modification time (`cp -p`, `rsync -t`, a tar extract) and a file deleted by
-hand. An edit in `node_modules` is never durable: make it a patch with
+modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
+hand, and, after an install Stim did not run, unrecorded edits of a package
+whose `package.json` an edit replaced (`sed -i`, save by rename). An edit in `node_modules` is never durable: make it a patch with
 `pnpm patch`, `yarn patch` or `patch-package`.
 
 Everything `gc` deletes, by category (N normal, H high, C critical):

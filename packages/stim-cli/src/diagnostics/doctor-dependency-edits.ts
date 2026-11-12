@@ -20,7 +20,7 @@ export function dependencyEditsFindings(roots: readonly string[]): Finding[] {
               {
                 level: 'note',
                 title: `Files in ${edits.tree} changed after the install`,
-                detail: `${edits.tree}: ${editsKeptReason(edits)}.`,
+                detail: `${edits.tree}: ${editsKeptReason(edits)}. At critical disk pressure maintenance saves them and deletes the folder, except with more than 1000 changed files or 64 MB of them, which keeps the folder and the disk it uses.`,
                 fix: PATCH_FIX,
               },
             ],

@@ -64,9 +64,9 @@ a directory in it that cannot be read.
   package manager's stamp (`.modules.yaml`, `.package-lock.json`,
   `.yarn-state.yml`, `.yarn-integrity`, `Pods/Manifest.lock`). A package's
   node_modules without a stamp uses the nearest one above it. A tree no stamp
-  covers (Bun) uses its own and its `.bin` directory's modification times
-  plus one minute, which is not saved at critical. With no usable reference
-  the tree is kept.
+  covers (Bun) uses its own and its `.bin` directory's modification times;
+  changes in the minute after it do not keep the tree and are saved at
+  critical. With no usable reference the tree is kept.
 - A 10-minute window after the stamp is install-script output, not an edit,
   only when the root `package.json` (the tree's or the worktree's) declares
   `preinstall`, `install`, `postinstall` or `prepare`. With none the reference
@@ -80,9 +80,15 @@ Podspecs`.
   into an existing tree it records the edits first. When an install Stim did
   not run moved the stamp past the last reference, a file changed after that
   older reference is still an edit unless its package was reinstalled (its
-  `package.json`, or for Pods the pod's directory, was created after it).
+  `package.json`, or for Pods the pod's directory, was created after it). A
+  tree with no record yet takes as the older reference the creation time of
+  its stamp file, which npm, pnpm, Yarn (on a no-op install) and CocoaPods
+  rewrite in place, or for a tree without one its `.bin` or own directory's
+  creation time. The first acting check writes the record; a read-only one
+  does not.
 - Not counted as edits: the package manager's state files at the tree's root,
-  `node_modules/.cache`, `.gradle`, `.kotlin` and `.cxx` directories in a
+  dot-directories at a node_modules root other than `.pnpm`, `.bun` and
+  `.bin` (tool caches: `.cache`, `.vite`, `.vitest-cache`), `.gradle`, `.kotlin` and `.cxx` directories in a
   package's `android` directory or beside a Gradle build script, a `build`
   directory there that holds Gradle's own output (`intermediates`,
   `generated`, `outputs`, `tmp`, `.transforms`, `kotlin` or `classes`) and
@@ -91,15 +97,21 @@ Podspecs`.
 - Not seen: an edit that keeps an older modification time (`cp -p`,
   `rsync -t`, a tar extract), a file deleted by hand, edits inside the
   excluded directories, and an edit made within the script window after an
-  install Stim did not run (seen only at critical, where it is saved).
+  install Stim did not run (seen only at critical, where it is saved). An
+  edit that replaces a package's `package.json` (`sed -i`, an editor that
+  saves by rename) makes that package look reinstalled, so after a later
+  install Stim did not run its unrecorded edits are dropped; edits an acting
+  check already recorded stay.
 - At normal and high a tree with edits is kept with a reason naming them, in
   the kept action, `stim status` and `stim doctor`. A kept tree is not walked
   again while its install signature and its recorded edits are unchanged.
 - At critical the files are copied into the worktree archive with a manifest;
   each copy is checked by size only. The tree is deleted and the action gives
   the `cp -R` command that puts them back. `stim status`, `stim doctor` and
-  `stim worktree warm` name the copy until it is restored or retention removes
-  it (`archive.maxAgeDays`, 30 days by default, and `archive.maxTotalGb`).
+  `stim worktree warm` name the copy until retention removes it
+  (`archive.maxAgeDays`, 30 days by default, and `archive.maxTotalGb`) or a
+  person deletes it. A record whose tree is absent is kept while its volume
+  cannot be shown mounted.
 - `stim worktree remove` saves the edits of every dependency tree it deletes,
   nested ones included, the same way. Without `--force` it refuses when a save
   cannot be done; `--force` still saves and only lets a failed save not stop

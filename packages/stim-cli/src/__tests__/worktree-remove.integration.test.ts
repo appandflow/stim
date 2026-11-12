@@ -1265,6 +1265,8 @@ function worktreeWithIgnoredTrees(base: string) {
   writeFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
   mkdirSync(join(wt, 'ios', 'Pods', 'Foo'), { recursive: true });
   writeFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), '#pragma once');
+  writeFileSync(join(wt, 'node_modules', '.package-lock.json'), '{}');
+  writeFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
   const outside = join(base, 'outside');
   mkdirSync(outside);
   writeFileSync(join(outside, 'keep.txt'), 'outside the worktree');
@@ -1829,7 +1831,9 @@ test.each([
       expect(process.exitCode === 1).toBe(!removed);
       const text = errs.join('\n');
       expect(text).toContain(saved ? 'cp -R' : 'packages/a/node_modules');
-      const copies = execSync(`find "${tmpHome}" -path '*/files/dep/index.js'`, { encoding: 'utf-8' }).trim();
+      const copies = execSync(`find "${join(tmpHome, 'archive')}" -path '*/files/dep/index.js' 2>/dev/null || true`, {
+        encoding: 'utf-8',
+      }).trim();
       expect(copies ? readFileSync(copies, 'utf-8') : null).toBe(saved ? 'patched by hand' : null);
     } finally {
       error.mockRestore();

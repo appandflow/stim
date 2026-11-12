@@ -80,6 +80,7 @@ test('an untouched tree is deleted; Gradle and pnpm output does not keep it, a J
   write(join(tree, '@react-native', 'gradle-plugin', 'shared', 'build', 'tmp', 'jar', 'MANIFEST.MF'));
   write(join(tree, '.pnpm', 'lock.yaml'));
   write(join(tree, '.cache', 'babel', 'entry.json'));
+  write(join(tree, '.vitest-cache', 'results.json'));
 
   expect(await checkDependencyEdits(tree, { level: 'high', worktree })).toEqual({ delete: true });
 
@@ -104,6 +105,29 @@ test('an edit stays an edit after a later install rewrites the stamp, while a pa
   await pause();
   write(join(tree, '.package-lock.json'), '{}');
 
+  expect(savedOf(await checkDependencyEdits(tree, { level: 'critical', worktree }))).toEqual(['pkg/index.js']);
+});
+
+test('with no record, an edit stays an edit after a later install rewrites the stamp in place', async () => {
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+  installAt(ago(0));
+  await pause();
+  write(join(tree, 'pkg', 'index.js'), 'patched by hand');
+  await pause();
+  writeFileSync(join(tree, '.package-lock.json'), '{"rewritten":true}');
+
+  expect(savedOf(await checkDependencyEdits(tree, { level: 'critical', worktree }))).toEqual(['pkg/index.js']);
+});
+
+test('in a tree no stamp covers, an edit in the first minute does not keep it but is saved at critical', async () => {
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+  write(join(tree, 'pkg', 'package.json'), '{}');
+  write(join(tree, 'pkg', 'index.js'), 'installed');
+  mkdirSync(join(tree, '.bin'));
+  await pause();
+  write(join(tree, 'pkg', 'index.js'), 'patched by hand');
+
+  expect(await checkDependencyEdits(tree, { level: 'high', worktree, readOnly: true })).toEqual({ delete: true });
   expect(savedOf(await checkDependencyEdits(tree, { level: 'critical', worktree }))).toEqual(['pkg/index.js']);
 });
 

@@ -645,20 +645,27 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   The reference is when an install, pod install or worktree warm that Stim ran
   there finished; otherwise the package manager's stamp (node_modules/
   .modules.yaml, .package-lock.json, .yarn-state.yml, .yarn-integrity, or
-  Pods/Manifest.lock). A 10-minute window after the stamp counts as install
+  Pods/Manifest.lock); a tree no stamp covers (Bun) uses its own and its .bin
+  directory's modification times. A 10-minute window after the stamp counts as install
   output only when the root package.json declares preinstall, install,
-  postinstall or prepare (Pods: 60 seconds). An edit found once stays an edit
+  postinstall or prepare (Pods and unstamped trees: 60 seconds); files in the
+  window do not keep a tree but are saved at critical. An edit found once stays an edit
   while the file is unchanged, and a later install does not hide it: before
   Stim runs an install it records the edits, and after an install it did not
   run, a file changed since the previous reference stays an edit unless its
-  package (its package.json, or the pod's directory) was reinstalled. Not
-  counted: the package manager's state files, node_modules/.cache, .gradle,
+  package (its package.json, or the pod's directory) was reinstalled; with no
+  record yet the previous reference is the stamp file's creation time. Not
+  counted: the package manager's state files, dot-directories at a
+  node_modules root other than .pnpm, .bun and .bin (.cache, .vite,
+  .vitest-cache), .gradle,
   .kotlin and .cxx in a package's android directory or beside a Gradle build
   script, a build directory there holding Gradle output (intermediates,
   generated, outputs, tmp, .transforms, kotlin, classes) that the package's
   package.json points nothing into, a package's ios/build, and Pods'
   xcuserdata. Not seen: an edit that keeps an older modification time (cp -p,
-  rsync -t, tar), a file deleted by hand, and edits inside those directories.
+  rsync -t, tar), a file deleted by hand, edits inside those directories, and
+  after an install Stim did not run, unrecorded edits of a package whose
+  package.json was replaced by an edit (sed -i, save by rename).
   Below critical a tree with edits is kept, and the kept action, \`stim
   status\` (--json dependencyEdits) and \`stim doctor\` name them. At critical
   the edits, and files inside the install window, are copied (checked by size
@@ -666,8 +673,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   with a manifest.json, then the tree is deleted; the action prints the cp -R
   command that puts them back after a reinstall, and \`stim status\` (--json
   dependencyEditsSaved), \`stim doctor\` and \`stim worktree warm\` name the
-  copy until it is restored or archive retention removes it
-  (archive.maxAgeDays, 30). A tree is kept even at critical when it has over
+  copy until archive retention (archive.maxAgeDays, 30) or a person removes
+  it. A tree is kept even at critical when it has over
   1000 changed files or 64 MB, when the copy cannot be written
   (archive.enabled false, archive.maxTotalGb full, no disk), when a directory
   in it cannot be read, or when it has no install stamp. stim worktree remove

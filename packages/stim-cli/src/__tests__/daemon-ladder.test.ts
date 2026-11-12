@@ -836,6 +836,7 @@ describe('rung 5', () => {
     for (const root of [repo]) {
       mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
       writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
+      writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
       mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
       writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
     }
@@ -845,6 +846,7 @@ describe('rung 5', () => {
       const root = realpathSync.native(join(projects, name));
       mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
       writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
+      writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
       mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
       writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
       roots[name] = root;

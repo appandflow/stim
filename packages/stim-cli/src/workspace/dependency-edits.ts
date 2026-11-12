@@ -43,7 +43,8 @@ const SCRIPT_GRACE_MS = 10 * 60_000;
 const POD_GRACE_MS = 60_000;
 /**
  * A tree no stamp covers takes its reference from its own directory's modification time, which an install changes
- * when it links a package but before it writes that package's files.
+ * when it links a package but before it writes that package's files: changes in the minute after it do not keep the
+ * tree, and are saved at critical.
  */
 const LINKED_GRACE_MS = 60_000;
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
@@ -64,6 +65,8 @@ const STAMPS: Record<TreeKind, readonly string[]> = {
 
 /** What `pod install` generates afresh for every pod, rather than a pod's own sources. */
 const POD_GENERATED = ['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs'];
+/** The dot-directories at a node_modules root that hold packages; every other one is a tool's cache (`.cache`, `.vite`). */
+const TREE_DOT_DIRS = ['.pnpm', '.bun', '.bin'];
 const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
 /** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
 const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
@@ -140,7 +143,7 @@ function excludedFromEdits(
     return kind === 'node_modules' && segments.length === 2 && segments[0] === '.pnpm' && name === 'lock.yaml';
   }
   if (kind === 'Pods') return name === 'xcuserdata';
-  if (segments.length === 1 && name === '.cache') return true;
+  if (segments.length === 1 && name.startsWith('.') && !TREE_DOT_DIRS.includes(name)) return true;
   if (parent === 'ios' && name === 'build') return true;
   const gradleSide = parent === 'android' || siblings.some((sibling) => GRADLE_SCRIPTS.includes(sibling));
   if (!gradleSide) return false;
@@ -177,6 +180,13 @@ interface ScanWindow {
    * package (node_modules) or pod (Pods) was not reinstalled since, which a new package.json or pod directory shows.
    */
   before: number | null;
+  /**
+   * For a tree with no record yet: when its stamp file was created (an install rewrites a stamp in place, so this is
+   * the first install's end), or for a tree without one its `.bin` or own directory's creation time.
+   */
+  born: number | null;
+  /** Where the window that ends at `before` starts: a change after it in a package not reinstalled is saved at critical. */
+  beforeFrom: number | null;
 }
 
 /**
@@ -243,7 +253,12 @@ async function scanEdits(tree: string, window: ScanWindow, signal?: AbortSignal)
       const kept =
         stat.mtimeMs > window.graceEnd ||
         (window.before !== null && stat.mtimeMs > window.before && unitBorn <= window.before);
-      if (!kept && (stat.mtimeMs <= window.saveFrom || unitBorn === Infinity)) continue;
+      const carried =
+        window.beforeFrom !== null &&
+        window.before !== null &&
+        stat.mtimeMs > window.beforeFrom &&
+        unitBorn <= window.before;
+      if (!kept && ((stat.mtimeMs <= window.saveFrom && !carried) || unitBorn === Infinity)) continue;
       if (full()) return { edits, grace, complete: false };
       (kept ? edits : grace).push(file);
     }
@@ -259,6 +274,23 @@ function newestStamp(tree: string): number | null {
     } catch {}
   }
   return newest;
+}
+
+function stampFile(tree: string): string | null {
+  let newest: { path: string; at: number } | null = null;
+  for (const name of STAMPS[kindOf(tree)]) {
+    const at = mtimeOf(join(tree, name));
+    if (at !== null && (!newest || at > newest.at)) newest = { path: join(tree, name), at };
+  }
+  return newest?.path ?? null;
+}
+
+function birthOf(path: string): number | null {
+  try {
+    return bornAt(lstatSync(path));
+  } catch {
+    return null;
+  }
 }
 
 function mtimeOf(path: string): number | null {
@@ -286,6 +318,7 @@ function reference(tree: string, worktree: string, record: DependencyInstallReco
   let recorded = record?.installedAt ?? null;
   let stampedAt = newestStamp(tree);
   let installRoot = dirname(tree);
+  let stampTree = tree;
   if (kind === 'node_modules')
     for (let current = tree; recorded === null && stampedAt === null;) {
       const parent = dirname(dirname(current));
@@ -294,9 +327,10 @@ function reference(tree: string, worktree: string, record: DependencyInstallReco
       recorded = readDependencyInstall(current)?.installedAt ?? null;
       stampedAt = newestStamp(current);
       installRoot = parent;
+      stampTree = current;
     }
   if (recorded !== null && (stampedAt === null || recorded >= stampedAt))
-    return { since: recorded, graceEnd: recorded, saveFrom: recorded, before: null };
+    return { since: recorded, graceEnd: recorded, saveFrom: recorded, before: null, born: null, beforeFrom: null };
   let linkedOnly = false;
   if (stampedAt === null) {
     const linked = [mtimeOf(tree), mtimeOf(join(tree, '.bin'))].filter((at): at is number => at !== null);
@@ -307,12 +341,8 @@ function reference(tree: string, worktree: string, record: DependencyInstallReco
   const scripts =
     kind === 'node_modules' && [installRoot, root].some((dir) => declaresInstallScript(dir)) ? SCRIPT_GRACE_MS : 0;
   const grace = Math.max(kind === 'Pods' ? POD_GRACE_MS : scripts, linkedOnly ? LINKED_GRACE_MS : 0);
-  return {
-    since: stampedAt,
-    graceEnd: stampedAt + grace,
-    saveFrom: linkedOnly ? stampedAt + grace : stampedAt,
-    before: null,
-  };
+  const born = linkedOnly ? (birthOf(join(tree, '.bin')) ?? birthOf(tree)) : birthOf(stampFile(stampTree) ?? tree);
+  return { since: stampedAt, graceEnd: stampedAt + grace, saveFrom: stampedAt, before: null, born, beforeFrom: null };
 }
 
 function unchanged(tree: string, file: DependencyEditFile): boolean {
@@ -440,8 +470,13 @@ export async function checkDependencyEdits(
     };
   const window = reference(tree, worktree, record);
   if (!window) return { keep: 'it has no install stamp to compare its files with, so its edits cannot be checked' };
-  if (record?.reference !== null && record?.reference !== undefined && window.since > record.reference)
-    window.before = record.reference;
+  // @ref LLP 0002#edits-inside-dependency-folders -- a later install must not hide an edit
+  if (record?.reference !== null && record?.reference !== undefined) {
+    if (window.since > record.reference) window.before = window.beforeFrom = record.reference;
+  } else if (window.born !== null) {
+    window.beforeFrom = window.born;
+    window.before = window.born + (window.graceEnd - window.since);
+  }
   const scan = await scanEdits(tree, window, signal);
   if ('problem' in scan) return { keep: `its files cannot be checked for edits: ${scan.problem}` };
   const edits = merge(known, scan.edits);
@@ -450,7 +485,7 @@ export async function checkDependencyEdits(
     try {
       updateRecord(tree, (current) => ({
         ...current,
-        reference: window.since,
+        reference: window.graceEnd,
         edits: edits.length ? { signature, files: edits, complete, at: new Date().toISOString() } : null,
       }));
     } catch {}
@@ -599,27 +634,9 @@ export async function dependencyEditsHold(worktree: string, signal?: AbortSignal
   return null;
 }
 
-function restored(tree: string, saved: DependencySavedEdits): boolean {
-  const manifest = readJsonObject(join(saved.dir, 'manifest.json'));
-  const files = Array.isArray(manifest?.files) ? manifest.files.filter((f): f is string => typeof f === 'string') : [];
-  const at = Date.parse(saved.at);
-  return (
-    files.length > 0 &&
-    files.every((rel) => {
-      try {
-        const copy = lstatSync(join(saved.dir, 'files', ...rel.split('/')));
-        const current = lstatSync(join(tree, ...rel.split('/')));
-        return current.size === copy.size && current.mtimeMs > at;
-      } catch {
-        return false;
-      }
-    })
-  );
-}
-
-/** The saved copies of `tree` still on disk and not put back yet. */
-function liveSaved(tree: string, saved: readonly DependencySavedEdits[]): DependencySavedEdits[] {
-  return saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')) && !restored(tree, entry));
+/** The saved copies still on disk; they stay listed until archive retention or a person removes them. */
+function liveSaved(saved: readonly DependencySavedEdits[]): DependencySavedEdits[] {
+  return saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')));
 }
 
 /**
@@ -645,7 +662,7 @@ export function dependencyEditsOf(root: string): {
         files: edits.files.slice(0, SHOWN).map((f) => f.rel),
         at: edits.at,
       });
-    for (const entry of liveSaved(tree, record.saved)) saved.push({ tree, ...entry });
+    for (const entry of liveSaved(record.saved)) saved.push({ tree, ...entry });
   }
   return {
     ...(kept.length ? { dependencyEdits: kept } : {}),
@@ -657,7 +674,7 @@ export function dependencyEditsOf(root: string): {
 export function savedEditsLines(trees: readonly string[]): string[] {
   return trees.flatMap((path) => {
     const tree = canonicalOr(path);
-    return liveSaved(tree, readDependencyInstall(tree)?.saved ?? []).map(
+    return liveSaved(readDependencyInstall(tree)?.saved ?? []).map(
       (entry) =>
         `${entry.count} file${entry.count === 1 ? '' : 's'} changed in ${tree} were saved to ${entry.dir} before it was deleted; put them back with ${entry.restore}`,
     );

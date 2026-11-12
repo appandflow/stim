@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDir, withDirLock } from '@stim-cli/core';
+import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import {
   dependencyInstallDir,
   dependencyInstallFile,
@@ -41,13 +42,15 @@ export function pruneDependencyInstallRecords(): void {
   } catch {
     return;
   }
+  const volumes = listMountedVolumes();
   for (const name of names) {
     const tree = readJsonObject(join(dependencyInstallDir(), name))?.tree;
     if (typeof tree !== 'string') continue;
     try {
       updateDependencyInstall(tree, (record) => {
         const saved = record.saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')));
-        if (!existsSync(tree) && !saved.length) return null;
+        // @ref LLP 0002#fail-closed -- an absent tree on an unmounted volume is not proof it is gone
+        if (!saved.length && !existsSync(tree) && isOnMountedVolume(tree, volumes)) return null;
         return { ...record, saved };
       });
     } catch {}
