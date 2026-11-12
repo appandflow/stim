@@ -55,6 +55,8 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
       case "delete-gradle-version": what = "Deleted Gradle \(name)"
       case "delete-temp-leftovers": what = "Deleted TMPDIR leftovers"
       case "delete-trash": what = "Emptied the worktree trash"
+      case "clean-tool-cache": what = "Cleaned the \(target)"
+      case "delete-runtime": what = "Deleted the unused simulator runtime \(target)"
       case "reclaim-device": what = "Shut down a device for a waiting run"
       default: what = "\(kind.replacingOccurrences(of: "-", with: " ")) \(name)"
       }
@@ -96,7 +98,7 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
   /// The newest actions first, at most `limit`.
   public func lastActions(_ limit: Int = 5) -> [Action] { Array((recent ?? []).reversed().prefix(limit)) }
 
-  /// `Pressure high: 14.2 GB free on /, under disk.minFreeGb (20 GB)`.
+  /// `Pressure high: 14.2 GB free on /, under disk.minFreeGb (40 GB)`.
   public var headline: String {
     let reasons = pressure?.reasons ?? []
     return "Pressure \(level)" + (reasons.isEmpty ? "" : ": \(reasons.joined(separator: "; "))")
