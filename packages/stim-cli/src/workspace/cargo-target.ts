@@ -7,6 +7,8 @@ import { measuredDirectorySizeAsync } from '../fs-util.ts';
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
+/** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
+const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
@@ -79,12 +81,16 @@ function errorCode(error: unknown): unknown {
   return isRecord(error) ? error.code : undefined;
 }
 
-function subdirectories(path: string): Dirent[] | null {
+function entriesOf(path: string): Dirent[] | null {
   try {
-    return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    return readdirSync(path, { withFileTypes: true });
   } catch {
     return null;
   }
+}
+
+function subdirectories(path: string): Dirent[] | null {
+  return entriesOf(path)?.filter((entry) => entry.isDirectory()) ?? null;
 }
 
 function profilePaths(target: string): { profiles: string[]; extras: Set<string> } | null {
@@ -98,12 +104,12 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
       profiles.push(first.name);
       continue;
     }
-    const inner = subdirectories(join(target, first.name));
+    const inner = entriesOf(join(target, first.name));
     if (!inner) return null;
     for (const second of inner) {
-      if (existsSync(join(target, first.name, second.name, '.fingerprint')))
+      if (second.isDirectory() && existsSync(join(target, first.name, second.name, '.fingerprint')))
         profiles.push(`${first.name}/${second.name}`);
-      else extras.add(first.name);
+      else if (second.isDirectory() || !CARGO_TRIPLE_FILES.has(second.name)) extras.add(first.name);
     }
   }
   return { profiles, extras };

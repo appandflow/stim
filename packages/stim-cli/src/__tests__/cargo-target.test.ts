@@ -75,6 +75,17 @@ test('an Exact ledger stamp keeps a profile whose directories were not written f
   expect(staleCargoTargetPaths(target, Date.now())).toEqual({ paths: ['debug'] });
 });
 
+test('a target triple holding anything but Cargo files and profiles loses only its stale profiles', () => {
+  makeProfile('apple-modules/host-dev', 3 * DAY);
+  writeFileSync(join(target, 'apple-modules', 'kept-crates-host-dev.json'), '{}');
+  makeProfile('aarch64-apple-ios/release', 3 * DAY);
+  writeFileSync(join(target, 'aarch64-apple-ios', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  writeFileSync(join(target, 'aarch64-apple-ios', '.rustc_info.json'), '{}');
+
+  const stale = staleCargoTargetPaths(target, Date.now());
+  expect('paths' in stale ? stale.paths.toSorted() : stale).toEqual(['aarch64-apple-ios', 'apple-modules/host-dev']);
+});
+
 test('a ledger that is not a unit ledger refuses the whole target', () => {
   makeProfile('debug', 3 * DAY);
   writeFileSync(join(target, '.exact-sweep.json'), '{"units":');

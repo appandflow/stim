@@ -69,6 +69,8 @@ describe('the Cargo target cap over a root target/', () => {
     profile(target, 'debug', 3 * DAY);
     profile(target, 'release', 0);
     profile(target, 'exact-filesystem-tool/debug', 3 * DAY);
+    mkdirSync(join(target, 'exact-filesystem-tool', 'exact-filesystem-bad498'), { recursive: true });
+    writeFileSync(join(target, 'exact-filesystem-tool', '.bootstrap.claims'), '');
     profile(target, 'web-js-modules/target/debug', 3 * DAY);
     for (const dir of ['bake', 'clients', 'dev-generations', 'web-js-modules/data'])
       mkdirSync(join(target, dir), { recursive: true });
@@ -128,8 +130,16 @@ describe('the Cargo target cap over a root target/', () => {
 
     expect(outcome.status).toBe('done');
     expect(existsSync(join(target, 'debug'))).toBe(false);
-    expect(existsSync(join(target, 'exact-filesystem-tool'))).toBe(false);
-    const stayed = ['release', 'bake/out.bin', 'clients', 'dev-generations', 'web-js-modules/target/debug/deps'];
+    expect(existsSync(join(target, 'exact-filesystem-tool', 'debug'))).toBe(false);
+    const stayed = [
+      'exact-filesystem-tool/exact-filesystem-bad498',
+      'exact-filesystem-tool/.bootstrap.claims',
+      'release',
+      'bake/out.bin',
+      'clients',
+      'dev-generations',
+      'web-js-modules/target/debug/deps',
+    ];
     expect(stayed.filter((path) => !existsSync(join(target, path)))).toEqual([]);
     expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
   });
