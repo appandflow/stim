@@ -33,6 +33,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
+import { LAUNCHD_TEST_GUARD_ENV } from './launchd-guard-env.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLock } from '../workspace/workspace-state.ts';
 import { clearManagedMetroTunnel, readMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
@@ -731,6 +732,8 @@ export function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Rec
 const xml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+const SYSTEM_LAUNCHCTL: ReadonlySet<string> = new Set(['/bin/launchctl', '/usr/bin/launchctl']);
+
 /** The prefix of the labels of this home's stimd launchd jobs. */
 export function launchdLabelPrefix(): string {
   return `dev.stim.stimd.${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}.`;
@@ -745,6 +748,8 @@ export function launchdLabelPrefix(): string {
 function startLaunchdJob(command: readonly string[], env: Record<string, string>): boolean {
   const uid = process.getuid?.();
   if (uid === undefined) return false;
+  if (process.env[LAUNCHD_TEST_GUARD_ENV] && SYSTEM_LAUNCHCTL.has(getExecutor().findExecutable('launchctl') ?? ''))
+    return false;
   const label = `${launchdLabelPrefix()}${randomBytes(3).toString('hex')}`;
   const plist = join(stimdRunDir(), `${label}.plist`);
   const strings = (values: readonly string[]) => values.map((value) => `<string>${xml(value)}</string>`).join('');

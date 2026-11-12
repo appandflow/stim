@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestProject } from 'vitest/node';
 import { killRunProcesses } from './vitest.kill-run-processes.ts';
+import { LAUNCHD_TEST_GUARD_ENV } from './packages/stim-cli/src/daemon/launchd-guard-env.ts';
+import { launchdJobsUnder, removeLaunchdLeftovers } from './vitest.launchd-leftovers.ts';
 
 // Directories Stim's own tests, and the tools they run, create in TMPDIR.
 const TRACKED_PREFIXES = [
@@ -28,6 +30,7 @@ export default function setup(project: TestProject): () => void {
 
   return () => {
     const { survivors: stimds, checked } = killRunProcesses(root);
+    const jobs = launchdJobsUnder(root);
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -57,6 +60,19 @@ export default function setup(project: TestProject): () => void {
       if (failed === 0) throw new Error(message);
       process.stderr.write(
         `${message}${failed === undefined ? ' The failed-test count could not be read, so the run does not fail for it.' : ` ${failed} tests failed, which may have left them; the run does not fail for them.`}\n`,
+      );
+    }
+    if (jobs.length > 0) {
+      const message =
+        `The test run left ${jobs.length} stimd launchd ${jobs.length === 1 ? 'job' : 'jobs'} registered (${removeLaunchdLeftovers(jobs)}); the run removed them. ` +
+        `A test that starts stimd must not reach the real launchd: vitest.setup.ts sets ${LAUNCHD_TEST_GUARD_ENV}, so a test with its own environment must pass it on, or put a stub launchctl on PATH.`;
+      let failed: number | undefined;
+      try {
+        failed = project.vitest.state.getCountOfFailedTests();
+      } catch {}
+      if (failed === 0) throw new Error(message);
+      process.stderr.write(
+        `${message} ${failed ?? 'Some'} tests failed, which may have left them; the run does not fail for them.\n`,
       );
     }
     if (leaked.length === 0) return;
