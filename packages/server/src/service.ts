@@ -15,10 +15,11 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { execStartOverride } from '@stim-cli/core';
 import { stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
-  launchdArguments,
+  jobArguments,
   withProgramArguments,
   DEFAULT_LABEL,
   DEFAULT_PORT,
@@ -37,6 +38,7 @@ import {
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
+import { editUnit } from './service-unit.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
 import { markTailnet } from './tailnet-marker.ts';
@@ -286,31 +288,59 @@ function engineShim(env: NodeJS.ProcessEnv = process.env): string | null {
   return existsSync(shim) ? shim : null;
 }
 
+/** The engine shim a service of this platform names; Task Scheduler runs Stim's own supervisor, which names no shim. */
+const unitShim = (): string | null => (serviceManager().name === 'taskscheduler' ? null : engineShim());
+
 /**
- * Rewrites the LaunchAgent `label`, when it names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`,
- * as Stim 1.42 wrote it), to name the engine store's `bin/stimd` shim with the same options. launchd reads the file only
- * when the job is bootstrapped, so the rewrite takes effect at the next bootstrap. Returns whether it rewrote the file.
+ * Moves the LaunchAgent or systemd unit `label` onto the engine store's `bin/stimd` shim and returns whether the running
+ * server must restart to run it, which is when this call changed what the manager will start.
+ *
+ * A unit that names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`, as Stim 1.42 wrote it) is
+ * rewritten to name the shim with the same options. launchd reads the file only when the job is bootstrapped. systemd
+ * restarts a job from the definition it already loaded, so a unit that names the shim also has to be loaded: this
+ * reloads it without restarting the job and checks `systemctl show` for the shim, which a later boot retries when a
+ * reload failed. A drop-in or multi-line `ExecStart=` is refused and the file left as written; a symlinked unit is
+ * written through.
  */
 export async function rewriteUnitToShim(label: string): Promise<boolean> {
-  const stimd = serviceManager().name === 'launchd' ? engineShim() : null;
+  const manager = serviceManager();
+  const stimd = unitShim();
   const installed = stimd ? await readInstalled(label) : null;
-  if (!stimd || !installed?.managed || installed.node === null || installed.script === null || installed.port === null)
-    return false;
+  if (!stimd || !installed?.managed || installed.script === null || installed.port === null) return false;
   const path = plistPath(label);
-  const text = readFileSync(path, 'utf8');
-  const args = launchdArguments({
-    ...installed,
-    node: installed.node,
-    script: installed.script,
-    port: installed.port,
-    stimd,
-  });
-  const rewritten = withProgramArguments(text, [...(installed.host ? [installed.host, 'run'] : []), ...args]);
-  if (rewritten === text) return false;
-  const partial = `${path}.${process.pid}.tmp`;
-  writeFileSync(partial, rewritten, { mode: 0o644 });
-  renameSync(partial, path);
-  return true;
+  let changed = false;
+  if (installed.node !== null) {
+    const text = readFileSync(path, 'utf8');
+    const args = [
+      ...(installed.host ? [installed.host, 'run'] : []),
+      ...jobArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd }),
+    ];
+    const rewritten =
+      manager.name === 'launchd' ? withProgramArguments(text, args) : editUnit(text, { programArguments: args });
+    if (rewritten !== text) {
+      const problem = manager.name === 'systemd' ? execStartOverride(path, text) : null;
+      if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
+      const target = realpathSync(path);
+      const partial = `${target}.${process.pid}.tmp`;
+      writeFileSync(partial, rewritten, { mode: 0o644 });
+      renameSync(partial, target);
+      changed = true;
+    }
+  } else if (installed.script !== stimd) return false;
+  if (manager.loadedCommand) {
+    const loadsShim = async () => ((await manager.loadedCommand?.(label)) ?? '').includes(`path=${stimd} ;`);
+    if (!(await loadsShim())) {
+      const reloaded = await manager.reload?.();
+      if (!reloaded?.ok || !(await loadsShim())) {
+        const override = execStartOverride(path, readFileSync(path, 'utf8'));
+        throw new ServiceError(
+          `${manager.noun} has not loaded the engine shim for ${label}${override ? ` (${override})` : reloaded?.ok ? '' : ` (${reloaded?.stderr.trim()})`}; ${manager.restartRemedy(label)} when no build runs.`,
+        );
+      }
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
@@ -344,7 +374,7 @@ export async function installJob(
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();
   const host = setup ? setup.host : await manager.host();
-  const stimd = manager.name === 'launchd' ? engineShim() : null;
+  const stimd = unitShim();
   const spec: ServiceSpec = {
     host: host?.executable ?? null,
     label: options.label,
