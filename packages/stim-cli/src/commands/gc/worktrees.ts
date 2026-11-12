@@ -62,7 +62,7 @@ import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/wor
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { processReader, runningFromReason } from '../../workspace/running-from.ts';
+import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -168,6 +168,8 @@ interface WorktreeCandidate {
   activity: WorktreeActivity | null;
   /** Discovery found it; see `WorktreeFacts.discovered`. */
   discovered?: boolean;
+  /** The main checkout of its repository, for a discovered worktree. */
+  source?: string;
   /** How many uncommitted or untracked entries removal archives first; absent or 0 for a clean worktree. */
   dirty?: number;
   buildState?: WorktreeBuildState;
@@ -255,8 +257,9 @@ export async function agentSessionUse(
   );
 }
 
-function dirtyLines(porcelain: string[] | null): string[] {
-  return excludePodChurn(excludeWatchmanCookies(porcelain).lines).lines;
+function dirtyLines(porcelain: string[] | null, podChurnIsDirty = false): string[] {
+  const lines = excludeWatchmanCookies(porcelain).lines;
+  return podChurnIsDirty ? lines : excludePodChurn(lines).lines;
 }
 
 function finished(facts: Pick<WorktreeFacts, 'merge' | 'pullRequest'>): boolean {
@@ -323,7 +326,7 @@ function removalBlocker(
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
-  const dirty = dirtyLines(facts.porcelain);
+  const dirty = dirtyLines(facts.porcelain, facts.discovered);
   if (dirty.length) {
     const paths = dirty.slice(0, DIRTY_PATHS_SHOWN).flatMap((line) => porcelainPath(line) ?? []);
     const more = dirty.length > DIRTY_PATHS_SHOWN ? ', ...' : '';
@@ -576,6 +579,27 @@ function activityFromGitDir(gitDir: string | undefined, keys: readonly string[])
   return newest === 'unreadable' ? null : newest;
 }
 
+const DAY_MS_FOR_DORMANT = 24 * 60 * MINUTE_MS;
+
+function dormantMs(operation?: StimContext): number {
+  return (
+    (machineNumber('idle.dormantDays', loadConfig(), operation?.env ?? process.env).value ?? 0) * DAY_MS_FOR_DORMANT
+  );
+}
+
+/** The reasons a discovered worktree stays, read again under the removal locks. */
+async function discoveredHold(candidate: WorktreeCandidate, operation?: StimContext): Promise<string[]> {
+  if (!candidate.discovered) return [];
+  const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
+  const hold = await discoveredRemovalHold(candidate.path, {
+    main: candidate.source ?? null,
+    idleMs: dormantMs(operation),
+    reads: discoveredReads(operation?.signal),
+    operation,
+  });
+  return hold ? [hold] : [];
+}
+
 function protectRecentMs(operation?: StimContext): number {
   const { value, error } = machineNumber(PROTECT_SETTING, loadConfig(), operation?.env ?? process.env);
   return (error ? Number(settingDefinition(PROTECT_SETTING)?.default) : (value ?? 0)) * 60 * MINUTE_MS;
@@ -730,13 +754,14 @@ async function checkMergeStates(
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
     operation?.signal.throwIfAborted();
-    const target = refresh
+    const fetches = refresh && entries.some(({ candidate }) => !candidate.discovered);
+    const target = fetches
       ? await fetchDefaultBranchAsync(repo, grace.now, execution)
       : await localDefaultBranchAsync(repo, execution);
     // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
-    const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs, execution);
+    const fetch = fetches ? null : await staleFetch(repo, grace.now, freshMs, execution);
     await eachLimited(entries, readConcurrency(operation), async ({ candidate, facts }) => {
       operation?.signal.throwIfAborted();
       const merge: MergeState =
@@ -837,11 +862,11 @@ export async function collectWorktreeSweep({
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
-    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
-    const porcelain = await porcelainOf(path, gitAnswered, operation);
-    const dirty = linked ? dirtyLines(porcelain).length : 0;
     const managed = roots.some((root) => registry.has(root));
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
+    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
+    const porcelain = await porcelainOf(path, gitAnswered, operation);
+    const dirty = linked ? dirtyLines(porcelain, discoveredOnly).length : 0;
     const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
@@ -879,7 +904,7 @@ export async function collectWorktreeSweep({
         skipped: null,
         eligibleAt: null,
         activity,
-        ...(discoveredOnly ? { discovered: true } : {}),
+        ...(discoveredOnly ? { discovered: true, ...('refusal' in source ? {} : { source: source.path }) } : {}),
         ...(archiveDirty ? { dirty } : {}),
       },
       facts,
@@ -909,16 +934,11 @@ export async function collectWorktreeSweep({
     );
     registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
   }
-  const found = linked.filter(({ facts }) => facts.discovered);
-  if (found.length) {
-    const processes = processReader(operation?.signal);
-    for (const { candidate, facts } of found) {
-      const running = runningFromReason(candidate.path, await processes());
-      if (running) facts.inUse.push(running);
-    }
-  }
-  if (refresh) await lookUpPullRequests(inspected, operation);
-  else readCachedPullRequests(inspected, now, freshMs);
+  const own = inspected.filter(({ candidate }) => !candidate.discovered);
+  const handedOver = inspected.filter(({ candidate }) => candidate.discovered);
+  if (refresh) await lookUpPullRequests(own, operation);
+  else readCachedPullRequests(own, now, freshMs);
+  readCachedPullRequests(handedOver, now, reportFreshMs(operation));
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
   for (const { candidate, facts, repo } of inspected) {
@@ -938,6 +958,20 @@ export async function collectWorktreeSweep({
     worktrees.push(candidate);
   }
   await checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs, operation);
+  const handed = worktrees.filter((candidate) => candidate.discovered && candidate.skipped === null);
+  if (handed.length) {
+    const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
+    const reads = discoveredReads(operation?.signal);
+    for (const candidate of handed) {
+      const hold = await discoveredRemovalHold(candidate.path, {
+        main: candidate.source ?? null,
+        idleMs: dormantMs(operation),
+        reads,
+        operation,
+      });
+      if (hold) Object.assign(candidate, { skipCode: 'recent-activity', skipped: `kept: ${hold}`, eligibleAt: null });
+    }
+  }
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );
@@ -1030,9 +1064,7 @@ export async function removeWorktrees(
         ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
         ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
         ...(agents.get(candidate.path) ?? []),
-        ...(candidate.discovered
-          ? [runningFromReason(candidate.path, await processReader(operation?.signal)())].flatMap((r) => (r ? [r] : []))
-          : []),
+        ...(await discoveredHold(candidate, operation)),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head
@@ -1100,6 +1132,7 @@ export async function removeWorktrees(
           : undefined;
       removed = await removeWorktreeTarget(candidate.path, {
         linkedOnly: true,
+        ...(candidate.discovered ? { podChurnIsDirty: true } : {}),
         guard,
         mergedHead,
         expectedHead,

@@ -1066,6 +1066,8 @@ interface RemoveOptions {
   removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
   force?: boolean;
   linkedOnly?: boolean;
+  /** A modification to a tracked file is dirty work even in the files `pod install` rewrites, as in a checkout Stim never ran in. */
+  podChurnIsDirty?: boolean;
   guard?: (lockedKeys: readonly string[]) => string[] | Promise<string[]>;
   /** A HEAD whose change gc proved is on the default branch; its local-only commits do not block removal. */
   mergedHead?: string;
@@ -1114,9 +1116,14 @@ function canonicalExistingPath(target: string): string {
   return resolve(realpathSync(existing), ...missing);
 }
 
-async function inspectRemoval(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
+async function inspectRemoval(
+  path: string,
+  mergedHead?: string,
+  operation?: StimContext,
+  podChurnIsDirty = false,
+): Promise<RemovalInspection> {
   try {
-    return await inspectGit(path, mergedHead, operation);
+    return await inspectGit(path, mergedHead, operation, podChurnIsDirty);
   } catch (error) {
     if (!isTimeoutError(error)) throw error;
     return timedOutInspection(error);
@@ -1135,7 +1142,12 @@ function timedOutInspection(error: unknown): RemovalInspection {
   };
 }
 
-async function inspectGit(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
+async function inspectGit(
+  path: string,
+  mergedHead?: string,
+  operation?: StimContext,
+  podChurnIsDirty = false,
+): Promise<RemovalInspection> {
   const options = {
     removal: true,
     env: operation?.env,
@@ -1145,7 +1157,9 @@ async function inspectGit(path: string, mergedHead?: string, operation?: StimCon
   const gitAnswered = await hasUncommittedWorkAsync(path, options);
   const allDirty = gitAnswered ? await dirtyPathsAsync(path, { limit: Infinity }, options) : [];
   const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
-  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
+  const { lines: dirtyLines, restore: podChurn } = podChurnIsDirty
+    ? { lines: withoutCookies, restore: [] }
+    : excludePodChurn(withoutCookies, customIosDirs(path));
   const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = await unpushedCommitsAsync(path, options);
   const merged = Boolean(mergedHead) && (await resolveFullRefAsync(path, 'HEAD', options)) === mergedHead;
@@ -1518,7 +1532,7 @@ async function removeOrRefuse(
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
   const approvedBranchSha = ownsBranch ? await resolveFullRefAsync(path, 'HEAD', options) : null;
   let mergedHead = opts.mergedHead;
-  let inspection = await inspectRemoval(path, mergedHead, opts.operation);
+  let inspection = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
   if (
     inspection.blockers.length &&
     !opts.force &&
@@ -1534,7 +1548,7 @@ async function removeOrRefuse(
     const pr = endedPullRequest(lookup);
     if (head && pr?.state === 'merged') {
       mergedHead = head;
-      inspection = await inspectRemoval(path, mergedHead, opts.operation);
+      inspection = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
       output.error(
         chalk.dim(`HEAD is in the merged PR #${pr.number} (${pr.url}); its local-only commits stay on GitHub.`),
       );
@@ -1574,7 +1588,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const current = await inspectRemoval(path, mergedHead, opts.operation);
+          const current = await inspectRemoval(path, mergedHead, opts.operation, opts.podChurnIsDirty);
           if (blockersOf(current, opts).length && !opts.force) {
             await printRemovalRefusal(path, current, output, opts.operation);
             return;

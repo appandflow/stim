@@ -1,17 +1,17 @@
 import { lstat, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import { agentSessionUse, worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
+import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
-import { runningFromReason, type RunningProcesses } from './running-from.ts';
+import type { DiscoveredReads } from './discovered-reads.ts';
+import { runningFromReason } from './running-from.ts';
 
-/** Folders holding dependencies, build output or other checkouts: their writes are not source activity. */
-const NOT_SOURCE = new Set([
-  '.git',
-  '.worktrees',
-  'node_modules',
-  'Pods',
+/** Folders holding dependencies or other checkouts, skipped wherever they are. */
+const ALWAYS_SKIPPED = new Set(['.git', '.worktrees', 'node_modules', 'Pods']);
+
+/** Folders holding build output, skipped only where git ignores them: a tracked or unignored one is source. */
+const SKIPPED_WHERE_IGNORED = new Set([
   'build',
   'dist',
   'target',
@@ -28,9 +28,13 @@ const NOT_SOURCE = new Set([
 ]);
 
 const SCAN_LIMIT = 20_000;
+const OVER_BOUND_KEEP_MS = 60 * 60_000;
 
 /** The newest modification time seen under each checkout: a lower bound, so it can prove activity and never idleness. */
 const newestSeen = new Map<string, number>();
+
+/** When a scan last met the bound: the verdict is a keep, so reusing it for an hour can only keep longer. */
+const overBound = new Map<string, number>();
 
 export type SourceScan = { newest: number } | { unknown: string };
 
@@ -47,6 +51,9 @@ export async function scanSourceWrites(
 ): Promise<SourceScan> {
   const known = newestSeen.get(root);
   if (known !== undefined && known > activeSince) return { newest: known };
+  const bounded = overBound.get(root);
+  if (bounded !== undefined && Date.now() - bounded < OVER_BOUND_KEEP_MS)
+    return { unknown: `it has more than ${limit} source entries to check` };
   let newest = known ?? 0;
   let seen = 0;
   const queue = [root];
@@ -60,9 +67,18 @@ export async function scanSourceWrites(
       return { unknown: `${dir} cannot be read` };
     }
     for (const entry of entries) {
-      if (NOT_SOURCE.has(entry.name)) continue;
-      if (++seen > limit) return { unknown: `it has more than ${limit} source entries to check` };
+      if (ALWAYS_SKIPPED.has(entry.name)) continue;
       const path = join(dir, entry.name);
+      if (
+        SKIPPED_WHERE_IGNORED.has(entry.name) &&
+        (await gitQuietAsync(root, ['check-ignore', '-q', '--', relative(root, path)], { signal })) !== null
+      )
+        continue;
+      if (++seen > limit) {
+        newestSeen.set(root, newest);
+        overBound.set(root, Date.now());
+        return { unknown: `it has more than ${limit} source entries to check` };
+      }
       let mtime: number;
       try {
         mtime = (await lstat(path)).mtimeMs;
@@ -83,21 +99,21 @@ export async function scanSourceWrites(
 }
 
 /**
- * What idleness rests on for a checkout with no Stim state: the newest source write, the last commit and the last git
- * write count as activity; a process running from or working in it, an agent session working in it, or evidence that
- * cannot be read keeps it.
+ * What idleness rests on for a checkout with no Stim state: the newest source write (git-ignored files included), the
+ * last commit and the last git write count as activity; a process running from or working in it, an agent session
+ * working in it, or evidence that cannot be read keeps it.
  */
 export async function discoveredEvidence(
   path: string,
   {
     now,
     idleMs,
-    processes,
+    reads,
     operation,
   }: {
     now: number;
     idleMs: number;
-    processes: () => Promise<RunningProcesses | null>;
+    reads: DiscoveredReads;
     operation?: StimContext;
   },
 ): Promise<IdleStopEvidence> {
@@ -113,8 +129,8 @@ export async function discoveredEvidence(
     (await gitQuietAsync(path, ['log', '-1', '--format=%ct', 'HEAD'], { signal, cwd: operation?.cwd }))?.trim(),
   );
   if (Number.isFinite(committed) && committed > 0) activity.push({ basis: 'git commit', at: committed * 1000 });
-  keep.push(...((await agentSessionUse([path], now, signal))[0] ?? []));
-  const running = runningFromReason(path, await processes());
+  keep.push(...(await reads.sessions(path, now)));
+  const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
   return { activity, keep };
 }

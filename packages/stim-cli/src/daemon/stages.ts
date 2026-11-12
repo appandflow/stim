@@ -37,7 +37,7 @@ import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { processReader, type RunningProcesses } from '../workspace/running-from.ts';
+import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -135,8 +135,8 @@ async function idleVerdict(
   {
     locked = false,
     operation,
-    processes = processReader(operation?.signal),
-  }: { locked?: boolean; operation?: StimContext; processes?: () => Promise<RunningProcesses | null> } = {},
+    reads = discoveredReads(operation?.signal),
+  }: { locked?: boolean; operation?: StimContext; reads?: DiscoveredReads } = {},
 ): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
@@ -144,7 +144,7 @@ async function idleVerdict(
   const evidence =
     getProject(path) || existsSync(workspaceMetadataFile(path))
       ? stim
-      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, processes, operation }));
+      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return { kept: decision.reason };
   try {
@@ -174,11 +174,11 @@ export async function discoveredKeepReason(
   path: string,
   thresholdMs: number,
   operation?: StimContext,
-  processes?: () => Promise<RunningProcesses | null>,
+  reads?: DiscoveredReads,
 ): Promise<string | null> {
   const verdict = await idleVerdict(path, thresholdMs, 'idle.dormantDays', {
     operation,
-    ...(processes ? { processes } : {}),
+    ...(reads ? { reads } : {}),
   });
   return 'kept' in verdict ? verdict.kept : null;
 }
@@ -196,7 +196,7 @@ async function idleWorkspaces(
   { discover = false }: { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs'> & { idleMs: number | null })[] = [];
-  const processes = processReader(reading.operation?.signal);
+  const reads = discoveredReads(reading.operation?.signal);
   const discovered = discover
     ? (await discoverCheckouts(config, listedRoots(), reading.operation)).map(({ path }): [string, ProjectRecord] => [
         path,
@@ -210,7 +210,7 @@ async function idleWorkspaces(
     try {
       const idleMs = (await runsSomething(path, project, reading))
         ? null
-        : await idleFor(path, thresholdMs, setting, { operation: reading.operation, processes });
+        : await idleFor(path, thresholdMs, setting, { operation: reading.operation, reads });
       readings.push({ path, project, idleMs });
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;

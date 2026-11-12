@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+
 import {
   existsSync,
   lstatSync,
@@ -383,6 +384,8 @@ describe('workspace directories without workspace.json', () => {
     for (const dir of [present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
   });
 });
+
+vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
 test('listWorkspaceDirs resolves each directory through its workspace.json', () => {
   const { root } = goneWorkspace('app');

@@ -1,5 +1,5 @@
-import { lstatSync, readdirSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
@@ -18,7 +18,7 @@ export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   dependencies: ['node_modules', 'ios/Pods'],
 };
 
-type DirRead = { names: string } | { directory: string };
+type DirRead = { names: string } | { directory: string } | { signature: string };
 type DirReads<T> = Generator<DirRead, T, string[] | boolean>;
 
 function* namesIn(path: string): DirReads<string[]> {
@@ -30,8 +30,15 @@ function* realDirectory(path: string): DirReads<boolean> {
   return (yield { directory: path }) === true;
 }
 
+const CACHEDIR_SIGNATURE = 'Signature: 8a477f597d28d172789f06886806bc55';
+
+function signatureHeads(text: string): boolean {
+  return text.startsWith(CACHEDIR_SIGNATURE);
+}
+
 function answerSync(read: DirRead): string[] | boolean {
   try {
+    if ('signature' in read) return signatureHeads(readFileSync(read.signature, 'utf8').slice(0, 64));
     return 'names' in read ? readdirSync(read.names) : lstatSync(read.directory).isDirectory();
   } catch {
     return 'names' in read ? [] : false;
@@ -40,6 +47,7 @@ function answerSync(read: DirRead): string[] | boolean {
 
 async function answerAsync(read: DirRead): Promise<string[] | boolean> {
   try {
+    if ('signature' in read) return signatureHeads((await readFile(read.signature, 'utf8')).slice(0, 64));
     return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
   } catch {
     return 'names' in read ? [] : false;
@@ -134,7 +142,9 @@ const CACHEDIR_TAG = 'CACHEDIR.TAG';
 function* cargoRootTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
   if (!(yield* realDirectory(path))) return [];
-  return (yield* namesIn(path)).includes(CACHEDIR_TAG) ? [path] : [];
+  return (yield* namesIn(path)).includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true
+    ? [path]
+    : [];
 }
 
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
@@ -148,7 +158,7 @@ function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
  * out as DerivedData, and a Cargo `target/` directly under `root`: an Exact app's (beside its `exact.mjs`) or any
- * that carries Cargo's `CACHEDIR.TAG`. A `.dd` that is not laid out as DerivedData is not one, nor is a `target/`
+ * that carries Cargo's `CACHEDIR.TAG` with its signature line. A `.dd` that is not laid out as DerivedData is not one, nor is a `target/`
  * anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {

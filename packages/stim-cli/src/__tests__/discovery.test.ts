@@ -15,6 +15,8 @@ import { type Config } from '@stim-cli/core/state';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import { discoverCheckouts, selectDiscovered, type DiscoveryChild } from '../workspace/discovery.ts';
 
+vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+
 describe('selectDiscovered', () => {
   const child = (path: string, recognised = true) =>
     ({ path, origin: 'sibling', from: '/dev', recognised }) satisfies DiscoveryChild;

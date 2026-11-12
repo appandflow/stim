@@ -58,6 +58,7 @@ export function gcDetailLines(run: LevelRun): string[] {
     lines.push(
       `discovered\t${checkout.origin}\t${checkout.path}\tfrom ${checkout.from}${checkout.kept ? `; kept: ${checkout.kept}` : ''}`,
     );
+  for (const entry of run.outside) lines.push(`outside the folders Stim manages\t${entry.path}\tof ${entry.from}`);
   for (const reason of run.blocked) lines.push(`blocked\t${reason}`);
   return lines;
 }
@@ -111,6 +112,13 @@ export function formatGcSummary(
     if (run.discovered.length > LARGEST_SHOWN * 4)
       lines.push(`  and ${run.discovered.length - LARGEST_SHOWN * 4} more`);
   }
+  if (run.outside.length)
+    lines.push(
+      `Outside the folders Stim manages (${run.outside.length} worktrees of known repositories, left alone): ${run.outside
+        .slice(0, 3)
+        .map((entry) => entry.path)
+        .join(', ')}${run.outside.length > 3 ? ', ...' : ''}`,
+    );
   const reported = run.actions.filter((action) => action.kind === 'report-tool-cache');
   if (failed.length || run.blocked.length || reported.length) {
     lines.push('Needs a person:');

@@ -18,6 +18,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
+import { missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
@@ -719,6 +720,14 @@ async function assembleDoctorReport(
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
+  const missingRoots = missingDiscoverRoots(loadConfig(), env);
+  if (missingRoots.length)
+    findings.push({
+      level: 'note',
+      title: 'maintenance.discoverRoots names folders that do not exist',
+      detail: `${missingRoots.join(', ')} ${missingRoots.length === 1 ? 'is' : 'are'} not a folder, so nothing is discovered there.`,
+      fix: 'Correct the list with `stim settings set maintenance.discoverRoots <json array> --scope machine`.',
+    });
   return {
     project: root,
     platform: opts.platform ?? null,

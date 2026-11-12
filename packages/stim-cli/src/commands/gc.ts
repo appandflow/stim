@@ -89,6 +89,8 @@ export interface GcRunPayload {
   blocked: string[];
   /** Checkouts no stim command ran in that the run treats as workspaces, each with its actions. */
   discovered: LevelRun['discovered'];
+  /** Worktrees outside the folders Stim manages, listed and never acted on. */
+  outside: LevelRun['outside'];
   /** Each action that ran, as the outcome items Stim Desktop lists. Empty on a dry run. */
   results: GcResult[];
   /** On a dry run, what Stim keeps on disk, for Stim Desktop's storage view. */
@@ -217,6 +219,7 @@ function runPayload(run: LevelRun, act: boolean): GcRunPayload {
     actions: run.actions,
     blocked: run.blocked,
     discovered: run.discovered,
+    outside: run.outside,
     results: act ? run.actions.filter((action) => action.outcome !== 'would').map(resultOf) : [],
   };
 }

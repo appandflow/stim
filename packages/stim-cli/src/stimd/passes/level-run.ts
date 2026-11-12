@@ -13,7 +13,7 @@ import { classifyPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { runDormantReduction, runForcedLadder } from '../../daemon/passes.ts';
 import { discoveredKeepReason, dormantAfterMs } from '../../daemon/stages.ts';
 import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
-import { processReader } from '../../workspace/running-from.ts';
+import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
@@ -23,7 +23,7 @@ import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { existsSync } from 'node:fs';
-import { discoverCheckouts, type DiscoveredCheckout } from '../../workspace/discovery.ts';
+import { discoverCheckouts, discoveredOutside, type DiscoveredCheckout } from '../../workspace/discovery.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
@@ -50,6 +50,8 @@ export interface LevelRun {
   blocked: string[];
   /** Checkouts no stim command ran in that this run treats as workspaces, with the actions it took or would take in each. */
   discovered: (DiscoveredCheckout & { actions: LevelRunAction[]; kept?: string })[];
+  /** Worktrees discovery reached outside the folders Stim manages, which no run acts on. */
+  outside: { path: string; from: string }[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
 }
@@ -128,6 +130,7 @@ export async function runMaintenanceAtLevel({
     onAction?.(action);
   };
   const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);
+  const outside = await discoveredOutside(loadConfig(), listedRoots(), operation);
   const now = Date.now();
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
   const sizes = [
@@ -190,7 +193,7 @@ export async function runMaintenanceAtLevel({
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
   const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
-  const processes = processReader(operation?.signal);
+  const reads = discoveredReads(operation?.signal);
   const discovered: LevelRun['discovered'] = [];
   const ownerOf = (path: string) =>
     found
@@ -202,7 +205,7 @@ export async function runMaintenanceAtLevel({
     const kept =
       taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
-        : await discoveredKeepReason(checkout.path, idleMs, operation, processes);
+        : await discoveredKeepReason(checkout.path, idleMs, operation, reads);
     if (kept && /source entries to check|cannot be read/.test(kept))
       blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
     discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
@@ -212,5 +215,5 @@ export async function runMaintenanceAtLevel({
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 10)
     .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
-  return { pressure, level, actions, blocked, discovered, usage };
+  return { pressure, level, actions, blocked, discovered, outside, usage };
 }

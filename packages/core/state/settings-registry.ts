@@ -19,7 +19,7 @@ export const SETTING_SCOPES: readonly SettingScope[] = ['machine', 'workspace', 
 export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
   | { kind: 'path'; absolute?: boolean; relative?: boolean; patternHelp?: string }
-  | { kind: 'strings' }
+  | { kind: 'strings'; absolutePaths?: boolean }
   | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
@@ -849,11 +849,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.discoverRoots',
-    type: { kind: 'strings' },
+    type: { kind: 'strings', absolutePaths: true },
     scopes: MACHINE,
     default: [],
     description:
-      'Absolute folders whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
+      'Absolute folders (a leading ~ is the home folder) whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
   },
   {
     key: 'maintenance.keep',
@@ -1273,6 +1273,13 @@ export function settingValueError(definition: SettingDefinition | string, value:
     ) {
       return numberBounds(type);
     }
+  }
+  if (type.kind === 'strings' && type.absolutePaths) {
+    const relative = (Array.isArray(value) ? value : []).find(
+      (entry) => !isAbsolute(entry) && !/^~(?:[\\/]|$)/.test(entry),
+    );
+    if (relative !== undefined)
+      return `an array of absolute paths (a leading ~ is the home folder), not ${JSON.stringify(relative)}`;
   }
   if (type.kind === 'path') {
     const path = value as string;
