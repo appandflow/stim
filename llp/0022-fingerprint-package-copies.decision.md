@@ -7,6 +7,10 @@
 **Date:** 2026-11-12
 **Related:** LLP 0014
 
+An agent chose these rules while fixing
+[#5508](https://github.com/appandflow/stim/issues/5508); the maintainer has not
+stated them.
+
 ## Packages the config evaluation loads are inputs
 
 A package whose code runs while Stim evaluates the app config, Expo
