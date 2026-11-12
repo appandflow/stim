@@ -72,9 +72,11 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
     try {
       names = await readdir(join(path, rel));
     } catch {
+      signal?.throwIfAborted();
       return unreadable;
     }
     for (const name of names) {
+      signal?.throwIfAborted();
       const child = join(rel, name);
       const stat = await lstat(join(path, child)).catch(() => null);
       if (!stat) return unreadable;

@@ -87,6 +87,10 @@ describe('scanSourceWrites', () => {
     expect('newest' in scan && scan.newest > quiet).toBe(true);
   });
 
+  it('stops at once when the pass is aborted instead of reporting an idle checkout', async () => {
+    await expect(scanSourceWrites(base, Date.now(), AbortSignal.abort())).rejects.toThrow(/abort/i);
+  });
+
   it('reports unknown, never idle, when the bound stops it', async () => {
     expect(await scanSourceWrites(base, Date.now() - 86_400_000, undefined, 1)).toMatchObject({
       unknown: expect.stringContaining('more than 1'),
