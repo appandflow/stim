@@ -19,7 +19,8 @@ export type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
-  | { type: 'update'; why: string };
+  | { type: 'update'; why: string }
+  | { type: 'restart'; why: string };
 
 /** A connection stimd's CLI socket handed over, carried as messages. */
 class Bridged extends Duplex {
@@ -58,6 +59,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       options,
       () => post({ type: 'idle' }),
       (why) => post({ type: 'update', why }),
+      (why) => post({ type: 'restart', why }),
     );
   } catch (error) {
     post({

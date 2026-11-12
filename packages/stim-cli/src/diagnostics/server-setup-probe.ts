@@ -13,7 +13,7 @@ import {
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configDir } from '@stim-cli/core';
+import { configDir, dropInExecStart } from '@stim-cli/core';
 import {
   isJsonObject,
   parseInstalledPlist,
@@ -130,11 +130,13 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
         ['--user', 'show', name, '-p', SHOW_PROPERTIES],
         { timeoutMs: PROBE_TIMEOUT_MS, env },
       );
+      const override = dropInExecStart(join(dir, name));
       return {
         manager: 'systemd',
         label: installed.label,
         installed,
         job: shown === null ? null : parseSystemctlShow(shown),
+        override: override ?? undefined,
       };
     }),
   );

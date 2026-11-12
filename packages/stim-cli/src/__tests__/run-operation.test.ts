@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'stim-run-operation-'));
   process.env.STIM_HOME = join(dir, 'home');
   env = { ...process.env, STIM_DAEMON: 'off' };
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '*' } }));
   const client = await import('../daemon/client.ts');
   const admission = vi.spyOn(client, 'beforeCommand').mockResolvedValue();
   restoreAdmission = () => admission.mockRestore();
@@ -68,6 +69,20 @@ describe('runOperation', () => {
     await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
     await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
   });
+
+  it.each(['ios', 'android'])(
+    'starts no daemon and records nothing for `stim %s` outside a project',
+    async (command) => {
+      const client = await import('../daemon/client.ts');
+      const outside = join(dir, 'outside');
+      mkdirSync(outside);
+      rmSync(join(dir, 'package.json'));
+      const entered = await runOperation({ caller: 'cli', command, plan: false, cwd: outside, env });
+      expect(entered).toMatchObject({ admitted: null, end: expect.any(Function) });
+      expect(client.beforeCommand).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, 'home'))).toBe(false);
+    },
+  );
 
   it('refuses an oversized environment before admitting either caller', async () => {
     env.LARGE = 'x'.repeat(512 * 1024);

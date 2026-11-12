@@ -8,6 +8,7 @@ import { getExecutor } from '../../exec.ts';
 import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { removeTemporaryEntryAsync } from '../../temporary.ts';
+import { PARITY_PREFIX, parityLeftoverKept, removeParityLeftover } from '../../diagnostics/parity-worktrees.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
@@ -18,7 +19,15 @@ import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-loc
 
 const TEMP_LEFTOVER_MIN_AGE_HOURS = 24;
 const MIN_AGE_MS = TEMP_LEFTOVER_MIN_AGE_HOURS * 60 * 60 * 1000;
-const STIM_PREFIXES = ['stim-claim-', 'stim-host-', 'stim-fakehome-', 'stim-hosted-macos-', 'stim-server-', 'stim-ws-'];
+const STIM_PREFIXES = [
+  'stim-claim-',
+  'stim-host-',
+  'stim-fakehome-',
+  'stim-hosted-macos-',
+  'stim-server-',
+  'stim-ws-',
+  PARITY_PREFIX,
+];
 const STAGING_PREFIX = '.stim-delete-';
 const TRACE_PATTERN = /^instruments.*\.ktrace$/;
 const TRACE_PROCESSES = new Set(['xctrace', 'Instruments']);
@@ -159,6 +168,10 @@ async function runningExecutables(operation?: StimContext, signal?: AbortSignal)
 }
 
 function stimKept(identity: string, scan: Walk, projects: readonly string[]): string | null {
+  if (basename(identity).startsWith(PARITY_PREFIX)) {
+    const parity = parityLeftoverKept(identity);
+    if (parity) return parity;
+  }
   const registered = projects.find((root) => inside(identity, root) || inside(root, identity));
   if (registered) return `the registered project ${registered} is in it; gc handles it as a project entry`;
   if (scan.unreadable) return scan.unreadable;
@@ -309,6 +322,16 @@ export async function deleteTempLeftovers(
     try {
       if (entry.kind === 'jest') continue;
       const name = basename(entry.path);
+      if (name.startsWith(PARITY_PREFIX)) {
+        const parity = await removeParityLeftover(entry.path, options.signal);
+        if (!parity.removed) {
+          output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: parity.kept ?? 'kept' });
+          continue;
+        }
+        done.count++;
+        done.bytes += entry.bytes;
+        continue;
+      }
       const staged =
         entry.kind !== 'stim' || name.startsWith(STAGING_PREFIX)
           ? entry.path
