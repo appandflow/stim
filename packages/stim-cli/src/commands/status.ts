@@ -67,6 +67,7 @@ import { isBootedParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked } fro
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
 import { hostedAgentLine } from '../hosted-names.ts';
+import { editsKeptReason } from '../workspace/dependency-edits.ts';
 
 function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): string[] {
   const out: string[] = [];
@@ -169,6 +170,13 @@ function timeIn(at: string, now: number): string {
 /** A source checkout whose installed dependencies maintenance deleted, so a worktree warm has none to copy. */
 function sourceDependenciesLine(root: string, { at, dirs }: { at: string; dirs: string[] }): string {
   return `  source checkout: ${dirs.map((dir) => relative(root, dir) || dir).join(' and ')} deleted ${at}; worktree warm has nothing to copy until they are installed here`;
+}
+
+/** One line per dependency tree that maintenance keeps because files in it changed after the install. */
+function dependencyEditsLines({ path, dependencyEdits = [] }: EnvironmentState): string[] {
+  return dependencyEdits.map((edits) =>
+    chalk.yellow(`  dependency edits: ${relative(path, edits.tree) || edits.tree} has ${editsKeptReason(edits)}`),
+  );
 }
 
 /** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
@@ -300,6 +308,7 @@ export function renderStatus(
     if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));
     if (!labelOnlyRoots[i] && state.sourceDependenciesCleared)
       out.push(chalk.dim(sourceDependenciesLine(state.path, state.sourceDependenciesCleared)));
+    out.push(...dependencyEditsLines(state));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)

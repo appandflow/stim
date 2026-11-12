@@ -165,11 +165,11 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-function safeName(value: string): string {
+export function safeName(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '') || 'worktree';
 }
 
-function stamp(at: number): string {
+export function stamp(at: number): string {
   return new Date(at).toISOString().replace(/[-:]/g, '').replace('.', '-');
 }
 

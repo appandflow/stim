@@ -136,6 +136,7 @@ import {
   type PhysicalDeviceReading,
 } from './physical-devices.ts';
 import { ownBuildLines } from './stimd/metro/injected.ts';
+import { keptDependencyEdits } from './workspace/dependency-edits.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -493,6 +494,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
       if (!state.live) applyStages(state, saved);
       const sourceDependencies = currentSourceDependencies(saved);
       if (sourceDependencies) state.sourceDependenciesCleared = sourceDependencies;
+      Object.assign(state, keptDependencyEdits(path));
       const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
       const phase = workspacePhase(state.live, saved, { now: leaseNow });
       Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {

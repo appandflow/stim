@@ -99,6 +99,7 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
+import { editedDependencyTrees } from '../workspace/dependency-edits.ts';
 
 export { brokenPodLinks } from './doctor-pods-flavor.ts';
 
@@ -1327,6 +1328,16 @@ export async function reactNativeDoctorFindings({
     await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
     appProjectFinding ? null : checkReadinessMarkers(projectRoot),
+    ...(await editedDependencyTrees(repositoryRoot ?? projectRoot, [projectRoot], options.operation?.signal))
+      .filter(({ edited }) => edited)
+      .map(({ tree, reason }) =>
+        finding(
+          'note',
+          `Files in ${relative(repositoryRoot ?? projectRoot, tree) || tree} changed after the install`,
+          `${tree}: ${reason}.`,
+          'An edit inside node_modules or Pods is not durable: a reinstall or maintenance removes it. Turn it into a patch with `pnpm patch`, `yarn patch` or `patch-package`, then reinstall.',
+        ),
+      ),
   ].filter((value): value is Finding => Boolean(value));
 }
 

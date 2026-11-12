@@ -7,6 +7,7 @@ import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
+import { dependencyEditsHold } from './dependency-edits.ts';
 
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
@@ -125,5 +126,9 @@ export async function discoveredRemovalHold(
   });
   if (!decision.stop) return decision.reason;
   if (!main) return 'its main checkout is unknown, so its git-ignored files cannot be compared';
-  return (await hiddenEditHold(path, operation?.signal)) ?? (await ignoredFilesHold(path, main, operation?.signal));
+  return (
+    (await hiddenEditHold(path, operation?.signal)) ??
+    (await ignoredFilesHold(path, main, operation?.signal)) ??
+    (await dependencyEditsHold(path, operation?.signal))
+  );
 }

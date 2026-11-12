@@ -2438,6 +2438,22 @@ only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
 
+A `node_modules` or `ios/Pods` tree with files modified after its install is
+never deleted silently. The install's time is when an install, `pod install`
+or `stim worktree warm` that Stim ran there finished, or else the package
+manager's stamp plus 10 minutes, so a root `postinstall` does not count.
+Build output (`node_modules/.cache`, Gradle and CMake output in a package's
+`android` directory or beside a Gradle build script, a package's `ios/build`,
+Xcode's `xcuserdata`) does not count either. At normal and high such a tree is
+kept, and `gc --dry-run`, `stim status` and `stim doctor` name the files. At
+critical the files are copied to `$STIM_HOME/archive/worktrees/` first, kept
+there under the worktree archive retention, and the tree is deleted; the
+action prints the `cp` command that puts them back after a reinstall. More
+than 1000 files or 64 MB keeps the tree even at critical.
+`stim worktree remove` saves them the same way before it removes the worktree.
+An edit in `node_modules` is never durable: make it a patch with
+`pnpm patch`, `yarn patch` or `patch-package`.
+
 Everything `gc` deletes, by category (N normal, H high, C critical):
 
 | Category                                                                                                                                                                                                                                        | Pass or rung               | Level                 | Kept when                                                                                                                                                                                                                                                                                                                                                                                        |

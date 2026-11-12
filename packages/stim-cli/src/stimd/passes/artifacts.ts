@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
+import { lastNativeUseFrom, type MaintenanceAction, type PressureLevel } from '@stim-cli/core/state';
 import {
   agentSessionUse,
   candidateRoots,
@@ -39,6 +39,12 @@ import {
   type RunningProcesses,
 } from '../../workspace/running-from.ts';
 import { finishLightened, recordLightened, restoreProblem, workspaceKeys } from '../../workspace/lightened.ts';
+import {
+  checkDependencyEdits,
+  forgetDependencyInstall,
+  savedEditsDetail,
+  type EditCheck,
+} from '../../workspace/dependency-edits.ts';
 import { recordSourceDependencies, takeWarmClaim, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
 import {
   listWorktrees,
@@ -585,6 +591,8 @@ export async function clearArtifact(
     restoreCache?: Parameters<typeof restoreProblem>[1];
     /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
     recheck?: (keys: readonly string[], worktree: string) => Promise<string | null>;
+    /** The pressure level the deletion runs at, which decides what files changed after the install do. */
+    level?: PressureLevel;
     operation?: StimContext;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
@@ -620,6 +628,7 @@ export async function clearArtifact(
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
+  let edits: EditCheck | null = null;
   const remove = async () => {
     const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
     if (lock) return lockReason(lock);
@@ -640,9 +649,21 @@ export async function clearArtifact(
     const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
     const record = kind === 'dependencies';
-    if (record) recordLightened(candidate.keys, candidate.path);
+    if (record) {
+      // @ref LLP 0002#edits-inside-dependency-folders -- a changed file keeps the folder, or is saved at critical
+      edits = await checkDependencyEdits(candidate.path, {
+        level: options.level ?? 'normal',
+        worktree: candidate.worktree,
+        signal,
+      });
+      if ('keep' in edits) return edits.keep;
+      recordLightened(candidate.keys, candidate.path);
+    }
     rmSync(candidate.path, { recursive: true, force: true });
-    if (record) finishLightened(candidate.keys, candidate.path);
+    if (record) {
+      finishLightened(candidate.keys, candidate.path);
+      forgetDependencyInstall(candidate.path);
+    }
     return null;
   };
   const kept = key
@@ -658,8 +679,13 @@ export async function clearArtifact(
   return {
     status: 'done',
     bytes: Number.isFinite(freed) ? Math.round(freed * 1024 * 1024) : 0,
-    detail: candidate.path,
+    detail: [candidate.path, editsDetail(edits)].filter(Boolean).join('; '),
   };
+}
+
+function editsDetail(edits: EditCheck | null): string | null {
+  if (!edits || 'keep' in edits) return null;
+  return edits.saved ? savedEditsDetail(edits.saved) : (edits.note ?? null);
 }
 
 function containing(worktrees: readonly ArtifactWorktree[], target: string): ArtifactWorktree | null {
@@ -688,6 +714,8 @@ export async function clearSourceTrees(
     worktrees: readonly ArtifactWorktree[];
     /** Why the checkout is no longer idle, asked once under the claims; null when it still is. */
     recheck: (keys: readonly string[], worktree: string) => Promise<string | null>;
+    /** The pressure level the deletion runs at, which decides what files changed after the install do. */
+    level: PressureLevel;
     operation?: StimContext;
   },
 ): Promise<Map<string, TreeOutcome>> {
@@ -754,10 +782,21 @@ export async function clearSourceTrees(
     const late = await options.recheck(worktree.keys, worktree.path);
     if (late) return keepAll(selected, late);
     const stillSelected: string[] = [];
+    const notes = new Map<string, string>();
     for (const path of selected) {
       const problem = await checkTree(path, heldKeys);
-      if (problem) keepAll([path], problem);
-      else stillSelected.push(path);
+      if (problem) {
+        keepAll([path], problem);
+        continue;
+      }
+      // @ref LLP 0002#edits-inside-dependency-folders -- a changed file keeps the folder, or is saved at critical
+      const edits = await checkDependencyEdits(path, { level: options.level, worktree: worktree.path, signal });
+      if ('keep' in edits) keepAll([path], edits.keep);
+      else {
+        const note = editsDetail(edits);
+        if (note) notes.set(path, note);
+        stillSelected.push(path);
+      }
     }
     selected = stillSelected;
     const begun: string[] = [];
@@ -766,7 +805,8 @@ export async function clearSourceTrees(
       begun.push(path);
       try {
         rmSync(path, { recursive: true, force: true });
-        results.set(path, { status: 'done', bytes: 0, detail: path });
+        forgetDependencyInstall(path);
+        results.set(path, { status: 'done', bytes: 0, detail: [path, notes.get(path)].filter(Boolean).join('; ') });
       } catch (error) {
         results.set(path, {
           status: 'failed',

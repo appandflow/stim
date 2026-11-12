@@ -10,6 +10,7 @@ import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { killOnAbort } from '../workspace/git-read.ts';
+import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -746,6 +747,7 @@ export async function runPodInstall(
       durationMs: run.durationMs,
     };
   }
+  recordDependencyInstall([join(iosDir, 'Pods')]);
   return { ok: true, command, notes, durationMs: run.durationMs };
 }
 

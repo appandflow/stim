@@ -91,6 +91,7 @@ import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
+import { recordDependencyInstall, savedEditsDetail, saveEditsBeforeRemoval } from '../workspace/dependency-edits.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -499,6 +500,11 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
+              recordDependencyInstall(
+                result.copied
+                  .filter((rel) => basename(rel) === 'node_modules' || basename(rel) === 'Pods')
+                  .map((rel) => join(target, rel)),
+              );
               const stale = reportCarriedStateHealth(
                 root,
                 target,
@@ -1222,6 +1228,28 @@ async function inspectGit(
   return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
+/**
+ * Saves the files changed after the install in the worktree's dependency trees before removal; false, after printing
+ * the refusal, when one tree's changes cannot be saved.
+ */
+async function saveDependencyEditsFirst(
+  path: string,
+  keys: readonly string[],
+  output: RemovalOutput,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  // @ref LLP 0002#edits-inside-dependency-folders -- removal saves changed dependency files first
+  const edits = await saveEditsBeforeRemoval(path, keys, signal);
+  if ('kept' in edits) {
+    output.error(chalk.red(`Refusing to remove ${path}: ${edits.kept}.`));
+    output.error(chalk.dim('Save or patch those files, or re-run with --force to remove it anyway.'));
+    output.fail();
+    return false;
+  }
+  for (const saved of edits.saved) output.error(chalk.dim(phaseLine('archive', savedEditsDetail(saved))));
+  return true;
+}
+
 async function printRemovalRefusal(
   path: string,
   inspection: RemovalInspection,
@@ -1650,6 +1678,10 @@ async function removeOrRefuse(
           const discardArchive = async (): Promise<void> => {
             if (archive) await discardWorktreeArchive(archive);
           };
+          if (!opts.force && !(await saveDependencyEditsFirst(path, lockedKeys, output, options.signal))) {
+            await discardArchive();
+            return;
+          }
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',

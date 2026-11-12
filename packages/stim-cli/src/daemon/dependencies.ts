@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction } from '@stim-cli/core/state';
+import type { DaemonLadderAction, PressureLevel } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -16,6 +16,7 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
+import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -265,6 +266,7 @@ export async function clearDependency(
   reason: string,
   operation?: StimContext,
   requireRestorable: boolean = true,
+  level: PressureLevel = 'normal',
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
@@ -283,6 +285,7 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
+        level,
         operation,
       },
     );
@@ -303,12 +306,13 @@ export async function clearSourceCheckouts(
   worktrees: readonly ArtifactWorktree[],
   operation: StimContext | undefined,
   setting: string,
+  level: PressureLevel,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
   const results = new Map<RankedDependency, TreeResult>();
   for (const group of groups.values()) {
-    const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, operation, setting);
+    const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, level, operation, setting);
     group.forEach((tree, index) => {
       const outcome = outcomes[index];
       if (outcome) results.set(tree, outcome);
@@ -326,6 +330,7 @@ export async function clearSourceDependencies(
   idleMs: number,
   protectedRoot: string,
   worktrees: readonly ArtifactWorktree[],
+  level: PressureLevel,
   operation?: StimContext,
   setting?: string,
 ): Promise<TreeResult[]> {
@@ -337,6 +342,7 @@ export async function clearSourceDependencies(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
+        level,
         operation,
       },
     );
@@ -350,6 +356,27 @@ export async function clearSourceDependencies(
     const detail = error instanceof Error ? error.message : String(error);
     return dependencies.map(() => ({ status: 'failed' as const, bytes: 0, detail }));
   }
+}
+
+/**
+ * A dry run's outcome for one dependency tree at `level`: kept when the edit check keeps it, else `would` with the edit
+ * check's note after `detail`.
+ */
+export async function wouldDelete(
+  dependency: RankedDependency,
+  level: PressureLevel,
+  detail: string,
+  operation?: StimContext,
+  bytes: number = dependency.privateBytes ?? 0,
+): Promise<{ status: 'would' | 'kept'; bytes: number; detail: string }> {
+  const edits = await checkDependencyEdits(dependency.candidate.path, {
+    level,
+    worktree: dependency.candidate.worktree,
+    dryRun: true,
+    signal: operation?.signal,
+  });
+  if ('keep' in edits) return { status: 'kept', bytes: 0, detail: edits.keep };
+  return { status: 'would', bytes, detail: [detail, edits.note].filter(Boolean).join('; ') };
 }
 
 let dormantCheckedAt = -Infinity;
@@ -448,7 +475,7 @@ async function takeIdleDependencies(
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
-      ? await clearSourceCheckouts(take, afterMs, input.protectedRoot ?? '', worktrees, operation, why)
+      ? await clearSourceCheckouts(take, afterMs, input.protectedRoot ?? '', worktrees, operation, why, 'normal')
       : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
     const target = dependency.candidate.path;
@@ -460,11 +487,12 @@ async function takeIdleDependencies(
       ? source
         ? (sourceResults.get(dependency) ?? { status: 'kept', bytes: 0, detail: 'it was not processed' })
         : await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
-      : {
-          status: 'would',
-          bytes: dependency.privateBytes ?? 0,
-          detail: input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing',
-        };
+      : await wouldDelete(
+          dependency,
+          'normal',
+          input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing',
+          operation,
+        );
     const restoreWith = source ? SOURCE_RESTORE : RESTORE;
     const restore = result.status === 'done' ? { restore: restoreWith } : {};
     actions.push({

@@ -668,6 +668,18 @@ export interface AndroidDeviceState {
 /** The tutorial format version the installed Stim writes into the tutorial app. */
 export const TUTORIAL_VERSION = 2;
 
+/** A dependency tree that maintenance keeps until critical pressure, because files in it changed after its install. */
+export interface DependencyEditsStatus {
+  tree: string;
+  count: number;
+  /** False when more files than listed may have changed. */
+  complete: boolean;
+  /** The first changed files, relative to the tree. */
+  files: string[];
+  /** When maintenance found them. */
+  at: string;
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
@@ -703,6 +715,8 @@ export interface EnvironmentState {
   dormantStage?: DormantStageRecord;
   /** Present while a source checkout's node_modules or Pods that maintenance deleted are still missing: worktree warm has nothing to copy. */
   sourceDependenciesCleared?: SourceDependenciesRecord;
+  /** The workspace's node_modules and Pods trees that maintenance keeps because files in them changed after the install. */
+  dependencyEdits?: DependencyEditsStatus[];
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**

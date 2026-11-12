@@ -49,6 +49,48 @@ lose work silently.
 Chosen by the coordinator and the reviews of #5519 and #5526, not by the
 maintainer.
 
+## Edits inside dependency folders
+
+A node_modules or Pods tree whose files changed after its install is never
+deleted silently, and never blocks freeing disk at critical:
+
+- Before a tree is deleted, Stim lists its files modified after the install
+  from file times alone; it never reads or hashes them. The install's time is
+  when an install, `pod install` or `stim worktree warm` that Stim ran there
+  finished, after every script; for an install Stim did not run, the package
+  manager's stamp plus 10 minutes, so a root `postinstall` is not an edit and
+  an edit made within those 10 minutes is missed.
+- Build and tool output does not count: `node_modules/.cache`, the `build`,
+  `.gradle`, `.kotlin` and `.cxx` directories in a package's `android`
+  directory or beside a Gradle build script, a package's `ios/build`, Xcode's
+  `xcuserdata` in Pods, and the package manager's own state files.
+- At normal and high a tree with changed files is kept, with a reason that
+  names them, until it is reinstalled; it is not walked again before that.
+- At critical the changed files are copied into the worktree archive with a
+  manifest, then the tree is deleted, and the action says how to put them
+  back. Over 1000 files or 64 MB, or when the copy cannot be written, the tree
+  is kept even at critical. A tree that cannot be checked is kept below
+  critical and deleted at critical with a note.
+- `stim worktree remove` saves them the same way, and refuses without
+  `--force` when it cannot.
+
+Reason: an agent patches a library in node_modules to get a build working, and
+a reinstall silently undoes it. Below critical, a wrong keep costs disk until
+the next reinstall; at critical, saving every changed file costs kilobytes, so
+a guess that build output is an edit never loses a fix and never keeps
+gigabytes.
+
+The maintainer raised the case ("there is 1 case i worry about is agwnt doing
+changes locally in node modules to fix libs and it being deleted on
+maintenance"), was shown the measures of #5581, and approved them:
+
+Maintainer decision: "I approve of all fixes", 2026-11-12.
+
+The reference times, the 10-minute grace, the exclusion list, the 1000-file and
+64 MB caps, saving under the worktree archive and its retention, and saving on
+`stim worktree remove` were chosen by the implementing lane and the
+coordinator in #5581, not by the maintainer.
+
 ## Machine-wide deletion refuses in a scoped home
 
 Deleting an unused iOS simulator runtime and rung 9 (LLP 0003) act on the whole
@@ -89,8 +131,9 @@ work or breaks a build in progress.
 
 ## Links
 
-- Issues: #5492, #5512, #5520. Pull requests: #5514, #5519, #5526.
+- Issues: #5492, #5512, #5520, #5581. Pull requests: #5514, #5519, #5526.
 - Code: `packages/stim-cli/src/stimd/passes/runtimes.ts` (`planRuntimes`),
   `packages/stim-cli/src/stimd/passes/unowned.ts` (`machineCleanupRefusal`),
   `packages/stim-cli/src/commands/worktree.ts` (`provenPodChurn`),
-  `packages/stim-cli/src/workspace/hidden-edits.ts`.
+  `packages/stim-cli/src/workspace/hidden-edits.ts`,
+  `packages/stim-cli/src/workspace/dependency-edits.ts`.
