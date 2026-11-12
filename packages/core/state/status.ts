@@ -8,6 +8,7 @@ import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type {
   DeviceIdleShutdownRecord,
   DormantStageRecord,
+  SourceDependenciesRecord,
   IdleStageRecord,
   IdleStopRecord,
   MetroLastStop,
@@ -700,6 +701,8 @@ export interface EnvironmentState {
   idleStage?: IdleStageRecord;
   /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
   dormantStage?: DormantStageRecord;
+  /** Present while a source checkout's node_modules or Pods that maintenance deleted are still missing: worktree warm has nothing to copy. */
+  sourceDependenciesCleared?: SourceDependenciesRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**

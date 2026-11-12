@@ -877,7 +877,7 @@ mode, the pressure level of its last tick and its last actions. It runs no timer
 and keeps no thresholds of its own. The **Automatic Maintenance** section of the
 App preferences shows the mode, the level, the last actions and the last
 maintenance pass (when, actions and bytes freed, and why it was blocked).
-**Clean up what is unused for** sets `maintenance.olderThanDays` (7 days by
+**Clean up what is unused for** sets `maintenance.olderThanDays` (3 days by
 default; Never is 0), **Stop idle workspaces after** sets `idle.minutes` (15
 minutes by default; Never is 0), and **Also remove clean, pushed worktrees
 unused that long** sets `maintenance.removeIdleWorktrees` (off by default; it

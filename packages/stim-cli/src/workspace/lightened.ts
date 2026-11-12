@@ -5,7 +5,8 @@ import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadataFile } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { warmWorktreeTarget } from '../commands/worktree.ts';
+import { dependencyInstallCommand, warmWorktreeTarget } from '../commands/worktree.ts';
+import { podInstallCommand } from '../engine/bundler.ts';
 import { withWorkspaceStateLock } from './workspace-state.ts';
 import {
   depsOutOfSync,
@@ -93,7 +94,10 @@ export async function restoreProblem(
   const facts = await pending;
   if (!facts) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
   const rel = relative(worktree, path);
-  if (!facts.carryable.has(rel)) return `worktree warm would not copy ${rel} back from the source checkout`;
+  if (!facts.carryable.has(rel))
+    return existsSync(join(facts.source, rel))
+      ? `worktree warm would not copy ${rel} back from the source checkout`
+      : `the source checkout has no installed ${rel} to copy, so worktree warm could not restore it`;
   const pods = basename(rel) === 'Pods';
   if ((pods ? podsOutOfSync(facts.source, [rel]) : depsOutOfSync(facts.source, facts.source, [rel])).length)
     return `the source checkout's ${rel} was not installed from its own lockfile, so worktree warm would restore other versions`;
@@ -168,6 +172,14 @@ function depsFailure(
   };
 }
 
+/** The command that installs what is missing at `dir`, a node_modules or Pods tree of the worktree `root`. */
+function installFor(dir: string, root: string): string {
+  const parent = dirname(dir);
+  return basename(dir) === 'Pods'
+    ? `cd '${parent.replaceAll("'", "'\\''")}' && ${podInstallCommand(root, parent)}`
+    : dependencyInstallCommand(parent);
+}
+
 /**
  * Restores the dependencies gc deleted from this workspace's worktree through `stim worktree warm`, or returns the
  * failure to report. A workspace gc never lightened is left alone.
@@ -190,7 +202,7 @@ export async function restoreLightenedDependencies(
         return depsFailure(
           root,
           `${dir} cannot be restored by worktree warm: ${problem}.`,
-          `Install the project's dependencies in ${root} (for example \`pnpm install\` or \`pod install\`), then retry.`,
+          `Run \`${installFor(dir, root)}\` to install them, then retry.`,
         );
     }
     operation.output(

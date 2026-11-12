@@ -206,7 +206,8 @@ In on mode a pass runs, cheapest to rebuild first:
      newest stays. Also kept: a runtime a project's ios.runtime pins, every
      runtime with the major version of the active Xcode's simulator SDK
      (xcrun --sdk iphonesimulator --show-sdk-version), and every runtime
-     whose simctl lastUsedAt is within maintenance.olderThanDays or that
+     whose simctl lastUsedAt is within the larger of maintenance.olderThanDays
+     and 7 days or that
      simctl records no use of (Stim keeps no record of its own). When the SDK
      version cannot be read, a registered project's path cannot be reached or
      its .stim.json cannot be parsed, no runtime is deleted and the run
@@ -219,7 +220,7 @@ In on mode a pass runs, cheapest to rebuild first:
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android; never
 at a set hour.
-maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
+maintenance.olderThanDays (3) is its age for steps 2, 3, 5 and 6; with 0 the
 sweep removes nothing in them by age, while step 1, step 7, finished
 worktrees and the cap and disk-driven parts of steps 2 and 3 still run.
 Kept for
@@ -522,7 +523,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     does not mark it deletable, it is the only installed runtime, it is the
     newest when none is used, a project's ios.runtime pins it, it has the
     major version of the active Xcode's simulator SDK, simctl's lastUsedAt
-    for it is within maintenance.olderThanDays or absent; an unreadable SDK
+    for it is within the larger of maintenance.olderThanDays and 7 days or absent; an unreadable SDK
     version, an unreachable project path or an unparsable .stim.json (reported
     under "Needs a person"); a scoped STIM_HOME; a failed listing.
   Owned simulators whose runtime is gone
@@ -609,8 +610,33 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
   or the source checkout's dependencies were not installed from its own
-  lockfile), refuses with STIM_DEPS_FAILED and asks for an install. The source
-  checkout's node_modules is never deleted. Only git-ignored regenerable
+  lockfile), refuses with STIM_DEPS_FAILED and asks for an install. A source
+  (main) checkout's node_modules and ios/Pods are deleted in two cases only,
+  after those of every linked worktree: it has had no activity for
+  idle.sourceDormantDays (7; 0 never; no activity means no Stim command, source
+  file write, git write or commit, in the checkout and in every Stim workspace
+  in it, registered or not; a worktree warm copying from it is activity when the
+  warmed app has a Stim workspace in the source, and a running warm keeps it;
+  runs from or works in it means a process whose working directory is in the
+  checkout or whose command line names a path in it, and reading files in an
+  editor with no process there is not activity), at any level, or the level is critical, the checkout is idle 2
+  minutes and its volume is still under the critical level (pressure ladder
+  rung 8, before the history and tool caches; \`stim gc --pressure critical\`
+  always takes it). Nothing that runs from or works in it, builds, drives,
+  leases, hosts or is pinned with maintenance.keep is touched, nor a checkout
+  whose node_modules a linked worktree listed by git links to (a symlink at the
+  same relative path or in its top two directory levels, up to 2000 entries,
+  resolving into the tree; past the bound or at an unreadable directory the
+  tree is kept; unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
+  rule (critical takes it), or that is not a real
+  git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
+  recorded in the checkout's workspace; \`stim worktree warm\` in a linked
+  worktree then says on stderr that the source has no installed dependencies
+  to copy and since when, \`stim status\` and --json sourceDependenciesCleared
+  show the same, and the record ends once they are installed again. A source
+  checkout is kept longer for a reason: it is what new worktrees warm from,
+  so keeping it installed is worth more than keeping one worktree installed.
+  Only git-ignored regenerable
   directories are deleted: a real directory inside the checkout whose files git
   ignores, with no tracked or unignored file, not reached through a link.
 

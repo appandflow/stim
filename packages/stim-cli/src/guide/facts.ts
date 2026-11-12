@@ -1509,6 +1509,10 @@ RULES
   with no Stim command since, carries dormantStage and a plain stage line:
 
   dormantStage  { at, dormantDays, deletedDevices, archived }
+  A source (main) checkout whose node_modules or ios/Pods maintenance or gc
+  deleted carries sourceDependenciesCleared { at, dirs } and a plain "source
+  checkout" line while any of those directories is still missing; worktree
+  warm has nothing to copy until they are installed there.
   deletedDevices names the owned devices it deleted; archived says its logs
   moved to the archive. When it deleted a device, the next stim ios or stim
   android creates one; with none deleted, stim revive resumes the workspace

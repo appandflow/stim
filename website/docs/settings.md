@@ -801,6 +801,10 @@ together with its dev server, once the workspace has had no activity for
 `idle.minutes` (15 by default), whether or not a dev server runs; see
 [idle stop](./dev-server-and-logs.md#idle-stop) and
 [idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
+`idle.sourceDormantDays` (7 by default; fractions allowed; `0` never; machine only) is the same for
+a source (main) checkout's `node_modules` and `ios/Pods`, taken after those of linked
+worktrees. Activity is a Stim command, a source file write, a git write or a commit in the
+checkout or any workspace in it, registered or not; a `stim worktree warm` copying from it counts too, when the warmed app has a Stim workspace in the source.
 After `idle.dormantDays` (1 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant and is reduced to its minimal size, at
 every level, by `stim gc` and by the `stim-daemon`: its regenerable build outputs
@@ -985,7 +989,7 @@ the same cap. Under disk pressure the
 [pressure ladder](./build-caches.md#disk-pressure) trims the caches further.
 `caches.ccacheMaxGb` is passed to ccache, which evicts by itself.
 `maintenance.sweepHours` (24) sets how often the age sweep runs.
-`maintenance.olderThanDays` (7; 0 turns these off) is how long something stays
+`maintenance.olderThanDays` (3; 0 turns these off) is how long something stays
 unused before that sweep removes it: workspace build outputs, shared cache
 entries, parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
