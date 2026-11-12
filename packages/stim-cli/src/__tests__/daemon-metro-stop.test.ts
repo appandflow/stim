@@ -160,6 +160,6 @@ test('a stimd of another build whose handover live shares hold names them at onc
   expect(stopped).toMatchObject({
     stopped: false,
     reason: expect.stringContaining('live web shares'),
-    remedy: expect.stringContaining('kill 4242'),
+    remedy: expect.stringContaining(process.platform === 'win32' ? 'taskkill /PID 4242' : 'kill 4242'),
   });
 });
