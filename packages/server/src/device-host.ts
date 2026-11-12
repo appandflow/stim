@@ -2482,6 +2482,7 @@ export class DeviceHost {
     }
   }
 
+  // @ref LLP 0010#resume-the-recorded-session -- restart resumes only the same proven owned device
   async resumeSessions(): Promise<void> {
     let records: HostedDeviceSession[];
     try {
