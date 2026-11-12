@@ -2367,7 +2367,8 @@ What each level deletes. A level includes the ones below it.
   stale records (the device ledger, the EAS ledger, gone Stim homes, dead build
   locks and slots, empty process locks, stale status caches, expired device
   leases), archives past retention, workspace logs over 8 MiB, parked hosted
-  devices, orphaned EAS sessions of the current Expo project, unused iOS
+  devices, orphaned EAS sessions of the current project when it has an Expo
+  config file, unused iOS
   simulator runtimes, and finished (merged, or pull request merged or closed)
   linked worktrees once `gc.worktreeGraceMinutes` have passed. It also reduces
   every workspace with no activity for `idle.dormantDays` (1 by default) to its
