@@ -199,7 +199,7 @@ test.each(['caller', 'timeout'] as const)(
           name: 'fixture',
           provider: {
             builds: {
-              store: () => null,
+              store: async () => null,
               resolve: async ({ destinationDir, signal }) => {
                 downloading = destinationDir;
                 signal.addEventListener('abort', stopped, { once: true });
@@ -323,7 +323,7 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
         name: 'fixture',
         provider: {
           builds: {
-            store: () => null,
+            store: async () => null,
             resolve: ({ destinationDir }) => {
               downloading = destinationDir;
               entered();
@@ -382,7 +382,7 @@ test.each([
     name: 'fixture',
     provider: {
       builds: {
-        store: () => null,
+        store: async () => null,
         resolve: ({ destinationDir }) => {
           downloading = destinationDir;
           entered();
