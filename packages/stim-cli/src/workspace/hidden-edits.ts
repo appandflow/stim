@@ -1,5 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { quotedPath } from '@stim-cli/core';
 import { gitQuietAsync } from './git.ts';
 
 /**
@@ -25,8 +26,7 @@ export async function hiddenEditHold(path: string, signal?: AbortSignal): Promis
     )
       continue;
     const kind = skipWorktree ? 'skip-worktree' : 'assume-unchanged';
-    const quoted = /^[A-Za-z0-9._/-]+$/.test(file) ? file : JSON.stringify(file);
-    return `its tracked file ${file} is marked ${kind}, so git status may not show an edit to it; show it with git -C ${path} update-index --no-${kind} ${quoted}, then commit or discard it`;
+    return `its tracked file ${file} is marked ${kind}, so git status may not show an edit to it; show it with git -C ${quotedPath(path)} update-index --no-${kind} ${quotedPath(file)}, then commit or discard it`;
   }
   return null;
 }

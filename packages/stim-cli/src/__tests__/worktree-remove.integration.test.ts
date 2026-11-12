@@ -1831,7 +1831,7 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
   git('git add -A');
   git('git commit -q -m init');
   git('git push -q -u origin HEAD');
-  const wt = join(base, 'wt');
+  const wt = join(base, 'wt dir');
   git(`git worktree add -q "${wt}" -b feat-pods`);
 
   const installed = `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`;
@@ -1985,6 +1985,12 @@ test.each(KEPT_EDITS)(
       expect(existsSync(wt)).toBe(true);
       expect(text).toContain(`Refusing to remove ${wt}`);
       expect(text).toMatch(message);
+      const kind = /skip-worktree/.test(message.source)
+        ? 'skip-worktree'
+        : /assume-unchanged/.test(message.source)
+          ? 'assume-unchanged'
+          : null;
+      expect(text).toContain(kind ? `git -C '${wt}' update-index --no-${kind} 'apps/app/App.tsx'` : '');
       expect(text).not.toMatch(/restored/);
       expect(status()).toBe(before);
       expect(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8')).toBe(lock);

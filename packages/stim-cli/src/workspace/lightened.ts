@@ -136,7 +136,6 @@ export function recordLightened(keys: readonly string[], dir: string): void {
     }));
 }
 
-/** The `Podfile.lock` beside a `Pods` directory about to be deleted, with its hash, when `Pods/Manifest.lock` is its copy. */
 function installedPodLock(dir: string): { path: string; hash: string } | null {
   if (basename(dir) !== 'Pods') return null;
   try {
