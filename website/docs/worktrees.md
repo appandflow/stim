@@ -80,6 +80,19 @@ Stim keeps active, locked and pinned worktrees. It also keeps unpushed commits u
 
 A finished worktree with uncommitted changes can be removed after Stim saves a recovery archive. The archive includes tracked changes and unignored untracked files, which can contain secrets. Stim keeps the worktree if it cannot safely save the archive or archiving is disabled. The removal output gives the exact restore commands.
 
+## Checkouts Stim never ran in
+
+Maintenance and `stim gc` also manage checkouts no `stim` command ever ran in, with the same rules as a registered workspace. Discovery finds linked worktrees of the repositories of your registered projects, direct children of the folders that hold those checkouts, and direct children of the folders in `maintenance.discoverRoots`. A child counts only when Stim's project detection recognises it as a project it handles; every other folder is ignored. Discovery registers nothing and creates no workspace directory.
+
+A discovered checkout loses its regenerable build outputs once it has been idle for `idle.dormantDays`, and a clean linked worktree whose branch is merged or whose pull request ended is removed after the grace period. With no Stim activity record, idle means the newest of its source file writes (outside `node_modules`, Pods, build output and nested worktrees), its last commit and its git writes. A process running from it, an agent session working in it, a pin with `maintenance.keep`, dirty or unpushed work, or anything Stim cannot read keeps it. Its `node_modules` and Pods stay, because Stim has no workspace record to restore them from. A `STIM_HOME` scoped home discovers only from its own `maintenance.discoverRoots`.
+
+<StimTabs
+code={`stim settings set maintenance.discoverRoots '["/Users/me/Developer"]' --scope machine
+stim gc --dry-run`}
+/>
+
+`stim gc --dry-run` lists every discovered checkout and what it would lose. To try it with an agent, paste: "Add my Developer folder to maintenance.discoverRoots, run stim gc --dry-run, and tell me which discovered checkouts hold the most regenerable space and why each is kept or cleared."
+
 ## Archived workspaces
 
 Open **Archived** in Desktop or the phone app to view retained build history, logs and device replay. An archived workspace is read-only. Logs and recordings can contain secrets, and retention limits apply. [Archive retention settings](./settings.md#archive-retention)

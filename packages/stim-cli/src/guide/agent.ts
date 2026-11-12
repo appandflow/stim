@@ -372,8 +372,8 @@ Ask the user before these actions:
   files.
 - gc, because it deletes: it runs one maintenance pass at the measured
   pressure level and removes orphaned resources, clean linked worktrees that a
-  stim command has run in (one another tool manages is kept as not-registered)
-  whose branch or pull request is merged (or whose pull request was closed),
+  stim command has run in or discovery finds (a scoped STIM_HOME keeps any
+  other as not-registered) whose branch or pull request is merged (or whose pull request was closed),
   unused iOS simulator runtimes, and everything a workspace idle for
   idle.dormantDays (1) holds that regenerates: build outputs, owned devices,
   and in a linked worktree node_modules and ios/Pods (worktree warm restores

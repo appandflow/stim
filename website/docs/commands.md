@@ -2340,7 +2340,9 @@ machine measures, and deletes. `stim gc --dry-run` reports what that run would
 delete and deletes nothing. `stim gc --pressure <level>` runs at that level
 instead of the measured one; add `--dry-run` to preview it. `gc` cannot pick a
 single cache, archive, worktree or age. Preview with `--dry-run`, then run
-`stim gc` when you want the space back.
+`stim gc` when you want the space back. The summary and `--json` also list
+discovered checkouts, ones no stim command ran in, with what each would lose
+([worktrees](./worktrees.md#checkouts-stim-never-ran-in)).
 
 What each level deletes. A level includes the ones below it.
 

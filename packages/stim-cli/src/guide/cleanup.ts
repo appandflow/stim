@@ -792,12 +792,10 @@ SWEEPING FINISHED WORKTREES
   Every \`gc\` looks at every registered project root,
   every workspace.json root, and every linked worktree \`git worktree list\`
   shows for a registered project's repository. It groups them by git worktree
-  and reports each linked worktree with the reason it is removed or kept. Only
-  a worktree Stim has used is ever removed: a project is registered, or a
-  workspace.json names a root, inside it, which a stim command that records a
-  workspace (start, ios, android, web, macos, or worktree warm from the app
-  directory) leaves. Stim does not create worktrees, so use is the only record
-  it has. A linked worktree another tool created and manages is reported as
+  and reports each linked worktree with the reason it is removed or kept. A
+  worktree is managed when a registered project or a workspace.json root lies
+  in it, or when discovery finds it (DISCOVERED CHECKOUTS below); a linked
+  worktree of a scoped STIM_HOME that none of these names is reported as
   not-registered and kept, however merged or idle; \`worktree remove\` still
   removes it on request. A worktree is finished when
   its branch is merged into the default branch, or its pull request was
@@ -812,9 +810,9 @@ SWEEPING FINISHED WORKTREES
   another worktree (worktree remove refuses it too), in use (the sweep also
   counts a running Claude Code session, or a Codex thread active in the last
   30 minutes, whose working directory is in the worktree),
-  not registered in this Stim home (not-registered: neither the registry nor
-  a workspace.json root of this Stim home lies in it, so no stim command ran
-  there, or the worktree belongs to another home),
+  not known to this Stim home (not-registered: no project, workspace.json root
+  or discovery source of this Stim home names it, which in a scoped STIM_HOME
+  includes every worktree outside maintenance.discoverRoots),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
@@ -1102,6 +1100,28 @@ ORPHANED WORKSPACE DIRECTORIES
   root its maintenance log names maps to the directory name and is gone. Any
   other file (state.json, for one), a held lock or a log naming no root keeps
   it under Skipped. The empty directory report has no project root.
+
+DISCOVERED CHECKOUTS
+A checkout no stim command ran in is managed like a registered workspace once
+discovery finds it: linked worktrees of the repositories of registered projects
+(\`git worktree list\`), direct children of the folders that hold those
+checkouts, and direct children of the folders in maintenance.discoverRoots (a
+machine setting, a list of absolute paths). A child counts only when Stim's
+project detection recognises it as a project it handles; any other folder is
+ignored. Discovery registers nothing, writes nothing and recomputes each run.
+A scoped STIM_HOME discovers only from its own maintenance.discoverRoots.
+  stim settings set maintenance.discoverRoots '["/Users/me/Developer"]' --scope machine
+A discovered checkout follows the registered rules: its regenerable build
+outputs go once it is idle for idle.dormantDays, or for 2 minutes at high and
+critical, and a clean linked worktree whose work is merged or whose pull request
+ended is removed. With no Stim activity record, idle means the newest of its
+source file writes (outside node_modules, Pods, build output and nested
+worktrees), its last commit, its git writes. A process running from or working
+in it, an agent session in it, a pin by maintenance.keep, more source files than
+the scan reads, or evidence that cannot be read keeps it. Dirty work is kept,
+never archived. Its node_modules and Pods stay, since Stim has no workspace
+record to restore them from. \`stim gc --dry-run\` lists the discovered
+checkouts and what each would lose.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`
