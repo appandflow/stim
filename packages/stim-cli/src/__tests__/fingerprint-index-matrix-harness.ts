@@ -145,101 +145,107 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
-  'the validation index against a full computation',
-  () => {
-    describe.each([
-      ['stamped pnpm', true],
-      ['unstamped', false],
-    ] as const)('%s install', (_layout, stamped) => {
-      let before: string;
-      const reinstall = () => {
-        if (stamped) appendFileSync(join(app, 'node_modules', '.modules.yaml'), '# installed again\n');
-      };
-      const nm = (name: string) =>
-        stamped
-          ? join(app, 'node_modules', '.pnpm', `${name}@1.0.0`, 'node_modules', name)
-          : join(app, 'node_modules', name);
+export function describeMatrix(layout: string, stamped: boolean, from: number, to: number): void {
+  describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
+    'the validation index against a full computation',
+    () => {
+      describe(`${layout} install`, () => {
+        let before: string;
+        const reinstall = () => {
+          if (stamped) appendFileSync(join(app, 'node_modules', '.modules.yaml'), '# installed again\n');
+        };
+        const nm = (name: string) =>
+          stamped
+            ? join(app, 'node_modules', '.pnpm', `${name}@1.0.0`, 'node_modules', name)
+            : join(app, 'node_modules', name);
 
-      beforeEach(async () => {
-        app = fixture(stamped);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        before = (await key('use')).hash;
-        const hit = await key('use');
-        if (hit.from !== 'index' || hit.hash !== before) throw new Error('the second computation was not an index hit');
-      }, 120_000);
+        beforeEach(async () => {
+          app = fixture(stamped);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          before = (await key('use')).hash;
+          const hit = await key('use');
+          if (hit.from !== 'index' || hit.hash !== before)
+            throw new Error('the second computation was not an index hit');
+        }, 120_000);
 
-      test.each<[string, () => void]>([
-        [
-          'a native edit in the committed ios/',
-          () => appendFileSync(join(app, 'ios/App/AppDelegate.swift'), '\n// edit'),
-        ],
-        ['a new untracked file in ios/', () => write(join(app, 'ios/App/New.swift'))],
-        [
-          'a native dependency version bump',
-          () => {
-            nativePackage(nm('native-lib'), 'native-lib', '1.1.0');
-            reinstall();
+        const cases: [string, () => void][] = [
+          [
+            'a native edit in the committed ios/',
+            () => appendFileSync(join(app, 'ios/App/AppDelegate.swift'), '\n// edit'),
+          ],
+          ['a new untracked file in ios/', () => write(join(app, 'ios/App/New.swift'))],
+          [
+            'a native dependency version bump',
+            () => {
+              nativePackage(nm('native-lib'), 'native-lib', '1.1.0');
+              reinstall();
+            },
+          ],
+          [
+            'a native module added',
+            () => {
+              const dir = join(app, 'node_modules', 'added-lib');
+              nativePackage(dir, 'added-lib', '2.0.0');
+              const manifest = readFileSync(join(app, 'package.json'), 'utf8');
+              write(join(app, 'package.json'), manifest.replace('"ws-lib":"*"', '"ws-lib":"*","added-lib":"*"'));
+              reinstall();
+            },
+          ],
+          [
+            'a local Expo module edit',
+            () => appendFileSync(join(app, 'modules/local-mod/ios/LocalMod.swift'), '\n// edit'),
+          ],
+          [
+            'a workspace-linked native package edit',
+            () => appendFileSync(join(base, 'repo/packages/ws-lib/ios/Lib.m'), '\n// edit'),
+          ],
+          [
+            'an existing modules/ directory becoming a native module',
+            () => write(join(app, 'modules/plain/expo-module.config.json'), '{"platforms":["apple"]}'),
+          ],
+          [
+            'a root react-native.config.js added',
+            () => write(join(app, 'react-native.config.js'), 'module.exports = { dependencies: {} };'),
+          ],
+          [
+            'an app.json edit',
+            () => write(join(app, 'app.json'), JSON.stringify({ expo: { name: 'Renamed', slug: 'app' } })),
+          ],
+          ['a .env file the config loader reads', () => write(join(app, '.env'), 'APP_FLAG=from-file')],
+          ['an asset app.json names', () => write(join(app, 'assets/icon.png'), 'new png')],
+          ['a local plugin app.json names', () => appendFileSync(join(app, 'plugins/native.js'), '\n// edit')],
+          ['a patch added', () => write(join(app, 'patches/native-lib+1.0.0.patch'), '--- a/ios/Lib.m')],
+          [
+            'a native package linked to a copy outside node_modules',
+            () => {
+              const copy = join(base, 'linked', 'native-lib');
+              nativePackage(copy, 'native-lib', '1.0.0');
+              appendFileSync(join(copy, 'ios', 'Lib.m'), '\n// linked');
+              rmSync(join(app, 'node_modules', 'native-lib'), { recursive: true });
+              symlinkSync(copy, join(app, 'node_modules', 'native-lib'));
+            },
+          ],
+          [
+            'an integrity change of a native package in the lockfile',
+            () => {
+              const lock = join(base, 'repo', 'pnpm-lock.yaml');
+              write(lock, readFileSync(lock, 'utf8').replace('sha512-native', 'sha512-repointed'));
+            },
+          ],
+        ];
+
+        test.each(cases.slice(from, to))(
+          'moves the key after %s, as a computation without the index does',
+          SLOW,
+          async (_change, change) => {
+            change();
+            const indexed = await key('use');
+            const full = await key('skip');
+            expect(indexed.hash).toBe(full.hash);
+            expect(indexed.hash).not.toBe(before);
           },
-        ],
-        [
-          'a native module added',
-          () => {
-            const dir = join(app, 'node_modules', 'added-lib');
-            nativePackage(dir, 'added-lib', '2.0.0');
-            const manifest = readFileSync(join(app, 'package.json'), 'utf8');
-            write(join(app, 'package.json'), manifest.replace('"ws-lib":"*"', '"ws-lib":"*","added-lib":"*"'));
-            reinstall();
-          },
-        ],
-        [
-          'a local Expo module edit',
-          () => appendFileSync(join(app, 'modules/local-mod/ios/LocalMod.swift'), '\n// edit'),
-        ],
-        [
-          'a workspace-linked native package edit',
-          () => appendFileSync(join(base, 'repo/packages/ws-lib/ios/Lib.m'), '\n// edit'),
-        ],
-        [
-          'an existing modules/ directory becoming a native module',
-          () => write(join(app, 'modules/plain/expo-module.config.json'), '{"platforms":["apple"]}'),
-        ],
-        [
-          'a root react-native.config.js added',
-          () => write(join(app, 'react-native.config.js'), 'module.exports = { dependencies: {} };'),
-        ],
-        [
-          'an app.json edit',
-          () => write(join(app, 'app.json'), JSON.stringify({ expo: { name: 'Renamed', slug: 'app' } })),
-        ],
-        ['a .env file the config loader reads', () => write(join(app, '.env'), 'APP_FLAG=from-file')],
-        ['an asset app.json names', () => write(join(app, 'assets/icon.png'), 'new png')],
-        ['a local plugin app.json names', () => appendFileSync(join(app, 'plugins/native.js'), '\n// edit')],
-        ['a patch added', () => write(join(app, 'patches/native-lib+1.0.0.patch'), '--- a/ios/Lib.m')],
-        [
-          'a native package linked to a copy outside node_modules',
-          () => {
-            const copy = join(base, 'linked', 'native-lib');
-            nativePackage(copy, 'native-lib', '1.0.0');
-            appendFileSync(join(copy, 'ios', 'Lib.m'), '\n// linked');
-            rmSync(join(app, 'node_modules', 'native-lib'), { recursive: true });
-            symlinkSync(copy, join(app, 'node_modules', 'native-lib'));
-          },
-        ],
-        [
-          'an integrity change of a native package in the lockfile',
-          () => {
-            const lock = join(base, 'repo', 'pnpm-lock.yaml');
-            write(lock, readFileSync(lock, 'utf8').replace('sha512-native', 'sha512-repointed'));
-          },
-        ],
-      ])('moves the key after %s, as a computation without the index does', SLOW, async (_change, change) => {
-        change();
-        const indexed = await key('use');
-        const full = await key('skip');
-        expect(indexed.hash).toBe(full.hash);
-        expect(indexed.hash).not.toBe(before);
+        );
       });
-    });
-  },
-);
+    },
+  );
+}

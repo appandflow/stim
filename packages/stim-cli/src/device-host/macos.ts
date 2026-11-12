@@ -225,6 +225,7 @@ export async function runHostedMacosApp(
       if (process.env[key] !== undefined) env[key] = process.env[key];
     Object.assign(env, { STIM_HOME: home, HOME: isolated, CFFIXED_USER_HOME: isolated, TMPDIR: temporary });
     try {
+      // @ref LLP 0017#the-macos-app-keeps-its-supervisor -- the supervisor gives the exit code and a stop a leftover process cannot block
       child = exec.spawn(process.execPath, [spawnEntry('macos-run'), canonicalRunRoot, launch.launchId], {
         detached: true,
         stdio: ['ignore', fd, fd, 'ipc'],

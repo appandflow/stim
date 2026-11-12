@@ -703,6 +703,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Concurrent native builds; 0 derives max(1, floor(CPU cores / 6))',
   },
   {
+    key: 'concurrency.maxTests',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_TESTS',
+    description: 'Concurrent test commands; 0 derives max(1, floor(CPU cores / 6))',
+  },
+  {
     key: 'concurrency.maxDevices',
     type: CAPACITY,
     scopes: MACHINE,
