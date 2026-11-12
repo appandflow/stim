@@ -45,6 +45,29 @@ describe('systemd unit', () => {
   });
 });
 
+describe('systemd unit naming the engine shim', () => {
+  const stimd = '/home/me/.stim/engine/bin/stimd';
+
+  it('runs the stimd shim with the server options in place of node and the script, keeping Restart=always', () => {
+    const text = renderUnit({ ...SPEC, stimd });
+    expect(parseUnit(text)).toMatchObject({
+      node: null,
+      script: stimd,
+      port: 7787,
+      env: ['JAVA_HOME=/usr/lib/jvm/java 17', 'TOKEN=a"b\\c%d$e\nf'],
+      pathPrepend: ['/opt/android sdk/platform-tools'],
+    });
+    expect(text).toContain('Restart=always');
+    expect(text).not.toContain(SPEC.node);
+  });
+
+  it('rewrites the arguments alone, leaving the recorded previous script', () => {
+    const text = renderUnit(SPEC, '/older/stim-server.mjs');
+    const edited = editUnit(text, { programArguments: [stimd, '--service', '--port', '7787'] });
+    expect(parseUnit(edited)).toMatchObject({ script: stimd, previousScript: '/older/stim-server.mjs' });
+  });
+});
+
 describe('systemctl show', () => {
   const show = (fields: Record<string, string>) =>
     Object.entries({
