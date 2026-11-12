@@ -1713,8 +1713,12 @@ async function runStimdInner(
     loopDelay.reset();
     if (emptyTicks >= lifetime.idleTicks(EMPTY_TICKS_BEFORE_EXIT)) {
       await checkEngine();
-      shutdown('nothing runs in this Stim home');
-      break;
+      // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- an op admitted during the engine check keeps stimd running
+      if (!hasActiveCommands()) {
+        shutdown('nothing runs in this Stim home');
+        break;
+      }
+      emptyTicks = 0;
     }
     if (maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
