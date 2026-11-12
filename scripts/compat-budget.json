@@ -82,12 +82,12 @@
     },
     "C27": {
       "loc": 10,
-      "end": "removal minor",
+      "end": "#5558",
       "mechanism": "stimd's owned-browser observer leaves a Chrome to the web-run supervisor an older Stim started"
     },
     "C28": {
       "loc": 6,
-      "end": "removal minor",
+      "end": "2.1.0",
       "mechanism": "a home with any registry record and no tailnet marker writes the marker at start, so it loads the Tailscale transport"
     }
   },

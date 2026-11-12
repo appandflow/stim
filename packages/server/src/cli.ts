@@ -198,7 +198,7 @@ export async function serve(
       const [pid] = await listenerPids(port);
       throw new NetRefusal(
         pid
-          ? `port ${port} is held by pid ${pid}; stop it (kill ${pid}), or run stim serve --port <n>.`
+          ? `port ${port} is held by pid ${pid}; stop it (${process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`}), or run stim serve --port <n>.`
           : `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
       );
     }
@@ -311,7 +311,7 @@ async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Pro
   let reported = '';
   const check = async () => {
     if (tailnet.current()) return;
-    // compat C28 until removal-minor
+    // compat C28 until 2.1.0
     if (!migrated && !hasTailnetMarker()) {
       const records = [readDevices, readBuildClients, readDeviceHostClients, readUnreadable];
       if (records.some((read) => read().length)) markTailnet('registry records at the first start');

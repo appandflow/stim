@@ -97714,7 +97714,7 @@ async function installCli(version, root) {
 				});
 			}
 		}
-		if (!existsSync$1(cli)) throw new Error(`stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref`);
+		if (!existsSync$1(cli)) throw new Error(`stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to 2.0.0 or later, or pin the action to an older ref`);
 		return {
 			cli,
 			code: 0

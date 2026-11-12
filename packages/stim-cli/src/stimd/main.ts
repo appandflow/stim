@@ -189,9 +189,10 @@ async function takeClaim(
 // @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
 export function daemonClaimRefusal(): string {
   const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
+  const stop = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
   return pid === undefined
     ? "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it."
-    : `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start. Stop it with \`kill ${pid}\`; it also exits on its own after its workspaces stop. If a project pins stim 1.40-1.42: npm i -D stim@latest there; for npx: npx stim@latest`;
+    : `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start. Stop it with \`${stop}\`; it also exits on its own after its workspaces stop. If a project pins stim 1.40-1.42, update it to stim 2.0.0 or later there (npm i -D stim@next until 2.0.0 is released; for npx: npx stim@next)`;
 }
 
 function answers(path: string): Promise<boolean> {

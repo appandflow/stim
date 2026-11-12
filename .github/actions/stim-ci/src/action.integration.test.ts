@@ -463,6 +463,6 @@ test.skipIf(process.platform === 'win32')('refuses a stim release that ships no 
   github.inputs.version = '1.41.0';
   delete github.inputs.artifacts;
   await expect(runAction()).rejects.toThrow(
-    'stim@1.41.0 has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref',
+    'stim@1.41.0 has no bin/stim.mjs, which this action runs with ci. Set version to 2.0.0 or later, or pin the action to an older ref',
   );
 });

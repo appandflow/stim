@@ -221,7 +221,7 @@ async function installCli(version: string, root: string): Promise<{ cli: string;
     }
     if (!existsSync(cli))
       throw new Error(
-        `stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to a stim release that ships stim ci, or pin the action to an older ref`,
+        `stim@${version} has no bin/stim.mjs, which this action runs with ci. Set version to 2.0.0 or later, or pin the action to an older ref`,
       );
     return { cli, code: 0 };
   } finally {
