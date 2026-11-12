@@ -401,7 +401,8 @@ test('a detached helper exits when its listener closes before it connects', asyn
   }
 });
 
-test.skipIf(process.platform === 'win32')(
+// kill(-pgid, 0) answers EPERM for a zombie-only group on macOS only; macosProcess reads the Darwin start time.
+test.skipIf(process.platform !== 'darwin')(
   'stopping an orphaned group with a live member reports success, not the EPERM of unreaped zombies',
   async () => {
     const launcher = getExecutor().spawn(
