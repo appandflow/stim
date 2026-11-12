@@ -20,6 +20,8 @@ import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim'
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { macosAppLogName, macosProcess } from '../macos/state.ts';
 import { upsertProject } from '../workspace/config.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -95,8 +97,8 @@ function record(): { pid: number; socket: string; build: string } | null {
   }
 }
 
-async function startStimd(): Promise<number> {
-  const child = spawn(process.execPath, [cli, '__stimd'], { env, stdio: 'ignore' });
+async function startStimd(mode?: 'off'): Promise<number> {
+  const child = spawn(process.execPath, [cli, '__stimd', ...(mode ? ['--mode', mode] : [])], { env, stdio: 'ignore' });
   stimd = child;
   await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
   return child.pid ?? 0;
@@ -256,6 +258,72 @@ test('a Metro that exits by itself releases its claim and stimd keeps serving', 
 }, 40_000);
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
+  test('off-mode keeps an owned macOS tail alive and drains final output', async () => {
+    const root = bareProject();
+    upsertProject(root, {});
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    await once(child, 'spawn');
+    if (child.pid === undefined) throw new Error('the app did not start');
+    const app = macosProcess(child.pid);
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const raw = join(logs, macosAppLogName('off-mode', 'out'));
+    writeFileSync(raw, 'off mode output\n');
+    writeWorkspaceState(root, {
+      macos: {
+        launchId: 'off-mode',
+        product: 'Fixture',
+        arguments: [],
+        bundle: root,
+        bundleId: 'fixture',
+        executable: process.execPath,
+        build: { state: 'ok', startedAt: new Date().toISOString() },
+        app,
+        supervisor: app,
+      },
+    });
+    try {
+      await startStimd('off');
+      await vi.waitFor(() => expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('off mode output'));
+      appendFileSync(raw, 'final off mode output\n');
+      child.kill('SIGKILL');
+      await once(child, 'exit');
+      expect(await ask('logs.drain', { root })).toMatchObject({ op: 'logs.drained', error: null });
+      expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final off mode output');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  }, 20_000);
+  test('invalid UTF-8 in app output does not block the daemon', async () => {
+    const root = bareProject();
+    const app = macosProcess(process.pid);
+    writeWorkspaceState(root, {
+      macos: {
+        launchId: 'invalid-utf8',
+        product: 'Fixture',
+        arguments: [],
+        bundle: root,
+        bundleId: 'fixture',
+        executable: process.execPath,
+        build: { state: 'ok', startedAt: new Date().toISOString() },
+        app,
+        supervisor: app,
+      },
+    });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('invalid-utf8', 'out')), Buffer.alloc(65_537, 0x80));
+    await startStimd();
+    try {
+      const response = await Promise.race([
+        ask('logs.observe', { root }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('stimd did not answer')), 3000)),
+      ]);
+      expect(response.op).toBe('logs.observed');
+    } finally {
+      if (stimd && stimd.exitCode === null) stimd.kill('SIGKILL');
+    }
+  });
   test('an attached stimd hands over when only a tunnel is running', async () => {
     const root = bareProject();
     write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 0\n', 0o755);

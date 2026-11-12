@@ -1209,19 +1209,28 @@ async function askHeldStimd(
 
 /**
  * Asks this home's stimd to observe what the op at `root` launched through `spawnOwned`: the owned Chrome's DevTools
- * session. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
+ * session and the macOS app's output. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
  * records that output. Resolves to null once stimd observes it, or to why it does not.
  */
 async function ownedRequest(
-  op: 'logs.observe' | 'logs.observe-web' | 'logs.drain',
+  op: 'logs.observe' | 'logs.observe-macos' | 'logs.observe-web' | 'logs.drain',
   root: string,
   env: NodeJS.ProcessEnv,
-  target?: { pid: number; token: string },
+  macosOnly = false,
+  target?: { pid: number; token: string; launchId?: string },
 ): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const reply = await askHeldStimd(() => askStimd(op, OBSERVE_MS, { params: { root, ...target } }));
+  const reply = await askHeldStimd(() =>
+    askStimd(op, OBSERVE_MS, { params: { root, ...(macosOnly ? { platform: 'macos' } : {}), ...target } }),
+  );
   const expected =
-    op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained';
+    op === 'logs.observe'
+      ? 'logs.observed'
+      : op === 'logs.observe-macos'
+        ? 'logs.macos-observed'
+        : op === 'logs.observe-web'
+          ? 'logs.web-observed'
+          : 'logs.drained';
   if (reply?.op !== expected)
     return stimdRefused()
       ? `this Stim home's stimd runs another Stim build (${refusedBuild}); run the command with that build`
@@ -1239,11 +1248,25 @@ export function observeOwnedWeb(
   token: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
-  return ownedRequest('logs.observe-web', root, env, { pid, token });
+  return ownedRequest('logs.observe-web', root, env, false, { pid, token });
+}
+
+export function observeOwnedMacos(
+  root: string,
+  pid: number,
+  token: string,
+  launchId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  return ownedRequest('logs.observe-macos', root, env, false, { pid, token, launchId });
 }
 
 export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   return ownedRequest('logs.drain', root, env);
+}
+
+export function drainOwnedMacos(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.drain', root, env, true);
 }
 
 /** Whether the net thread serves, on which port, or why it does not. */

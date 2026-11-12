@@ -860,6 +860,8 @@ async function runStimdInner(
       handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
     (why) => maybeUpdate(why, ASKED_MS),
+    (session) => logs.ownedDrainHosted(session),
+    (session, pid, token, launchId) => logs.ownedObserveHosted(session, pid, token, launchId),
   );
   let restartingNet = false;
   let updating: Promise<void> | null = null;
@@ -1296,28 +1298,42 @@ async function runStimdInner(
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
-        } else if (op === 'logs.observe' || op === 'logs.observe-web' || op === 'logs.drain') {
+        } else if (
+          op === 'logs.observe' ||
+          op === 'logs.observe-macos' ||
+          op === 'logs.observe-web' ||
+          op === 'logs.drain'
+        ) {
           const root = isJsonObject(message.params) ? message.params.root : undefined;
           const params = isJsonObject(message.params) ? message.params : {};
           if (
             typeof root !== 'string' ||
-            (op === 'logs.observe-web' &&
+            ((op === 'logs.observe-macos' || op === 'logs.observe-web') &&
               (typeof params.pid !== 'number' ||
                 !Number.isSafeInteger(params.pid) ||
                 params.pid <= 0 ||
-                typeof params.token !== 'string'))
+                typeof params.token !== 'string' ||
+                (op === 'logs.observe-macos' && typeof params.launchId !== 'string')))
           )
             socket.destroy();
           else {
+            const macosOnly = params.platform === 'macos';
             const request =
               op === 'logs.observe'
                 ? logs.ownedSync(root)
                 : op === 'logs.observe-web'
                   ? logs.ownedObserveWeb(root, params.pid as number, params.token as string)
-                  : logs.ownedDrain(root);
+                  : op === 'logs.observe-macos'
+                    ? logs.ownedObserveMacos(
+                        root,
+                        params.pid as number,
+                        params.token as string,
+                        params.launchId as string,
+                      )
+                    : logs.ownedDrain(root, macosOnly);
             void request.then((error) =>
               socket.end(
-                `${JSON.stringify({ op: op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained', error })}\n`,
+                `${JSON.stringify({ op: op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-macos' ? 'logs.macos-observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained', error })}\n`,
               ),
             );
           }

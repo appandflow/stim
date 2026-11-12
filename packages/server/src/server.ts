@@ -744,6 +744,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const hostedDevices = new DeviceHost({
+    observeHosted: options.observeHosted,
+    drainHosted: options.drainHosted,
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
     env: options.env,
     agents: agentDrivers,

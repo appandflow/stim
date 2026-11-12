@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readMacosRecord, type MacosAppRecord, type MacosProcess } from '@stim-cli/core/state';
 import { captureProcessToken, processStartMicros, sameProcessRecord } from '../process-identity.ts';
@@ -7,6 +8,12 @@ import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace
 
 export const macosDir = (root: string): string => join(workspaceDir(root), 'macos');
 export const macosLogFile = (root: string): string => join(workspaceLogsDir(root), 'macos.ndjson');
+export const macosAppLogName = (launchId: string, stream: 'out' | 'err'): string =>
+  `macos-app-${createHash('sha256').update(launchId).digest('hex')}.${stream}`;
+export const macosAppStdout = (root: string, launchId: string): string =>
+  join(workspaceLogsDir(root), macosAppLogName(launchId, 'out'));
+export const macosAppStderr = (root: string, launchId: string): string =>
+  join(workspaceLogsDir(root), macosAppLogName(launchId, 'err'));
 export const macosRuntimeClaim = (root: string): string => join(macosDir(root), 'runtime.lock');
 
 export const macosAppPresent = (root: string): boolean =>

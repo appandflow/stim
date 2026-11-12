@@ -54,7 +54,7 @@ executables, including Stim Desktop's sim-fold helper, are not built.
   stim status --json      # environments[].macos and build state
   stim logs --source build
   stim logs --errors
-  stim stop               # stop this workspace's owned app and supervisor
+  stim stop               # stop this workspace's owned app
 
 Each invocation validates the project settings, development plist and resource
 entries before stopping its previous owned app, rebuilding and launching. SwiftPM
@@ -64,11 +64,16 @@ owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. When
-a record names the app as its own supervisor and the app has exited while its
-process group remains, Stim cannot prove the group still belongs to it and
-sends no signal. Inspect the group with ps -A -o pid,pgid,command and stop only
-verified owned members before retrying. For
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. If the
+app leader has exited but its process group remains, Stim cannot prove the
+group still belongs to it and sends no signal. Inspect the group with
+ps -A -o pid,pgid,command and stop only verified owned members before retrying.
+A reused PID can also leave the runtime claim unresolved after its group is gone;
+inspect that claim and remove it only after verifying no owned process remains.
+If a launch cannot publish its runtime claim, Stim retains the launch claim even
+after stopping the leader's group: a separately grouped child may still run.
+Inspect the named claim and remove it only after verifying the app and its children
+have stopped. For
 a hosted session the same rule covers every app bundle the session received, so
 stop and a replacement launch also end a copy that LaunchServices started from
 an earlier attempt.
@@ -144,10 +149,24 @@ plannedPhases are null; finished runs and their phase times are in
 environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
 steps the same way.
-Runtime stdout and stderr become client records; build output becomes build
-records, all with platform "macos". Unexpected app exits are error records.
+The app runs detached, started by the command (or by stimd for a Desktop or
+phone run) with that caller's environment; a hosted app gets the host's
+restricted environment. Its stdout and stderr go to per-launch files in the workspace
+logs, which stimd follows into client records (stdout at info,
+stderr at warn) while the app runs, and its exit becomes an info record
+without an exit code; build output becomes build records, all with platform
+"macos".
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
-line instead of when the app exits.
+line instead of when the app exits. While stimd runs, each raw output file is
+reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down,
+the files can grow, and a replaced app that stimd never observed keeps its raw
+files until workspace cleanup without replaying them into stim logs.
+If a reset checkpoint cannot be written and stimd crashes before the warning is
+recorded, the warning can be lost. A raw file that cannot be inspected or
+truncated can grow.
+An app launch requires its output observer. If the observer cannot start, Stim
+stops the app and drains its output before releasing ownership. If cleanup or
+drain cannot be verified, the app record and ownership remain for reconciliation.
 
 BUILD OFFLOAD
 
@@ -222,7 +241,7 @@ actions are no longer returned, and a failed open is not shown.
 
 OWNERSHIP AND LOCAL VIEWING
 
-The supervisor owns a process-identity claim with the app as its child. Stop
+The app holds a process-identity claim of its own for its lifetime. Stop
 signals only verified recorded identities. That includes the commands the app
 started that are still running, even mid-operation: they get SIGTERM, then
 SIGKILL, as the app does. They are its direct children and the helpers in their

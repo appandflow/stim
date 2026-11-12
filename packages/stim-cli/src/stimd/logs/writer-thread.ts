@@ -39,8 +39,11 @@ function nativeTimestamp(stream: Entry, line: string): unknown {
 
 type Message =
   | { op: 'owned-sync'; requestId: number; root?: string }
-  | { op: 'owned-drain'; requestId: number; root: string }
+  | { op: 'owned-drain'; requestId: number; root: string; macosOnly?: boolean }
   | { op: 'owned-observe-web'; requestId: number; root: string; pid: number; token: string }
+  | { op: 'owned-observe-macos'; requestId: number; root: string; pid: number; token: string; launchId: string }
+  | { op: 'owned-observe-hosted'; requestId: number; session: string; pid: number; token: string; launchId: string }
+  | { op: 'owned-drain-hosted'; requestId: number; session: string }
   | { op: 'owned-close'; requestId: number }
   | {
       op: 'open';
@@ -90,10 +93,28 @@ const add = (map: Map<string, number>, key: string): boolean => {
   return true;
 };
 
-type OwnedRequest = Extract<Message, { op: 'owned-sync' | 'owned-drain' | 'owned-observe-web' }>;
+type OwnedRequest = Extract<
+  Message,
+  {
+    op:
+      | 'owned-sync'
+      | 'owned-drain'
+      | 'owned-observe-web'
+      | 'owned-observe-macos'
+      | 'owned-observe-hosted'
+      | 'owned-drain-hosted';
+  }
+>;
 
 function isOwnedRequest(message: Message): message is OwnedRequest {
-  return message.op === 'owned-sync' || message.op === 'owned-drain' || message.op === 'owned-observe-web';
+  return (
+    message.op === 'owned-sync' ||
+    message.op === 'owned-drain' ||
+    message.op === 'owned-observe-web' ||
+    message.op === 'owned-observe-macos' ||
+    message.op === 'owned-observe-hosted' ||
+    message.op === 'owned-drain-hosted'
+  );
 }
 
 function handleOwnedRequest(message: OwnedRequest): void {
@@ -101,8 +122,14 @@ function handleOwnedRequest(message: OwnedRequest): void {
     message.op === 'owned-sync'
       ? owned.sync(message.root)
       : message.op === 'owned-drain'
-        ? owned.drain(message.root)
-        : owned.observeWeb(message.root, message.pid, message.token);
+        ? owned.drain(message.root, message.macosOnly)
+        : message.op === 'owned-observe-web'
+          ? owned.observeWeb(message.root, message.pid, message.token)
+          : message.op === 'owned-observe-macos'
+            ? owned.observeMacos(message.root, message.pid, message.token, message.launchId)
+            : message.op === 'owned-observe-hosted'
+              ? owned.observeHosted(message.session, message.pid, message.token, message.launchId)
+              : owned.drainHosted(message.session);
   void result.then(
     (error) => {
       port.postMessage({ event: 'owned-running', running: owned.running() });

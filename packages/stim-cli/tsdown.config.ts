@@ -32,7 +32,6 @@ export default defineConfig({
     'stimd-status': 'src/stimd/status-thread.ts',
     'net-thread': '../server/src/net-thread.ts',
     'kit-worker': 'src/kit-worker.ts',
-    'macos-run': 'src/macos/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
     'status-worker': 'src/status-worker.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',

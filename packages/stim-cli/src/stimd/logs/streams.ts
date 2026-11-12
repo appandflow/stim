@@ -113,8 +113,11 @@ export function resumeDecision(
 
 export interface StreamTable {
   ownedSync(root?: string): Promise<string | null>;
-  ownedDrain(root: string): Promise<string | null>;
+  ownedDrain(root: string, macosOnly?: boolean): Promise<string | null>;
   ownedObserveWeb(root: string, pid: number, token: string): Promise<string | null>;
+  ownedObserveMacos(root: string, pid: number, token: string, launchId: string): Promise<string | null>;
+  ownedObserveHosted(session: string, pid: number, token: string, launchId: string): Promise<string | null>;
+  ownedDrainHosted(session: string): Promise<string | null>;
   ownedRunning(): boolean;
   start(
     input: StreamSpec,
@@ -1025,11 +1028,11 @@ export function createStreams(
         ownedPending--;
       }
     },
-    async ownedDrain(root) {
+    async ownedDrain(root, macosOnly) {
       if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
       ownedPending++;
       try {
-        await (await getWriters()).ownedDrain(root);
+        await (await getWriters()).ownedDrain(root, macosOnly);
         if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
         return null;
       } catch (error) {
@@ -1045,6 +1048,41 @@ export function createStreams(
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
+      } finally {
+        ownedPending--;
+      }
+    },
+    async ownedObserveMacos(root, pid, token, launchId) {
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedObserveMacos(root, pid, token, launchId);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the macOS observer failed';
+      } finally {
+        ownedPending--;
+      }
+    },
+    async ownedObserveHosted(session, pid, token, launchId) {
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedObserveHosted(session, pid, token, launchId);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the hosted observer failed';
+      } finally {
+        ownedPending--;
+      }
+    },
+    async ownedDrainHosted(session) {
+      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedDrainHosted(session);
+        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the hosted drain failed';
       } finally {
         ownedPending--;
       }

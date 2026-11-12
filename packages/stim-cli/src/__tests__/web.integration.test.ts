@@ -1770,6 +1770,8 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
     try {
       expect(await streams.sync(root)).toContain('transient disconnect');
       expect(streams.running()).toBe(true);
+      expect(await streams.drain(root, true)).toBeNull();
+      expect(streams.running()).toBe(true);
       await vi.waitFor(() => expect(attempts).toBe(2), { timeout: 8000, interval: 50 });
       await vi.waitFor(() => expect(readFileSync(webLogFile(root), 'utf8')).toContain('web_browser_observed'));
       expect(requests).toContainEqual({

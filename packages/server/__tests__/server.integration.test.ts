@@ -522,6 +522,7 @@ async function start(
     /** The bundled Desktop's private key; the test key by default, null for a server Desktop did not start. */
     desktopBootstrap?: ServerOptions['desktopBootstrap'] | null;
     setupDeps?: ServerOptions['setupDeps'];
+    hostedObserver?: boolean;
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -532,6 +533,7 @@ async function start(
   writeFileSync(tailscale, FAKE_TAILSCALE);
   chmodSync(tailscale, 0o755);
   server = await startServer({
+    ...(overrides.hostedObserver === false ? {} : { observeHosted: async () => null, drainHosted: async () => null }),
     host: overrides.host,
     hostsDevices: overrides.hostsDevices ?? true,
     attached: overrides.attached,
@@ -2876,6 +2878,51 @@ describe('setup approval in Stim Desktop on this machine', () => {
 });
 
 describe('hosted device sessions', () => {
+  test.skipIf(process.platform !== 'darwin')('a server without an observer refuses hosted macOS launch', async () => {
+    const port = await start({ hostedObserver: false });
+    writeFileSync(
+      join(root, 'device-host-worker.mjs'),
+      `
+      import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+      const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={architecture:'arm64',macosVersion:'27.0',appSlot:input.appSlot};
+      if(input.mode==='prepare')writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+    );
+    const pending = setupClient(['device-host'], 'Client');
+    const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+    const reserved = await client.request('device-host.reserve', {
+      workspace: '/client/app',
+      slot: 'default',
+      platform: 'macos',
+      attempt: 'observer-session',
+    });
+    if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+    const result: unknown = reserved.result;
+    assert(isJsonObject(result) && typeof result.id === 'string');
+    const session = result.id;
+    await vi.waitFor(async () =>
+      expect(await client.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+    );
+    const attempt = 'observer-app';
+    expect(
+      await client.request('device-host.app.offer', {
+        session,
+        attempt,
+        bundleId: 'dev.stim.fixture',
+        mode: 'release',
+        manifest: { sha256: 'a'.repeat(64), size: 1 },
+      }),
+    ).toHaveProperty('result.delivery.state', 'receiving');
+    expect(await client.request('device-host.app.launch', { session, attempt })).toMatchObject({
+      error: { code: 'action-failed', message: 'The hosted macOS observer is unavailable.' },
+    });
+    expect(readHostedSessions().find((entry) => entry.id === session)?.state).toBe('ready');
+    client.socket.close();
+  });
+
   test('an attached server refuses hosted work before starting a worker while allowing session queries', async () => {
     const port = await start({ attached: true });
     const pending = setupClient(['device-host'], 'Client');

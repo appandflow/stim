@@ -7,6 +7,7 @@ import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
+  appendFileSync,
   constants,
   promises as fs,
   copyFileSync,
@@ -18,12 +19,14 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
   macosAppState,
+  deviceHostArea,
   parseMacosRecord,
   readMacosRecord,
   readBuildHistory,
@@ -36,11 +39,13 @@ import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import * as nativeBuild from '../macos/build.ts';
+import * as buildProgress from '../engine/build-progress.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
 import * as artifactCache from '../macos/artifact-cache.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import * as ndjson from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
@@ -49,10 +54,12 @@ import { WorkspaceProcessCleanupError, workspaceProcessLockPath } from '../engin
 import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import * as ownership from '../ownership-claim.ts';
 import { startedBy } from '../macos/instances.ts';
-import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
-import * as registration from '../macos/registration.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import { macosAppLogName, macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import * as macosState from '../macos/state.ts';
 import * as owning from '../engine/spawn-owned.ts';
+import { refuseDeclaredSpawns } from '../engine/spawn-claims.ts';
+import * as stimdClient from '../daemon/client.ts';
+import { createOwnedStreams } from '../stimd/logs/owned.ts';
 import { withLocalMacosAdmission } from '../macos/admission.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
@@ -63,6 +70,7 @@ import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../work
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import * as processIdentity from '../process-identity.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 
@@ -451,7 +459,7 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
 });
 
 test.skipIf(process.platform === 'win32')(
-  'a direct-launch record whose app group survives its leader keeps its runtime claim',
+  'the runtime claim remains live while a launched app helper survives',
   async () => {
     const declaration = tryAcquireClaim({
       root: join(dir, 'launch.lock'),
@@ -461,7 +469,7 @@ test.skipIf(process.platform === 'win32')(
     assert(declaration);
     const claimRoot = macosRuntimeClaim(root);
     const logs = workspaceLogsDir(root);
-    const out = join(logs, 'direct-launch.out');
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
     const owned = await owning.spawnOwned({
       file: process.execPath,
       args: [
@@ -471,13 +479,15 @@ test.skipIf(process.platform === 'win32')(
       cwd: root,
       env: process.env,
       stdout: out,
-      stderr: join(logs, 'direct-launch.err'),
+      stderr: join(logs, macosAppLogName('test-launch', 'err')),
       claim: { root: claimRoot, label: 'app' },
       declare: [declaration],
     });
     const app = { ...owned, startedAtMicros: 1 };
     writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const streams = createOwnedStreams(() => {});
     try {
+      await streams.sync(root);
       expect(await waitForProcessExit(owned, 5000)).toBe(true);
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
       await expect(stopMacosApp(root)).rejects.toMatchObject({
@@ -485,9 +495,19 @@ test.skipIf(process.platform === 'win32')(
         message: expect.stringContaining('no signal was sent to that process group'),
       });
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
-      expect(readMacosRecord(root)?.app).toMatchObject({ pid: owned.pid });
+      appendFileSync(out, 'helper output after leader\n');
+      const log = join(logs, 'macos.ndjson');
+      for (
+        let tries = 0;
+        tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('helper output after leader'));
+        tries++
+      )
+        await new Promise((done) => setTimeout(done, 50));
+      expect(readFileSync(log, 'utf8')).toContain('helper output after leader');
+      expect(readFileSync(log, 'utf8')).not.toContain('Exited Sample.');
       expect(existsSync(out)).toBe(true);
     } finally {
+      streams.close();
       try {
         process.kill(-owned.pid, 'SIGKILL');
       } catch {}
@@ -507,6 +527,678 @@ test('an unresolved app-spawn claim blocks cleanup and refuses a successful stop
     await expect(stopMacosApp(root)).rejects.toMatchObject({ code: 'STIM_MACOS_OWNER_UNVERIFIED' });
   } finally {
     releaseClaim(claim);
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'stimd copies the output of an app that exited before it was observed, once',
+  async () => {
+    const child = getExecutor().spawn(process.execPath, ['-e', 'setTimeout(() => {}, 200)'], { stdio: 'ignore' });
+    children.push(child);
+    await once(child, 'spawn');
+    if (child.pid === undefined) throw new Error('The app fixture did not start.');
+    const app = macosProcess(child.pid);
+    await once(child, 'exit');
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'printed before the crash\n');
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), 'fatal: missing library');
+    const log = join(logs, 'macos.ndjson');
+    const client = () =>
+      existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line): Record<string, unknown> => JSON.parse(line))
+            .filter((entry) => entry.src === 'client')
+            .map(({ level, msg }) => [level, msg])
+        : [];
+    for (const stimd of [1, 2]) {
+      const streams = createOwnedStreams(() => {});
+      try {
+        await streams.sync(root);
+        for (let tries = 0; tries < 40 && client().length < 3; tries++)
+          await new Promise((done) => setTimeout(done, 50));
+        await new Promise((done) => setTimeout(done, stimd === 2 ? 600 : 0));
+      } finally {
+        streams.close();
+      }
+    }
+    expect(client()).toEqual([
+      ['info', 'printed before the crash'],
+      ['warn', 'fatal: missing library'],
+      ['info', 'Exited Sample.'],
+    ]);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a rapid relaunch drains the previous app before replacing its tail',
+  async () => {
+    const previous = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app: previous, supervisor: previous }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const oldOutput = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(oldOutput, 'previous final output');
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(previous, 5000)).toBe(true);
+      const next = await ownedProcess();
+      writeWorkspaceState(root, { macos: record({ launchId: 'next-launch', app: next, supervisor: next }) });
+      writeFileSync(join(logs, macosAppLogName('next-launch', 'out')), 'new output\n');
+      await streams.sync(root);
+      const log = join(logs, 'macos.ndjson');
+      for (
+        let tries = 0;
+        tries < 40 &&
+        (!existsSync(log) ||
+          !readFileSync(log, 'utf8').includes('new output') ||
+          !readFileSync(log, 'utf8').includes('Exited Sample.'));
+        tries++
+      )
+        await new Promise((done) => setTimeout(done, 50));
+      const output = readFileSync(log, 'utf8');
+      expect(output).toContain('previous final output');
+      expect(output).toContain('Exited Sample.');
+      expect(output).toContain('new output');
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'workspace drain flushes the stopped app and prevents stream rediscovery',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final line');
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await streams.drain(root)).toBeNull();
+      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      expect(output).toContain('final line');
+      expect(output).toContain('Exited Sample.');
+      rmSync(logs, { recursive: true });
+      await streams.sync(root);
+      expect(existsSync(logs)).toBe(false);
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'public stop drains output written during SIGTERM before returning',
+  async () => {
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const raw = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(raw, '');
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `process.on('SIGTERM', () => { require('node:fs').appendFileSync(${JSON.stringify(raw)}, 'final diagnostic\\n'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(child);
+    assert(child.stdout);
+    await once(child.stdout, 'data');
+    if (child.pid === undefined) throw new Error('the app did not start');
+    const app = macosProcess(child.pid);
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const streams = createOwnedStreams(() => {});
+    const drain = vi
+      .spyOn(stimdClient, 'drainOwnedMacos')
+      .mockImplementation((workspace) => streams.drain(workspace, true));
+    try {
+      await streams.sync(root);
+      expect(await stopMacosApp(root)).toBe(true);
+      expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final diagnostic');
+    } finally {
+      drain.mockRestore();
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'hosted drain records final output even before observer discovery',
+  async () => {
+    const app = await ownedProcess();
+    const serverHome = process.env.STIM_HOME;
+    assert(serverHome);
+    const session = '12345678-1234-1234-1234-123456789abc';
+    const home = join(deviceHostArea(session), 'home');
+    const hostedRoot = join(home, 'macos-app');
+    mkdirSync(hostedRoot, { recursive: true });
+    process.env.STIM_HOME = home;
+    try {
+      writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor: app }) });
+      const logs = workspaceLogsDir(hostedRoot);
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final hosted output\n');
+      const child = children.at(-1);
+      assert(child);
+      child.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      process.env.STIM_HOME = serverHome;
+      const streams = createOwnedStreams(() => {});
+      try {
+        expect(await streams.drainHosted(session)).toBeNull();
+        expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final hosted output');
+      } finally {
+        streams.close();
+      }
+    } finally {
+      process.env.STIM_HOME = serverHome;
+    }
+  },
+);
+
+test('hosted drain accepts a legacy supervisor record without a new spool checkpoint', async () => {
+  const serverHome = process.env.STIM_HOME;
+  assert(serverHome);
+  const session = '12345678-1234-1234-1234-123456789abc';
+  const home = join(deviceHostArea(session), 'home');
+  const hostedRoot = join(home, 'macos-app');
+  mkdirSync(hostedRoot, { recursive: true });
+  process.env.STIM_HOME = home;
+  try {
+    const app = { pid: 123, processToken: 'old-app', startedAtMicros: 1 };
+    const supervisor = { pid: 456, processToken: 'old-supervisor', startedAtMicros: 1 };
+    writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor }) });
+    process.env.STIM_HOME = serverHome;
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.drainHosted(session)).toBeNull();
+    } finally {
+      streams.close();
+    }
+  } finally {
+    process.env.STIM_HOME = serverHome;
+  }
+});
+
+test.skipIf(process.platform === 'win32')('hosted observe acknowledges only the matching app stream', async () => {
+  const app = await ownedProcess();
+  const serverHome = process.env.STIM_HOME;
+  assert(serverHome);
+  const session = '12345678-1234-1234-1234-123456789abc';
+  const home = join(deviceHostArea(session), 'home');
+  const hostedRoot = join(home, 'macos-app');
+  mkdirSync(hostedRoot, { recursive: true });
+  process.env.STIM_HOME = home;
+  try {
+    writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(hostedRoot);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'hosted output\n');
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
+    process.env.STIM_HOME = serverHome;
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.observeHosted(session, app.pid, 'wrong', 'test-launch')).toContain('record changed');
+      expect(await streams.observeHosted(session, app.pid, app.processToken, 'wrong')).toContain('record changed');
+      expect(await streams.observeHosted(session, app.pid, app.processToken, 'test-launch')).toBeNull();
+      const log = join(logs, 'macos.ndjson');
+      for (
+        let tries = 0;
+        tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('hosted output'));
+        tries++
+      )
+        await new Promise((done) => setTimeout(done, 50));
+      expect(readFileSync(log, 'utf8')).toContain('hosted output');
+      const child = children.at(-1);
+      assert(child);
+      child.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await streams.drainHosted(session)).toBeNull();
+    } finally {
+      streams.close();
+    }
+  } finally {
+    process.env.STIM_HOME = serverHome;
+  }
+});
+
+test.skipIf(process.platform === 'win32')('local observe acknowledges only the matching app stream', async () => {
+  const app = await ownedProcess();
+  let streams = createOwnedStreams(() => {});
+  try {
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain('record changed');
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    const err = join(logs, macosAppLogName('test-launch', 'err'));
+    const log = join(logs, 'macos.ndjson');
+    writeFileSync(out, '');
+    writeFileSync(err, '');
+    expect(await streams.observeMacos(root, app.pid, 'wrong', 'test-launch')).toContain('record changed');
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'wrong')).toContain('record changed');
+    const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('unknown');
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain('identity');
+    identity.mockRestore();
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
+    streams.close();
+    streams = createOwnedStreams(() => {});
+    rmSync(log);
+    mkdirSync(log);
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
+      'could not be recorded',
+    );
+    rmSync(log, { recursive: true });
+    rmSync(err);
+    mkdirSync(err);
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
+      'output is unavailable',
+    );
+    rmSync(err, { recursive: true });
+    writeFileSync(err, '');
+    writeFileSync(out, 'x'.repeat(8 * 1024 * 1024 + 1));
+    writeFileSync(err, 'y'.repeat(8 * 1024 * 1024 + 1));
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
+    expect(statSync(out).size).toBe(0);
+    expect(statSync(err).size).toBe(0);
+    const child = children.at(-1);
+    assert(child);
+    child.kill('SIGKILL');
+    expect(await waitForProcessExit(app, 5000)).toBe(true);
+    expect(await streams.drain(root, true)).toBeNull();
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
+  } finally {
+    streams.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('quiet macOS observation refuses when the sink write fails', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
+  const log = join(logs, 'macos.ndjson');
+  writeFileSync(log, '');
+  const create = ndjson.createNdjsonWriter;
+  const writer = vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((file, options) => {
+    const actual = create(file, options);
+    return file === log ? { ...actual, write: () => false } : actual;
+  });
+  const streams = createOwnedStreams(() => {});
+  try {
+    expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain(
+      'could not be recorded',
+    );
+    expect(existsSync(log)).toBe(true);
+  } finally {
+    streams.close();
+    writer.mockRestore();
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'quiet macOS observation requires a checkpoint without repeating its record',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), '');
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'err')), '');
+    const staging = join(logs, 'macos-app.tail.json.tmp');
+    mkdirSync(staging);
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toContain('unavailable');
+      rmSync(staging, { recursive: true });
+      expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
+      expect(await streams.observeMacos(root, app.pid, app.processToken, 'test-launch')).toBeNull();
+      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      expect(output.match(/Observing Sample output\./g)).toHaveLength(1);
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a failed final checkpoint keeps the spool and does not repeat the exit line',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'final output\n');
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      const staging = join(logs, 'macos-app.tail.json.tmp');
+      mkdirSync(staging);
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      expect(existsSync(out)).toBe(true);
+      rmSync(staging, { recursive: true });
+      expect(await streams.drain(root)).toBeNull();
+      const lines = readFileSync(join(logs, 'macos.ndjson'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line): Record<string, unknown> => JSON.parse(line));
+      expect(lines.filter((line) => line.msg === 'Exited Sample.')).toHaveLength(1);
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when stimd refuses the drain', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'raw output\n');
+  writeFileSync(join(logs, 'macos.ndjson'), 'saved output\n');
+  const stopDrain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+  const drain = vi.spyOn(stimdClient, 'drainOwned').mockResolvedValue('fixture refusal');
+  try {
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(true);
+    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('saved output\n');
+    expect(drain).toHaveBeenCalledOnce();
+  } finally {
+    stopDrain.mockRestore();
+    drain.mockRestore();
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a transient output write failure is retried before the spool is removed',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'retry this line\n');
+    const log = join(logs, 'macos.ndjson');
+    mkdirSync(log);
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await streams.drain(root)).toContain('could not be drained');
+      expect(existsSync(out)).toBe(true);
+      rmSync(log, { recursive: true });
+      expect(await streams.drain(root)).toBeNull();
+      const output = readFileSync(log, 'utf8');
+      expect(output).toContain('retry this line');
+      expect(output).toContain('Exited Sample.');
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test('a reused app PID can be finalized when its original group is gone', async () => {
+  const app = { pid: 123456, processToken: 'old-app', startedAtMicros: 1 };
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final output\n');
+  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('different');
+  const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    expect(await streams.drain(root)).toBeNull();
+    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final output');
+  } finally {
+    streams.close();
+    identity.mockRestore();
+    group.mockRestore();
+  }
+});
+
+test.each([false, true])(
+  'final drain reads output written immediately before app exit (macosOnly=%s)',
+  async (macosOnly) => {
+    const app = { pid: 123456, processToken: 'last-output', startedAtMicros: 1 };
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'first output\n');
+    const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('same');
+    const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      identity.mockReturnValueOnce('same');
+      identity.mockImplementationOnce(() => {
+        appendFileSync(out, 'final output\n');
+        return 'gone';
+      });
+      expect(await streams.drain(root, macosOnly)).toBeNull();
+      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      expect(output).toContain('final output');
+      expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
+    } finally {
+      await streams.close();
+      identity.mockRestore();
+      group.mockRestore();
+    }
+  },
+);
+
+test.each([false, true])('drain starts an unobserved local macOS tail (macosOnly=%s)', async (macosOnly) => {
+  const app = { pid: 123456, processToken: 'unobserved-output', startedAtMicros: 1 };
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'unobserved output\n');
+  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('gone');
+  const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+  const streams = createOwnedStreams(() => {});
+  try {
+    expect(await streams.drain(root, macosOnly)).toBeNull();
+    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    expect(output).toContain('unobserved output');
+    expect(output.indexOf('unobserved output')).toBeLessThan(output.indexOf('Exited Sample.'));
+  } finally {
+    await streams.close();
+    identity.mockRestore();
+    group.mockRestore();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd preserves a partial output line across a restart', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  const mark = join(logs, 'macos-app.tail.json');
+  writeFileSync(out, 'first half ');
+  const first = createOwnedStreams(() => {});
+  await first.sync(root);
+  for (let tries = 0; tries < 40 && !existsSync(mark); tries++) await new Promise((done) => setTimeout(done, 50));
+  expect(existsSync(mark)).toBe(true);
+  first.close();
+  appendFileSync(out, 'second half\n');
+  const second = createOwnedStreams(() => {});
+  try {
+    await second.sync(root);
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
+    expect(readFileSync(log, 'utf8')).toContain('first half second half');
+  } finally {
+    second.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and continues tailing it', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  writeFileSync(out, 'x'.repeat(8 * 1024 * 1024));
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    for (let tries = 0; tries < 100 && statSync(out).size !== 0; tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    appendFileSync(out, 'after reset\n');
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    const output = readFileSync(log, 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('after reset');
+  } finally {
+    streams.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('the first drain succeeds when both raw streams exceed the cap', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  const err = join(logs, macosAppLogName('test-launch', 'err'));
+  writeFileSync(out, 'x'.repeat(8 * 1024 * 1024 + 1));
+  writeFileSync(err, 'y'.repeat(8 * 1024 * 1024 + 1));
+  children.at(-1)!.kill('SIGKILL');
+  expect(await waitForProcessExit(app, 5000)).toBe(true);
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    expect(await streams.drain(root)).toBeNull();
+    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('Exited Sample.');
+  } finally {
+    streams.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd caps both raw streams while the log sink is unavailable', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  const err = join(logs, macosAppLogName('test-launch', 'err'));
+  const log = join(logs, 'macos.ndjson');
+  mkdirSync(log);
+  writeFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+  writeFileSync(err, 'err\n'.repeat(2 * 1024 * 1024 + 1));
+  const first = createOwnedStreams(() => {});
+  let second: ReturnType<typeof createOwnedStreams> | undefined;
+  try {
+    await first.sync(root);
+    for (let tries = 0; tries < 100 && (statSync(out).size || statSync(err).size); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    expect(statSync(err).size).toBe(0);
+    first.close();
+    appendFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+    appendFileSync(err, 'err\n'.repeat(2 * 1024 * 1024 + 1));
+    second = createOwnedStreams(() => {});
+    await second.sync(root);
+    for (let tries = 0; tries < 100 && (statSync(out).size || statSync(err).size); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    expect(statSync(err).size).toBe(0);
+    rmSync(log, { recursive: true });
+    appendFileSync(out, 'after recovery\n');
+    for (
+      let tries = 0;
+      tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after recovery'));
+      tries++
+    )
+      await new Promise((done) => setTimeout(done, 50));
+    expect(readFileSync(log, 'utf8')).toContain('output may have been dropped');
+    expect(readFileSync(log, 'utf8')).toContain('after recovery');
+  } finally {
+    first.close();
+    second?.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'stimd caps raw output when the reset checkpoint cannot be written',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    const log = join(logs, 'macos.ndjson');
+    const staging = join(logs, 'macos-app.tail.json.tmp');
+    mkdirSync(log);
+    mkdirSync(staging);
+    writeFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      for (let tries = 0; tries < 100 && statSync(out).size; tries++) await new Promise((done) => setTimeout(done, 50));
+      expect(statSync(out).size).toBe(0);
+      rmSync(staging, { recursive: true });
+      rmSync(log, { recursive: true });
+      for (let tries = 0; tries < 100 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
+      expect(readFileSync(log, 'utf8')).toContain('output may have been dropped');
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool reset', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'after reset\n');
+  writeFileSync(
+    join(logs, 'macos-app.tail.json'),
+    JSON.stringify({
+      processToken: app.processToken,
+      out: 8 * 1024 * 1024,
+      err: 0,
+      resetting: 'out',
+    }),
+  );
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    const output = readFileSync(log, 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('after reset');
+  } finally {
+    streams.close();
   }
 });
 
@@ -742,6 +1434,47 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'failed launch cleanup refuses an unverified child and stops a verified separate group',
+  async () => {
+    const idle = 'setInterval(() => {}, 1000)';
+    const owner = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { detached: true, stdio: 'ignore' }); process.stdout.write(child.pid + '\\n'); ${idle}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(owner);
+    const childPid = Number(
+      await new Promise<string>((resolve) => owner.stdout?.once('data', (data) => resolve(String(data)))),
+    );
+    const ownerPid = owner.pid;
+    assert(ownerPid);
+    const ownerToken = captureProcessToken(ownerPid);
+    const childToken = captureProcessToken(childPid);
+    assert(ownerToken && childToken);
+    const app = { pid: ownerPid, processToken: ownerToken };
+    const child = { pid: childPid, processToken: childToken };
+    const capture = processIdentity.captureProcessIdentity;
+    const spy = vi
+      .spyOn(processIdentity, 'captureProcessIdentity')
+      .mockImplementation((pid) => (pid === childPid ? { ok: false, reason: 'UNAVAILABLE' } : capture(pid)));
+    try {
+      await expect(stopping.stopMacosChildren(app)).rejects.toThrow('Cannot verify macOS child');
+      expect(inspectProcessIdentity(child)).toBe('same');
+      spy.mockRestore();
+      await stopping.stopMacosChildren(app);
+      expect(inspectProcessIdentity(child)).toMatch(/^(gone|different)$/);
+      expect(inspectProcessIdentity(app)).toBe('same');
+    } finally {
+      spy.mockRestore();
+      if (inspectProcessIdentity(child) === 'same') process.kill(childPid, 'SIGKILL');
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
   'a pending cleanup declaration remains unresolved after both owners exit',
   async () => {
     const launcher = await ownedProcess();
@@ -959,15 +1692,14 @@ describe('macOS build placement and promotion', () => {
     });
   });
 
-  describe.skipIf(process.platform !== 'darwin')('failed launch registration', () => {
-    test.each(['delayed supervisor', 'unrecorded app'])('drains the %s', async (mode) => {
+  test.skipIf(process.platform !== 'darwin')(
+    'launches the app with the command environment and its own claim, and stimd records its output',
+    async () => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
-      const resumed = join(dir, 'resume-supervisor');
-      const marker = join(dir, 'late-app-started');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.arguments', [
         '-e',
-        `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000)`,
+        "console.log('env', process.env.STIM_BACKGROUND_LAUNCH, process.env.NSUnbufferedIO, process.env.STIM_TEST_CALLER);console.error('warned');setInterval(()=>{},1000)",
       ]);
       const cached = remoteBundle();
       copyFileSync(process.execPath, join(cached, 'Contents', 'MacOS', 'Sample'));
@@ -978,18 +1710,11 @@ describe('macOS build placement and promotion', () => {
         restore: async () => ({ bundle: cached, tier: 'local' }),
         store: async () => {},
       });
+      vi.stubEnv('STIM_TEST_CALLER', 'caller');
+      vi.stubEnv('DYLD_LIBRARY_PATH', join(dirname(process.execPath), '..', 'lib'));
       const mocked = getExecutor();
       resetExecutor();
       const real = getExecutor();
-      let supervisor: MacosProcess | undefined;
-      let app: MacosProcess | undefined;
-      const wait = registration.waitForMacosRegistration;
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(async (project, launchId, child) => {
-        const [message] = await once(child, 'message');
-        if (message.error) throw new Error(message.error);
-        if (!message.gated) app = macosProcess(message.pid);
-        return wait(project, launchId, child, Date.now() + 20);
-      });
       setExecutor({
         ...mocked,
         runFile: (file, args, options) => {
@@ -1003,141 +1728,410 @@ describe('macOS build placement and promotion', () => {
           return mocked.runFile(file, args, options);
         },
         runFileAsync: (file, args, options) =>
-          file === 'ps' || file === 'lsof'
-            ? real.runFileAsync(file, args, options)
-            : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
-        spawn: (file, args, options) => {
-          if (args[0] !== spawnEntry('macos-run')) return mocked.spawn(file, args, options);
-          const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
-          const entry = new URL('../../dist/macos-run.mjs', import.meta.url).href;
-          const script =
-            mode === 'delayed supervisor'
-              ? `import{watch,existsSync}from'node:fs';await new Promise(r=>{const w=watch(${JSON.stringify(dir)},()=>{if(existsSync(${JSON.stringify(resumed)})){w.close();r()}});process.send({gated:true})});const{runMacosSupervisor}=await import(${JSON.stringify(entry)});await runMacosSupervisor(${JSON.stringify(root)},${JSON.stringify(args[2])});`
-              : `import{spawn}from'node:child_process';const app=spawn(${JSON.stringify(executable)},['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','inherit','ipc']});app.once('error',e=>process.send({error:e.message}));app.once('message',()=>process.send({pid:app.pid}));setInterval(()=>{},1000);`;
-          const child = real.spawn(process.execPath, ['--input-type=module', '-e', script], {
-            ...options,
-            env: { ...options?.env, DYLD_LIBRARY_PATH: join(dirname(process.execPath), '..', 'lib') },
-          });
-          children.push(child);
-          if (child.pid === undefined) throw new Error('Supervisor fixture did not start');
-          supervisor = macosProcess(child.pid);
-          return child;
-        },
+          file === 'lsappinfo'
+            ? Promise.resolve('ASN:0x0-0x1:')
+            : file === 'ps' || file === 'lsof'
+              ? real.runFileAsync(file, args, options)
+              : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
+        spawn: (file, args, options) =>
+          file === join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample')
+            ? real.spawn(file, args, options)
+            : mocked.spawn(file, args, options),
       });
+      const streams = createOwnedStreams(() => {});
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation((workspace) => streams.sync(workspace));
+      vi.spyOn(stimdClient, 'drainOwnedMacos').mockImplementation((workspace) => streams.drain(workspace, true));
+      let launched: MacosAppRecord | undefined;
       try {
-        await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('did not register');
-        expect(inspectProcessIdentity(supervisor)).toBe('gone');
-        expect(app ? inspectProcessIdentity(app) : null).toBe(mode === 'unrecorded app' ? 'gone' : null);
-        writeFileSync(resumed, 'resume');
-        expect(existsSync(marker)).toBe(false);
+        launched = await runMacos(testContext({ runId: 'macos-launch' }), root, () => {}, undefined, 'local');
+        const app = launched.app;
+        if (!app) throw new Error('The launch recorded no app.');
+        expect(launched.supervisor).toEqual(app);
+        expect(inspectProcessIdentity(app)).toBe('same');
+        expect(readMacosRecord(root)).toMatchObject({ app, supervisor: app, runId: 'macos-launch' });
+        expect(readClaimSet(macosRuntimeClaim(root)).live.map((holder) => holder.owner.pid)).toEqual([app.pid]);
+        const log = join(workspaceLogsDir(root), 'macos.ndjson');
+        const recorded = async (msg: string) => {
+          for (let tries = 0; tries < 100; tries++) {
+            const lines = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+            const found = lines
+              .map((line): Record<string, unknown> => JSON.parse(line))
+              .find((entry) => entry.src === 'client' && entry.msg === msg);
+            if (found) return found;
+            await new Promise((done) => setTimeout(done, 50));
+          }
+          throw new Error(`macos.ndjson has no client record ${msg}`);
+        };
+        expect(await recorded('env 1 YES caller')).toMatchObject({ level: 'info', runId: 'macos-launch' });
+        expect(await recorded('warned')).toMatchObject({ level: 'warn', runId: 'macos-launch' });
+        await stopMacosApp(root);
+        expect(inspectProcessIdentity(app)).not.toBe('same');
+        expect(await recorded('Exited Sample.')).toMatchObject({ level: 'info', runId: 'macos-launch' });
+        expect(readClaimSet(macosRuntimeClaim(root)).live).toEqual([]);
       } finally {
-        const owners = [app, supervisor].filter((owner) => owner !== undefined);
-        for (const owner of owners) if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGKILL');
-        expect(await Promise.all(owners.map((owner) => waitForProcessExit(owner, 1000)))).not.toContain(false);
+        streams.close();
+        const app = launched?.app;
+        if (app && inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
       }
-    });
-  });
+    },
+    30_000,
+  );
 
   test.skipIf(process.platform !== 'darwin')(
-    'cancellation during LaunchServices verification stops the registered supervisor and app',
+    'replacement retains the previous record when its output cannot be drained',
     async () => {
-      const mocked = getExecutor();
-      resetExecutor();
-      const app = await ownedProcess();
-      const supervisor = await ownedProcess();
-      const child = children.at(-1)!;
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
-      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
-        async ({ bundle: targetBundle, bundleId: targetId }) => {
-          mkdirSync(workspaceLogsDir(root), { recursive: true });
-          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
-          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
-          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
-        },
-      );
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
-        async (project, _launch, _child, _deadline, accept) => {
-          const current = { ...requiredMacosRecord(project)!, app, supervisor };
-          writeWorkspaceState(project, { macos: current });
-          accept?.(current);
-          return current;
-        },
-      );
-      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
-      const controller = new AbortController();
-      setExecutor({
-        ...mocked,
-        spawn: () => child,
-        runFileAsync: async (file, args, options) => {
-          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
-          controller.abort(new Error('cancelled during LaunchServices'));
-          return 'ASN:0x0-0x1:';
-        },
-      });
-      await expect(
-        runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
-      ).rejects.toThrow('cancelled during LaunchServices');
-      expect(inspectProcessIdentity(supervisor)).not.toBe('same');
-      expect(inspectProcessIdentity(app)).not.toBe('same');
-      expect(readMacosRecord(root)?.app).toBeUndefined();
-      expect(readMacosRecord(root)?.supervisor).toBeUndefined();
+      const app = macosProcess(process.pid);
+      const previous = record({ app, supervisor: app });
+      writeWorkspaceState(root, { macos: previous });
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      writeFileSync(join(workspaceLogsDir(root), macosAppLogName(previous.launchId, 'out')), 'old output\n');
+      vi.spyOn(stopping, 'stopMacosAppHeld').mockResolvedValue(true);
+      const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue('fixture refusal');
+      const buildSpy = vi.spyOn(nativeBuild, 'buildMacosBundle');
+      await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('fixture refusal');
+      expect(drain).toHaveBeenCalledOnce();
+      expect(buildSpy).not.toHaveBeenCalled();
+      expect(readMacosRecord(root)).toMatchObject({ launchId: previous.launchId, app });
     },
   );
 
   test.skipIf(process.platform !== 'darwin')(
-    'cancellation during LaunchServices verification stops commands the app started',
+    'a spawn cleanup refusal retains its pending launch declarations',
     async () => {
-      const mocked = getExecutor();
-      resetExecutor();
-      const real = getExecutor();
-      const idle = 'setInterval(() => {}, 1000)';
-      const appChild = getExecutor().spawn(
-        process.execPath,
-        [
-          '-e',
-          `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
-        ],
-        { stdio: ['ignore', 'pipe', 'ignore'] },
-      );
-      children.push(appChild);
-      const helperPid = Number(
-        await new Promise<string>((resolve) => appChild.stdout?.once('data', (d) => resolve(String(d)))),
-      );
-      helperPids.push(helperPid);
-      const appPid = appChild.pid;
-      const appToken = appPid === undefined ? null : captureProcessToken(appPid);
-      if (appPid === undefined || !appToken) throw new Error('The fixture app has no identity.');
-      const app: MacosProcess = { pid: appPid, processToken: appToken, startedAtMicros: 1 };
-      const supervisor = await ownedProcess();
-      const child = children.at(-1);
-      if (!child) throw new Error('The supervisor fixture did not start.');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
       vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
         async ({ bundle: targetBundle, bundleId: targetId }) => {
-          mkdirSync(workspaceLogsDir(root), { recursive: true });
           mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
           writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
           return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
         },
       );
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
-        async (project, _launch, _child, _deadline, accept) => {
-          const current = { ...requiredMacosRecord(project), app, supervisor } as MacosAppRecord;
-          writeWorkspaceState(project, { macos: current });
-          accept?.(current);
-          return current;
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      vi.spyOn(owning, 'spawnOwned').mockImplementation(async ({ declare }) => {
+        const claims = [...declare];
+        for (const claim of claims) markClaimChildPending(claim);
+        throw new WorkspaceProcessCleanupError(claims, 'unverified spawn', 'verify the child');
+      });
+      let failure: unknown;
+      try {
+        failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+        assert(failure instanceof WorkspaceProcessCleanupError);
+        expect(failure.claims.length).toBeGreaterThan(0);
+        for (const claim of failure.claims) {
+          expect(readClaimSet(claim.root).live.find((entry) => entry.claimId === claim.claimId)).toMatchObject({
+            childDeclared: true,
+            child: null,
+          });
+        }
+      } finally {
+        if (failure instanceof WorkspaceProcessCleanupError) for (const claim of failure.claims) releaseClaim(claim);
+      }
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled native run does not spawn after the final bundle probe',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      const context = testContext();
+      vi.spyOn(stopping, 'stopBundleInstances').mockImplementation(async () => {
+        refuseDeclaredSpawns(context, 'native run cancelled');
+        return false;
+      });
+      const spawn = vi.spyOn(owning, 'spawnOwned');
+      await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('native run cancelled');
+      expect(spawn).not.toHaveBeenCalled();
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled native run drains an app returned by the spawn',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
         },
       );
       vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const context = testContext();
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      setExecutor(mocked);
+      const owned = {
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        },
+      };
+      vi.spyOn(owning, 'spawnOwned').mockImplementation(async () => {
+        const recorded = readMacosRecord(root);
+        assert(recorded);
+        const out = join(workspaceLogsDir(root), macosAppLogName(recorded.launchId, 'out'));
+        mkdirSync(workspaceLogsDir(root), { recursive: true });
+        writeFileSync(out, 'output during spawn\n');
+        refuseDeclaredSpawns(context, 'cancelled during spawn');
+        return owned;
+      });
+      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+      const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockImplementation(async (workspace, env) => {
+        expect(workspace).toBe(root);
+        expect(env).toBe(context.env);
+        expect(readMacosRecord(root)?.app).toMatchObject({ pid: app.pid, processToken: app.processToken });
+        return null;
+      });
+      await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('cancelled during spawn');
+      expect(stop).toHaveBeenCalledWith(owned);
+      expect(drain).toHaveBeenCalledOnce();
+    },
+    20_000,
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled native run drains an app when observer attachment finishes',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const context = testContext();
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      setExecutor(mocked);
+      const owned = {
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        },
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue(owned);
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation(async () => {
+        refuseDeclaredSpawns(context, 'cancelled during observe');
+        return null;
+      });
+      const childStop = vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
+      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+      await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('cancelled during observe');
+      expect(childStop).toHaveBeenCalledWith(owned);
+      const stopOrder = stop.mock.invocationCallOrder[0];
+      assert(stopOrder !== undefined);
+      expect(childStop.mock.invocationCallOrder[0]).toBeLessThan(stopOrder);
+      expect(stop).toHaveBeenCalledWith(owned);
+    },
+    20_000,
+  );
+
+  test.skipIf(process.platform !== 'darwin')('an unrecorded launch retains its output and claims', async () => {
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+    vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+      async ({ bundle: targetBundle, bundleId: targetId }) => {
+        mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+        writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+        return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+      },
+    );
+    vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+    vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
+    vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+    vi.spyOn(macosState, 'updateMacosRecord').mockReturnValue(false);
+    const app = macosProcess(process.pid);
+    const claim = {
+      root: 'fixture',
+      path: 'fixture',
+      claimId: 'fixture',
+      mode: 'exclusive' as const,
+      owner: app,
+      startedAt: new Date().toISOString(),
+      details: {},
+      label: 'fixture',
+    };
+    let raw = '';
+    vi.spyOn(owning, 'spawnOwned').mockImplementation(async () => {
+      const recorded = readMacosRecord(root);
+      assert(recorded);
+      raw = join(workspaceLogsDir(root), macosAppLogName(recorded.launchId, 'out'));
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      writeFileSync(raw, 'unrecorded output\n');
+      return { ...app, claim };
+    });
+    const drain = vi.spyOn(stimdClient, 'drainOwnedMacos');
+    let failure: unknown;
+    try {
+      failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+      assert(failure instanceof WorkspaceProcessCleanupError);
+      expect(failure.message).toContain('cannot be attributed');
+      expect(drain).not.toHaveBeenCalled();
+      expect(readFileSync(raw, 'utf8')).toBe('unrecorded output\n');
+      for (const held of failure.claims)
+        expect(readClaimSet(held.root).live.find((entry) => entry.claimId === held.claimId)).toMatchObject({
+          childDeclared: true,
+          child: null,
+        });
+    } finally {
+      if (failure instanceof WorkspaceProcessCleanupError) for (const held of failure.claims) releaseClaim(held);
+    }
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('observer drain retention', () => {
+    test.each(['observer', 'launchservices', 'bookkeeping'])(
+      'a launch that exits during %s drains output and retains unverified ownership',
+      async (phase) => {
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+        vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+          async ({ bundle: targetBundle, bundleId: targetId }) => {
+            mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+            writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+            return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+          },
+        );
+        vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+        const mocked = getExecutor();
+        resetExecutor();
+        const app = await ownedProcess();
+        setExecutor(mocked);
+        const claim = {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        };
+        vi.spyOn(owning, 'spawnOwned').mockResolvedValue({ ...app, claim });
+        const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+        const inspect = processIdentity.inspectProcessIdentity;
+        let exitedDuringBookkeeping = false;
+        vi.spyOn(processIdentity, 'inspectProcessIdentity').mockImplementation((owner) =>
+          exitedDuringBookkeeping && owner?.pid === app.pid ? 'gone' : inspect(owner),
+        );
+        const recordPhase = buildProgress.recordBuildPhase;
+        vi.spyOn(buildProgress, 'recordBuildPhase').mockImplementation((...args) => {
+          if (phase === 'bookkeeping' && args[3] === 'launch') {
+            process.kill(app.pid, 'SIGKILL');
+            exitedDuringBookkeeping = true;
+          }
+          recordPhase(...args);
+        });
+        const executor = getExecutor();
+        setExecutor({
+          ...executor,
+          runFileAsync: async (file, args, options) => {
+            if (file !== 'lsappinfo') return executor.runFileAsync(file, args, options);
+            if (phase === 'launchservices') {
+              process.kill(app.pid, 'SIGKILL');
+              assert(await waitForProcessExit(app, 5000));
+            }
+            return 'ASN:0x0-0x1:';
+          },
+        });
+        vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation(async () => {
+          const recorded = readMacosRecord(root);
+          assert(recorded);
+          writeFileSync(join(workspaceLogsDir(root), macosAppLogName(recorded.launchId, 'out')), 'final output\n');
+          if (phase === 'observer') {
+            process.kill(app.pid, 'SIGKILL');
+            assert(await waitForProcessExit(app, 5000));
+          }
+          return null;
+        });
+        let failure: unknown;
+        try {
+          failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+          assert(failure instanceof WorkspaceProcessCleanupError);
+          expect(drain).toHaveBeenCalledOnce();
+          expect(readMacosRecord(root)?.app).toMatchObject({ pid: app.pid, processToken: app.processToken });
+          for (const held of failure.claims)
+            expect(readClaimSet(held.root).live.find((entry) => entry.claimId === held.claimId)).toMatchObject({
+              childDeclared: true,
+              child: null,
+            });
+        } finally {
+          if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
+          const exited = await waitForProcessExit(app, 5000);
+          if (exited && failure instanceof WorkspaceProcessCleanupError)
+            for (const held of failure.claims) releaseClaim(held);
+          expect(exited).toBe(true);
+        }
+      },
+    );
+    test('cancellation during LaunchServices verification cleans up the launched app', async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const stopChildren = vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
+      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+      const app = macosProcess(process.pid);
+      const claim = {
+        root: 'fixture',
+        path: 'fixture',
+        claimId: 'fixture',
+        mode: 'exclusive' as const,
+        owner: app,
+        startedAt: new Date().toISOString(),
+        details: {},
+        label: 'fixture',
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue({ ...app, claim });
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockResolvedValue(null);
+      vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
       const controller = new AbortController();
+      const executor = getExecutor();
       setExecutor({
-        ...mocked,
-        spawn: () => child,
+        ...executor,
         runFileAsync: async (file, args, options) => {
-          if (file === 'ps') return real.runFileAsync(file, args, options);
-          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
+          if (file !== 'lsappinfo') return executor.runFileAsync(file, args, options);
           controller.abort(new Error('cancelled during LaunchServices'));
           return 'ASN:0x0-0x1:';
         },
@@ -1145,12 +2139,212 @@ describe('macOS build placement and promotion', () => {
       await expect(
         runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
       ).rejects.toThrow('cancelled during LaunchServices');
-      expect(inspectProcessIdentity(supervisor)).not.toBe('same');
-      expect(inspectProcessIdentity(app)).not.toBe('same');
-      expect(() => process.kill(helperPid, 0)).toThrow(/ESRCH/);
+      expect(stopChildren).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
+      expect(stop).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
       expect(readMacosRecord(root)?.app).toBeUndefined();
-      expect(readMacosRecord(root)?.supervisor).toBeUndefined();
+    });
+
+    test.each([false, true])(
+      'a launch retains output and claim if the observer cannot drain (cancelled: %s)',
+      async (cancelled) => {
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+        vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+          async ({ bundle: targetBundle, bundleId: targetId }) => {
+            mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+            writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+            return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+          },
+        );
+        vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+        vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
+        vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+        const app = macosProcess(process.pid);
+        const claim = {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        };
+        vi.spyOn(owning, 'spawnOwned').mockResolvedValue({ ...app, claim });
+        const context = testContext();
+        let raw = '';
+        vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation(async () => {
+          const recorded = readMacosRecord(root);
+          assert(recorded);
+          raw = join(workspaceLogsDir(root), macosAppLogName(recorded.launchId, 'out'));
+          writeFileSync(raw, 'final output\n');
+          if (cancelled) refuseDeclaredSpawns(context, 'cancelled during observe');
+          return 'observer unavailable';
+        });
+        vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue('observer unavailable');
+        let failure: unknown;
+        try {
+          failure = await runMacos(context, root, () => {}, undefined, 'local').catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+          assert(failure instanceof WorkspaceProcessCleanupError);
+          expect(failure.message).toContain('observer unavailable');
+          expect(readMacosRecord(root)?.app).toMatchObject(app);
+          expect(readFileSync(raw, 'utf8')).toBe('final output\n');
+          for (const held of failure.claims)
+            expect(readClaimSet(held.root).live.find((entry) => entry.claimId === held.claimId)).toMatchObject({
+              childDeclared: true,
+              child: null,
+            });
+        } finally {
+          if (failure instanceof WorkspaceProcessCleanupError) for (const held of failure.claims) releaseClaim(held);
+        }
+      },
+    );
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'an unobserved launch permits a retry after fixture-proven stop',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.arguments', [
+        '-e',
+        'setInterval(() => {}, 1000)',
+      ]);
+      vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+        identity: async () => ({ hash: 'fingerprint', key: 'cache-key' }),
+        has: async () => true,
+        restore: async () => {
+          const restored = remoteBundle();
+          copyFileSync(process.execPath, join(restored, 'Contents', 'MacOS', 'Sample'));
+          chmodSync(join(restored, 'Contents', 'MacOS', 'Sample'), 0o755);
+          return { bundle: restored, tier: 'local' };
+        },
+        store: async () => {},
+      });
+      vi.stubEnv('DYLD_LIBRARY_PATH', join(dirname(process.execPath), '..', 'lib'));
+      const mocked = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor({
+        ...mocked,
+        runFile: (file, args, options) => {
+          if (file === 'plutil' && args[0] === '-replace') {
+            const path = args.at(-1) ?? '';
+            const value = JSON.parse(readFileSync(path, 'utf8'));
+            value[args[1] ?? ''] = args[3];
+            writeFileSync(path, JSON.stringify(value));
+            return '';
+          }
+          return mocked.runFile(file, args, options);
+        },
+        runFileAsync: (file, args, options) =>
+          file === 'lsappinfo'
+            ? Promise.resolve('ASN:0x0-0x1:')
+            : file === 'ps' || file === 'lsof'
+              ? real.runFileAsync(file, args, options)
+              : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
+        spawn: (file, args, options) =>
+          file.endsWith('/Sample.app/Contents/MacOS/Sample')
+            ? real.spawn(file, args, options)
+            : mocked.spawn(file, args, options),
+      });
+      vi.spyOn(owning, 'stopOwnedProcess').mockImplementation(async (owner) => {
+        if (inspectProcessIdentity(owner) !== 'same') return false;
+        process.kill(-owner.pid, 'SIGKILL');
+        if (!(await waitForProcessExit(owner, 5000))) return false;
+        const members = real.runFile('/bin/ps', ['-A', '-o', 'pid=,pgid='], { timeoutMs: 2000 });
+        return !members.split('\n').some((line) => Number(line.trim().split(/\s+/)[1]) === owner.pid);
+      });
+      const streams = createOwnedStreams(() => {});
+      let failedApp: MacosProcess | undefined;
+      let retried: MacosAppRecord | undefined;
+      vi.spyOn(stimdClient, 'observeOwnedMacos')
+        .mockImplementationOnce(async () => {
+          failedApp = readMacosRecord(root)?.app;
+          return 'observer unavailable';
+        })
+        .mockImplementation((workspace) => streams.sync(workspace));
+      vi.spyOn(stimdClient, 'drainOwnedMacos').mockImplementation(async (workspace) => {
+        await streams.sync(workspace);
+        return streams.drain(workspace, true);
+      });
+      try {
+        await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow(
+          'observer unavailable',
+        );
+        assert(failedApp);
+        expect(inspectProcessIdentity(failedApp)).not.toBe('same');
+        expect(readClaimSet(macosRuntimeClaim(root)).live).toEqual([]);
+        expect(readMacosRecord(root)?.app).toBeUndefined();
+        retried = await runMacos(testContext(), root, () => {}, undefined, 'local');
+        expect(retried.app).toBeDefined();
+        await stopMacosApp(root);
+      } finally {
+        streams.close();
+        if (retried?.app && inspectProcessIdentity(retried.app) === 'same') process.kill(retried.app.pid, 'SIGKILL');
+      }
     },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled launch retains its app record and declared child when helper cleanup is unverified',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const context = testContext();
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      setExecutor(mocked);
+      const owned = {
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        },
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue(owned);
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation(async () => {
+        refuseDeclaredSpawns(context, 'cancelled during observe');
+        return null;
+      });
+      vi.spyOn(stopping, 'stopMacosChildren').mockRejectedValue(new Error('unverified child'));
+      const stop = vi.spyOn(owning, 'stopOwnedProcess');
+      let failure: unknown;
+      try {
+        failure = await runMacos(context, root, () => {}, undefined, 'local').catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+        assert(failure instanceof WorkspaceProcessCleanupError);
+        expect(stop).not.toHaveBeenCalled();
+        expect(readMacosRecord(root)?.app).toMatchObject({ pid: app.pid, processToken: app.processToken });
+        expect(failure.claims.length).toBeGreaterThan(0);
+        for (const claim of failure.claims) {
+          const holder = readClaimSet(claim.root).live.find((entry) => entry.claimId === claim.claimId);
+          expect(holder).toMatchObject({ childDeclared: true, child: null });
+        }
+      } finally {
+        if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
+        await waitForProcessExit(app, 5000);
+        if (failure instanceof WorkspaceProcessCleanupError) for (const claim of failure.claims) releaseClaim(claim);
+      }
+    },
+    20_000,
   );
 
   test.skipIf(process.platform !== 'darwin')(
@@ -1159,8 +2353,6 @@ describe('macOS build placement and promotion', () => {
       const mocked = getExecutor();
       resetExecutor();
       const app = await ownedProcess();
-      const supervisor = await ownedProcess();
-      const child = children.at(-1)!;
       let enter!: () => void;
       let release!: () => void;
       const entered = new Promise<void>((resolve) => {
@@ -1180,17 +2372,23 @@ describe('macOS build placement and promotion', () => {
           return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
         },
       );
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
-        async (project, _launch, _child, _deadline, accept) => {
-          const current = { ...requiredMacosRecord(project)!, app, supervisor };
-          writeWorkspaceState(project, { macos: current });
-          accept?.(current);
-          return current;
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue({
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: macosRuntimeClaim(root),
+          path: macosRuntimeClaim(root),
+          claimId: 'fixture',
+          mode: 'exclusive',
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'macOS app',
         },
-      );
+      });
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockResolvedValue(null);
       setExecutor({
         ...mocked,
-        spawn: () => child,
         runFileAsync: async (file, args, options) => {
           if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
           enter();
@@ -1220,7 +2418,7 @@ describe('macOS build placement and promotion', () => {
         release();
         await pending;
       }
-      expect((await pending).app).toEqual(app);
+      expect((await pending).app).toMatchObject({ pid: app.pid, processToken: app.processToken });
     },
   );
 
