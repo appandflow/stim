@@ -11,7 +11,13 @@ import { bundleInstancePids, bundleInstancePidsAsync } from '../macos/instances.
 import { lstatSync, rmdirSync } from 'node:fs';
 import { lstat, readdir, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
+import {
+  claimFilesRemoveCommand,
+  describeClaimProblem,
+  isClaimRefusal,
+  isClaimUnavailable,
+  readClaimSet,
+} from '../ownership-claim.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { managedLockHolders } from '../engine/tunnel.ts';
@@ -93,7 +99,7 @@ export function workspaceInUse(
     const claims = readClaimSet(workspaceProcessLockPath(workspaceDir(root), NATIVE_RUN, true));
     if (claims.live.length) reasons.push(NATIVE_RUN_HELD);
     else if (claims.unresolved[0])
-      reasons.push(`its native-run.lock cannot be resolved: ${claims.unresolved[0].reason}`);
+      reasons.push(`its native-run.lock cannot be resolved: ${describeClaimProblem(claims.unresolved[0])}`);
   }
   for (const platform of ['ios', 'android'] as const) {
     for (const [slot, record] of Object.entries(
@@ -192,7 +198,14 @@ export async function withIdleWorkspace<T>(
     signal?.throwIfAborted();
     if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };
     if (isClaimRefusal(error) || isClaimUnavailable(error)) {
-      return { ran: false, reasons: [`its native-run.lock cannot be taken: ${error.reason}`] };
+      return {
+        ran: false,
+        reasons: [
+          isClaimRefusal(error)
+            ? `its native-run.lock cannot be taken: ${error.reason}; the claim is at ${error.claimPath}. If nothing is using it, run: ${error.blockingFile ? error.removeCommand : claimFilesRemoveCommand(error.claimPath)}`
+            : `its native-run.lock cannot be taken: ${error.reason}`,
+        ],
+      };
     }
     throw error;
   } finally {

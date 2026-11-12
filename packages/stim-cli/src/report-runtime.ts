@@ -6,12 +6,18 @@ interface ReportState {
   failure?: unknown;
   recoveries: Map<Promise<void>, (() => boolean) | undefined>;
   abort: (reason: unknown) => void;
+  deadline: number;
 }
 
 const reports = new WeakMap<StimContext, ReportState>();
 
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
+}
+
+export function reportTimeRemainingMs(context: StimContext | undefined): number | undefined {
+  const state = context && reports.get(context);
+  return state ? state.deadline - performance.now() : undefined;
 }
 
 export function trackReportResource(
@@ -77,9 +83,9 @@ export async function runReport<T>(
   };
   inheritDeclaredSpawns(context, operation);
   const pending = new Map<Promise<void>, Error | undefined>();
-  const state: ReportState = { pending, recoveries: new Map(), abort: (reason) => controller.abort(reason) };
-  reports.set(operation, state);
   const deadline = performance.now() + timeoutMs;
+  const state: ReportState = { pending, recoveries: new Map(), abort: (reason) => controller.abort(reason), deadline };
+  reports.set(operation, state);
   const expire = () => {
     controller.abort(
       Object.assign(new Error(`The report exceeded its ${timeoutMs / 1000} second budget.`), {

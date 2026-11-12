@@ -199,8 +199,11 @@ export function liveClaimOwner(): ClaimOwner {
 
 // unique-pid encodes a token as `upid1.` plus base64url JSON of the identity it decodes. Rebuilding one
 // is the only way to get a record for a process that is provably gone, or one whose pid was recycled.
-function reshape(change: (identity: Record<string, unknown>) => Record<string, unknown>): ClaimOwner {
-  const parsed = decode(liveClaimOwner().processToken);
+function reshape(
+  change: (identity: Record<string, unknown>) => Record<string, unknown>,
+  base: ClaimOwner = liveClaimOwner(),
+): ClaimOwner {
+  const parsed = decode(base.processToken);
   if (!parsed.ok) throw new Error(parsed.error.message);
   const identity = change({ ...parsed.value });
   return {
@@ -211,6 +214,14 @@ function reshape(change: (identity: Record<string, unknown>) => Record<string, u
 
 export function goneClaimOwner(pid: number = IMPOSSIBLE_PID): ClaimOwner {
   return reshape((identity) => ({ ...identity, pid }));
+}
+
+export function claimOwnerStartedAfter(reference: ClaimOwner, pid: number): ClaimOwner {
+  return reshape((identity) => {
+    const start = String(identity.startTime).split(':');
+    start[0] = String(BigInt(start[0] ?? '0') + 1n);
+    return { ...identity, pid, startTime: start.join(':') };
+  }, reference);
 }
 
 export function recycledClaimOwner(): ClaimOwner {

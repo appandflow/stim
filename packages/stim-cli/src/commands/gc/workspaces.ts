@@ -7,7 +7,7 @@ import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/st
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { agentDeviceDaemon } from '../../devices/activity.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
-import { readClaimSet } from '../../ownership-claim.ts';
+import { clearFreeClaimSet, describeClaimProblem, readClaimSet } from '../../ownership-claim.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
@@ -46,6 +46,7 @@ const RESIDUE_FILES: readonly string[] = ['log-error-index.json', 'ended-agents.
 const RESIDUE_LOCKS: readonly string[] = ['metadata.lock', 'ended-agents.lock'];
 const MAINTENANCE_LOGS: readonly string[] = ['maintenance.ndjson', 'maintenance.ndjson.1'];
 const FIRST_RECORD_BYTES = 64 * 1024;
+const NATIVE_RUN_LOCK_DIR = 'native-run.lock';
 
 function firstWorkspaceField(file: string): string | null {
   let fd: number | null = null;
@@ -79,6 +80,13 @@ function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): Wor
   }
   const locks = new Set(entries.filter((entry) => RESIDUE_LOCKS.includes(lockOf(entry))).map(lockOf));
   for (const entry of entries) {
+    if (entry === NATIVE_RUN_LOCK_DIR) {
+      const survey = readClaimSet(join(dir, entry));
+      if (survey.live.length) return blocked(`${entry} is held`);
+      if (survey.unresolved[0])
+        return blocked(`${entry} cannot be resolved: ${describeClaimProblem(survey.unresolved[0])}`);
+      continue;
+    }
     if (RESIDUE_LOCKS.includes(lockOf(entry)) || RESIDUE_FILES.includes(entry)) continue;
     if (entry === 'agent-device') {
       const daemon = agentDeviceDaemon(join(dir, entry));
@@ -113,7 +121,7 @@ function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): Wor
   if (root !== undefined && (!isAbsolute(root) || workspaceName(root) !== basename(dir))) {
     return blocked(`its maintenance log names ${root}, whose workspace directory has another name`);
   }
-  return { projectRoot: root ?? null, empty: entries.length === 0, blocked: null };
+  return { projectRoot: root ?? null, empty: entries.every((entry) => entry === NATIVE_RUN_LOCK_DIR), blocked: null };
 }
 
 function workspacesRoot(): string {
@@ -716,6 +724,8 @@ function removeEmptyResidue(dir: string): boolean {
   if (existsSync(join(dir, 'workspace.json'))) return false;
   const residue = inspectWorkspaceResidue(dir);
   if (residue.blocked !== null || !residue.empty) return false;
+  const lock = join(dir, NATIVE_RUN_LOCK_DIR);
+  if (existsSync(lock) && clearFreeClaimSet({ root: lock, label: 'native-run' }).status !== 'cleared') return false;
   try {
     rmdirSync(dir);
     return true;

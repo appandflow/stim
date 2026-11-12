@@ -289,6 +289,7 @@ test('an unacknowledged late report retains ownership rather than returning an o
     runFileAsync: async (_file, _args, options) => {
       const request: { ownership: { directory: string } } = JSON.parse(String(options.input));
       temps.push(request.ownership.directory);
+      writeFileSync(join(request.ownership.directory, 'group-0.json'), JSON.stringify({ record: null }));
       options.onSpawn?.(makeChildProcess());
       now += 120_001;
       return JSON.stringify({ uncertain: 'fixture' });
@@ -364,7 +365,7 @@ test('a verification child refuses a queued item for a different fenced workspac
 });
 
 test.skipIf(process.platform === 'win32')(
-  'a killed verification child leaves its evaluator and exact workspace claim pending',
+  'a killed verification child has its evaluator stopped by the owner and releases the exact workspace claim',
   { timeout: 30_000 },
   async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-verify-project-')));
@@ -447,16 +448,14 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       if (inspectProcessIdentity(outer) !== 'same') throw new Error('verification child identity changed');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-      expect(inspectProcessIdentity(evaluator)).toBe('same');
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
+      expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const lock = workspaceProcessLockPath(
         join(context.home, 'workspaces', workspaceName(root)),
         NATIVE_RUN_LOCK,
         true,
       );
-      expect(readClaimSet(lock).live).toEqual(
-        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-      );
+      expect(readClaimSet(lock)).toMatchObject({ live: [], dead: [], unresolved: [] });
       expect(readdirSync(directory)).toHaveLength(1);
     } catch (error) {
       testFailure = { error };
@@ -506,7 +505,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a killed report child leaves its evaluator and workspace ownership pending',
+  'a killed report child has its evaluator stopped by the owner and releases the workspace ownership',
   { timeout: 30_000 },
   async () => {
     const root = expoApp({});
@@ -554,16 +553,14 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       expect(inspectProcessIdentity(outer)).toBe('same');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-      expect(inspectProcessIdentity(evaluator)).toBe('same');
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
+      expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const lock = workspaceProcessLockPath(
         join(operation.home, 'workspaces', workspaceName(root)),
         NATIVE_RUN_LOCK,
         true,
       );
-      expect(readClaimSet(lock).live).toEqual(
-        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-      );
+      expect(readClaimSet(lock)).toMatchObject({ live: [], dead: [], unresolved: [] });
     } finally {
       controller.abort();
       if (children.outer && inspectProcessIdentity(children.outer) === 'same')

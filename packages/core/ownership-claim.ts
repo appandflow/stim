@@ -69,6 +69,9 @@ export interface ClaimProblem {
   reason: string;
   engineDirs?: string[];
   pendingChild?: boolean;
+  /** The holder, when the problem is a claim whose liveness could not be decided. */
+  owner?: ClaimOwner;
+  startedAt?: string;
   /** The Stim home its holder named, for a claim in a store several homes share. */
   home?: string;
 }
@@ -107,6 +110,7 @@ export class ClaimRefusedError extends Error {
   readonly claimPath: string;
   readonly reason: string;
   readonly removeCommand: string;
+  readonly blockingFile: boolean;
 
   constructor({
     claimPath,
@@ -134,6 +138,7 @@ export class ClaimRefusedError extends Error {
     this.claimPath = claimPath;
     this.reason = reason;
     this.removeCommand = removeCommand;
+    this.blockingFile = blockingFile;
   }
 }
 
@@ -163,6 +168,24 @@ export class ClaimUnavailableError extends Error {
 export function claimRemoveCommand(path: string): string {
   const onlyThisFile = path.endsWith(CLAIM_SUFFIX) || path.endsWith(CHILD_SUFFIX);
   return `rm ${onlyThisFile ? '-f' : '-rf'} ${quotedPath(path)}`;
+}
+
+/** `claimRemoveCommand` that, for a claim file, also names its child file. */
+export function claimFilesRemoveCommand(path: string): string {
+  return path.endsWith(CLAIM_SUFFIX)
+    ? `rm -f ${quotedPath(path)} ${quotedPath(childPath(path))}`
+    : claimRemoveCommand(path);
+}
+
+/** An unresolved claim as one line: why, who held it, and the command that removes it once nothing uses it. */
+export function describeClaimProblem(problem: ClaimProblem): string {
+  const status = problem.owner ? inspectProcessIdentity(problem.owner) : null;
+  const holder = problem.owner
+    ? `; its owner pid ${problem.owner.pid}${problem.startedAt ? ` (claimed ${problem.startedAt})` : ''} ${
+        status === 'gone' ? 'is no longer running' : status === 'same' ? 'is running' : 'could not be identified'
+      }`
+    : '';
+  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, run: ${claimFilesRemoveCommand(problem.path)}`;
 }
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {
@@ -423,6 +446,8 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     else {
       into.unresolved.push({
         path,
+        owner: holder.owner,
+        startedAt: holder.startedAt,
         ...(holder.childPending ? { pendingChild: true } : {}),
         ...(typeof holder.details.home === 'string' ? { home: holder.details.home } : {}),
         ...(Array.isArray(holder.details.engineDirs)

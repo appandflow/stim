@@ -21,7 +21,7 @@ vi.mock('../daemon/engine-switch.ts', async (original) => ({
 }));
 
 test.skipIf(process.platform === 'win32')(
-  'a killed verification retains its workspace claim and releases the selected engine claim while the evaluator survives',
+  'a killed verification has its evaluator stopped by the owner and releases the workspace and engine claims',
   { timeout: 30_000 },
   async () => {
     const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-verify-owned-')));
@@ -115,12 +115,10 @@ test.skipIf(process.platform === 'win32')(
       evaluator = { pid, processToken: identity.token };
       if (inspectProcessIdentity(outer) !== 'same') throw new Error('verification child identity changed');
       process.kill(outer.pid, 'SIGKILL');
-      expect(await settled).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
-      expect(inspectProcessIdentity(evaluator)).toBe('same');
+      expect(await settled).toMatchObject({ message: expect.stringContaining('Command failed') });
+      expect(inspectProcessIdentity(evaluator)).toBe('gone');
       const native = workspaceProcessLockPath(join(home, 'workspaces', workspaceName(root)), NATIVE_RUN_LOCK, true);
-      expect(readClaimSet(native).live).toEqual(
-        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
-      );
+      expect(readClaimSet(native)).toMatchObject({ live: [], dead: [], unresolved: [] });
       expect(readClaimSet(buildClaimRoot(selected.root, '0123456789ab'))).toMatchObject({ live: [], unresolved: [] });
     } catch (error) {
       testFailure = { error };

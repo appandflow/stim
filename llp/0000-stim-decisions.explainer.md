@@ -81,3 +81,4 @@ the workflow.
 - LLP 0004: checkouts Stim never ran in.
 - LLP 0005: Cargo `target/` directories.
 - LLP 0006: making room before a build.
+- LLP 0007: claims and child cleanup.

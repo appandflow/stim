@@ -6,6 +6,7 @@ import { readFingerprintNotes } from '../fingerprint-precompute.ts';
 import {
   checkMainCheckout,
   detectFingerprintParity,
+  fingerprintReportGate,
   mainCheckoutProjectRoot,
   reactNativeDoctorFindings,
   type DoctorPlatform,
@@ -71,9 +72,19 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const sourceRoot = checksIos ? mainRoot : root;
       const architectures = checksIos ? await inspectIosDebugArchitectures(sourceRoot, iosProjectPath) : [];
       const podsFlavor = checksIos ? podsFlavorFinding(root, sourceRoot, iosProjectPath, settings) : null;
+      const skippedFingerprint = fingerprintReportGate(operation);
       const prebuildRecords = machineSettings?.corrupt
         ? []
-        : (await inspectPrebuildRecords({ root: mainRoot, platform, host, operation })).map(prebuildRecordFinding);
+        : skippedFingerprint
+          ? [
+              {
+                level: 'note' as const,
+                title: 'Prebuild records were not checked',
+                detail: skippedFingerprint,
+                fix: 'Run stim doctor in a terminal to get the check.',
+              },
+            ]
+          : (await inspectPrebuildRecords({ root: mainRoot, platform, host, operation })).map(prebuildRecordFinding);
       const fingerprintPlatform = platform ?? (checksIos ? 'ios' : 'android');
       const fingerprintInputs = fingerprintInputsSetting(settings);
       const request = {
@@ -84,7 +95,14 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
         fingerprintInputs,
         embedMode: 'development' as const,
       };
-      const fingerprintNotes = await readFingerprintNotes(operation ?? processContext(root), request);
+      const fingerprintNotes = skippedFingerprint
+        ? [
+            {
+              message: `Fingerprint notes were not computed: ${skippedFingerprint}`,
+              remedy: 'Run stim doctor in a terminal to get them.',
+            },
+          ]
+        : await readFingerprintNotes(operation ?? processContext(root), request);
       const parity = await detectFingerprintParity(root, { ...request, operation });
       return [
         ...source,
