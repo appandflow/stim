@@ -23,8 +23,14 @@ export interface CargoTargetCandidate {
   root: string;
   dir: string;
   discovered: boolean;
-  /** When a size scan last walked it, or null when none has. */
   measuredAt: number | null;
+}
+
+/** Orders targets that were never measured, such as all of them after a restart, differently each hour, so the same few do not repeat. */
+function tieBreak(dir: string, now: number): number {
+  let hash = Math.floor(now / 3_600_000);
+  for (const char of dir) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  return hash;
 }
 
 /**
@@ -35,6 +41,7 @@ export interface CargoTargetCandidate {
 export function selectCargoTargets(
   candidates: readonly CargoTargetCandidate[],
   limit: number = MAX_DISCOVERED_TARGETS,
+  now: number = Date.now(),
 ): { measured: CargoTargetCandidate[]; unlisted: CargoTargetCandidate[] } {
   const byDir = new Map<string, CargoTargetCandidate>();
   for (const candidate of candidates) {
@@ -44,7 +51,12 @@ export function selectCargoTargets(
   const all = [...byDir.values()];
   const discovered = all
     .filter((entry) => entry.discovered)
-    .toSorted((a, b) => (a.measuredAt ?? -Infinity) - (b.measuredAt ?? -Infinity) || a.dir.localeCompare(b.dir));
+    .toSorted(
+      (a, b) =>
+        (a.measuredAt ?? -Infinity) - (b.measuredAt ?? -Infinity) ||
+        tieBreak(a.dir, now) - tieBreak(b.dir, now) ||
+        a.dir.localeCompare(b.dir),
+    );
   return {
     measured: [...all.filter((entry) => !entry.discovered), ...discovered.slice(0, limit)],
     unlisted: discovered.slice(limit),
@@ -63,7 +75,6 @@ interface ScanState {
  */
 let scan: ScanState = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
 
-/** When each `target/` was last walked, kept for the life of the process and seeded from the recorded sizes. */
 const lastMeasured = new Map<string, number>();
 
 const kept = (detail: string): ActionOutcome => ({ status: 'kept', bytes: 0, detail });
@@ -108,7 +119,11 @@ export async function measureCargoTargets(
   scan = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
   if (resolveMaintenanceSettings().cargoTargetMaxGb === 0) return sizes;
   const registered = Object.keys(loadConfig()?.projects ?? {});
-  const { measured, unlisted } = selectCargoTargets(await cargoTargetCandidates(registered, operation));
+  const { measured, unlisted } = selectCargoTargets(
+    await cargoTargetCandidates(registered, operation),
+    MAX_DISCOVERED_TARGETS,
+    now,
+  );
   scan.unlisted = unlisted.map(({ dir }) => dir);
   for (const { root, dir } of measured) {
     lastMeasured.set(dir, now);

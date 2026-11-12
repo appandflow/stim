@@ -133,14 +133,16 @@ In on mode a pass runs, cheapest to rebuild first:
      target/ inside it, are never removed, though they count in its size. A
      target triple directory holding anything besides Cargo's CACHEDIR.TAG and
      .rustc_info.json and its profiles keeps those files and loses only its
-     stale profiles. Without Exact's ledger, a build that changes nothing
-     leaves no trace in a profile's directory times: first the profiles and target triples no build wrote in the last
+     stale profiles: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap. Each is renamed
+     remaining profile, largest first, until under the cap. Without Exact's
+     ledger, a build that changes nothing leaves no trace in a profile's
+     directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
-     moved back if a build took its .cargo-lock meanwhile, then deleted; a
-     leftover .stim-trimmed is deleted first. A profile whose .cargo-lock a
+     moved back if a build took one of the profile's lock files (.cargo-lock,
+     .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
+     leftover .stim-trimmed is deleted first. A profile whose lock file a
      build holds, and any path a process executes from or holds open (one lsof
      and one ps read; unreadable keeps everything), stay, so a server running
      from target/exact-filesystem-tool does not protect the rest

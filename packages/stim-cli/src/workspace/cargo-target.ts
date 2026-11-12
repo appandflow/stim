@@ -167,7 +167,7 @@ export function cargoProfileDirs(target: string): string[] | null {
   return profilePaths(target)?.profiles.map((path) => join(target, path)) ?? null;
 }
 
-type LsofOutcome = { stdout: string } | { status: unknown; stdout: unknown };
+type LsofOutcome = ({ stdout: string } | { status: unknown; stdout: unknown }) & { file?: string };
 
 /** Whether a process holds a file open, from an lsof run: output names a holder, and anything but a clean no-match holds. */
 function lockHeld(outcome: LsofOutcome): boolean {
@@ -177,7 +177,7 @@ function lockHeld(outcome: LsofOutcome): boolean {
 
 /**
  * Whether a rename of a profile that passed the lock check stands: it is rolled back when a Cargo build holds the
- * profile's `.cargo-lock` after the move, or when that cannot be told.
+ * profile's lock files after the move, or when that cannot be told.
  */
 function renameStands(afterMove: LsofOutcome): boolean {
   return !lockHeld(afterMove);
@@ -199,13 +199,18 @@ function selectIncremental(candidates: readonly { path: string; bytes: number }[
 }
 
 async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofOutcome> {
-  const locks = PROFILE_LOCKS.map((name) => join(profile, name)).filter((lock) => existsSync(lock));
-  if (!locks.length) return { stdout: '' };
-  try {
-    return { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', ...locks], { timeoutMs: 5000, signal }) };
-  } catch (error) {
-    return isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
+  for (const name of PROFILE_LOCKS) {
+    const lock = join(profile, name);
+    if (!existsSync(lock)) continue;
+    let outcome: LsofOutcome;
+    try {
+      outcome = { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal }) };
+    } catch (error) {
+      outcome = isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
+    }
+    if (lockHeld(outcome)) return { ...outcome, file: name };
   }
+  return { stdout: '' };
 }
 
 const folded = (path: string): string => (FOLD_CASE ? path.toLowerCase() : path);
@@ -272,7 +277,7 @@ async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
  * remaining profile, largest first. A directory is renamed into `target/.stim-trimmed` after its lock check, so a build
  * that starts meanwhile makes a fresh one, and the lock is read again at the new path: a build that took it in between
  * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
- * open, and a profile whose `.cargo-lock` a build holds, stays.
+ * open, and a profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a build holds, stays.
  */
 export async function trimCargoTarget(
   registeredTarget: string,
@@ -318,11 +323,13 @@ export async function trimCargoTarget(
       result.kept.push(`${label}: a process uses it`);
       return false;
     }
-    for (const profile of profiles)
-      if (lockHeld(await lockOutcome(profile, signal))) {
-        result.kept.push(`${label}: a build holds its .cargo-lock`);
+    for (const profile of profiles) {
+      const held = await lockOutcome(profile, signal);
+      if (lockHeld(held)) {
+        result.kept.push(`${label}: a build holds its ${held.file ?? '.cargo-lock'}`);
         return false;
       }
+    }
     await mkdir(aside, { recursive: true });
     const there = join(aside, String(moved++));
     try {
@@ -331,11 +338,13 @@ export async function trimCargoTarget(
       result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
       return false;
     }
-    for (const profile of await locks(there))
-      if (!renameStands(await lockOutcome(profile))) {
+    for (const profile of await locks(there)) {
+      const after = await lockOutcome(profile);
+      const lockName = after.file ?? '.cargo-lock';
+      if (!renameStands(after)) {
         try {
           await rename(there, dir);
-          result.kept.push(`${label}: a build took its .cargo-lock during the move`);
+          result.kept.push(`${label}: a build took its ${lockName} during the move`);
         } catch {
           const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
           const home = await rename(there, stranded).then(
@@ -354,11 +363,12 @@ export async function trimCargoTarget(
             },
           );
           result.kept.push(
-            `${label}: a build took its .cargo-lock during the move and the directory could not be put back; it stays in ${home} for a person to merge or delete`,
+            `${label}: a build took its ${lockName} during the move and the directory could not be put back; it stays in ${home} for a person to merge or delete`,
           );
         }
         return false;
       }
+    }
     result.bytes += bytes ?? (await sizeOf(there, signal));
     result.removed.push(label);
     return true;
