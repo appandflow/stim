@@ -332,8 +332,15 @@ export async function trimCargoTarget(
           const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
           const home = await rename(there, stranded).then(
             () => stranded,
-            () => {
+            async () => {
               keepAside = true;
+              try {
+                await writeFile(join(aside, STRANDED), '');
+              } catch (error) {
+                throw new Error(
+                  `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
+                );
+              }
               return there;
             },
           );
@@ -365,10 +372,7 @@ export async function trimCargoTarget(
       await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
     }
   }
-  if (keepAside) {
-    await writeFile(join(aside, STRANDED), '').catch(() => {});
-    return result;
-  }
+  if (keepAside) return result;
   try {
     await rm(aside, { recursive: true, force: true });
   } catch (error) {
