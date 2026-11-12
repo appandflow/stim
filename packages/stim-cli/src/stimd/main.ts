@@ -788,6 +788,10 @@ async function runStimdInner(
       handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
     (why) => maybeUpdate(why, ASKED_MS),
+    (why) => {
+      restartWhy ??= why;
+      void checkEngine();
+    },
   );
   let restartingNet = false;
   let updating: Promise<void> | null = null;
@@ -925,6 +929,7 @@ async function runStimdInner(
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
+  let restartWhy: string | null = null;
   let switchedTo: { build: string; version: string } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
   const checkedClients = new Map<string, string>();
@@ -982,6 +987,20 @@ async function runStimdInner(
     void checkEngine();
   };
   const checkEngine = async (): Promise<void> => {
+    if (
+      restartWhy &&
+      !closing &&
+      !ending &&
+      !switchedTo &&
+      !hasActiveCommands() &&
+      !enginePinned() &&
+      !net.running()?.shareOnly
+    ) {
+      log('info', 'service_restart', restartWhy);
+      if (attached) requestEnd(restartWhy);
+      else shutdown(restartWhy);
+      return;
+    }
     if (
       !follower &&
       updatedInPlace &&

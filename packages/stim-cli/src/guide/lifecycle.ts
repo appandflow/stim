@@ -2321,7 +2321,10 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   \`stim doctor\` recomputes the current fingerprint and reports inputs it
   cannot safely evaluate or offload. Its determinism and worktree parity checks
   run project config and autolinking in an isolated child, so run doctor only
-  in a checkout whose project code you trust. Untracked, non-gitignored native files can
+  in a checkout whose project code you trust. The parity check makes a
+  temporary git worktree of HEAD; before it runs, doctor removes the leftover
+  ones of ended Stim processes and unregisters them in the repository they
+  were created for. Untracked, non-gitignored native files can
   move the key on one machine and not another.`,
     },
     concurrency: {
@@ -2534,7 +2537,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cache, which can only be emptied whole, emptied once over half its
        cap); at critical the Metro and compilation caches emptied, the build
        cache trimmed to the entries a workspace, parked device or build still
-       uses, and the fingerprint memo emptied
+       uses, the fingerprint index and memo emptied, and every other cache
+       Stim registered emptied whole (ccache, the macOS artifact cache and the
+       React Native and Android caches; \`guide cleanup\` lists them), except
+       report-only caches, caches inside a workspace, caches Stim does not own,
+       caches outside a scoped STIM_HOME and one a build holds
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
