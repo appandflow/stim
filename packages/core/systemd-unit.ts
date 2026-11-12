@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 const ESCAPES: Record<string, string> = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t', '\r': '\\r' };
 const UNESCAPES: Record<string, string> = { n: '\n', t: '\t', r: '\r' };
 
@@ -55,4 +57,27 @@ export function unitLines(text: string): UnitLine[] {
       out.push({ section, key: trimmed.slice(0, equals).trim(), value: trimmed.slice(equals + 1).trim() });
   }
   return out;
+}
+
+/** The sentence naming the drop-in (`<unit>.d/*.conf`) of the unit at `path` that sets `ExecStart=`, which systemd runs instead of the unit's. */
+export function dropInExecStart(path: string): string | null {
+  const dropIns = `${path}.d`;
+  try {
+    for (const name of readdirSync(dropIns).toSorted()) {
+      const file = join(dropIns, name);
+      if (name.endsWith('.conf') && unitLines(readFileSync(file, 'utf8')).some((line) => line.key === 'ExecStart'))
+        return `${file} sets ExecStart=, which systemd runs instead of the unit's`;
+    }
+  } catch {}
+  return null;
+}
+
+/** Why Stim cannot rewrite `ExecStart=` of the unit at `path` with `text`: a drop-in sets it, or the unit's own is not one single line. */
+export function execStartOverride(path: string, text: string): string | null {
+  const dropIn = dropInExecStart(path);
+  if (dropIn) return dropIn;
+  const starts = text.split('\n').filter((line) => /^\s*ExecStart\s*=/.test(line));
+  return starts.length !== 1 || /\\\s*$/.test(starts[0] ?? '')
+    ? `${path} has an ExecStart= that is not one single line`
+    : null;
 }

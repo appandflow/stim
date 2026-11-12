@@ -1216,7 +1216,7 @@ TMPDIR LEFTOVERS
   \`gc --dry-run\` reports recognized entries directly in the user's TMPDIR
   under "TMPDIR leftovers", with their count, size and a remedy: Stim temp
   directories (stim-claim-*, stim-host-*, stim-fakehome-*,
-  stim-hosted-macos-*, stim-server-*, stim-ws-*), xctrace recordings
+  stim-hosted-macos-*, stim-server-*, stim-ws-*, stim-parity-*), xctrace recordings
   (instruments*.ktrace), SwiftPM temp directories (TemporaryDirectory.* with a
   six-character suffix, left by swift and xcodebuild) and Jest's
   jest_<uid in base 36> cache. \`gc\` at high or critical checks them again and deletes a
@@ -1224,6 +1224,9 @@ TMPDIR LEFTOVERS
   it changed for 24 hours. It keeps a Stim temp directory that contains or
   sits inside a registered project, holds a live or unverifiable ownership
   claim or a .lock directory that is not a claim set, or cannot be listed. It
+  removes a stim-parity-* directory, with its git worktree registration, only
+  when its Stim record names a process that has ended; one without that record
+  stays. It
   keeps a recording or SwiftPM temp directory that cannot be read, every
   recording while an xctrace or Instruments process runs, and every SwiftPM
   temp directory while a swift or xcodebuild process runs, or when the process
