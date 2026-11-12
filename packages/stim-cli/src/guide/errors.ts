@@ -1549,13 +1549,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_REPORT_TIMEOUT
 
 An API operation exceeded its execution budget: 90 minutes for warmWorktree(),
-60 seconds for doctor(), gc(), collectGarbage(), reload(), plan() and removeWorktree().
+60 seconds for doctor(), previewGarbage(), collectGarbage(), reload(), plan() and removeWorktree().
 Stim attempts only that operation's cleanup before rejecting, with a 35 second
 cleanup budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
 Other clients are unaffected. Retry after the machine is less busy, or narrow
-the report with doctor({ platform }) or gc({ pressure }). doctor() and gc() remain
+the report with doctor({ platform }) or previewGarbage({ pressure }). doctor() and previewGarbage() remain
 read-only. collectGarbage() can mutate resources; completed actions remain applied.
-Inspect what remains with gc() before retrying a mutation.
+Inspect what remains with previewGarbage() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {

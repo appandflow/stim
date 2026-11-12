@@ -135,7 +135,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let stim = createStim({
     projectRoot,
     home: options.home ? resolve(options.home) : undefined,
-    buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+    buildCacheDir: options.buildCache ? resolve(options.buildCache) : undefined,
     onProgress,
   });
   let attempted = false;
@@ -155,7 +155,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       stim = createStim({
         projectRoot,
         home: options.home ? resolve(options.home) : undefined,
-        buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+        buildCacheDir: options.buildCache ? resolve(options.buildCache) : undefined,
         env: { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
         onProgress,
       });
@@ -170,13 +170,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       env: host ? { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' } : { ...process.env },
       onProgress,
     };
-    stim = new Proxy(stim, {
-      get(target, name) {
-        const value: unknown = Reflect.get(target, name);
-        if (typeof name !== 'string' || typeof value !== 'function') return value;
-        return (...args: unknown[]) => binding.runOp(name, args, context);
-      },
-    });
+    stim = binding.client(context);
     attempted = true;
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();

@@ -25,7 +25,7 @@ try {
   console.log(result.facts.udid);
 } finally {
   try {
-    const diagnostics = await stim.diagnostics({ errors: true });
+    const diagnostics = await stim.diagnostics({ errorsOnly: true });
     console.log(diagnostics.directory, diagnostics.records);
   } finally {
     const cleanup = await stim.stop();
@@ -37,7 +37,7 @@ try {
 ## Client context
 
 `createStim` resolves `projectRoot` to its canonical path once. It accepts
-optional absolute `home` and `buildCache` paths, an `env` object, and an
+optional absolute `home` and `buildCacheDir` paths, an `env` object, and an
 `onProgress` callback. `env` defaults to the caller's `process.env`; Stim reads
 its settings overrides from it and passes it to its child processes. Omitted paths use
 that environment, captured when the client is created, and normal Stim
@@ -50,7 +50,7 @@ stderr.
 Operations apply the matching CLI command's policy first, as `stim start`,
 `stim ios` and `stim gc` do. `start`, `build` and `run` refuse while the
 environment or settings still set a removed or leftover-off setting, and make
-sure the home's stim-daemon runs. `gc` and `collectGarbage` take the same
+sure the home's stim-daemon runs. `previewGarbage` and `collectGarbage` take the same
 refusals. Unlike the CLI, the API never runs the daemon's passes in the calling
 process. `beforeStart` runs after this policy. Pass `admission: 'none'` to skip
 it when the caller already runs inside a Stim resident process, as stim-server
@@ -131,9 +131,9 @@ cleanup cannot be confirmed.
 | `web`     | Existing web server  | `headed` (default `false`)                                         |
 
 The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
-`remoteBuild`, `remote`, `device`, `wait`, and `easProfile`. `device: true` selects a
-physical device automatically; a string pins its UDID or serial. `wait` takes
-seconds as a string, such as `"30"`. `wait: false` refuses an owned-device slot
+`remoteBuild`, `remote`, `device`, `waitSeconds`, and `easProfile`. `device: true` selects a
+physical device automatically; a string pins its UDID or serial. `waitSeconds` takes
+a number of seconds, such as `30`. `waitSeconds: false` refuses an owned-device slot
 wait immediately; for a physical device it bypasses another workspace's lease
 and can replace that workspace's running app, as CLI `--no-wait` does.
 `easProfile` downloads an existing compatible development build, never starts
@@ -232,7 +232,7 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `gc()`, `collectGarbage()` and `deleteGarbageItem()` cancel
+and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `previewGarbage()`, `collectGarbage()` and `deleteGarbageItem()` cancel
 their owned work; `stop()` and other reads finish their work first.
 
 ## Warm a worktree
@@ -326,7 +326,7 @@ takes precedence over the original request error.
 
 ```ts
 const doctor = await stim.doctor({ platform: 'ios', signal });
-const garbage = await stim.gc({ pressure: 'high', signal });
+const garbage = await stim.previewGarbage({ pressure: 'high', signal });
 console.log(doctor.findings, garbage.sections);
 ```
 
@@ -371,7 +371,7 @@ Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
 Desktop uses the private `desktop-machine-access` subscription on its own bundled
 server; phone, network and other local connections cannot request access through it.
 
-`gc({ pressure?, measureBuildState? })` returns the `stim gc --dry-run --json` report.
+`previewGarbage({ pressure?, measureBuildState? })` returns the `stim gc --dry-run --json` report.
 It never deletes resources or shuts down idle devices. `pressure` is `normal`,
 `high` or `critical` and previews that level instead of the measured one.
 `measureBuildState: false` reports each worktree's `buildState` sizes only from
@@ -516,7 +516,7 @@ Caller context and process settings remain unchanged.
 
 ## Diagnostics and CI state
 
-`diagnostics({ tail: 200, errors: false })` reads the existing local timeline
+`diagnostics({ tail: 200, errorsOnly: false })` reads the existing local timeline
 and returns `{ directory, records }`. `tail: 0` returns paths without records.
 The directory is returned even before a run creates logs. This method does not
 fetch remote logs or capture new native crashes.

@@ -1,6 +1,6 @@
-import { clientProjectRoot, facadeClient, StimError } from './api/facade.ts';
+import { clientProjectRoot, engineOptions, facadeClient, StimError } from './api/facade.ts';
 import type { RunOp } from './api/engine-route.ts';
-import type { StimClient, StimFailure, StimOptions } from './api/types.ts';
+import type { EngineClient, EngineOptions, StimClient, StimFailure, StimOptions } from './api/types.ts';
 
 export { StimError };
 
@@ -60,10 +60,10 @@ export type {
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
-  const projectRoot = clientProjectRoot(options);
+  const projectRoot = clientProjectRoot(options, ['buildCacheDir', options.buildCacheDir]);
   const env = { ...(options.env ?? process.env) };
-  const ctx: StimOptions = { ...options, projectRoot, env };
-  let local: Promise<StimClient> | undefined;
+  const ctx: EngineOptions = { ...engineOptions(options), projectRoot, env };
+  let local: Promise<EngineClient> | undefined;
   const runLocal = async (name: string, args: unknown[]): Promise<unknown> => {
     local ??= import('./api/client.ts').then(({ createLocalStim }) => createLocalStim(ctx));
     const client = await local;
@@ -103,6 +103,6 @@ function isPlainFailure(value: unknown): value is StimFailure {
  * (the options of `createStim`) with `args`, in this build. Resolves the operation's result, or rejects a plain
  * `{code, message, remedy, details}`, so a caller of another build can wrap it in its own `StimError`.
  */
-export async function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown> {
+export async function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown> {
   return (await import('./api/client.ts')).runOp(name, args, ctx);
 }

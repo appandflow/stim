@@ -36,7 +36,7 @@ export interface StimOptions {
   /** Environment Stim reads its settings overrides from and passes to its child processes. Defaults to the caller's `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Absolute native artifact cache directory. Its coordinating home must be shared by all writers. */
-  buildCache?: string;
+  buildCacheDir?: string;
   /**
    * Receives output chunks without writing to the importing process's terminal.
    * An exception cancels the operation and rejects it with that exception.
@@ -51,7 +51,22 @@ export interface StimOptions {
   admission?: 'command' | 'none';
 }
 
-export type StimRunOptions = PlatformRunOptions & {
+/**
+ * The options of `createStim` as an engine of any Stim build receives them through `runOp`, with the cache directory
+ * under its wire name.
+ */
+export type EngineOptions = Omit<StimOptions, 'buildCacheDir'> & { buildCache?: string };
+
+type RunSelectors = PlatformRunOptions extends infer Options
+  ? Options extends { wait?: unknown }
+    ? Omit<Options, 'wait'> & {
+        /** iOS and Android: seconds to wait for an owned-device slot or a physical device's lease; `false` does not wait. */
+        waitSeconds?: number | false;
+      }
+    : Options
+  : never;
+
+interface RunExtras {
   /**
    * iOS and Android: install and launch the app the last `build` with the same scheme and configuration or variant
    * recorded in this workspace, without fingerprinting, building or replacing its JS. Refuses with
@@ -66,7 +81,12 @@ export type StimRunOptions = PlatformRunOptions & {
    */
   cleanAppState?: boolean;
   signal?: AbortSignal;
-};
+}
+
+export type StimRunOptions = RunSelectors & RunExtras;
+
+/** The run options as an engine of any Stim build receives them. */
+export type EngineRunOptions = PlatformRunOptions & RunExtras;
 
 export type StimRunResult =
   | { platform: 'ios'; facts: IosFacts }
@@ -132,9 +152,12 @@ export type StimReloadResult = ReloadFacts;
 export interface StimDiagnosticsOptions {
   /** Maximum number of records, default 200. Zero returns paths without records. */
   tail?: number;
-  errors?: boolean;
+  errorsOnly?: boolean;
   signal?: AbortSignal;
 }
+
+/** The diagnostics options as an engine of any Stim build receives them. */
+export type EngineDiagnosticsOptions = Omit<StimDiagnosticsOptions, 'errorsOnly'> & { errors?: boolean };
 
 export interface StimDiagnostics {
   directory: string;
@@ -267,7 +290,7 @@ export interface StimClient {
   /** Predicts the configured native build with a 60 second execution and 35 second cleanup budget; never builds or launches. */
   plan(options: StimPlanOptions): Promise<StimPlan>;
   /** Reads the GC dry run at the measured or given pressure level, with the storage sections, with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
-  gc(options?: StimGcOptions): Promise<StimGcReport>;
+  previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
   /** Runs one maintenance pass at the measured or given pressure level and deletes, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
   /** Deletes one shared cache, the idle workspaces' build outputs, one archive or part of it, or a helper daemon's memory, under maintenance admission. */
@@ -314,6 +337,19 @@ export interface StimClient {
     onRecord: (record: NdjsonRecord) => void,
     onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>,
   ): Promise<() => void>;
+}
+
+/**
+ * The client an engine of any Stim build runs: operation names and options keep the names they had when
+ * builds started routing operations to each other, so a client of one build can call an engine of another.
+ */
+export interface EngineClient extends Omit<StimClient, 'previewGarbage' | 'run' | 'diagnostics'> {
+  gc(options?: StimGcOptions): Promise<StimGcReport>;
+  run<P extends StimPlatform>(
+    options: EngineRunOptions & { platform: P },
+  ): Promise<Extract<StimRunResult, { platform: P }>>;
+  run(options: EngineRunOptions): Promise<StimRunResult>;
+  diagnostics(options?: EngineDiagnosticsOptions): Promise<StimDiagnostics>;
 }
 
 export interface StimFailure {

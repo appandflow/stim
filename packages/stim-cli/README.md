@@ -88,7 +88,7 @@ try {
   console.log(result.facts.udid);
 } finally {
   try {
-    console.log(await stim.diagnostics({ errors: true }));
+    console.log(await stim.diagnostics({ errorsOnly: true }));
   } finally {
     const cleanup = await stim.stop();
     if (!cleanup.ok) throw new Error(cleanup.summary);
@@ -180,13 +180,13 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
-`doctor({ platform?, record? })` and `gc({ pressure?, measureBuildState? })` read their CLI
+`doctor({ platform?, record? })` and `previewGarbage({ pressure?, measureBuildState? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record
 its checked platforms after the report and owned cleanup succeed. Recording waits
 asynchronously for the config lock, honors `signal`, and rejects unavailable state.
-`gc()` never
+`previewGarbage()` never
 deletes or shuts down idle devices; `collectGarbage({ pressure? })` runs `stim gc`
 in process. Reads can refresh their own usage caches
 and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
@@ -206,7 +206,7 @@ unresolved resources in place. Credential refresh waits asynchronously and
 checks cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
-`home` and `buildCache` accept absolute paths. Omit them to use normal Stim
+`home` and `buildCacheDir` accept absolute paths. Omit them to use normal Stim
 settings. A cache used by concurrent writers needs the same coordinating Stim
 home; do not point independent homes at a concurrently writable artifact cache.
 `start({ remote?, resetCache?, waitSeconds?, signal?, beforeStart? })` starts or

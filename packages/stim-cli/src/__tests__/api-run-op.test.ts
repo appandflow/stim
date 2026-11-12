@@ -54,6 +54,28 @@ describe('createStim', () => {
     ]);
   });
 
+  it('sends an engine of another build the operation and option names engines read', async () => {
+    const calls: unknown[][] = [];
+    engine.runOp = async (...call) => {
+      calls.push(call);
+      return null;
+    };
+    const buildCacheDir = join(scratch, 'cache');
+    const client = createStim({ projectRoot: scratch, home: join(scratch, 'home'), buildCacheDir });
+    await client.previewGarbage({ pressure: 'high' });
+    await client.run({ platform: 'ios', waitSeconds: 30 });
+    await client.run({ platform: 'android', waitSeconds: false });
+    await client.diagnostics({ errorsOnly: true });
+    expect(calls.map(([name, args]) => [name, args])).toEqual([
+      ['gc', [{ pressure: 'high' }]],
+      ['run', [{ platform: 'ios', wait: '30' }]],
+      ['run', [{ platform: 'android', wait: false }]],
+      ['diagnostics', [{ errors: true }]],
+    ]);
+    expect(calls[0]?.[2]).toMatchObject({ buildCache: buildCacheDir });
+    expect(calls[0]?.[2]).not.toHaveProperty('buildCacheDir');
+  });
+
   it('runs in this build when the caller already runs inside a Stim resident process', async () => {
     engine.runOp = async () => 'engine identity';
     const ctx = { projectRoot: scratch, home: join(scratch, 'home'), admission: 'none' } as const;

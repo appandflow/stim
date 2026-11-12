@@ -1,5 +1,5 @@
 // The stim API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
-[*] @internal declare function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown>;
+[*] @internal declare function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown>;
 [*] declare class StimError extends Error {
 [*] declare class StimError extends Error { | constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
 [*] declare class StimError extends Error { | readonly code: string;
@@ -1049,6 +1049,10 @@
 [*] interface RemoteListing { || reachability: Reachability;
 [*] interface RemoteListing { || revoke: string[];
 [*] interface RemoteListing { || serverKeyFingerprint: string | null;
+[*] interface RunExtras {
+[*] interface RunExtras { | cleanAppState?: boolean;
+[*] interface RunExtras { | recordedBuild?: boolean;
+[*] interface RunExtras { | signal?: AbortSignal;
 [*] interface RunLeaseFacts {
 [*] interface RunLeaseFacts { | expiresAt: string;
 [*] interface RunLeaseFacts { | kind: string;
@@ -1144,10 +1148,10 @@
 [*] interface StimClient { | diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
 [*] interface StimClient { | doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
 [*] interface StimClient { | followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void, onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>): Promise<() => void>;
-[*] interface StimClient { | gc(options?: StimGcOptions): Promise<StimGcReport>;
 [*] interface StimClient { | identity(options?: StimReadOptions): Promise<string>;
 [*] interface StimClient { | logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
 [*] interface StimClient { | plan(options: StimPlanOptions): Promise<StimPlan>;
+[*] interface StimClient { | previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
 [*] interface StimClient { | readonly projectRoot: string;
 [*] interface StimClient { | reload(options?: StimReloadOptions): Promise<StimReloadResult>;
 [*] interface StimClient { | remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
@@ -1190,7 +1194,7 @@
 [*] interface StimDiagnostics { | directory: string;
 [*] interface StimDiagnostics { | records: NdjsonRecord[];
 [*] interface StimDiagnosticsOptions {
-[*] interface StimDiagnosticsOptions { | errors?: boolean;
+[*] interface StimDiagnosticsOptions { | errorsOnly?: boolean;
 [*] interface StimDiagnosticsOptions { | signal?: AbortSignal;
 [*] interface StimDiagnosticsOptions { | tail?: number;
 [*] interface StimDoctorOptions extends StimReadOptions {
@@ -1228,7 +1232,7 @@
 [*] interface StimMachineAccessOptions extends StimReadOptions { | ticket?: string;
 [*] interface StimOptions {
 [*] interface StimOptions { | admission?: "command" | "none";
-[*] interface StimOptions { | buildCache?: string;
+[*] interface StimOptions { | buildCacheDir?: string;
 [*] interface StimOptions { | env?: NodeJS.ProcessEnv;
 [*] interface StimOptions { | home?: string;
 [*] interface StimOptions { | onProgress?: (event: StimProgress) => void;
@@ -1453,6 +1457,8 @@
 [*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & {
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & { | buildCache?: string;
 [*] type GcItem = {
 [*] type GcItem = { | dir: string;
 [*] type GcItem = { | kind: "cache";
@@ -1552,6 +1558,8 @@
 [*] type RecordingKeptCode = "unresolved" | "retained" | "recently-recorded";
 [*] type ReloadPlatform = WorkspaceLaunchPlatform | "web";
 [*] type RunOutcomeKind = "hit" | "cold";
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { | wait?: unknown;
 [*] type SettingScope = "machine" | "workspace" | "repo" | "committed";
 [*] type SettingsPayload = {
 [*] type SettingsPayload = { | files: Partial<Record<SettingScope, string>>;
@@ -1597,10 +1605,7 @@
 [*] type StimPlatform = "ios" | "android" | "macos" | "web";
 [*] type StimReloadResult = ReloadFacts;
 [*] type StimRemoteMachines = RemoteListing;
-[*] type StimRunOptions = PlatformRunOptions & {
-[*] type StimRunOptions = PlatformRunOptions & { | cleanAppState?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { | recordedBuild?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { | signal?: AbortSignal;
+[*] type StimRunOptions = RunSelectors & RunExtras;
 [*] type StimRunResult = {
 [*] type StimRunResult = { | facts: IosFacts;
 [*] type StimRunResult = { | platform: "ios";
@@ -1626,6 +1631,9 @@
 [*] type WorkspaceLaunchPlatform = "ios" | "android";
 [*] type WorkspaceLogsKeptCode = "unresolved" | "in-use" | "collector";
 [*] type WorktreeSkipCode = "not-a-worktree" | "bare-repository" | "source-checkout-unknown" | "source-checkout" | "not-registered" | "locked" | "pinned" | "nested-worktree" | "in-use" | "status-unreadable" | "dirty" | "unpushed-unchecked" | "unpushed" | "submodules" | "not-merged" | "merge-unknown" | "last-use-unknown" | "recently-used" | "activity-unknown" | "recent-activity";
+[*] } : Options : never;
+[*] } ? Omit<Options, "wait"> & {
+[*] } ? Omit<Options, "wait"> & { | waitSeconds?: number | false;
 [*] } | HostedAgentIssuedGrant;
 [*] } | null;
 [*] } | {

@@ -4,13 +4,12 @@ import {
   type StimProgress,
   StimError,
   type StimReloadOptions,
-  type StimClient,
   type StimStartOptions,
   type StimGcItem,
   type StimWorktreeWarmOptions,
   type StimWorktreeRemoveOptions,
 } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createStim, type EngineClient } from 'stim/api-self';
 import { realpathSync, lstatSync } from 'node:fs';
 import {
   readFailure,
@@ -208,7 +207,7 @@ function lifecycleAction(
   limits: CommandLimits,
   label: string,
   timeoutCode: string,
-  execute: (client: StimClient, signal: AbortSignal) => Promise<StopOutcome>,
+  execute: (client: EngineClient, signal: AbortSignal) => Promise<StopOutcome>,
   onProgress?: (progress: StimProgress) => void,
 ) {
   const abort = new AbortController();

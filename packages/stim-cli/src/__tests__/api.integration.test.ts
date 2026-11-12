@@ -141,7 +141,7 @@ test('diagnostics preserves local tail, error filtering and missing log director
   writeFileSync(join(directory, 'build.ndjson'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
   const stim = createStim({ projectRoot: root, home });
   expect(await stim.diagnostics({ tail: 1 })).toEqual({ directory, records: [records[2]] });
-  expect(await stim.diagnostics({ errors: true })).toEqual({ directory, records: [records[1]] });
+  expect(await stim.diagnostics({ errorsOnly: true })).toEqual({ directory, records: [records[1]] });
   expect(await stim.diagnostics({ tail: 0 })).toEqual({ directory, records: [] });
   rmSync(directory, { recursive: true });
   expect(await stim.diagnostics()).toEqual({ directory, records: [] });

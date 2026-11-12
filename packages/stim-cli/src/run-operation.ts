@@ -1,4 +1,4 @@
-import type { StimClient, StimOptions } from './api/types.ts';
+import type { EngineClient, StimOptions } from './api/types.ts';
 import { GOVERNED_COMMANDS, removedEnvironmentRefusal } from './daemon/mode.ts';
 import { removedSettingFindings, settingsLayers, projectSettingsContext } from './workspace/settings.ts';
 import { loadConfig } from './workspace/config.ts';
@@ -8,7 +8,7 @@ import { STIM_VERSION } from './stim-version.ts';
 
 export type Admission = NonNullable<StimOptions['admission']>;
 
-export type ApiOperation = Exclude<keyof StimClient, 'projectRoot'>;
+export type ApiOperation = Exclude<keyof EngineClient, 'projectRoot'>;
 
 export type OperationEntry = { cwd: string; env: NodeJS.ProcessEnv } & (
   | { caller: 'cli'; command: string; plan: boolean }
