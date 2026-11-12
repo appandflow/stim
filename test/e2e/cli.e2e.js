@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { killStimdUnder } from '../../vitest.kill-run-processes.ts';
 
 const packageRoot = new URL('../../packages/stim-cli/', import.meta.url);
 const version = JSON.parse(readFileSync(new URL('package.json', packageRoot), 'utf8')).version;
@@ -18,6 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  killStimdUnder(home);
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   delete process.env.STIM_NO_UPDATE_CHECK;

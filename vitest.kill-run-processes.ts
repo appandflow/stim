@@ -5,7 +5,7 @@ import { basename, dirname, sep } from 'node:path';
 const MAX_BUFFER = 256 * 1024 * 1024;
 
 function isRunRoot(root: string | undefined): root is string {
-  return process.platform !== 'win32' && !!root && basename(root).startsWith('stim-vitest-');
+  return process.platform !== 'win32' && !!root && /^stim-(?:vitest|e2e-run)-/.test(basename(root));
 }
 
 // A process's working directory outlives the directory itself: macOS lsof and Linux /proc keep naming the removed path.
