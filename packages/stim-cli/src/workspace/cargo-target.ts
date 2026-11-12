@@ -59,7 +59,9 @@ export function staleCargoPaths(
  * Exact's `.exact-sweep.json` ledger (`{ units: { "<profile>#<hash>": ms } }`): the stamp of each unit and the newest
  * per profile, which Exact refreshes from the fingerprint files a build read. Null when the text is not that shape.
  */
-function parseSweepLedger(text: string): { units: Map<string, number>; newest: Map<string, number> } | null {
+function parseSweepLedger(
+  text: string,
+): { units: Map<string, number>; newest: Map<string, number>; at: number | null } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -76,7 +78,8 @@ function parseSweepLedger(text: string): { units: Map<string, number>; newest: M
     stamps.set(key, at);
     newest.set(profile, Math.max(newest.get(profile) ?? 0, at));
   }
-  return { units: stamps, newest };
+  const at = isRecord(parsed) && typeof parsed.at === 'number' && Number.isFinite(parsed.at) ? parsed.at : null;
+  return { units: stamps, newest, at };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -133,9 +136,22 @@ function newestMtime(profile: string): number | null {
   return newest;
 }
 
-const EMPTY_LEDGER = { units: new Map<string, number>(), newest: new Map<string, number>() };
+interface Ledger {
+  units: Map<string, number>;
+  newest: Map<string, number>;
+  at: number | null;
+}
 
-function readLedger(target: string): typeof EMPTY_LEDGER | { refusal: string } {
+const EMPTY_LEDGER: Ledger = { units: new Map(), newest: new Map(), at: null };
+
+/** A ledger whose own time is older than this no longer shows use: Exact's sweep stopped recording it. */
+const LEDGER_FRESH_MS = 3 * 24 * 3_600_000;
+
+function ledgerShowsUse(ledger: Ledger | { refusal: string }, now: number): boolean {
+  return !('refusal' in ledger) && ledger.units.size > 0 && ledger.at !== null && now - ledger.at <= LEDGER_FRESH_MS;
+}
+
+function readLedger(target: string): Ledger | { refusal: string } {
   const ledgerPath = join(target, '.exact-sweep.json');
   if (!existsSync(ledgerPath)) return EMPTY_LEDGER;
   let text: string;
@@ -177,7 +193,7 @@ export function staleCargoTargetPaths(
  */
 export function idleCargoUnitPaths(target: string, now: number, skip: readonly string[] = []): string[] {
   const ledger = readLedger(target);
-  if ('refusal' in ledger || !ledger.units.size) return [];
+  if (!ledgerShowsUse(ledger, now) || 'refusal' in ledger) return [];
   const stamps = ledger.units;
   const found: string[] = [];
   for (const profile of cargoProfileDirs(target) ?? []) {
@@ -226,13 +242,18 @@ function selectIncremental(candidates: readonly { path: string; bytes: number }[
   return chosen;
 }
 
-async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofOutcome> {
+async function lockOutcome(profile: string, signal?: AbortSignal, lowPriority = false): Promise<LsofOutcome> {
   for (const name of PROFILE_LOCKS) {
     const lock = join(profile, name);
     if (!existsSync(lock)) continue;
     let outcome: LsofOutcome;
     try {
-      outcome = { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal }) };
+      const exec = getExecutor();
+      outcome = {
+        stdout: await (lowPriority
+          ? exec.runFileAsync('nice', ['-n', '19', 'lsof', '-t', '--', lock], { timeoutMs: 5000, signal })
+          : exec.runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal })),
+      };
     } catch (error) {
       outcome = isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
     }
@@ -372,7 +393,7 @@ export async function trimCargoTarget(
       return false;
     }
     for (const profile of profiles) {
-      const held = await lockOutcome(profile, signal);
+      const held = await lockOutcome(profile, signal, lowPriority);
       if (lockHeld(held)) {
         result.kept.push(`${label}: a build holds its ${held.file ?? '.cargo-lock'}`);
         return false;
@@ -387,7 +408,7 @@ export async function trimCargoTarget(
       return false;
     }
     for (const profile of await locks(there)) {
-      const after = await lockOutcome(profile);
+      const after = await lockOutcome(profile, undefined, lowPriority);
       const lockName = after.file ?? '.cargo-lock';
       if (!renameStands(after)) {
         try {
@@ -423,7 +444,7 @@ export async function trimCargoTarget(
   };
   const sweepUnits = async (profile: string, key: string): Promise<{ units: number; bytes: number; kept?: string }> => {
     const none = { units: 0, bytes: 0 };
-    if ('refusal' in ledger || !ledger.units.size) return none;
+    if (!ledgerShowsUse(ledger, now) || 'refusal' in ledger) return none;
     const all = readCargoUnits(profile, ledger.units, key, now);
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
@@ -438,7 +459,7 @@ export async function trimCargoTarget(
         .slice(at, at + UNIT_CHUNK)
         .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
       if (!chunk.length) continue;
-      const held = await lockOutcome(profile, signal);
+      const held = await lockOutcome(profile, signal, lowPriority);
       if (lockHeld(held))
         return { units: swept, bytes, kept: `a build holds its ${held.file ?? '.cargo-lock'}, so the sweep stopped` };
       const batch = join(aside, `units-${moved++}`);
@@ -455,7 +476,7 @@ export async function trimCargoTarget(
           break;
         }
       }
-      const after = await lockOutcome(profile);
+      const after = await lockOutcome(profile, undefined, lowPriority);
       if (failure === null && !renameStands(after))
         failure = `a build took its ${after.file ?? '.cargo-lock'} during the move, so the sweep stopped`;
       if (failure !== null) {

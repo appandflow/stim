@@ -187,7 +187,7 @@ async function bytesOfMany(
 }
 
 /** Whether a target still over its cap after the other steps loses its idle units too, at normal and high; one place to turn off. */
-const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'toNeed';
+const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'none';
 
 /**
  * What a trim of a Cargo `target/` removes at a disk level: normal covers the overage with stale profiles, then

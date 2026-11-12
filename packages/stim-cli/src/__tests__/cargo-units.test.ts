@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   utimesSync,
@@ -62,8 +63,8 @@ describe('a profile on disk with Exact ledger', () => {
     if (stampAgeMs !== null) stamps[`debug#${hash}`] = Date.now() - stampAgeMs;
   }
 
-  function writeLedger(): void {
-    writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now(), units: stamps }));
+  function writeLedger(atAgeMs = 0): void {
+    writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now() - atAgeMs, units: stamps }));
   }
 
   beforeEach(() => {
@@ -106,7 +107,7 @@ describe('a profile on disk with Exact ledger', () => {
 
   it('keeps every live unit of a package whose lib, build script and test units differ, and removes only superseded ones', async () => {
     for (const crate of ['foo', 'foo-bar'])
-      for (const n of [1, 2, 3, 4]) makeUnit(crate, h(n + (crate === 'foo' ? 10 : 20)), DAY / 4 + n * 1000);
+      for (const n of [1, 2, 3, 4]) makeUnit(crate, h(n + (crate === 'foo' ? 10 : 20)), n ** 2 * 1.25 * 3_600_000);
     makeUnit('foo', h(99), 8 * DAY);
     writeLedger();
     stub({});
@@ -116,6 +117,19 @@ describe('a profile on disk with Exact ledger', () => {
     expect(result.removed).toContain('debug: 1 idle units');
     expect(readdirSync(join(profile(), '.fingerprint')).filter((name) => name.startsWith('foo-'))).toHaveLength(8);
     expect(existsSync(join(profile(), 'deps', `libfoo-${h(99)}.rlib`))).toBe(false);
+  });
+
+  it('sweeps no unit when the ledger itself is older than 3 days, since it shows no use', async () => {
+    makeUnit('serde', h(1), 5 * DAY);
+    makeUnit('serde', h(2), 3 * DAY);
+    writeLedger(4 * DAY);
+    stub({});
+
+    expect(idleCargoUnitPaths(target, Date.now())).toEqual([]);
+    const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
+
+    expect(result.removed).not.toContain('debug: 1 idle units');
+    expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
   });
 
   it('sweeps no unit of a target without the ledger', async () => {
@@ -193,6 +207,7 @@ describe('a profile on disk with Exact ledger', () => {
     expect(existsSync(join(target, '.stim-trimmed', 'NOT-RESTORED'))).toBe(false);
     expect(readdirSync(target).filter((name) => name.startsWith('.stim-not-restored-'))).toEqual([]);
     expect(existsSync(join(profile(), '.fingerprint', `dup-${h(100)}`, 'fresh'))).toBe(true);
+    expect(readFileSync(victim, 'utf8')).toBe('fresh build');
     expect(result.kept.join(' ')).toContain('took its');
   });
 

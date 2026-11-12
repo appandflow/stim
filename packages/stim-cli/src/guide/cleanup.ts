@@ -136,13 +136,12 @@ In on mode a pass runs, cheapest to rebuild first:
      stale profiles: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap, then, still over,
-     the idle build units of each remaining profile, only where Exact's
+     remaining profile, largest first, until under the cap. At critical only,
+     the idle build units of each remaining profile go too, where Exact's
      ledger shows their use (see CARGO UNITS below). The disk level of the volume holding a target/
      tightens this: at high every recognised target/, in use or not, loses all
-     its stale profiles and all incremental/ data whatever the cap, and its
-     idle units only while it is over the cap; at critical it loses every idle
-     unit too. An explicit stim gc --pressure high|critical applies the level
+     its stale profiles and all incremental/ data whatever the cap, and
+     at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
      to every target/. The level is read when the trim is planned, which is at
      the hourly size scan, or hourly on its own while host load defers the size
      scan (the cap is never held back by load, and its du runs at low priority,
@@ -1651,7 +1650,10 @@ CARGO UNITS
   even if it compiled nothing. Units are swept only in a target that has that
   ledger. A unit is idle when its stamp is over a day old and no build read
   its fingerprint since that sweep (the access time Exact's sweep resets); a
-  unit with no stamp stays, and so does the newest unit of each crate. The
+  unit with no stamp stays, and so does one unit per crate name, the most
+  recently used (its other units, whatever their kind, can go when idle). A
+  ledger whose own time is over 3 days old shows no use and its target keeps
+  its units. Units are swept at critical only. The
   work goes in chunks of 25 units: the three lock files (.cargo-lock,
   .cargo-build-lock, .cargo-artifact-lock) are checked before and after each
   chunk and the sweep of that profile stops when one is held. A chunk is
