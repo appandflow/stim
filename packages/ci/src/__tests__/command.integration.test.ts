@@ -1,8 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { runCommand } from '../command.ts';
+import { waitForPid } from '../../../stim-cli/src/__tests__/_pid-file.ts';
 
 let root: string;
 
@@ -27,10 +27,7 @@ test.skipIf(process.platform === 'win32')(
       signal: controller.signal,
     });
     try {
-      const deadline = Date.now() + 2000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await delay(10);
-      expect(existsSync(pidFile)).toBe(true);
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = await waitForPid(pidFile, 2000);
       controller.abort();
       const result = await running;
       expect(result.signal).toBe('SIGKILL');

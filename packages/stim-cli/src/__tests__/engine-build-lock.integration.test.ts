@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { claimRemoveCommand, readClaimSet } from '../ownership-claim.ts';
@@ -19,6 +19,7 @@ import {
 } from '../engine/build-lock.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const PLATFORM = 'ios';
 const KEY = 'a3f9b1c2d3e4f5-debug-sim';
@@ -619,11 +620,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
       const exited = new Promise((resolve) => child.once('exit', resolve));
       let toolPid: number | null = null;
       try {
-        for (let attempts = 0; attempts < 500 && !existsSync(started); attempts += 1) {
-          await new Promise((r) => setTimeout(r, 20));
-        }
-        expect(existsSync(started), 'the builder never spawned xcodebuild').toBe(true);
-        toolPid = Number(readFileSync(started, 'utf-8'));
+        toolPid = await waitForPid(started, 10_000);
         const lockPath = buildLockPath('ios', key);
         for (let attempts = 0; attempts < 500 && !readClaimSet(lockPath).live[0]?.child; attempts += 1) {
           await new Promise((r) => setTimeout(r, 20));

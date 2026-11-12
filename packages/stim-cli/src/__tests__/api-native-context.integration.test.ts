@@ -37,6 +37,7 @@ import { checkEasAuth, loadProjectProvider } from '../engine/remote-cache.ts';
 import { resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { swapJsBundle } from '../engine/js-swap.ts';
 import { swapApkBundle } from '../engine/apk-swap.ts';
+import { waitForPid } from './_pid-file.ts';
 
 let root: string;
 beforeEach(() => {
@@ -238,10 +239,7 @@ setInterval(() => {}, 100);`,
     const controller = new AbortController();
     const operation = { ...context({ SHELL: shell }), signal: controller.signal };
     const pending = withAmbientContext(operation, () => podEnvForRubyAsync(null));
-    const started = Date.now();
-    while (!existsSync(pidFile) && Date.now() - started < 3000) await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(existsSync(pidFile)).toBe(true);
-    const pid = Number(readFileSync(pidFile, 'utf8'));
+    const pid = await waitForPid(pidFile, 3000);
     const rejected = pending.catch((error: unknown) => error);
     controller.abort();
     expect(await rejected).toMatchObject({ name: 'AbortError' });
@@ -337,8 +335,7 @@ setTimeout(() => {}, 4000);`,
     ),
   ).catch((error: unknown) => error);
   try {
-    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
-    const pid = Number(readFileSync(marker, 'utf8'));
+    const pid = await waitForPid(marker);
     const claims = withAmbientContext(operation, () => readClaimSet(join(workspaceDir(root), 'native-run.lock')));
     expect(claims.live).toHaveLength(1);
     expect(claims.live[0]?.child?.pid).toBe(pid);
