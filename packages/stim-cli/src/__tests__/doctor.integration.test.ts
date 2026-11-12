@@ -1390,6 +1390,47 @@ test('parity retains its registered worktree when fingerprint cleanup is unverif
   }
 });
 
+test('an aborted parity check unregisters its worktree and removes its directory', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-aborted-'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+    const controller = new AbortController();
+    let temporaryWorktree: string | undefined;
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (file === 'git' && args.includes('add')) temporaryWorktree = args.at(-2);
+        if (args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs'))) {
+          controller.abort(new Error('aborted'));
+          throw controller.signal.reason;
+        }
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    const operation = { ...processContext(repo), signal: controller.signal };
+    await expect(detectFingerprintParity(repo, { operation })).rejects.toThrow('aborted');
+    assert(temporaryWorktree);
+    expect(existsSync(dirname(temporaryWorktree))).toBe(false);
+    expect(
+      git('worktree', 'list', '--porcelain')
+        .split('\n')
+        .filter((line) => line.startsWith('worktree ')),
+    ).toHaveLength(1);
+  } finally {
+    resetExecutor();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('detectFingerprintParity against a real repo: a clean checkout is silent', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-clean-'));

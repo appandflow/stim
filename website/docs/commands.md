@@ -2544,7 +2544,7 @@ volume is not mounted, is kept and counted under "Skipped".
 `gc` also lists recognized leftovers directly in the user's `TMPDIR` under
 "TMPDIR leftovers", with their count, size and a remedy: Stim temp directories
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
-`stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`),
+`stim-server-*`, `stim-ws-*`, `stim-parity-*`), xctrace recordings (`instruments*.ktrace`),
 SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
 Jest's cache (`jest_<uid in base 36>`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
 temp directory only when nothing in it changed for 24 hours. It keeps a directory that contains or sits

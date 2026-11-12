@@ -124,6 +124,14 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
 });
 
+test("a parity directory without Stim's record is kept however old it is", async () => {
+  const unmarked = oldDir('stim-parity-OldRun1', { head: 'x' });
+
+  expect(await kept(unmarked)).toMatch(/no Stim record/);
+  expect(await deleteTempLeftovers()).toEqual({ count: 0, bytes: 0, failures: 0 });
+  expect(existsSync(unmarked)).toBe(true);
+});
+
 test('SwiftPM TemporaryDirectory.* directories are listed and deleted once idle and no swift process runs', async () => {
   const idle = oldDir('TemporaryDirectory.0Hkz40', { '.keep-directory': '', 'inputs-1.LinkFileList': 'x' });
   const recent = oldDir('TemporaryDirectory.2kjCOS');

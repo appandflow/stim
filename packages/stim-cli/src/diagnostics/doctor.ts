@@ -6,7 +6,7 @@ import { reportSignal, reportTimeRemainingMs, trackReportResource } from '../rep
 import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { rm } from 'fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
@@ -26,7 +26,8 @@ import {
 } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { tailscaleStatus } from '../tailscale-status.ts';
-import { makeTemporaryDirectory } from '../temporary.ts';
+import { makeTemporaryDirectory, temporaryRoot } from '../temporary.ts';
+import { PARITY_PREFIX, sweepParityLeftovers, writeParityMarker } from './parity-worktrees.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
@@ -1592,6 +1593,9 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
+  try {
+    await sweepParityLeftovers(temporaryRoot(projectRoot, operation), AbortSignal.timeout(10_000));
+  } catch {}
   const skipped = fingerprintReportGate(operation);
   if (skipped)
     return finding(
@@ -1604,7 +1608,13 @@ export async function detectFingerprintParity(
   const context = operation ?? processContext(projectRoot);
   let base: string;
   try {
-    base = makeTemporaryDirectory(projectRoot, 'stim-parity-');
+    base = makeTemporaryDirectory(projectRoot, PARITY_PREFIX, operation);
+    try {
+      writeParityMarker(base, projectRoot);
+    } catch (error) {
+      rmSync(base, { recursive: true, force: true });
+      throw error;
+    }
   } catch {
     return null;
   }
