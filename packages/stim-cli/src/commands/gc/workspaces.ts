@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmdirSync, statSync } from 'fs';
+import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmSync, rmdirSync, statSync } from 'fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
@@ -85,7 +85,6 @@ function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): Wor
       if (survey.live.length) return blocked(`${entry} is held`);
       if (survey.unresolved[0])
         return blocked(`${entry} cannot be resolved: ${describeClaimProblem(survey.unresolved[0])}`);
-      if (survey.orphans.length) return blocked(`${entry} holds ${survey.orphans[0]}`);
       continue;
     }
     if (RESIDUE_LOCKS.includes(lockOf(entry)) || RESIDUE_FILES.includes(entry)) continue;
@@ -726,6 +725,7 @@ function removeEmptyResidue(dir: string): boolean {
   const residue = inspectWorkspaceResidue(dir);
   if (residue.blocked !== null || !residue.empty) return false;
   const lock = join(dir, NATIVE_RUN_LOCK_DIR);
+  for (const orphan of readClaimSet(lock).orphans) rmSync(orphan, { force: true });
   for (const path of [join(lock, 'exclusive'), join(lock, 'shared'), lock]) {
     try {
       rmdirSync(path);
