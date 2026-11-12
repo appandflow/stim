@@ -537,8 +537,6 @@ async function main() {
     assert(gc.code === 0, `gc exited ${gc.code}:\n${lastLines(gc.stderr, 30)}`);
     const { mode, sections } = JSON.parse(gc.stdout);
     assert(mode === 'dry-run', `expected a GC dry run, got ${mode}`);
-    const cacheSizes = new Map(sections.caches.map(({ dir, bytes }) => [dir, bytes]));
-    const outputSizes = new Map(sections.workspaceBuildOutputs.map(({ dir, bytes }) => [dir, bytes]));
 
     const outputNames = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
     const expected = [
@@ -550,7 +548,12 @@ async function main() {
     for (const root of [wt1, wt2]) {
       const dir = dirname(workspaceLogsDir(root));
       const files = outputNames.reduce((sum, name) => sum + dirStats(join(dir, name)).files, 0);
-      expected.push({ name: 'workspace build outputs', dir, stats: { exists: files > 0, files }, sizes: outputSizes });
+      expected.push({
+        name: 'workspace build outputs',
+        dir,
+        stats: { exists: files > 0, files },
+        entries: sections.workspaceBuildOutputs,
+      });
     }
 
     const missing = [];
@@ -561,10 +564,13 @@ async function main() {
         c.ev(`${e.name}: nothing on disk at ${e.dir}, so gc has nothing to report -- not counted against it`);
         continue;
       }
-      const bytes = (e.sizes ?? cacheSizes).get(realpathSync(e.dir));
-      if (Number.isFinite(bytes) && bytes >= 0) {
+      const path = realpathSync(e.dir);
+      const entry = (e.entries ?? sections.caches).find(
+        ({ dir, bytes }) => Number.isFinite(bytes) && bytes >= 0 && existsSync(dir) && realpathSync(dir) === path,
+      );
+      if (entry) {
         reported += 1;
-        c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(bytes)} measured)`);
+        c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(entry.bytes)} measured)`);
       } else {
         c.ev(`gc has no measured size for ${e.name}, which holds ${stats.files} files at ${e.dir}`);
         missing.push(e);
