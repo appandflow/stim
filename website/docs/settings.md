@@ -50,7 +50,7 @@ validation; Stim ignores the `$schema` key:
 
 ```json
 {
-  "$schema": "https://unpkg.com/stim/dist/settings.schema.json",
+  "$schema": "https://unpkg.com/stim@2/dist/settings.schema.json",
   "ios": { "deviceType": "iPhone 17 Pro" }
 }
 ```

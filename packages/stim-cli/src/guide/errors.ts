@@ -2115,6 +2115,40 @@ not on any remote"  (worktree remove)
   and call stop() in cleanup, including after a partial run. If the error is
   unexpected, report its message and logs at github.com/appandflow/stim/issues.`,
     },
+    ci: {
+      summary: 'the codes stim ci run and stim ci build report in failure, cleanup.error and diagnostics.error',
+      separator: '--- STIM CI RESULTS ---',
+      body: () => `STIM_CI_SETUP_FAILED       run failed before the test command ran
+STIM_CI_TEST_FAILED        the test command exited nonzero; its exit code is kept
+STIM_CI_BUILD_FAILED       ci build could not build the app
+STIM_CI_ARTIFACT_FAILED    ci build built the app but could not pack or copy it
+STIM_CI_TIMEOUT            the job exceeded --timeout; exit code 124
+STIM_CI_CANCELLED          the job was cancelled; exit code 130
+STIM_CI_CLEANUP_FAILED     stop could not stop the workspace (cleanup.error)
+STIM_CI_DIAGNOSTICS_FAILED the logs could not be read or copied (diagnostics.error)
+STIM_CI_REPORT_FAILED      an onProgress callback or result file write failed
+                           (reportingError); it never interrupts cleanup
+  A failure that already carries a STIM_ code from the run or build keeps it.
+  Read result.json and diagnostics.json from --artifacts; stim guide lifecycle
+  describes stim ci.`,
+    },
+    'server-actions': {
+      summary: 'the codes stim-server reports for start, stop, reload, gc, doctor and worktree actions',
+      body: () => `STIM_ACTION_BUSY              another action already runs in this workspace;
+                              wait for it, then retry
+STIM_OUTPUT_LIMIT             the action printed more than the server keeps;
+                              run the same command in a terminal
+STIM_METRO_START_FAILED       start failed; read stim logs --source metro
+STIM_RELOAD_TIMEOUT           reload did not finish in time
+STIM_GC_TIMEOUT, STIM_GC_FAILED
+                              the gc action timed out or failed
+STIM_DOCTOR_REPAIR_FAILED     doctor --fix reported repair refusals
+STIM_WORKTREE_WARM_TIMEOUT, STIM_WORKTREE_WARM_FAILED
+STIM_WORKTREE_REMOVE_TIMEOUT, STIM_WORKTREE_REMOVE_FAILED
+                              worktree warm or remove timed out or failed
+  Stim Desktop and the phone show these for actions they ask stim-server to
+  run. Run the matching stim command in the workspace for the full output.`,
+    },
     STIM_NODE_UNSUPPORTED: {
       summary: 'stim or stim-server started on a Node older than 22.12.0, often a project pin',
       body: () => `STIM_NODE_UNSUPPORTED  ("Stim needs Node <floor> or later; this is Node <version> at <path>")

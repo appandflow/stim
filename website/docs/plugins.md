@@ -41,6 +41,17 @@ import only types from `stim/plugin`:
 import type { Transport, TransportInput } from 'stim/plugin';
 ```
 
+The module exports, per kind:
+
+| Kind             | Exports                                                                       | Type                  |
+| ---------------- | ----------------------------------------------------------------------------- | --------------------- |
+| `cache-provider` | `createCacheProvider({ projectRoot, options, env })` and `apiVersion`         | `CacheProviderModule` |
+| `transport`      | `id` and `createTransport({ env, options })`                                  | `TransportModule`     |
+| `agent-driver`   | `id` and `createAgentDriver(input)`, optionally `client` and `recover(input)` | `AgentDriverModule`   |
+
+Stim checks the kind integer in `package.json`, not `apiVersion`, before it
+imports the module.
+
 A runtime `import 'stim'` fails `stim plugin test`: a plugin runs without the
 engine on its import path. Add `stim` as a development dependency for the
 types and the kits.

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
+`ios`, `android`, `macos`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 

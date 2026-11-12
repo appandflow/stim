@@ -113,6 +113,12 @@ cancellation returns 130, including cancellation during cleanup when the test
 has not already failed. Progress callback failures are retained in
 `reportingError` and cannot interrupt cleanup. Leave at least 70 seconds between
 this timeout and the provider's hard timeout for diagnostics and cleanup.
+A failure's `code` is one of `STIM_CI_SETUP_FAILED`, `STIM_CI_TEST_FAILED`,
+`STIM_CI_BUILD_FAILED`, `STIM_CI_ARTIFACT_FAILED` (`ci build` built the app but
+could not pack or copy it), `STIM_CI_TIMEOUT` or `STIM_CI_CANCELLED`, unless the
+run or build failed with a more specific `STIM_` code. `cleanup.error` uses
+`STIM_CI_CLEANUP_FAILED`, `diagnostics.error` uses `STIM_CI_DIAGNOSTICS_FAILED`,
+and `reportingError` uses `STIM_CI_REPORT_FAILED`. `stim guide errors ci` lists them.
 Without `--artifacts` no result, test or diagnostic file is written and no logs
 are copied. An artifacts directory must be empty; choose a new one for each run.
 

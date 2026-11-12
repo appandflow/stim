@@ -311,11 +311,23 @@ for the bundled stim-server and CI runner and carries no compatibility, and so
 do identity(), deviceTool(), requestMachineAccess(), deleteGarbageItem() and the
 admission option, which serve Stim Desktop and stim-server.
 
+Within 2.x, --json payloads, logs --json records and API results only gain
+fields and enum values; ignore what you do not know. No compatibility covers
+status --json maintenance and daemon, the per-workspace idleStage,
+dormantStage, sourceDependenciesCleared and idleShutdown records, tutorial,
+gitChip, agentDevice.stateDir, or paths and pids of Stim's own state (a device
+lease's path and parsed, a build's waitingOn.path, gc --json lock path and pid).
+
 PLUGINS
 
 A plugin declares the kinds it implements and their integers in its
 package.json, such as "stimPlugin": { "kinds": { "transport": 1 } }, and
 imports only types from 'stim/plugin'; a runtime import of stim fails its test.
+A cache-provider module exports createCacheProvider({ projectRoot, options, env })
+and apiVersion (CacheProviderModule), a transport id and createTransport({ env,
+options }) (TransportModule), and an agent driver id and createAgentDriver(input),
+optionally client and recover(input) (AgentDriverModule). Stim checks the
+package.json integer, not apiVersion, before importing the module.
 The kinds are cache-provider, transport and agent-driver. Only cache-provider
 is stable in 2.x; transport and agent-driver are experimental, and their
 contracts and integers may change in a minor release. runContract(kind,

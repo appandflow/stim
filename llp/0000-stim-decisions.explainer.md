@@ -101,3 +101,4 @@ the workflow.
 - [LLP 0015](./0015-compatibility-removals.decision.md) covers the compatibility mechanisms that ended in 2.0.
 - [LLP 0016](./0016-stimd-managed-tunnel.decision.md) covers the managed tunnel that stimd runs.
 - [LLP 0017](./0017-macos-app-supervisor.decision.md) covers why the macOS app keeps its supervisor while the other long-lived children run in stimd.
+- [LLP 0023](./0023-public-api.decision.md) covers what the `stim` package exports as public API, the frozen plugin kinds, the JSON rule and the API report gate.

@@ -34,6 +34,8 @@
 
 ## Changed
 
+- The settings JSON Schema's `$id`, and the `$schema` URL the docs suggest for `.stim.json`, is `https://unpkg.com/stim@2/dist/settings.schema.json`, so an editor keeps the 2.x schema after a later major. It resolves once a stable 2.0.0 is published.
+- Within 2.x, `--json` payloads, `logs --json` records and API results only gain fields and enum values; `stim guide api` and the commands page name the parts of `status --json` and the file paths that carry no compatibility. `stim guide errors ci` lists the `STIM_CI_*` codes of `stim ci`, and `stim guide errors server-actions` the codes stim-server reports for Desktop and phone actions.
 - `@stim-cli/cache-s3` declares its `stim` peer dependency as `^<version>` instead of the exact version, so it installs beside any later `stim` of the same major.
 - `maintenance.olderThanDays` defaults to 3 (was 7): the age sweep removes workspace build outputs, shared cache entries, parked simulators and emulators, and opt-in idle worktrees after 3 days, and a simulator runtime that simctl recorded as used within 7 days is kept (the runtime window does not shrink below 7 days). Every stage and rung that reduces workspaces takes linked worktrees before source (main) checkouts, longest idle first in each.
 - `import('stim')` loads a small `createStim` facade, and Stim's implementation loads on the first operation call. Every client operation now reports a refusal as a rejected promise, including the argument checks that threw synchronously before.
