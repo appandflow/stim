@@ -89,7 +89,7 @@ import {
   readMaintenanceState,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
-import { goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
+import { IMPOSSIBLE_PID, goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -175,6 +175,11 @@ beforeEach(() => {
     runQuiet: () => null,
     runFile: (file, args, opts) => (file === 'du' || file === 'git' ? real.runFile(file, args, opts) : ''),
     runFileQuiet: (file, args, opts) => (file === 'git' ? real.runFileQuiet(file, args, opts) : null),
+    runFileAsync: (file, args, opts) => {
+      if (file === 'du' || file === 'git') return real.runFileAsync(file, args, opts);
+      if (file === 'xcrun') return Promise.resolve(JSON.stringify({ devices: {}, devicetypes: [] }));
+      return Promise.reject(Object.assign(new Error(`spawn ${file} ENOENT`), { code: 'ENOENT' }));
+    },
     findExecutable: (name) => (name === 'gh' ? null : real.findExecutable(name)),
     spawn: () => {
       throw new Error('unexpected spawn');
@@ -362,7 +367,7 @@ describe('workspace directories without workspace.json', () => {
 
   test('a directory holding only a native-run lock is kept with its claim path until the claim is removed, then deleted', async () => {
     const dir = husk(join(projects, 'locked'), {}, null);
-    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    const claim = plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
       child: { record: null },
     });
@@ -379,7 +384,7 @@ describe('workspace directories without workspace.json', () => {
 
   test('a directory holding only a native-run claim whose owner is gone and that has no child is deleted', async () => {
     const dir = husk(join(projects, 'dead-lock'), {}, null);
-    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    plantClaim(join(dir, 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
     });
     await gcJson({ pressure: 'normal' });
@@ -699,14 +704,14 @@ describe('workspaceInUse', () => {
 
   test('a native-run claim left by a dead owner with an unknown child names its path, owner and removal command', () => {
     const { root } = goneWorkspace('stale-fingerprint');
-    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(4242), {
+    const claim = plantClaim(join(workspaceDir(root), 'native-run.lock'), 'exclusive', goneClaimOwner(), {
       details: { purpose: 'fingerprint evaluation' },
       child: { record: null },
       startedAt: '2026-11-12T05:23:46.715Z',
     });
     const [reason] = workspaceInUse(root);
     expect(reason).toContain(claim);
-    expect(reason).toContain('pid 4242 (claimed 2026-11-12T05:23:46.715Z) is no longer running');
+    expect(reason).toContain(`pid ${IMPOSSIBLE_PID} (claimed 2026-11-12T05:23:46.715Z) is no longer running`);
     expect(reason).toContain(`rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`);
   });
 
