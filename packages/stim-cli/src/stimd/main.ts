@@ -139,6 +139,7 @@ import {
 } from './attached.ts';
 
 const TICK_MS = 60_000;
+const HOME_WATCH_MS = 15_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
 const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
@@ -630,6 +631,8 @@ interface RunStimdOptions {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
+  /** How often a detached stimd checks that its `run/` directory still exists: 15 seconds. */
+  homeWatchMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
   /** Starts the net thread at boot with these options, for `stim serve` and a service unit. */
@@ -685,6 +688,7 @@ async function runStimdInner(
   {
     tickMs = TICK_MS,
     slowTickMs = tickMs * SLOW_TICKS,
+    homeWatchMs = HOME_WATCH_MS,
     mode: startMode = daemonMode({}),
     serve,
     desktopKey,
@@ -1566,6 +1570,12 @@ async function runStimdInner(
   const syncOwned = () => {
     if (!closing) void logs.ownedSync();
   };
+  const homeWatch = attached
+    ? undefined
+    : setInterval(() => {
+        if (!closing && runDirRemoved(stimdRunDir())) shutdown('its run directory was removed');
+      }, homeWatchMs);
+  homeWatch?.unref();
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1765,6 +1775,7 @@ async function runStimdInner(
     await shutdownDone;
     await relaunchDone;
     await writerDone;
+    clearInterval(homeWatch);
     clearTimeout(attachedWatchdog);
   }
   return true;
@@ -1923,6 +1934,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
 }
 
 /** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */
+function runDirRemoved(run: string): boolean {
+  return !existsSync(run) && existsSync(dirname(run));
+}
+
 function removeExitedJobs(own: string): void {
   try {
     const executor = getExecutor();
