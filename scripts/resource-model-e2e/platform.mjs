@@ -24,19 +24,15 @@ export const SAMPLE_COLUMNS = [
   'booted_total',
   'booted_ours',
   'booting_ours',
-  'n_supervisor',
-  'rss_supervisor_mb',
-  'n_collector',
-  'rss_collector_mb',
-  'n_daemon',
-  'rss_daemon_mb',
+  'n_stimd',
+  'rss_stimd_mb',
   'n_metro',
   'rss_metro_mb',
   'n_xcodebuild',
   'rss_xcodebuild_mb',
 ];
 
-export const PROCESS_KINDS = ['supervisor', 'collector', 'daemon', 'metro', 'xcodebuild'];
+export const PROCESS_KINDS = ['stimd', 'metro', 'xcodebuild'];
 
 export function parseVmStat(text) {
   const pageBytes = Number(/page size of (\d+) bytes/.exec(text)?.[1] ?? 0) || null;
@@ -100,20 +96,18 @@ export function parsePs(text) {
 }
 
 function kindOf(cmd) {
-  if (cmd.startsWith('stim-supervisor')) return 'supervisor';
-  if (cmd.startsWith('stim-collector')) return 'collector';
-  if (/stim-daemon/.test(cmd)) return 'daemon';
+  if (/^stimd(\s|$)/.test(cmd)) return 'stimd';
   if (/(^|\/)xcodebuild(\s|$)/.test(cmd)) return 'xcodebuild';
   if (/(^|\/)node(\s|$)/.test(cmd) && /expo\/bin\/cli|@expo\/cli|\bexpo start\b|metro/.test(cmd)) return 'metro';
   return null;
 }
 
 function looksOurs(cmd, { home, worktreePrefix }) {
-  return /^stim-(supervisor|collector|daemon)/.test(cmd) || cmd.includes(home) || cmd.includes(worktreePrefix);
+  return /^stimd(\s|$)/.test(cmd) || cmd.includes(home) || cmd.includes(worktreePrefix);
 }
 
-// The supervisor retitles itself to a bare `stim-supervisor` (packages/stim-cli/src/supervisor/run.ts), so no command
-// line names the home: a recorded pid is the run's only while its start time is the one seen when it was first recorded.
+// stimd retitles itself to a bare `stimd` (packages/stim-cli/src/stimd/main.ts), so no command line names the home: a
+// recorded pid is the run's only while its start time is the one seen when it was first recorded.
 export function noteRecorded(recordedAt, pids, now) {
   for (const pid of pids) if (!recordedAt.has(pid)) recordedAt.set(pid, now);
 }
@@ -150,7 +144,7 @@ export function classifyStimProcesses(procs, { identities, home, worktreePrefix 
     const kind = kindOf(p.cmd);
     if (!kind) continue;
     const named = p.cmd.includes(home) || p.cmd.includes(worktreePrefix);
-    if (!(owned.has(p.pid) || (named && kind !== 'supervisor' && kind !== 'collector'))) continue;
+    if (!(owned.has(p.pid) || (named && kind !== 'stimd'))) continue;
     totals[kind].n += 1;
     totals[kind].rssMb += p.rssMb;
   }
@@ -181,10 +175,12 @@ export function recordedPids(home) {
       read(join(home, 'workspaces', entry, 'state.json'), liveProcesses);
     }
   } catch {}
-  try {
-    const dir = join(home, 'daemon');
-    for (const entry of readdirSync(dir, { recursive: true })) read(join(dir, String(entry)));
-  } catch {}
+  for (const name of ['run', 'daemon']) {
+    try {
+      const dir = join(home, name);
+      for (const entry of readdirSync(dir, { recursive: true })) read(join(dir, String(entry)));
+    } catch {}
+  }
   return found;
 }
 
