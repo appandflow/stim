@@ -9,10 +9,17 @@
 
 ## What Stim is for
 
-Stim gives each React Native or Expo workspace an isolated Metro port and an
-owned simulator or emulator, caches native builds, captures structured logs, and
-keeps the machine it runs on usable: it reclaims the disk its builds and devices
-consume. `AGENTS.md` holds the rules for changing this repository.
+Stim gives coding agents an isolated development and testing environment for
+each workspace. It runs React Native and Expo apps on iOS and Android, native
+iOS apps built with Xcode, native Android apps built with Gradle, Exact apps
+on iOS simulators, and SwiftPM development apps on macOS. It opens web apps
+in a workspace-owned Chrome session using a running web server.
+
+Stim manages the devices and app sessions it starts, reserves a Metro port
+for workspaces that use Metro, caches eligible native builds, and captures
+structured logs. It reclaims disk space from build outputs, caches, and
+devices under its cleanup rules. [AGENTS.md](../AGENTS.md) holds the rules for
+changing this repository.
 
 ## What a decision document is
 
@@ -84,13 +91,13 @@ the workflow.
 
 ## Documents
 
-- LLP 0001: disk pressure levels and what each deletes.
-- LLP 0002: what cleanup never deletes, and failing closed.
-- LLP 0003: caches of tools Stim does not own.
-- LLP 0004: checkouts Stim never ran in.
-- LLP 0005: Cargo `target/` directories.
-- LLP 0006: making room before a build.
-- LLP 0007: claims and child cleanup.
+- [LLP 0001](./0001-disk-pressure-levels.decision.md) covers disk pressure levels and what each deletes.
+- [LLP 0002](./0002-cleanup-never-deletes.decision.md) covers what cleanup never deletes, and failing closed.
+- [LLP 0003](./0003-tool-caches.decision.md) covers caches of tools Stim does not own.
+- [LLP 0004](./0004-discovered-checkouts.decision.md) covers checkouts Stim never ran in.
+- [LLP 0005](./0005-cargo-target.decision.md) covers Cargo `target/` directories.
+- [LLP 0006](./0006-build-headroom.decision.md) covers making room before a build.
+- [LLP 0007](./0007-claims-and-child-cleanup.decision.md) covers claims and child cleanup.
 - [LLP 0008](./0008-machine-authentication.decision.md) covers machine authentication and pairing.
 - [LLP 0009](./0009-build-offload.decision.md) covers build offload and worker services.
 - [LLP 0010](./0010-hosted-devices.decision.md) covers hosted runtime ownership and connections.
