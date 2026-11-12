@@ -31,6 +31,7 @@
 
 ## Changed
 
+- `@stim-cli/cache-s3` declares its `stim` peer dependency as `^<version>` instead of the exact version, so it installs beside any later `stim` of the same major.
 - `maintenance.olderThanDays` defaults to 3 (was 7): the age sweep removes workspace build outputs, shared cache entries, parked simulators and emulators, and opt-in idle worktrees after 3 days, and a simulator runtime that simctl recorded as used within 7 days is kept (the runtime window does not shrink below 7 days). Every stage and rung that reduces workspaces takes linked worktrees before source (main) checkouts, longest idle first in each.
 - `import('stim')` loads a small `createStim` facade, and Stim's implementation loads on the first operation call. Every client operation now reports a refusal as a rejected promise, including the argument checks that threw synchronously before.
 - `stim ci --version` and `stim ci -V` print the CI package version after Stim's pre-command checks run. Under `stim-server`, an option after a subcommand that the subcommand does not define, such as `stim-server devices grant ID --json`, is refused.

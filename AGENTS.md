@@ -330,7 +330,7 @@ outside it moves to its own issue and pull request.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
   default. Update `cache-packages.test.ts` when those rules change. The published packages are `stim` and
-  `@stim-cli/cache-s3`. Internal workspace ranges stay `workspace:*`; folded
+  `@stim-cli/cache-s3`. Internal workspace ranges stay `workspace:*`, and peer ranges `workspace:^`; folded
   packages are private and are bundled into `stim`.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.

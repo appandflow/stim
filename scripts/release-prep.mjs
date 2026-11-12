@@ -8,6 +8,7 @@ const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
 const licensesPath = join(repositoryRoot, 'apps', 'mobile', 'src', 'generated', 'licenses.json');
 const exactRange = 'workspace:*';
+const peerRange = 'workspace:^';
 const usage = 'usage: node scripts/release-prep.mjs <X.Y.Z[-rc.N]>\n       node scripts/release-prep.mjs --check';
 
 const fail = (message) => {
@@ -51,8 +52,9 @@ const audit = () => {
     versions.set(dir, manifest.version);
     for (const { group, name, range } of internalRanges(manifest)) {
       ranges += 1;
-      if (range !== exactRange) {
-        problems.push(`packages/${dir} ${group}.${name} is "${range}", not "${exactRange}"`);
+      const expected = group === 'peerDependencies' ? peerRange : exactRange;
+      if (range !== expected) {
+        problems.push(`packages/${dir} ${group}.${name} is "${range}", not "${expected}"`);
       }
     }
   }
@@ -115,7 +117,9 @@ if (target === '--check') {
   for (const problem of before.problems) process.stderr.write(`release-prep: ${problem}\n`);
   if (before.problems.length > 0) process.exit(1);
   process.stdout.write(`release-prep: ${packageDirs.length} packages at ${before.version}\n`);
-  process.stdout.write(`release-prep: ${before.ranges} inter-package ranges, all workspace:*\n`);
+  process.stdout.write(
+    `release-prep: ${before.ranges} inter-package ranges, workspace:^ for peers, else workspace:*\n`,
+  );
   process.exit(0);
 }
 
@@ -164,7 +168,7 @@ if (after.version !== target) restore(`the manifests read ${after.version} after
 process.stdout.write(`\nrelease-prep: ${before.version} -> ${target}\n`);
 for (const dir of packageDirs) process.stdout.write(`  ${`packages/${dir}`.padEnd(28)}${target}\n`);
 process.stdout.write(
-  `  ${'inter-package ranges'.padEnd(28)}${after.ranges} workspace:* ranges, packed as exact versions\n`,
+  `  ${'inter-package ranges'.padEnd(28)}${after.ranges} workspace ranges, packed as ^version for peers, else exact\n`,
 );
 if (regenerateLicenses) process.stdout.write(`  ${'apps/mobile licenses.json'.padEnd(28)}regenerated\n`);
 process.stdout.write(`  ${'pnpm-lock.yaml'.padEnd(28)}still matches the manifests\n`);

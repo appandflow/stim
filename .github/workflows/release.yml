@@ -162,7 +162,7 @@ jobs:
               for (const group of groups) {
                 for (const [name, range] of Object.entries(manifest[group] ?? {})) {
                   if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
-                  const ok = accepted.has(range);
+                  const ok = group === "peerDependencies" ? range === `^${tag}` : accepted.has(range);
                   console.log(`${manifest.name} ${group}.${name} ${range} ${ok ? "ok" : "MISMATCH"}`);
                   if (!ok) bad += 1;
                 }
@@ -473,8 +473,9 @@ jobs:
               for (const group of groups) {
                 for (const [name, range] of Object.entries(manifest[group] ?? {})) {
                   if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
-                  if (range !== version) {
-                    console.log(`${manifest.name} ${group}.${name} is ${range}, not ${version}`);
+                  const expected = group === "peerDependencies" ? `^${version}` : version;
+                  if (range !== expected) {
+                    console.log(`${manifest.name} ${group}.${name} is ${range}, not ${expected}`);
                     bad += 1;
                   }
                 }

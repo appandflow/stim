@@ -34,7 +34,7 @@
     "stim": "workspace:*"
   },
   "peerDependencies": {
-    "stim": "workspace:*"
+    "stim": "workspace:^"
   },
   "peerDependenciesMeta": {
     "stim": {
