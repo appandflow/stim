@@ -343,7 +343,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const running = runStimd({ mode: 'on', tickMs: 500 });
     await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
     let ended = false;
-    void running.then(() => {
+    void running.finally(() => {
       ended = true;
     });
     const releaseHold = await vi

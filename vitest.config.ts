@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { localMaxWorkers } from './scripts/test-max-workers.mjs';
 
 // pnpm's bin shims export NODE_PATH with node_modules/.pnpm/node_modules, where
 // pnpm hoists every workspace dependency, including apps/mobile's expo and
@@ -41,5 +42,6 @@ export default defineConfig({
     ],
     exclude: ['**/*.compat.test.ts', 'scripts/agent-benchmark/**'],
     pool: 'forks',
+    maxWorkers: localMaxWorkers(),
   },
 });

@@ -410,6 +410,7 @@ async function launchHere(
   let supervisor: MacosProcess | undefined;
   try {
     try {
+      // @ref LLP 0017#the-macos-app-keeps-its-supervisor -- the supervisor gives the exit code and a stop a leftover process cannot block
       child = spawnDeclared(context, () =>
         getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
           cwd: root,

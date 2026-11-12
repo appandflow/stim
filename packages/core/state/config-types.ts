@@ -94,6 +94,7 @@ export interface StimConfig {
   optimizations?: unknown;
   concurrency?: {
     maxBuilds?: unknown;
+    maxTests?: unknown;
     maxDevices?: unknown;
     maxIosDevices?: unknown;
     maxAndroidDevices?: unknown;
