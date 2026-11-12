@@ -484,7 +484,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 7,
     description:
-      "Days without activity before a source (main) checkout's node_modules and Pods are deleted, at any pressure level; a stim worktree warm that copied from it counts as activity. Linked worktrees follow idle.dormantDays and go first. Fractions of a day are allowed; 0 never",
+      "Days without activity before a source (main) checkout's node_modules and Pods are deleted, at any pressure level; No activity means no Stim command, source file write, git write or commit, in the checkout and in every workspace in it; a stim worktree warm that copied from it counts as activity. Linked worktrees follow idle.dormantDays and go first. Fractions of a day are allowed; 0 never",
   },
   {
     key: 'macos.product',

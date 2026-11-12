@@ -13,6 +13,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -28,6 +29,8 @@ import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.t
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
+import { warmClaimPath } from '../engine/warm-claim.ts';
+import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { testContext } from './_context.ts';
 
@@ -106,7 +109,14 @@ function write(path: string) {
 function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<string, string> {
   const repo = join(projects, 'repo');
   mkdirSync(repo, { recursive: true });
-  const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
+  const long = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const git = (args: string, cwd = repo) =>
+    execSync(`git ${args}`, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 15_000,
+      env: { ...process.env, GIT_AUTHOR_DATE: long, GIT_COMMITTER_DATE: long },
+    }).trim();
   git('init -q -b main');
   git('config user.email test@example.com');
   git('config user.name test');
@@ -124,8 +134,7 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
   for (const [name, root] of Object.entries(roots)) {
     write(join(root, 'node_modules', 'pkg', 'index.js'));
     write(join(root, 'ios', 'Pods', 'Manifest.lock'));
-    ageTree(join(root, 'node_modules'), hourAgo);
-    ageTree(join(root, 'ios'), hourAgo);
+    ageTree(root, hourAgo);
     for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) {
       const bytes = 512 * 1024 ** 2;
       writeCacheFile(diskUsageCacheFile(path), {
@@ -174,11 +183,13 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
 }
 
 type LevelPayload = {
-  actions: { rung: number | null; kind: string; target: string; outcome: string }[];
+  actions: { rung: number | null; kind: string; target: string; outcome: string; detail?: string }[];
 };
 
 function criticalDependencies(payload: LevelPayload): string[] {
-  return payload.actions.flatMap((action) => (action.kind === 'delete-dependencies' ? [action.target] : []));
+  return payload.actions.flatMap((action) =>
+    action.kind === 'delete-dependencies' && action.outcome !== 'kept' ? [action.target] : [],
+  );
 }
 
 test.skipIf(process.platform === 'win32')(
@@ -223,8 +234,9 @@ test.skipIf(process.platform === 'win32')(
       const { payload }: { payload: LevelPayload } = await gcJson();
       const critical = payload.actions.filter((action) => action.kind === 'delete-dependencies');
       expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
-      expect(critical.map((action) => action.target).indexOf(join(at('repo'), 'node_modules'))).toBeGreaterThan(
-        critical.map((action) => action.target).indexOf(join(at('feature'), 'node_modules')),
+      const planned = criticalDependencies(payload);
+      expect(planned.indexOf(join(at('repo'), 'node_modules'))).toBeGreaterThan(
+        planned.indexOf(join(at('feature'), 'node_modules')),
       );
       expect(critical.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
       await quietly(() => runGc({ pressure: 'normal' }));
@@ -356,8 +368,7 @@ test.skipIf(process.platform === 'win32')(
 function ageCheckout(root: string, at: Date) {
   recordWorkspaceUse(root, at);
   utimesSync(workspaceStateFile(root), at, at);
-  ageTree(join(root, 'node_modules'), at);
-  ageTree(join(root, 'ios'), at);
+  ageTree(root, at);
   const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', { cwd: root, encoding: 'utf-8' }).trim();
   for (const file of ['index', 'HEAD', join('logs', 'HEAD')])
     if (existsSync(join(gitDir, file))) utimesSync(join(gitDir, file), at, at);
@@ -411,6 +422,7 @@ test.skipIf(process.platform === 'win32')(
       child.kill('SIGKILL');
     }
     writeFileSync(join(source, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    ageTree(source, new Date(Date.now() - 60 * 60_000));
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(join(source, 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(roots.feature ?? '', 'node_modules'))).toBe(false);
@@ -440,10 +452,73 @@ test.skipIf(process.platform === 'win32')(
     expect(kept()).toBe(true);
 
     saveConfig({ ...currentConfig(), idle: {} });
+    recordWarmedFrom(source, daysAgo(9));
     await quietly(() => runGc({ pressure: 'normal' }));
     expect(kept()).toBe(false);
     expect(currentSourceDependencies(readWorkspaceState(source))).not.toBeNull();
     expect(existsSync(join(roots.feature ?? '', 'node_modules'))).toBe(true);
+  },
+  60_000,
+);
+
+const sourceModules = (source: string) => join(source, 'node_modules', 'pkg', 'index.js');
+
+test.skipIf(process.platform === 'win32')(
+  'a source checkout edited or committed in with other tools inside the window keeps its dependencies at critical and at 7 days, and a dry run says why',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const git = (args: string) => execSync(`git ${args}`, { cwd: source, timeout: 15_000 });
+
+    writeFileSync(join(source, 'edited.ts'), 'x');
+    const { payload }: { payload: LevelPayload } = await gcJson();
+    const kept = payload.actions.find(
+      (action) =>
+        action.rung === 8 && action.kind === 'delete-dependencies' && action.target === join(source, 'node_modules'),
+    );
+    expect(kept).toMatchObject({ outcome: 'kept' });
+    expect(kept?.detail).toMatch(/file edit/);
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
+
+    ageCheckout(source, daysAgo(8));
+    git('-c user.name=t -c user.email=t@example.com commit -q --allow-empty -m recent');
+    await quietly(() => runGc({ pressure: 'normal' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a source checkout keeps its dependencies while a worktree warm holds its claim, an app in it is active, or a worktree links to them',
+  async () => {
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'linker', workspace: true },
+    ]);
+    const source = roots.repo ?? '';
+    const linker = roots.linker ?? '';
+    const claim = plantClaim(warmClaimPath(source), 'shared', liveClaimOwner());
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
+    rmSync(claim, { force: true });
+
+    const app = join(source, 'apps', 'mobile');
+    write(join(app, 'package.json'));
+    ageTree(source, new Date(Date.now() - 60 * 60_000));
+    upsertProject(app, { metroPort: null });
+    recordWorkspaceUse(app, new Date());
+    ensureWorkspaceStorage(app);
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
+    recordWorkspaceUse(app, new Date(Date.now() - 60 * 60_000));
+    utimesSync(workspaceStateFile(app), new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 60 * 60_000));
+
+    rmSync(join(linker, 'node_modules'), { recursive: true, force: true });
+    symlinkSync(join(source, 'node_modules'), join(linker, 'node_modules'));
+    writeFileSync(join(linker, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(sourceModules(source))).toBe(true);
   },
   60_000,
 );

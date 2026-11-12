@@ -44,8 +44,13 @@ import {
   reportedCaches,
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
-import { clearDependency, rankDependencies, selectDependencies, SOURCE_RESTORE } from './dependencies.ts';
-import { sourceDependenciesDue } from '../policy/checkout-order.ts';
+import {
+  clearDependency,
+  rankDependencies,
+  rankSourceDependencies,
+  selectDependencies,
+  SOURCE_RESTORE,
+} from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -655,19 +660,41 @@ async function worktreesRung(context: RungContext): Promise<void> {
  * dependencies, and before the history and tool caches because one reinstall costs less than they do.
  */
 async function sourceDependenciesStep(context: RungContext): Promise<void> {
-  const idle = (await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS)).filter(
-    (candidate) =>
-      candidate.role === 'source' &&
-      sourceDependenciesDue({
-        level: 'critical',
-        idleMs: candidate.idleMs,
-        dormantMs: 0,
-        criticalIdleMs: PRESSURE_IDLE_MS,
-      }) === 'critical',
-  );
-  if (!idle.length) return;
+  const keeps = new Map<string, string>();
+  const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS, {
+    full: true,
+    onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+  });
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const { take } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation, true), 'take');
+  const { ranked, kept } = await rankSourceDependencies(
+    idle,
+    keeps,
+    protectedRoot,
+    {
+      level: 'critical',
+      dormantMs: 0,
+      criticalIdleMs: PRESSURE_IDLE_MS,
+      thresholdMs: PRESSURE_IDLE_MS,
+      setting: 'the pressure idle threshold',
+    },
+    context.operation,
+  );
+  if (!context.act || context.force)
+    for (const entry of kept)
+      recordAction(
+        context,
+        {
+          rung: 8,
+          kind: 'delete-dependencies',
+          target: entry.target,
+          ...(entry.workspace ? { workspace: entry.workspace } : {}),
+          outcome: 'kept',
+          bytes: 0,
+          detail: entry.reason,
+        },
+        context.why,
+      );
+  const { take } = selectDependencies(ranked, 'take');
   if (!take.length) return;
   const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
   if (shortDevices?.size === 0) return;

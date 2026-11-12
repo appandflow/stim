@@ -29,6 +29,7 @@ import {
   discoveredBuildDirs,
   discoveredBuildDirsAsync,
   isBuildDirPath,
+  regenerableDirProblem,
   type ArtifactKind,
 } from '../../workspace/regenerable-dirs.ts';
 import {
@@ -38,7 +39,7 @@ import {
   type RunningProcesses,
 } from '../../workspace/running-from.ts';
 import { finishLightened, recordLightened, restoreProblem } from '../../workspace/lightened.ts';
-import { recordSourceDependencies } from '../../workspace/source-dependencies.ts';
+import { recordSourceDependencies, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
 import {
   listWorktrees,
   LOCKED_REASON,
@@ -71,6 +72,8 @@ export interface ArtifactCandidate {
   keys: string[];
   locked: boolean;
   agents?: string[];
+  /** In a source checkout, whose dependencies no worktree warm restores. */
+  source?: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -347,6 +350,8 @@ function artifactGuard(
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
   if (candidate.locked) return LOCKED_REASON;
+  const warming = candidate.source ? warmCopyingFrom(worktree) : null;
+  if (warming) return warming;
   if (candidate.agents?.length) return `in use: ${candidate.agents.join('; ')}`;
   if (!pathExists(path)) return 'it is already gone';
   let real: string;
@@ -380,7 +385,8 @@ export async function collectArtifactsAsync(
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
   const running = kind === 'dependencies' ? await readRunningProcessesAsync(signal) : null;
-  for (const worktree of await artifactWorktreesAsync(signal, operation)) {
+  const all = await artifactWorktreesAsync(signal, operation);
+  for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
@@ -413,6 +419,7 @@ export async function collectArtifactsAsync(
           keys: worktree.keys,
           locked: worktree.locked,
           agents: worktree.agents,
+          ...(options.source ? { source: true } : {}),
         };
         const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
         let reason = !inUse
@@ -425,11 +432,28 @@ export async function collectArtifactsAsync(
             { ...options, pinned, running, ...(inUse ? { inUse } : {}) },
             await artifactReads(candidate, kind, signal, operation),
           );
+        if (!reason && candidate.source)
+          reason = (await regenerableDirProblem(worktree.path, path, signal)) ?? linkedWorktreeUsing(candidate, all);
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
       }
   }
   return { candidates, skips };
+}
+
+/** Why a linked worktree keeps a source checkout's dependency tree: its own one at the same place is a link into it. */
+function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly ArtifactWorktree[]): string | null {
+  const rel = relative(candidate.worktree, candidate.path);
+  const real = canonicalPath(candidate.path);
+  for (const other of worktrees) {
+    if (!other.linked) continue;
+    const path = join(other.path, rel);
+    try {
+      if (lstatSync(path).isSymbolicLink() && `${canonicalPath(path)}${sep}`.startsWith(`${real}${sep}`))
+        return `the worktree ${other.path} links its ${rel} to it`;
+    } catch {}
+  }
+  return null;
 }
 
 /** Regenerable directories of idle worktrees, oldest activity first; dependencies only in linked worktrees. */
@@ -476,7 +500,7 @@ export async function clearArtifact(
     source?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
     /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
-    recheck?: (workspace: string) => Promise<string | null>;
+    recheck?: (keys: readonly string[], worktree: string) => Promise<string | null>;
     operation?: StimContext;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
@@ -506,6 +530,7 @@ export async function clearArtifact(
     keys: worktree.keys,
     locked: worktree.locked,
     agents,
+    ...(options.source ? { source: true } : {}),
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
@@ -516,6 +541,11 @@ export async function clearArtifact(
     await artifactReads(candidate, kind, signal, operation),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
+  const unsafe = options.source
+    ? ((await regenerableDirProblem(worktree.path, candidate.path, signal)) ??
+      linkedWorktreeUsing(candidate, options.worktrees))
+    : null;
+  if (unsafe) return { status: 'kept', bytes: 0, detail: unsafe };
   const unrestorable =
     kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache, operation) : null;
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
@@ -538,8 +568,13 @@ export async function clearArtifact(
       await artifactReads(candidate, kind, signal, operation),
     );
     if (reason) return reason;
-    const late = key && options.recheck ? await options.recheck(key) : null;
+    const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
+    const stillUnsafe = options.source
+      ? ((await regenerableDirProblem(worktree.path, candidate.path, signal)) ??
+        linkedWorktreeUsing(candidate, options.worktrees))
+      : null;
+    if (stillUnsafe) return stillUnsafe;
     const record = kind === 'dependencies' && !options.source;
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });

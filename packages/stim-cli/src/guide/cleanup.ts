@@ -183,7 +183,8 @@ In on mode a pass runs, cheapest to rebuild first:
      newest stays. Also kept: a runtime a project's ios.runtime pins, every
      runtime with the major version of the active Xcode's simulator SDK
      (xcrun --sdk iphonesimulator --show-sdk-version), and every runtime
-     whose simctl lastUsedAt is within maintenance.olderThanDays or that
+     whose simctl lastUsedAt is within the larger of maintenance.olderThanDays
+     and 7 days or that
      simctl records no use of (Stim keeps no record of its own). When the SDK
      version cannot be read, a registered project's path cannot be reached or
      its .stim.json cannot be parsed, no runtime is deleted and the run
@@ -499,7 +500,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     does not mark it deletable, it is the only installed runtime, it is the
     newest when none is used, a project's ios.runtime pins it, it has the
     major version of the active Xcode's simulator SDK, simctl's lastUsedAt
-    for it is within maintenance.olderThanDays or absent; an unreadable SDK
+    for it is within the larger of maintenance.olderThanDays and 7 days or absent; an unreadable SDK
     version, an unreachable project path or an unparsable .stim.json (reported
     under "Needs a person"); a scoped STIM_HOME; a failed listing.
   Owned simulators whose runtime is gone
@@ -589,12 +590,16 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   lockfile), refuses with STIM_DEPS_FAILED and asks for an install. A source
   (main) checkout's node_modules and ios/Pods are deleted in two cases only,
   after those of every linked worktree: it has had no activity for
-  idle.sourceDormantDays (7; 0 never; a worktree warm that copied from it is
-  activity), at any level, or the level is critical, the checkout is idle 2
+  idle.sourceDormantDays (7; 0 never; no activity means no Stim command, source
+  file write, git write or commit, in the checkout and in every Stim workspace
+  in it, registered or not; a worktree warm copying from it is activity, and a
+  running warm keeps it), at any level, or the level is critical, the checkout is idle 2
   minutes and its volume is still under the critical level (pressure ladder
   rung 8, before the history and tool caches; \`stim gc --pressure critical\`
   always takes it). Nothing that runs from or works in it, builds, drives,
-  leases, hosts or is pinned with maintenance.keep is touched. The deletion is
+  leases, hosts or is pinned with maintenance.keep is touched, nor a checkout
+  whose node_modules a linked worktree links to, or that is not a real
+  git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies
   to copy and since when, \`stim status\` and --json sourceDependenciesCleared

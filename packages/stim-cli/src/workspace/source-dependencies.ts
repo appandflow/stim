@@ -5,9 +5,11 @@ import {
   readWorkspaceState,
   SOURCE_DEPENDENCIES_KEY,
   workspaceMetadataFile,
-  type SourceDependenciesRecord,
 } from '@stim-cli/core/state';
 import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { warmClaimPath } from '../engine/warm-claim.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { updateWorkspaceState } from './workspace-state.ts';
 
 const withWorkspace = (keys: readonly string[]): string[] =>
@@ -25,21 +27,39 @@ export function recordSourceDependencies(keys: readonly string[], dir: string, n
     });
 }
 
-/** The record of the source checkout's workspace at `key`, while the directories it names are still missing. */
-function sourceDependenciesOf(key: string): SourceDependenciesRecord | null {
-  return currentSourceDependencies(readWorkspaceState(key));
-}
+const WARMED_FROM_KEY = 'warmedFromAt';
 
-/** Notes in the source checkout's workspace that a worktree warm copied from it, which counts as activity there. */
+/**
+ * Notes in the source checkout's workspace that a worktree warm is copying from it, which the source dependency rule
+ * counts as activity. It leaves `lastUsedAt` alone, so a warm does not postpone any other reduction.
+ */
 export function recordWarmedFrom(key: string, now: Date = new Date()): void {
   if (existsSync(workspaceMetadataFile(key)))
-    updateWorkspaceState(key, (state) => ({ ...state, lastUsedAt: now.toISOString() }));
+    updateWorkspaceState(key, (state) => ({ ...state, [WARMED_FROM_KEY]: now.toISOString() }));
+}
+
+/** The newest warm from any of the workspaces `keys`, in epoch milliseconds; NaN when none recorded one. */
+export function warmedFromAt(keys: readonly string[]): number {
+  const times = keys
+    .map((key) => Date.parse(String(readWorkspaceState(key)?.[WARMED_FROM_KEY] ?? '')))
+    .filter(Number.isFinite);
+  return times.length ? Math.max(...times) : Number.NaN;
+}
+
+/** Why a worktree warm keeps the source checkout at `root`, or null: a warm holds its copy claim, or the claim cannot be read. */
+export function warmCopyingFrom(root: string): string | null {
+  for (const path of new Set([root, canonicalPath(root)])) {
+    const survey = readClaimSet(warmClaimPath(path));
+    if (survey.live.length) return 'a worktree warm is copying from it';
+    if (survey.unresolved.length) return 'its warm claim cannot be read';
+  }
+  return null;
 }
 
 /**
  * What `stim worktree warm` adds to its carry line when the source checkout has no installed dependencies to copy: the
- * missing directories, when maintenance deleted them if it did, and the install that fixes the source and this worktree.
- * Null when the source checkout has them, or is not a project with a lockfile or a Podfile.
+ * missing directories, when maintenance deleted each one if it did, and the installs that fix the source. Null when the
+ * source checkout has them, or is not a project with a lockfile or a Podfile.
  */
 export function sourceDependenciesNotice({
   root,
@@ -54,25 +74,31 @@ export function sourceDependenciesNotice({
   target: string;
   appDir: string;
   iosDir: string;
+  /** The command that installs node_modules in a directory, with the directory named. */
   install: (dir: string) => string;
+  /** The command that installs Pods for an ios directory, with the directory named. */
   pods: (dir: string) => string;
 }): string | null {
+  const cleared = currentSourceDependencies(readWorkspaceState(appDir));
   const missing: string[] = [];
   const commands: string[] = [];
   let targetNeedsInstall = false;
+  const describe = (label: string, dir: string) =>
+    cleared?.dirs.includes(dir) ? `${label} (maintenance deleted it at ${cleared.at})` : label;
   const state = dependencyState(appDir, root);
   if (state && !hasInstalledDependencies(state.root, state.installed)) {
-    missing.push('node_modules');
+    missing.push(describe('node_modules', join(state.root, 'node_modules')));
     commands.push(install(state.root));
     targetNeedsInstall ||= !hasInstalledDependencies(join(target, relative(root, state.root)), state.installed);
   }
   if (existsSync(join(iosDir, 'Podfile')) && !existsSync(join(iosDir, 'Pods'))) {
-    missing.push('ios/Pods');
+    missing.push(describe('ios/Pods', join(iosDir, 'Pods')));
     commands.push(pods(iosDir));
     targetNeedsInstall ||= !existsSync(join(target, relative(root, iosDir), 'Pods'));
   }
   if (!missing.length) return null;
-  const cleared = sourceDependenciesOf(appDir);
-  const since = cleared ? ` since ${cleared.at}, when maintenance deleted them` : '';
-  return `the source checkout ${root} has no installed ${missing.join(' or ')} to copy${since}. Install them there (${commands.join('; ')}) so new worktrees warm from it${targetNeedsInstall ? '; this worktree needs its own install before it builds, or stim worktree warm --refresh installs in the source and copies here' : ''}`;
+  const refresh = targetNeedsInstall
+    ? '; this worktree needs its own install before it builds. stim worktree warm --refresh installs in the source and copies here, but it also fast-forwards the source and refuses when that is dirty or detached, so then install there by hand'
+    : '';
+  return `the source checkout ${root} has no installed ${missing.join(' or ')} to copy. Install them there (${commands.join('; ')}) so new worktrees warm from it${refresh}`;
 }

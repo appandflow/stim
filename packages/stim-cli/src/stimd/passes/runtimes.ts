@@ -209,10 +209,13 @@ async function listRuntimes(operation?: StimContext): Promise<SimRuntimeRecord[]
   );
 }
 
-/** The start of the recency window `maintenance.olderThanDays` sets, or null when it is 0, which turns age removals off. */
+/** A runtime simctl records as used this recently stays whatever `maintenance.olderThanDays` is: a re-download is network-bound. */
+const MIN_RUNTIME_KEEP_DAYS = 7;
+
+/** The start of the runtime recency window: `maintenance.olderThanDays`, at least 7 days, or null when it is 0, which turns age removals off. */
 function recentSince(operation?: StimContext): number | null {
   const days = resolveMaintenanceSettings(loadConfig(), operation?.env ?? process.env).olderThanDays;
-  return days > 0 ? Date.now() - days * 86_400_000 : null;
+  return days > 0 ? Date.now() - Math.max(days, MIN_RUNTIME_KEEP_DAYS) * 86_400_000 : null;
 }
 
 const label = (runtime: SimRuntimeRecord) => `iOS ${runtime.version ?? '?'} simulator runtime (${runtime.identifier})`;

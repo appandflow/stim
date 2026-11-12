@@ -264,6 +264,7 @@
 [*] interface DaemonLadderAction { | outcome: "done" | "kept" | "failed" | "would";
 [*] interface DaemonLadderAction { | restore?: string;
 [*] interface DaemonLadderAction { | rung: number;
+[*] interface DaemonLadderAction { | setting?: string;
 [*] interface DaemonLadderAction { | target: string;
 [*] interface DaemonLadderAction { | workspace?: string;
 [*] interface DaemonPressure {

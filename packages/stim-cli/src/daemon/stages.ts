@@ -146,13 +146,14 @@ async function idleVerdict(
     locked = false,
     operation,
     reads = discoveredReads(operation?.signal),
-  }: { locked?: boolean; operation?: StimContext; reads?: DiscoveredReads } = {},
+    full = false,
+  }: { locked?: boolean; operation?: StimContext; reads?: DiscoveredReads; full?: boolean } = {},
 ): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
   const stim = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
   const evidence =
-    getProject(path) || existsSync(workspaceMetadataFile(path))
+    !full && (getProject(path) || existsSync(workspaceMetadataFile(path)))
       ? stim
       : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
@@ -179,6 +180,21 @@ async function idleFor(
   return 'idleMs' in verdict ? verdict.idleMs : null;
 }
 
+/**
+ * How long a source checkout has had no activity, by the full evidence whether or not a workspace is registered for it:
+ * the newest of Stim activity, source file writes, git writes and the last commit. An unreadable state or a scan over
+ * its bound keeps it, and the reason says so.
+ */
+export function sourceCheckoutIdle(
+  path: string,
+  thresholdMs: number,
+  setting: string,
+  operation?: StimContext,
+  locked = false,
+): Promise<{ idleMs: number } | { kept: string }> {
+  return idleVerdict(path, thresholdMs, setting, { operation, full: true, locked });
+}
+
 /** Why a discovered checkout is not idle `thresholdMs` by the activity definition, or null when it is. */
 export async function discoveredKeepReason(
   path: string,
@@ -197,13 +213,19 @@ function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, 
   return { ...a, activity: [...a.activity, ...b.activity], keep: [...a.keep, ...b.keep] };
 }
 
+/** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
+interface IdleSelection {
+  full?: boolean;
+  onKept?: (path: string, reason: string) => void;
+}
+
 async function idleWorkspaces(
   config: Config,
   reading: DeviceReading,
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false }: { discover?: boolean } = {},
+  { discover = false, full = false, onKept }: IdleSelection & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
@@ -216,11 +238,18 @@ async function idleWorkspaces(
   for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
-    if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
+    if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
+      onKept?.(path, `a Stim command used it ${Math.floor((Date.now() - used) / MINUTE_MS)} minutes ago`);
+      continue;
+    }
     try {
-      const idleMs = (await runsSomething(path, project, reading))
-        ? null
-        : await idleFor(path, thresholdMs, setting, { operation: reading.operation, reads });
+      let idleMs: number | null = null;
+      if (await runsSomething(path, project, reading)) onKept?.(path, 'something of it runs');
+      else {
+        const verdict = await idleVerdict(path, thresholdMs, setting, { operation: reading.operation, reads, full });
+        if ('idleMs' in verdict) idleMs = verdict.idleMs;
+        else onKept?.(path, verdict.kept);
+      }
       readings.push({ path, project, idleMs });
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
@@ -243,8 +272,14 @@ async function hasOutputs(path: string): Promise<boolean> {
 }
 
 /** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
-export async function stillIdle(path: string, thresholdMs: number, operation?: StimContext): Promise<boolean> {
-  return (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked: true, operation })) !== null;
+export async function stillIdle(
+  path: string,
+  thresholdMs: number,
+  operation?: StimContext,
+  full = false,
+  locked = true,
+): Promise<boolean> {
+  return (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked, operation, full })) !== null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
@@ -252,8 +287,12 @@ export function idleStageCandidates(
   config: Config,
   reading: DeviceReading,
   thresholdMs: number,
+  selection: IdleSelection = {},
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true, { discover: true });
+  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, () => true, {
+    discover: true,
+    ...selection,
+  });
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */

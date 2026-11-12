@@ -28,7 +28,7 @@ import { workspacePhase } from '../engine/warm-progress.ts';
 import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { recordSourceDependencies } from '../workspace/source-dependencies.ts';
+import { recordSourceDependencies, warmedFromAt } from '../workspace/source-dependencies.ts';
 import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
@@ -362,7 +362,7 @@ test('warm says on stderr that the source checkout has no installed dependencies
   ensureWorkspaceStorage(root);
   const clearedAt = '2026-01-02T03:04:05.000Z';
   recordSourceDependencies([root], join(root, 'node_modules'), new Date(clearedAt));
-  const before = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? '')) || 0;
+  const lastUsedBefore = readWorkspaceState(root)?.lastUsedAt;
 
   const result = await runWarm(target);
 
@@ -370,10 +370,11 @@ test('warm says on stderr that the source checkout has no installed dependencies
   expect(result.stdout).toEqual([]);
   expect(result.stderr).toMatch(
     new RegExp(
-      `carry\\s+complete: 1 ignored entries copied.*has no installed node_modules or ios/Pods to copy since ${clearedAt}.*pnpm install.*pod install`,
+      `carry\\s+complete: 1 ignored entries copied.*has no installed node_modules \\(maintenance deleted it at ${clearedAt}\\) or ios/Pods to copy.*pnpm install.*cd '.*ios' && pod install.*stim worktree warm --refresh`,
     ),
   );
-  expect(Date.parse(String(readWorkspaceState(root)?.lastUsedAt))).toBeGreaterThan(before);
+  expect(Number.isFinite(warmedFromAt([root]))).toBe(true);
+  expect(readWorkspaceState(root)?.lastUsedAt).toEqual(lastUsedBefore);
 }, 30_000);
 
 test('warm does not mention the source checkout dependencies when it has them', async () => {

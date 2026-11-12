@@ -100,7 +100,7 @@ function fromLadder(action: DaemonLadderAction, dormant = false): LevelRunAction
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: action.outcome,
     bytes: action.bytes,
-    reason: dormant ? 'no activity for idle.dormantDays' : `pressure ladder rung ${action.rung}`,
+    reason: dormant ? `no activity for ${action.setting ?? 'idle.dormantDays'}` : `pressure ladder rung ${action.rung}`,
     detail: action.detail,
     ...(action.restore ? { restore: action.restore } : {}),
   };

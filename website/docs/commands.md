@@ -2425,8 +2425,9 @@ source checkout's, or the source checkout's dependencies were not installed from
 its own lockfile), the command refuses with `STIM_DEPS_FAILED` and asks for an
 install. A source (main) checkout's `node_modules` and `ios/Pods` are deleted only
 after every linked worktree's: once it has had no activity for
-`idle.sourceDormantDays` (7 by default; `0` never; a `worktree warm` that copied
-from it counts as activity) at any level, or at critical when the disk is still
+`idle.sourceDormantDays` (7 by default; `0` never; activity is a Stim command, a source file write, a
+git write or a commit in the checkout or any workspace in it, registered or not,
+and a `worktree warm` copying from it, which also keeps it while it runs) at any level, or at critical when the disk is still
 under the critical level, which `stim gc --pressure critical` always does. Then
 `stim worktree warm` and `stim status` say the source has no installed
 dependencies to copy, and since when, until you install them there. `gc` deletes
@@ -2690,7 +2691,7 @@ the owning tool's remedy, as JSON `sections.machineCaches`:
 runtime delete <id>` for a deletable runtime no simulator uses, at every
   level; the only installed runtime stays, as does every runtime a project's
   `ios.runtime` pins, with the major version of the active Xcode's simulator SDK,
-  or used within `maintenance.olderThanDays` (or with no use recorded by
+  or used within the larger of `maintenance.olderThanDays` and 7 days (or with no use recorded by
   simctl). When the SDK version, a registered project's path or its `.stim.json`
   cannot be read, no runtime is deleted and the run says why under Needs a person. entries, which Xcode copies again when the device
   next connects.

@@ -437,6 +437,8 @@ export async function warmWorktreeTarget(opts: {
               exitCode = 1;
               return;
             }
+            const sourceApp = mainCheckoutAppDir(root, target, opts.cwd);
+            recordWarmedFrom(sourceApp);
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
             const generatedFrom = new Map<string, string>();
@@ -492,15 +494,13 @@ export async function warmWorktreeTarget(opts: {
               await relocateCarriedPods(root, target, result.copied, out);
               reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
-            const sourceApp = mainCheckoutAppDir(root, target, opts.cwd);
-            if (result.copied.length) recordWarmedFrom(sourceApp);
             const noDependencies = sourceDependenciesNotice({
               root,
               target,
               appDir: sourceApp,
               iosDir: appIosProjectDir(sourceApp).dir,
               install: (dir) => dependencyInstallCommand(dir),
-              pods: (dir) => podInstallCommand(root, dir),
+              pods: (dir) => `cd '${dir.replaceAll("'", "'\\''")}' && ${podInstallCommand(root, dir)}`,
             });
             out(
               phaseLine(

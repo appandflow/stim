@@ -5,7 +5,8 @@ import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadataFile } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { warmWorktreeTarget } from '../commands/worktree.ts';
+import { dependencyInstallCommand, warmWorktreeTarget } from '../commands/worktree.ts';
+import { podInstallCommand } from '../engine/bundler.ts';
 import { withWorkspaceStateLock } from './workspace-state.ts';
 import {
   depsOutOfSync,
@@ -171,6 +172,14 @@ function depsFailure(
   };
 }
 
+/** The command that installs what is missing at `dir`, a node_modules or Pods tree of the worktree `root`. */
+function installFor(dir: string, root: string): string {
+  const parent = dirname(dir);
+  return basename(dir) === 'Pods'
+    ? `cd '${parent.replaceAll("'", "'\\''")}' && ${podInstallCommand(root, parent)}`
+    : dependencyInstallCommand(parent);
+}
+
 /**
  * Restores the dependencies gc deleted from this workspace's worktree through `stim worktree warm`, or returns the
  * failure to report. A workspace gc never lightened is left alone.
@@ -193,7 +202,7 @@ export async function restoreLightenedDependencies(
         return depsFailure(
           root,
           `${dir} cannot be restored by worktree warm: ${problem}.`,
-          `Install the project's dependencies in ${root} (for example \`pnpm install\` or \`pod install\`), then retry.`,
+          `Run \`${installFor(dir, root)}\` to install them, then retry.`,
         );
     }
     operation.output(

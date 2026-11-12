@@ -803,7 +803,8 @@ together with its dev server, once the workspace has had no activity for
 [idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
 `idle.sourceDormantDays` (7 by default; fractions allowed; `0` never; machine only) is the same for
 a source (main) checkout's `node_modules` and `ios/Pods`, taken after those of linked
-worktrees; a `stim worktree warm` that copied from it counts as activity.
+worktrees. Activity is a Stim command, a source file write, a git write or a commit in the
+checkout or any workspace in it, registered or not; a `stim worktree warm` copying from it counts too.
 After `idle.dormantDays` (1 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant and is reduced to its minimal size, at
 every level, by `stim gc` and by the `stim-daemon`: its regenerable build outputs

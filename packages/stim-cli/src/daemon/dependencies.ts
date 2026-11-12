@@ -20,12 +20,14 @@ import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
+  sourceCheckoutIdle,
   sourceDormantAfterMs,
   stillIdle,
   type DeviceReading,
   type StageCandidate,
 } from './stages.ts';
 import { sourceDependenciesDue } from '../policy/checkout-order.ts';
+import { warmedFromAt } from '../workspace/source-dependencies.ts';
 import type { Config } from '../workspace/config.ts';
 
 /**
@@ -136,6 +138,117 @@ export async function rankDependencies(
     .map(({ dependency }) => dependency);
 }
 
+export interface SourceRule {
+  level: 'normal' | 'critical';
+  /** `idle.sourceDormantDays` in milliseconds; 0 never. */
+  dormantMs: number;
+  criticalIdleMs: number;
+  /** The idle time the workspaces in `idle` were selected by. */
+  thresholdMs: number;
+  setting: string;
+}
+
+/**
+ * The node_modules and Pods of source checkouts that are due under `rule`, in `idle`'s order, and each other one with
+ * why it stays. Every Stim workspace in the checkout must be in `idle`, and the checkout itself must be idle by the full
+ * evidence (Stim activity, source file writes, git writes, the last commit); a worktree warm that copied from it
+ * counts as activity.
+ */
+export async function rankSourceDependencies(
+  idle: readonly StageCandidate[],
+  keeps: ReadonlyMap<string, string>,
+  protectedRoot: string,
+  rule: SourceRule,
+  operation?: StimContext,
+): Promise<{ ranked: RankedDependency[]; kept: { target: string; workspace?: string; reason: string }[] }> {
+  const rank = new Map(
+    idle.flatMap((candidate, index) => {
+      const key = canonicalOrNull(candidate.path);
+      return key ? [[key, index] as const] : [];
+    }),
+  );
+  const found = await collectArtifactsAsync(
+    'dependencies',
+    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
+    operation?.signal ?? new AbortController().signal,
+    operation,
+  );
+  const kept: { target: string; workspace?: string; reason: string }[] = found.skips.map(({ target, reason }) => ({
+    target,
+    reason,
+  }));
+  const ranked: { dependency: RankedDependency; order: number }[] = [];
+  for (const candidate of found.candidates) {
+    const keys = workspaceKeys(candidate.keys);
+    const workspace = keys[0] ?? candidate.worktree;
+    const notIdle = [...keys, ...(keys.length ? [] : [candidate.worktree])].find(
+      (key) => !rank.has(canonicalOrNull(key) ?? ''),
+    );
+    if (notIdle !== undefined) {
+      kept.push({
+        target: candidate.path,
+        workspace,
+        reason: `${notIdle} is not idle: ${keeps.get(canonicalOrNull(notIdle) ?? '') ?? 'it has recent activity'}`,
+      });
+      continue;
+    }
+    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, operation);
+    if ('kept' in verdict) {
+      kept.push({ target: candidate.path, workspace, reason: verdict.kept });
+      continue;
+    }
+    const warmed = warmedFromAt(candidate.keys);
+    const sinceWarm = Number.isFinite(warmed) ? Date.now() - warmed : Infinity;
+    const due = sourceDependenciesDue({
+      level: rule.level,
+      idleMs: Math.min(verdict.idleMs, sinceWarm),
+      dormantMs: rule.dormantMs,
+      criticalIdleMs: rule.criticalIdleMs,
+    });
+    if (!due) {
+      kept.push({
+        target: candidate.path,
+        workspace,
+        reason:
+          sinceWarm < verdict.idleMs
+            ? `a worktree warm copied from it ${Math.floor(sinceWarm / 60_000)} minutes ago`
+            : `idle ${Math.floor(verdict.idleMs / 60_000)} minutes, under the threshold`,
+      });
+      continue;
+    }
+    ranked.push({
+      order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0,
+      dependency: {
+        candidate,
+        source: true,
+        workspace,
+        bytes: trustedMeasure(candidate.path)?.bytes ?? null,
+        privateBytes: knownPrivateBytes(candidate.path),
+      },
+    });
+  }
+  return { ranked: ranked.toSorted((a, b) => a.order - b.order).map(({ dependency }) => dependency), kept };
+}
+
+/**
+ * Why a dependency tree's checkout is no longer idle `idleMs`, asked again under its first workspace's claim, or null.
+ * A source checkout needs every one of its workspaces and the checkout itself idle by the full evidence, and no worktree
+ * warm having copied from it within `idleMs`.
+ */
+async function stillUnused(
+  source: boolean,
+  keys: readonly string[],
+  worktree: string,
+  idleMs: number,
+  operation?: StimContext,
+): Promise<string | null> {
+  const [first] = keys;
+  if (!source) return first && !(await stillIdle(first, idleMs, operation)) ? 'it is no longer idle' : null;
+  for (const key of new Set([...workspaceKeys(keys), worktree]))
+    if (!(await stillIdle(key, idleMs, operation, true, key === first))) return `${key} is no longer idle`;
+  return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
+}
+
 /**
  * Deletes one dependency tree under its workspace's claim once the workspace is still idle `idleMs`, recording the
  * restore. `requireRestorable` keeps a tree `stim worktree warm` could not put back with the same versions.
@@ -166,7 +279,7 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         source: dependency.source,
-        recheck: async (key) => ((await stillIdle(key, idleMs, operation)) ? null : 'it is no longer idle'),
+        recheck: (keys, worktree) => stillUnused(dependency.source, keys, worktree, idleMs, operation),
         operation,
       },
     );
@@ -207,26 +320,51 @@ async function takeIdleDependencies(
   afterMs: number,
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
-  const idle = (await idleStageCandidates(config, input, afterMs)).filter(
-    (candidate) =>
-      (candidate.role === 'source') === source &&
-      (!source ||
-        sourceDependenciesDue({
-          level: 'normal',
-          idleMs: candidate.idleMs,
-          dormantMs: afterMs,
-          criticalIdleMs: Infinity,
-        }) === 'dormant'),
-  );
-  if (!idle.length) return [];
+  const keeps = new Map<string, string>();
+  const idle = (
+    await idleStageCandidates(
+      config,
+      input,
+      afterMs,
+      source ? { full: true, onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason) } : {},
+    )
+  ).filter((candidate) => source || candidate.role === 'linked');
   const { operation } = input;
-  const { take } = selectDependencies(
-    await rankDependencies(idle, input.protectedRoot ?? '', operation, source),
-    'take',
-  );
+  const actions: DaemonLadderAction[] = [];
+  let take: RankedDependency[];
+  if (source) {
+    const { ranked, kept } = await rankSourceDependencies(
+      idle,
+      keeps,
+      input.protectedRoot ?? '',
+      {
+        level: 'normal',
+        dormantMs: afterMs,
+        criticalIdleMs: Infinity,
+        thresholdMs: afterMs,
+        setting: 'idle.sourceDormantDays',
+      },
+      operation,
+    );
+    if (!input.act || input.force)
+      for (const entry of kept)
+        actions.push({
+          rung: 4,
+          kind: 'delete-dependencies',
+          target: entry.target,
+          ...(entry.workspace ? { workspace: entry.workspace } : {}),
+          outcome: 'kept',
+          bytes: 0,
+          detail: entry.reason,
+          setting: 'idle.sourceDormantDays',
+        });
+    take = selectDependencies(ranked, 'take').take;
+  } else {
+    if (!idle.length) return [];
+    take = selectDependencies(await rankDependencies(idle, input.protectedRoot ?? '', operation), 'take').take;
+  }
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
-  const actions: DaemonLadderAction[] = [];
   for (const dependency of take) {
     const target = dependency.candidate.path;
     const reason =
@@ -250,6 +388,7 @@ async function takeIdleDependencies(
       outcome: result.status,
       bytes: result.bytes,
       detail: result.detail,
+      ...(source ? { setting: 'idle.sourceDormantDays' } : {}),
       ...restore,
     });
     const level = result.status === 'failed' ? 'warn' : 'info';

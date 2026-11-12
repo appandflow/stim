@@ -2659,8 +2659,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   before source (main) checkouts, longest idle first in each; the idle stage,
   which reaches every workspace with something running, keeps its own order. A source checkout's node_modules and ios/Pods go when it
   has had no activity for idle.sourceDormantDays (7; 0 never; at any level, last
-  in this step; a worktree warm that copied from it is activity), or at
-  critical under rung 8; its build outputs follow the one-day rule like any
+  in this step; no activity means no Stim command, source file write, git write
+  or commit, in the checkout and in every Stim workspace in it, registered or
+  not; a worktree warm copying from it is activity and a running warm keeps it,
+  without moving its last use), or at critical under rung 8 by the same
+  evidence; its build outputs follow the one-day rule like any
   workspace's. The deletion is recorded in its workspace: \`stim worktree warm\`
   in a linked worktree then adds to its carry line that the source has no
   installed node_modules or ios/Pods to copy and since when, with the
