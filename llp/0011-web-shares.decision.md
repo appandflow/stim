@@ -75,7 +75,8 @@ its address is not restored. The restore start carries the saved address and the
 route checks it against the exposure it chooses to open, in the same step, so a
 login or a setting that changes between the check and the opening refuses the
 start instead of opening another exposure; a Funnel route is opened only on the
-saved port, and the start is refused when that port is not free. No
+saved port, and the start is refused when that port is not free (the entry
+stays saved and each later stimd tries again until it expires). No
 `tailscale funnel` or `tailscale serve` command runs for a share saved under
 proxy exposure. A share that cannot come back is not restored: a share-only
 server marks it stopped, with one log line, and `stim share --reuse` starts it

@@ -202,6 +202,8 @@ test('a stimd with no saved share and no share route left starts no net thread',
       timeout: 20_000,
     },
   );
+  await new Promise((done) => setTimeout(done, 3000));
+  expect(readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8')).not.toContain('net_started');
   await expect(stimdConnect(stimd.socket)).rejects.toThrow(/net-off/);
   stimd.child.kill('SIGTERM');
   await stimd.exited;
