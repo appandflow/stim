@@ -219,7 +219,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     if (closed) return;
     const warn = (what: string, error: unknown) =>
       log('warn', 'owned_macos_failed', `${what}: ${error instanceof Error ? error.message : String(error)}`);
-    for (const root of [...retrying]) void local(root).catch((error: unknown) => warn(root, error));
+    for (const root of retrying) void local(root).catch((error: unknown) => warn(root, error));
     try {
       for (const session of readHostedSessions()) {
         if (session.platform !== 'macos') continue;
