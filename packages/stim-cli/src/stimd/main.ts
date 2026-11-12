@@ -1789,11 +1789,16 @@ function hostedNativeWork(session: HostedDeviceSession): boolean {
  * Whether this home has a saved share to restore or a share route claim whose holder is gone, which a share-only net
  * thread restores or removes. A share started with no service and no Desktop lives only in such a thread, so a
  * successor stimd (a handover or a start after a crash) finds its work here, not in its arguments. A thread that
- * refuses a saved share marks it stopped, so it counts once; an entry of a workspace that is not registered or no longer exists is not counted, and is left as it is. A dead claim counts only while a tailscale command exists
+ * refuses a saved share marks it stopped, so it counts once; an entry of a workspace that is not registered or no longer exists is not counted, and is left as it is. A config that cannot be read counts as no work, so the tick fails and ends the daemon as before. A dead claim counts only while a tailscale command exists
  * to remove its route; without one, a thread would fail the same way on every boot.
  */
 function shareWorkPending(): boolean {
-  const projects = Object.keys(loadConfig()?.projects ?? {});
+  let projects: string[];
+  try {
+    projects = Object.keys(loadConfig()?.projects ?? {});
+  } catch {
+    return false;
+  }
   if (readLiveShareLinks().some(({ workspace }) => projects.includes(workspace) && existsSync(workspace))) return true;
   const claims = readClaimSet(shareRouteClaimRoot());
   const dead = claims.dead.length > 0 || claims.orphans.length > 0;
