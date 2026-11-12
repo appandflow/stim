@@ -132,3 +132,18 @@ test('a clean startup refusal can be retried', async () => {
   current().emit('exit', 0);
   await closing;
 });
+
+test('a restart message from the net thread reaches stimd', async () => {
+  const onRestart = vi.fn<(why: string) => void>();
+  const net = createNetThread(
+    log,
+    () => {},
+    () => {},
+    onRestart,
+  );
+  const started = net.ensure(options);
+  current().emit('message', { type: 'listening', port: 1234 });
+  await started;
+  current().emit('message', { type: 'restart', why: 'unit rewritten' });
+  expect(onRestart).toHaveBeenCalledWith('unit rewritten');
+});
