@@ -1,5 +1,5 @@
 import type { BuildLedgerRecord } from '@stim-cli/core/state';
-import { DEFAULT_BUILD_GB, estimateBuildBytes, headroomShortfall } from '../engine/build-headroom.ts';
+import { DEFAULT_BUILD_GB, estimateBuildBytes } from '../engine/build-headroom.ts';
 
 const GB = 1024 ** 3;
 const NOW = Date.parse('2026-11-11T12:00:00.000Z');
@@ -36,27 +36,31 @@ const ask = (records: BuildLedgerRecord[]) =>
   estimateBuildBytes({ records, projectKey: '/repo/app', platform: 'ios', type: 'expo', now: NOW });
 
 describe('estimateBuildBytes', () => {
-  it('takes the largest figure of the same project and platform, ignoring hits, failures, other platforms and old builds', () => {
+  it('takes the median of the project and platform builds, ignoring hits, failures, other platforms, other projects, old builds and non-positive records', () => {
     const estimate = ask([
       record({ gb: 3 }),
       record({ gb: 9 }),
+      record({ gb: 4 }),
+      record({ gb: 0 }),
       record({ gb: 40, cache: { result: 'hit', key: null, fingerprint: null } }),
       record({ gb: 40, outcome: 'failed' }),
       record({ gb: 40, platform: 'android' }),
       record({ gb: 40, projectKey: '/repo/other' }),
       record({ gb: 40, ts: NOW - 31 * DAY }),
     ]);
-    expect(estimate).toEqual({ bytes: 9 * GB, source: 'history' });
+    expect(estimate).toEqual({ bytes: 4 * GB, source: 'history' });
   });
 
-  it('uses the default of the project type when the project has no measured build', () => {
-    expect(ask([record({})])).toEqual({ bytes: (DEFAULT_BUILD_GB.expo.ios ?? 0) * GB, source: 'default' });
+  it('uses only the ten newest records, so an old large one cannot pin the estimate', () => {
+    const newest = Array.from({ length: 10 }, (_, index) => record({ gb: 2, ts: NOW - index * 1000 }));
+    const estimate = ask([record({ gb: 50, ts: NOW - DAY }), ...newest]);
+    expect(estimate).toEqual({ bytes: 2 * GB, source: 'history' });
   });
-});
 
-describe('headroomShortfall', () => {
-  it('is the bytes missing for the estimate plus the critical floor, and zero when the volume has room', () => {
-    expect(headroomShortfall({ freeBytes: 20 * GB, estimateBytes: 18 * GB, criticalBytes: 6 * GB })).toBe(4 * GB);
-    expect(headroomShortfall({ freeBytes: 30 * GB, estimateBytes: 18 * GB, criticalBytes: 6 * GB })).toBe(0);
+  it('uses the default of the project type when the project has no positive measured build', () => {
+    expect(ask([record({}), record({ gb: 0 })])).toEqual({
+      bytes: (DEFAULT_BUILD_GB.expo.ios ?? 0) * GB,
+      source: 'default',
+    });
   });
 });

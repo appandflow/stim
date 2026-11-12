@@ -1309,8 +1309,8 @@ result.
   the simulator or emulator it targeted, this Mac's load per core when the run
   started, when the run's owned simulator or emulator boot started and the load
   per core then (`loadPerCore` and `boot`, absent from older records), the
-  project key and the bytes a succeeded local compile wrote to its build output
-  and the shared caches (`projectKey` and `bytesWritten`, which Stim uses to
+  project key and the bytes a succeeded local compile took from free space on its
+  volume (`projectKey` and `bytesWritten`, which Stim uses to
   estimate the disk a later build of the project needs), and the Stim version. It outlives the
   workspace, works from any directory, stands alone (`--source all` leaves it
   out), and takes the same options as `--source gc`; `--errors` shows only failed

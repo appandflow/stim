@@ -135,6 +135,11 @@ export function diskUsageWalkClaims(): string {
   return join(configDir(), 'disk-usage-walk.claims');
 }
 
+/** The ownership claim root that admits one headroom ladder run at a time on this machine. */
+export function ladderRunClaims(): string {
+  return join(configDir(), 'ladder-run.claims');
+}
+
 /** The remote machines this machine asked for build access, each with its pinned stim-server key once approved. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');

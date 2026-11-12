@@ -1,8 +1,9 @@
-import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
+import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
+  ladderRunClaims,
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -273,16 +274,15 @@ async function runCommandLadder(
   trigger: string,
   env: NodeJS.ProcessEnv,
   protectedRoot?: string,
-  highFreeMb = 0,
+  headroom?: { device: number; freeMb: number; operation: StimContext },
 ): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
   if (!config || mode === 'off') return;
-  const base = diskThresholds(config, env).thresholds;
-  const thresholds = { ...base, highMb: Math.max(base.highMb, highFreeMb) };
+  const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
   const classify = async () => {
-    const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+    const [disk, memory] = await Promise.all([measureDisk(config, headroom?.operation.signal), measureMemory()]);
     const pressure = classifyPressure({
       disk,
       memory,
@@ -291,6 +291,17 @@ async function runCommandLadder(
       now: Date.now(),
     });
     warningSince = pressure.memoryWarningSince;
+    const short = headroom && disk.find((volume) => volume.device === headroom.device);
+    if (headroom && short && pressure.level === 'normal' && short.freeMb < headroom.freeMb) {
+      return {
+        ...pressure,
+        level: 'high' as const,
+        disk: 'high' as const,
+        reasons: [
+          `${(short.freeMb / 1024).toFixed(1)} GB free on ${short.volume}, under the ${(headroom.freeMb / 1024).toFixed(1)} GB the next build needs`,
+        ],
+      };
+    }
     return pressure;
   };
   const pressure = await classify();
@@ -310,6 +321,7 @@ async function runCommandLadder(
         fromRung: 2,
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
+        ...(headroom ? { operation: headroom.operation } : {}),
       },
       pressure,
     );
@@ -506,19 +518,35 @@ export async function runLadderNow(
 }
 
 /**
- * Runs the pressure ladder, in this process after a daemon tick, treating free disk under `freeMb` as the high level
- * so the ladder reclaims until `freeMb` is free or its rungs are spent. Never throws except on abort.
+ * Runs the pressure ladder once, in this process and with no daemon tick, until `freeMb` is free on the volume with device id `device` or its
+ * rungs are spent: the other volumes keep their usual thresholds. It holds the machine-wide `ladderRunClaims` claim and
+ * returns at once when another process holds it, so concurrent builds run one ladder. Throws only on abort.
  */
-export async function runLadderToFree(
-  env: NodeJS.ProcessEnv,
-  freeMb: number,
-  signal?: AbortSignal,
-  protectedRoot?: string,
-): Promise<void> {
-  await requestDaemonTick(env, signal);
-  signal?.throwIfAborted();
-  if (stimdRefused()) return;
+export async function runLadderToFree({
+  operation,
+  device,
+  freeMb,
+  protectedRoot,
+}: {
+  operation: StimContext;
+  device: number;
+  freeMb: number;
+  protectedRoot: string;
+}): Promise<void> {
+  let claim: ClaimHandle | null = null;
   try {
-    await runCommandLadder('command', env, protectedRoot, freeMb);
-  } catch {}
+    const attempt = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired ?? null;
+  } catch {
+    return;
+  }
+  if (!claim) return;
+  try {
+    await runCommandLadder('command', operation.env, protectedRoot, { device, freeMb, operation });
+  } catch {
+    operation.signal.throwIfAborted();
+  } finally {
+    releaseClaim(claim);
+  }
 }

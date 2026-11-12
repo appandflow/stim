@@ -22,7 +22,7 @@ export const DEFAULT_BUILD_GB: Record<BuildProjectType, Partial<Record<BuildLedg
 
 /** Recorded builds older than this no longer inform an estimate. */
 const HISTORY_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
-/** The newest matching records an estimate takes its largest figure from. */
+/** The newest matching records an estimate takes its median from. */
 const HISTORY_LIMIT = 10;
 
 export interface BuildEstimate {
@@ -31,8 +31,9 @@ export interface BuildEstimate {
 }
 
 /**
- * The bytes the next cold local build of `projectKey` on `platform` is expected to write: the largest of its
- * `HISTORY_LIMIT` newest successful, measured, non-hit builds in the last 30 days, else the default for its type.
+ * The bytes the next cold local build of `projectKey` on `platform` is expected to write: the median of the
+ * `HISTORY_LIMIT` newest positive `bytesWritten` of its succeeded, non-hit builds in the last 30 days, else the
+ * default for its type.
  */
 export function estimateBuildBytes({
   records,
@@ -54,24 +55,18 @@ export function estimateBuildBytes({
         record.outcome === 'succeeded' && record.cache.result !== 'hit' && now - record.ts <= HISTORY_MAX_AGE_MS,
     )
     .toSorted((a, b) => b.ts - a.ts)
-    .flatMap((record) => (typeof record.bytesWritten === 'number' ? [record.bytesWritten] : []))
-    .slice(0, HISTORY_LIMIT);
-  if (recorded.length) return { bytes: Math.max(...recorded), source: 'history' };
+    .flatMap((record) =>
+      typeof record.bytesWritten === 'number' && record.bytesWritten > 0 ? [record.bytesWritten] : [],
+    )
+    .slice(0, HISTORY_LIMIT)
+    .toSorted((a, b) => a - b);
+  if (recorded.length) {
+    const middle = Math.floor(recorded.length / 2);
+    const median = recorded.length % 2 ? recorded[middle] : ((recorded[middle - 1] ?? 0) + (recorded[middle] ?? 0)) / 2;
+    return { bytes: median ?? 0, source: 'history' };
+  }
   return {
     bytes: (DEFAULT_BUILD_GB[type][platform] ?? DEFAULT_BUILD_GB.native[platform] ?? 0) * GB,
     source: 'default',
   };
-}
-
-/** How many bytes the volume lacks for the build and the critical floor; 0 when it has room. */
-export function headroomShortfall({
-  freeBytes,
-  estimateBytes,
-  criticalBytes,
-}: {
-  freeBytes: number;
-  estimateBytes: number;
-  criticalBytes: number;
-}): number {
-  return Math.max(0, estimateBytes + criticalBytes - freeBytes);
 }

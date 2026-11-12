@@ -1,7 +1,15 @@
+import { realpathSync } from 'node:fs';
 import type { BuildLedgerPlatform } from '@stim-cli/core/state';
 
 const measured = new Map<string, number>();
-const measureKey = (root: string, platform: BuildLedgerPlatform) => `${platform}\0${root}`;
+
+function measureKey(root: string, platform: BuildLedgerPlatform): string {
+  let canonical = root;
+  try {
+    canonical = realpathSync(root);
+  } catch {}
+  return `${platform}\0${canonical}`;
+}
 
 export function setBuildBytes(root: string, platform: BuildLedgerPlatform, bytes: number): void {
   measured.set(measureKey(root, platform), bytes);

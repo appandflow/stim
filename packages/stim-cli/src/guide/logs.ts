@@ -368,14 +368,12 @@ msg and
                   wall time and milliseconds in each local phase (prepare,
                   cache-lookup, wait, prebuild, pods, compile, device,
                   install, launch)
-  bytesWritten    bytes a succeeded local compile added to the workspace's
-                  build output (in-tree build directories, derived-data and
-                  gradle-build under the workspace's state) and to the shared
-                  artifact store, compilation cache, ccache, Gradle and Pods
-                  directories, from one du before and after the compile. Absent
-                  for a cache hit, an offloaded or failed build, or a walk
-                  that ran past 20 seconds. Builds running at the same time
-                  count in the shared directories.
+  bytesWritten    bytes a succeeded local compile took from free space on
+                  the volume of the project: free space before the compile
+                  minus free space after it, two statfs reads and no
+                  directory walk. Writes of other processes in that time
+                  count, and a drop that is not positive records nothing.
+                  Absent for a cache hit, an offloaded or failed build.
   offloadPhases   milliseconds on the build machine: sync, deps, prebuild,
                   pods, build, fetch
   outcome         succeeded, failed or cancelled

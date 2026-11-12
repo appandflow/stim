@@ -2604,20 +2604,27 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   BUILD HEADROOM: before a local native compile (ios, android, macos; a cache
   hit or an offloaded build writes little here and is not checked), Stim
-  estimates the bytes the compile writes: the largest bytesWritten of the
-  project's newest 10 succeeded, measured, non-hit builds of that platform in
-  the last 30 days (\`guide logs\`, BUILD LEDGER), matched by project key so a
-  new worktree inherits its project's history. Without history it uses a
-  default for the project type and platform, in GB: Expo 6 ios and 6 android;
-  bare React Native and Re.Pack 8 and 6; standalone native 4 and 3 (macOS 2);
-  Exact 20 ios. They are estimates, not measurements. When free disk on the
-  workspace's or $STIM_HOME's volume is under that estimate plus the critical
-  floor (disk.criticalFreeGb, or disk.hardFloorGb when higher), the ladder runs
-  with the high level starting at that much free space, and the build then
-  starts whatever the result. If the space is still short, one warning on
-  stderr (also in --json mode) gives the bytes expected and available. The
-  check adds no refusal and no error code, and a failure inside it never fails
-  the build; disk.hardFloorGb still refuses as rung 7 says.
+  estimates the bytes the compile writes: the median of the project's newest
+  10 positive bytesWritten of succeeded, non-hit builds of that platform in the
+  last 30 days (\`guide logs\`, BUILD LEDGER), matched by project key so a new
+  worktree inherits its project's history. Without history it uses a default
+  for the project type and platform, in GB: Expo 6 ios and 6 android; bare
+  React Native and Re.Pack 8 and 6; standalone native 4 and 3 (macOS 2); Exact
+  20 ios. A project type Stim does not recognise uses the standalone native
+  default. They are estimates, not measurements. When free disk on the volume
+  of the project is under that estimate plus the critical floor
+  (disk.criticalFreeGb, or disk.hardFloorGb when higher), the ladder runs once,
+  in the build's own process with no daemon tick, from rung 2: every rung counts
+  that volume short under that target, and other volumes keep disk.minFreeGb.
+  The ladder holds a machine-wide claim, so a build that finds it held skips
+  the ladder. The build then starts whatever the result. If the space is
+  still short, one warning on stderr (also in --json mode) gives the bytes
+  expected and available. The check adds no refusal and no error code, a
+  failure inside it never fails the build, and cancelling the build stops the
+  ladder; disk.hardFloorGb still refuses as rung 7 says. With the default
+  high level of 40 GB the default estimates all sit under it, so the check
+  matters when the daemon is not running or when a project's recorded builds
+  need more than disk.minFreeGb minus the critical floor.
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is

@@ -5,6 +5,7 @@ import { buildLedgerFile, readBuildLedger } from '@stim-cli/core/state';
 import { errorRemedy, buildLedgerRecord, type BuildLedgerRun } from '../engine/build-ledger.ts';
 
 import { recordFinishedBuild, startBuildProgress } from '../engine/build-progress.ts';
+import { setBuildBytes } from '../engine/build-bytes.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 
@@ -71,6 +72,29 @@ describe('errorRemedy', () => {
 });
 
 describe('recordFinishedBuild', () => {
+  test('writes the bytes measured for the same platform and root, once, only for a succeeded run', () => {
+    const root = join(home, 'app');
+    mkdirSync(root, { recursive: true });
+    const finished = (status: 'ok' | 'failed', platform: 'ios' | 'android') =>
+      recordFinishedBuild(root, {
+        platform,
+        status,
+        startedAt: new Date(T0).toISOString(),
+        durationMs: 1_000,
+        configuration: 'Debug',
+        cacheHit: false,
+      });
+    setBuildBytes(root, 'ios', 5_000);
+    finished('ok', 'android');
+    finished('ok', 'ios');
+    finished('ok', 'ios');
+    setBuildBytes(root, 'ios', 7_000);
+    finished('failed', 'ios');
+    const records = readBuildLedger();
+    expect(records.map((record) => record.bytesWritten)).toEqual([undefined, 5_000, undefined, undefined]);
+    expect(records.every((record) => typeof record.projectKey === 'string')).toBe(true);
+  });
+
   test('writes one record with the run phases, the load at start and its first boot, and keeps ledger-only fields out of the workspace state', () => {
     const root = join(home, 'app');
     mkdirSync(root, { recursive: true });
