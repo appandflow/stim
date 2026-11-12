@@ -140,6 +140,18 @@ async function discoverToolCaches(env: NodeJS.ProcessEnv, signal?: AbortSignal):
       command: ['pod', 'cache', 'clean', '--all'],
       running: /(^|[\s/])pod(\s|$)/,
     });
+  const swiftpm =
+    process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Caches', 'org.swift.swiftpm')
+      : join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'org.swift.swiftpm');
+  if (existsSync(swiftpm))
+    found.push({
+      tool: 'swift',
+      label: 'SwiftPM cache',
+      paths: [swiftpm],
+      command: null,
+      running: /swift-build|swift-package|swift-frontend|xcodebuild|SourceKitService/,
+    });
   const gradle = gradleSharedCaches(env);
   if (gradle.length)
     found.push({
@@ -202,7 +214,7 @@ export async function surveyToolCaches(operation?: StimContext): Promise<ToolCac
   );
 }
 
-/** Empties one tool cache through its tool's command, or removes Gradle's shared caches, measuring before and after. */
+/** Empties one tool cache through its tool's command, or removes the caches of Gradle and SwiftPM, which have none, measuring before and after. */
 export async function cleanToolCache(
   plan: ToolCachePlan,
   act: boolean,

@@ -780,7 +780,7 @@ that `stim worktree warm` can restore (idle 10 minutes at high, 2 at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
 trash, finished and long-idle worktrees, at critical recordings and archived
 logs, and last, at critical or at high while free disk stays under
-`disk.minFreeGb`, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle). Each rung measures again first, skips a workspace with
+`disk.minFreeGb`, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
 a build, a driver, a lease, a live [web share](./share.md) or
 `maintenance.keep`, and takes the longest-idle
 workspace first; a level raised by memory alone runs only what frees memory.

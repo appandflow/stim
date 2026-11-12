@@ -203,10 +203,10 @@ DISK PRESSURE
   it is a real directory inside its worktree, git tracks nothing in it, its
   worktree is not in use, is not locked with git worktree lock, holds no build
   lock and is not pinned. The last rung, 9, cleans other tools' caches (npm,
-  Yarn, pnpm, CocoaPods, Gradle's version-independent caches) through each
+  Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
   tool's own command, at critical and at high while free disk stays under
-  disk.minFreeGb (\`stim guide cleanup gc\`); the SwiftPM cache and other
-  DerivedData are never deleted. Every command prints one stderr line while the daemon's last tick, at most 10
+  disk.minFreeGb (\`stim guide cleanup gc\`); Xcode DerivedData outside Stim
+  is never deleted. Every command prints one stderr line while the daemon's last tick, at most 10
   minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
@@ -602,13 +602,14 @@ leases conservatively mark entries in use. Dead lock owners and leases do not.
 Use agent-device's own tooling or remove directories yourself to clear unused
 state.
 
-SWIFTPM CACHE (REPORT ONLY)
+SWIFTPM CACHE
 gc --dry-run also reports the user-level SwiftPM cache after agent-device:
 ~/Library/Caches/org.swift.swiftpm on macOS, or org.swift.swiftpm under
 XDG_CACHE_HOME (default ~/.cache) elsewhere. It is shared by every SwiftPM
-build on this machine. Stim reports it and never deletes it. It is never in
-caches, never changes actionable, and no gc run selects it. Only stats and
-gc --dry-run measure it.
+build on this machine, so it is never in caches and never changes actionable.
+Only the last rung, 9, removes it, at critical and at high while free disk
+stays under disk.minFreeGb, and only while no swift-build, swift-package,
+swift-frontend, xcodebuild or SourceKitService process runs.
 
 GRADLE VERSIONS
 \`stim gc --dry-run\` lists, and \`stim gc\` at high or critical removes, the

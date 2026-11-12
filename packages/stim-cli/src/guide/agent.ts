@@ -383,7 +383,7 @@ Ask the user before these actions:
   more go dormant, losing their owned devices, node_modules and Pods. At
   critical it also empties every shared cache, removes clean pushed worktrees
   idle 7 days across projects, and cleans other tools' caches through their own
-  commands (npm, Yarn, pnpm, CocoaPods, Gradle). That includes the workspace
+  commands (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). That includes the workspace
   you run it from: an app you are not driving right now stops. It never
   touches a workspace that is building, driven, leased, shared with stim
   share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first
