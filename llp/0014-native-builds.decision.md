@@ -93,7 +93,20 @@ with the current one, so Stim treats it like a record of another fingerprint: it
 runs `expo prebuild` over the directory without deleting anything, then records
 the result. A directory Git tracks is never regenerated. A record this Stim cannot
 read, a higher schema or a shape no Stim wrote, still refuses with
-`STIM_PREBUILD_FAILED`, and the remedy names `mv ios ios.bak`.
+`STIM_PREBUILD_FAILED`, and the remedy names a move to a dated name, `mv ios ios-<date>`, that cannot nest
+inside an existing directory.
+
+Only shapes a Stim wrote read as `earlier`: the bare 40-digit hash, and an integer
+`schema` from 2, the first that wrote records, below the current one. Any other
+string or number is unreadable.
+
+Local runs delete nothing. The offload worker is different: it runs
+`expo prebuild --clean` on its own staged copy of the project when the plan is
+`regenerate` (`packages/stim-cli/src/job/offload/worker.ts`), as it already did for a
+`moved` or missing record. And because an `earlier` hash cannot be compared, the
+regeneration fires on the first run after an upgrade in every generated, untracked
+worktree, whether or not anything changed, so hand edits to a git-ignored `ios/`
+can be overwritten there.
 
 Reason: a schema bump, or the move from Stim 1.40, would otherwise refuse every
 Expo worktree once, with advice that did not fit an upgrade (#5623). The

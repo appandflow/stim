@@ -224,14 +224,17 @@ test('a record of an earlier Stim regenerates an untracked directory and a recor
   try {
     mkdirSync(join(root, 'ios'));
     const options = { isExpo: true, fingerprint: 'new-fingerprint', native: 'generated' as const };
-    for (const earlier of ['legacy-fingerprint', { schema: FINGERPRINT_SCHEMA - 1, hash: 'old-fingerprint' }]) {
+    for (const earlier of [
+      'a'.repeat(40),
+      ...(FINGERPRINT_SCHEMA > 2 ? [{ schema: 2, hash: 'old-fingerprint' }] : []),
+    ]) {
       writeWorkspaceState(root, { prebuild: { ios: earlier } });
       expect(await planPrebuildAsync(root, 'ios', options)).toBe('regenerate');
       expect(await planPrebuildAsync(root, 'ios', { ...options, native: 'tracked' })).toBe('none');
     }
     writeWorkspaceState(root, { prebuild: { ios: { schema: FINGERPRINT_SCHEMA + 1, hash: 'future-fingerprint' } } });
     expect(await planPrebuildAsync(root, 'ios', options)).toBe('refuse');
-    expect(prebuildPlanRefusal(root, 'ios').remedy).toContain('mv ios ios.bak');
+    expect(prebuildPlanRefusal(root, 'ios').remedy).toMatch(/mv ios ios-\d{4}-\d{2}-\d{2}/);
     rmSync(join(root, 'ios'), { recursive: true });
     expect(await planPrebuildAsync(root, 'ios', { ...options, native: 'tracked' })).toBe('refuse');
     expect(await planPrebuildAsync(root, 'ios', options)).toBe('generate');
@@ -247,8 +250,10 @@ describe('the prebuild record', () => {
   test.each([
     ['an unfinished prebuild', null, null, { kind: 'unfinished' }],
     ['no record', undefined, null, { kind: 'unrecorded' }],
-    ['the bare hash Stim 1.40 wrote', 'abc', 'abc', { kind: 'earlier' }],
-    ['a lower schema', { schema: FINGERPRINT_SCHEMA - 1, hash: 'abc' }, 'abc', { kind: 'earlier' }],
+    ['the bare hash Stim 1.40 wrote', 'a'.repeat(40), 'abc', { kind: 'earlier' }],
+    ['a bare string that is not a 1.40 hash', 'abc', 'abc', { kind: 'foreign' }],
+    ['a fractional schema', { schema: 2.5, hash: 'abc' }, 'abc', { kind: 'foreign' }],
+    ['a schema no Stim shipped', { schema: 1, hash: 'abc' }, 'abc', { kind: 'foreign' }],
     ['a higher schema', { schema: FINGERPRINT_SCHEMA + 1, hash: 'abc' }, 'abc', { kind: 'foreign' }],
     ['a record without a hash', { schema: FINGERPRINT_SCHEMA }, 'abc', { kind: 'foreign' }],
     [

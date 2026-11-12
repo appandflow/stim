@@ -2146,7 +2146,8 @@ THE BUILD CACHE HAS THREE LEVELS
   (including Stim 1.40's), Stim runs expo prebuild over it once and records the
   result; it deletes nothing. A record this Stim cannot read, written by a newer
   Stim or damaged, refuses with STIM_PREBUILD_FAILED: preserve any changes, move
-  the directory aside (mv ios ios.bak) and retry. A tracked native directory is
+  the directory aside to a name that does not exist yet (for example mv ios
+  ios-2026-11-12) and retry. A tracked native directory is
   never regenerated. Builds in one Stim home share the
   workspace native-run lock; separate Stim homes do not share that lock.
 

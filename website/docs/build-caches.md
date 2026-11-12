@@ -160,7 +160,8 @@ entries. An existing generated Expo native directory whose prebuild record an
 earlier Stim wrote, Stim 1.40's included, gets `expo prebuild` run over it once
 and a new record; Stim deletes nothing. A record this Stim cannot read, from a
 newer Stim or damaged, refuses with `STIM_PREBUILD_FAILED`: preserve any local
-changes, move the directory aside (`mv ios ios.bak`) and retry. Tracked native
+changes, move the directory aside to a name that does not exist yet (for example
+`mv ios ios-2026-11-12`) and retry. Tracked native
 directories are never regenerated.
 The workspace native-run lock serializes Stim builds in the same Stim home;
 separate Stim homes do not share that lock.

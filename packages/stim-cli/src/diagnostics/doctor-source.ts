@@ -63,7 +63,7 @@ export function prebuildRecordFinding({ platform, status }: PrebuildRecordProble
     detail: `${why}, and \`stim worktree warm\` carries a native directory only when that record matches, ${cost}.`,
     fix:
       status.kind === 'foreign'
-        ? `Run the project with the Stim that generated ${dir}, or preserve any changes, move it aside with \`mv ${dir.slice(0, -1)} ${dir.slice(0, -1)}.bak\` and run stim ${platform} again.`
+        ? `Run the project with the Stim that generated ${dir}, or preserve any changes, move it aside to a name that does not exist yet, for example \`mv ${dir.slice(0, -1)} ${dir.slice(0, -1)}-${new Date().toISOString().slice(0, 10)}\`, and run stim ${platform} again.`
         : `Run stim doctor --fix in a terminal to run the prebuild${platform === 'ios' ? ' and pod install' : ''} without compiling, or run stim ${platform} once in the source checkout.`,
   };
 }
