@@ -100,7 +100,7 @@ export async function planRecords({
   for (const entry of skipped) skips.push({ target: entry.dir, reason: entry.reason });
 
   let deviceRecords: DeviceRecords | null = null;
-  if (devices)
+  if (devices && !(background && deviceSweepIsScoped(operation?.env ?? process.env)))
     await attempt('owned devices of removed projects', async () => {
       deviceRecords = await collectDeviceRecords(cfg, deadProjects, { operation });
       const records = deviceRecords;
