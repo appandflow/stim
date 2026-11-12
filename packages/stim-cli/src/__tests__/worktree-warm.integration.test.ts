@@ -353,6 +353,8 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
 test.each([
   'matching inputs',
   'changed lockfile',
+  'different npm config',
+  'stale source npm config',
   'removed patch',
   'stale source install',
   'patch removed after warm',
@@ -374,7 +376,17 @@ test.each([
     write(target, lockfile, scenario === 'changed lockfile' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
     write(root, patch, 'patch applied in source');
     if (scenario !== 'removed patch') write(target, patch, 'patch applied in source');
+    if (scenario === 'different npm config' || scenario === 'stale source npm config') {
+      write(root, '.npmrc', 'ignore-scripts=true\n');
+      write(target, '.npmrc', scenario === 'different npm config' ? 'ignore-scripts=false\n' : 'ignore-scripts=true\n');
+      utimesSync(
+        join(root, '.npmrc'),
+        beforeInstall,
+        scenario === 'stale source npm config' ? checkout : beforeInstall,
+      );
+    }
     write(root, stamp, lock);
+    utimesSync(join(root, 'package.json'), beforeInstall, beforeInstall);
     utimesSync(join(root, stamp), installed, installed);
     utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
     utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);

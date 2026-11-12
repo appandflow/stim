@@ -1,8 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { ensurePrivateDir, workspaceStateDir } from '@stim-cli/core';
-import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
+import { ensurePrivateDir } from '@stim-cli/core';
+import {
+  fingerprintEnvDir,
+  fingerprintIndexDir,
+  fingerprintIndexLock,
+  LOCKFILES,
+  readWarmedNpmInstall,
+  warmedNpmInstallFile,
+} from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 import { gitLocation } from './git-index.ts';
 import { installRoot, patches } from './inputs.ts';
@@ -506,14 +513,20 @@ function installInputs(roots: Roots): string[] | Uncertain {
 }
 
 const npmStamp = (roots: Roots) => join(roots.install, 'node_modules', '.package-lock.json');
-const npmCarryRecord = (roots: Roots) => join(workspaceStateDir(roots.project), 'warmed-npm-install.json');
+
+function npmInstallInputs(roots: Roots, inputs: string[]): string[] {
+  const npmInputs = [roots.project, roots.install].flatMap((dir) =>
+    ['package.json', '.npmrc'].map((name) => join(dir, name)),
+  );
+  return [...new Set([...inputs, ...npmInputs])];
+}
 
 function installInputDigest(roots: Roots, inputs: string[]): string {
-  const manifests = [join(roots.project, 'package.json'), join(roots.install, 'package.json')];
-  const rows = [...new Set([...inputs, ...manifests])].map((path): [string, string | null] => [
-    relocate(path, roots),
-    statSync(path, { throwIfNoEntry: false }) ? sha256(readFileSync(path)) : null,
-  ]);
+  const rows = inputs.map((path): [string, string | null] => {
+    const info = statSync(path, { throwIfNoEntry: false });
+    if (info && !info.isFile()) throw new Error(`Cannot verify install input ${path}.`);
+    return [relocate(path, roots), info ? sha256(readFileSync(path)) : null];
+  });
   return sha256(canonicalJson(Object.fromEntries(rows)));
 }
 
@@ -522,27 +535,37 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
   const source = { project: sourceProject, install: installRoot(sourceProject) };
   const target = { project, install: installRoot(project) };
   try {
-    const sourceStamp = statKey(npmStamp(source));
-    const installedAt = mtime(npmStamp(source));
+    const sourceStampPath = npmStamp(source);
+    if (!statSync(sourceStampPath, { throwIfNoEntry: false })?.isFile()) return null;
+    const sourceStamp = statKey(sourceStampPath);
+    const installedAt = mtime(sourceStampPath);
     if (!sourceStamp || installedAt === undefined || mtime(join(source.install, 'package-lock.json')) === undefined)
       return null;
-    const sourceStampHash = readHash(npmStamp(source));
+    const sourceStampHash = readHash(sourceStampPath);
     const inputs = installInputs(source);
-    if (!sourceStampHash || isUncertain(inputs) || inputs.some((path) => (mtime(path) ?? 0) > installedAt)) return null;
-    const digest = installInputDigest(source, inputs);
+    if (!sourceStampHash || isUncertain(inputs)) return null;
+    const sourceFiles = npmInstallInputs(source, inputs);
+    if (sourceFiles.some((path) => (mtime(path) ?? 0) > installedAt)) return null;
+    const digest = installInputDigest(source, sourceFiles);
     return (copied) => {
       if (!copied.includes(dirname(npmStamp(target)))) return;
       try {
         const sourceInputs = installInputs(source);
         const targetInputs = installInputs(target);
         if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
-        if (installInputDigest(source, sourceInputs) !== digest || installInputDigest(target, targetInputs) !== digest)
+        const currentSourceFiles = npmInstallInputs(source, sourceInputs);
+        if (currentSourceFiles.some((path) => (mtime(path) ?? 0) > installedAt)) return;
+        if (
+          installInputDigest(source, currentSourceFiles) !== digest ||
+          installInputDigest(target, npmInstallInputs(target, targetInputs)) !== digest
+        )
           return;
-        if (sourceInputs.some((path) => (mtime(path) ?? 0) > installedAt)) return;
-        const stamp = statKey(npmStamp(target));
-        if (!stamp || readHash(npmStamp(target)) !== sourceStampHash) return;
-        if (statKey(npmStamp(source))?.key !== sourceStamp.key || statKey(npmStamp(target))?.key !== stamp.key) return;
-        const record = npmCarryRecord(target);
+        const targetStampPath = npmStamp(target);
+        if (!statSync(targetStampPath, { throwIfNoEntry: false })?.isFile()) return;
+        const stamp = statKey(targetStampPath);
+        if (!stamp || readHash(targetStampPath) !== sourceStampHash) return;
+        if (statKey(sourceStampPath)?.key !== sourceStamp.key || statKey(targetStampPath)?.key !== stamp.key) return;
+        const record = warmedNpmInstallFile(target.project);
         ensurePrivateDir(dirname(record));
         writePrivate(record, JSON.stringify({ stamp: stamp.key, inputs: digest }));
       } catch {}
@@ -568,14 +591,16 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
     if (isUncertain(inputs)) return inputs;
     const pending = inputs.find((path) => (mtime(path) ?? 0) > installed);
     if (!pending) return null;
-    const record = readJson(npmCarryRecord(roots));
-    const stamp = statKey(npmStamp(roots));
+    const record = readWarmedNpmInstall(roots.project);
+    if (!record) return pending;
+    const stampPath = npmStamp(roots);
+    const stamp = statKey(stampPath);
     if (
       stamp &&
-      mtime(npmStamp(roots)) === installed &&
-      field(record, 'stamp') === stamp.key &&
-      field(record, 'inputs') === installInputDigest(roots, inputs) &&
-      statKey(npmStamp(roots))?.key === stamp.key
+      mtime(stampPath) === installed &&
+      record.stamp === stamp.key &&
+      record.inputs === installInputDigest(roots, npmInstallInputs(roots, inputs)) &&
+      statKey(stampPath)?.key === stamp.key
     )
       return null;
     return pending;
