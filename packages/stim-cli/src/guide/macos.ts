@@ -73,6 +73,8 @@ and refuses, listing their pids and the kill command; check them and stop them
 before retrying. A stim stop that runs inside the app's own process group (a
 Desktop copy stopping its own workspace) refuses; run stim stop from outside the
 app.
+For a hosted app, a stop that refuses this way leaves the session unknown, holding
+its slot, until a person on the host kills the listed pids and stops it again.
 A reused PID can also leave the runtime claim unresolved after its group is gone;
 inspect that claim and remove it only after verifying no owned process remains.
 If a launch cannot publish its runtime claim, Stim retains the launch claim even
@@ -159,7 +161,8 @@ phone run) with that caller's environment; a hosted app gets the host's
 restricted environment. Its stdout and stderr go to per-launch files in the
 workspace logs, which stimd copies into logs/macos-app.ndjson as client records
 (stdout at info, stderr at warn), each line once even when stimd restarts or is
-updated. Build output becomes build records in logs/macos.ndjson, all with
+updated. A stim logs --follow that read an interrupted
+append can print some records again. Build output becomes build records in logs/macos.ndjson, all with
 platform "macos". No process waits on the app, so its exit status is unknown.
 An end Stim requested of a running app (stop, relaunch, hosted stop or
 replacement, removal) records "Exited <product>." at info. Any other end records

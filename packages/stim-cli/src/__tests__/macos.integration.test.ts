@@ -502,7 +502,7 @@ test.skipIf(process.platform === 'win32')(
         return Number(line);
       });
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
-      expect(await streams.drain(root, true)).toContain(`process group ${owned.pid} remains`);
+      expect(await streams.drain(root, true)).toContain('remain in its process group');
       expect(readFileSync(log, 'utf8')).not.toContain('Exited Sample.');
       await expect(stopMacosApp(root)).rejects.toMatchObject({
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
@@ -526,6 +526,44 @@ test.skipIf(process.platform === 'win32')(
       } catch {}
       releaseClaim(owned.claim);
       releaseClaim(declaration);
+    }
+  },
+  20_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a stop of an orphaned app with a member in its group succeeds the first time',
+  async () => {
+    const real = getExecutor();
+    const launcher = real.spawn(
+      process.execPath,
+      [
+        '-e',
+        `const a = require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 60 & echo member $!; wait'], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); process.stdout.write('app ' + a.pid + '\\n', () => process.exit(0));`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(launcher);
+    let printed = '';
+    launcher.stdout?.on('data', (data) => (printed += String(data)));
+    const pids = await vi.waitFor(() => {
+      const app = /app (\d+)/.exec(printed)?.[1];
+      const member = /member (\d+)/.exec(printed)?.[1];
+      if (!app || !member) throw new Error('the fixture app has not started');
+      return { app: Number(app), member: Number(member) };
+    });
+    const app = macosProcess(pids.app);
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+    try {
+      expect(await stopMacosApp(root)).toBe(true);
+      await vi.waitFor(() => expect(() => process.kill(pids.member, 0)).toThrow(/ESRCH/));
+    } finally {
+      drain.mockRestore();
+      for (const pid of [pids.member, pids.app])
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
     }
   },
   20_000,

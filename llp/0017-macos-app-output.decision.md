@@ -119,6 +119,11 @@ its group:
   refuses with `STIM_MACOS_OWNER_UNVERIFIED`, listing each remaining pid and the
   `kill` command for them. The person checks them and stops them.
 
+"Remaining" means the processes `ps` lists in that group, without zombies and
+without the stop's own process; macOS answers a signal-0 probe of a group that
+holds only unreaped zombies with EPERM, so the probe is not used to decide this.
+A group whose only member left is the stop itself counts as empty.
+
 While members remain after the app exited on its own, the run stays open.
 
 Everywhere in this flow a signal follows, in the same synchronous step, a check
@@ -163,8 +168,13 @@ flight compares the file:
 
 - exactly the expected size with the same identity means the append landed;
 - an unchanged size means the append did not land;
-- a file that grew but falls short holds part of the append, so the tail cuts it
-  back to its size before the append and appends again.
+- a file that grew but falls short holds part of the append, and a file that
+  grew past it holds bytes another writer added, so in both cases the tail cuts
+  it back to its size before the append and appends again; the other writer's
+  bytes are lost;
+- a file whose identity changed after a complete append (replaced by a copy) is
+  not compared: the append is repeated, so that batch appears twice in the new
+  file. Both cases need a writer other than the tail.
 
 Only the tail appends to `macos-app.ndjson` or rotates it, so a stimd killed at
 any point, restarted or replaced neither repeats nor skips a record in the file.

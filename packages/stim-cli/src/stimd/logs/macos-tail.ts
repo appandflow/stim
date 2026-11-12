@@ -17,9 +17,10 @@ import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, ensurePrivateDir, rotateLog } from '@stim-cli/core';
 import { isJsonObject, type MacosProcess } from '@stim-cli/core/state';
 import { macosAppLogName } from '../../macos/state.ts';
-import { outputWriters } from '../../macos/output-writers.ts';
+import { liveGroupPids, outputWriters } from '../../macos/output-writers.ts';
+import { getExecutor } from '../../exec.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
-import { processGroupAlive, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../../ownership-claim.ts';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../../ownership-claim.ts';
 
 const TAIL_MS = 250;
 const WRITERS_PROBE_MS = 2000;
@@ -386,13 +387,29 @@ export function tailMacosApp(
           identity === 'unknown' ? 'the macOS app identity cannot be verified' : `the macOS app (pid ${app.pid}) runs`;
         return false;
       }
-      if (identity === 'gone' && processGroupAlive(app.pid)) {
-        reason = `the macOS app exited but process group ${app.pid} remains`;
-        waiting = true;
-        return false;
-      }
       if (!force && Date.now() - probedAt < probeEvery) return false;
       probedAt = Date.now();
+      if (identity === 'gone') {
+        let members: number[];
+        try {
+          members = liveGroupPids(
+            await getExecutor().runFileAsync('ps', ['-axo', 'pid=,pgid=,stat='], {
+              timeoutMs: 10_000,
+              killSignal: 'SIGKILL',
+            }),
+            app.pid,
+          );
+        } catch {
+          reason = 'ps could not list the macOS app process group';
+          return false;
+        }
+        if (done) return state.exited;
+        if (members.length) {
+          reason = `the macOS app exited but pid ${members.join(', ')} remain in its process group`;
+          waiting = true;
+          return false;
+        }
+      }
       const writers = await outputWriters(files.map((file) => file.path));
       if (done) return state.exited;
       if (writers === null) {

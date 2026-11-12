@@ -8,6 +8,7 @@ import {
   waitForProcessExit,
 } from '../process-identity.ts';
 import { getExecutor } from '../exec.ts';
+import { liveGroupPids } from './output-writers.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -21,7 +22,7 @@ import {
 } from './state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { drainOwnedMacos } from '../daemon/client.ts';
-import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
 const APP_EXIT_MS = 5000;
@@ -93,16 +94,12 @@ export function requestMacosStop(root: string, launchId: string): void {
 }
 
 async function groupMembers(pgid: number, operation?: StimContext): Promise<number[]> {
-  const listed = await runOperationFile(operation, getExecutor(), 'ps', ['-axo', 'pid=,pgid='], {
+  const listed = await runOperationFile(operation, getExecutor(), 'ps', ['-axo', 'pid=,pgid=,stat='], {
     cwd: operation?.cwd,
     timeoutMs: 10_000,
     killSignal: 'SIGKILL',
   });
-  return listed
-    .split('\n')
-    .map((line) => /^\s*(\d+)\s+(\d+)\s*$/.exec(line))
-    .filter((match) => match !== null && Number(match[2]) === pgid)
-    .map((match) => Number(match?.[1]));
+  return liveGroupPids(listed, pgid);
 }
 
 /** The leader's identity state and the members of its process group, for a refusal that a person reads. */
@@ -136,40 +133,42 @@ function memberRecord(pid: number): MacosProcess | null {
 }
 
 function signalLiveLaunchGroup(app: MacosProcess, pids: readonly number[]): MacosProcess[] | null {
-  if (inspectProcessIdentity(app) !== 'same') return null;
   const members = pids.filter((pid) => pid !== app.pid).flatMap((pid) => memberRecord(pid) ?? []);
+  if (inspectProcessIdentity(app) !== 'same') return null;
   process.kill(-app.pid, 'SIGTERM');
   return members;
 }
 
-function groupRefusal(pgid: number, pids: readonly number[], why: string): Error {
-  const others = pids.filter((pid) => pid !== process.pid);
-  return Object.assign(
-    new Error(
-      `${why}; no signal was sent to process group ${pgid}${others.length ? ` (pid ${others.join(', ')})` : ''}.`,
-    ),
-    {
-      code: 'STIM_MACOS_OWNER_UNVERIFIED',
-      remedy: others.length
-        ? `Verify those processes belong to this workspace, stop them (kill ${others.join(' ')}), then run the command again.`
-        : 'Run the command again once that process group is empty.',
-    },
-  );
+function groupRefusal(pids: readonly number[], why: string): Error {
+  return Object.assign(new Error(`${why} (pid ${pids.join(', ')}).`), {
+    code: 'STIM_MACOS_OWNER_UNVERIFIED',
+    remedy: `Verify those processes belong to this workspace, stop them (kill ${pids.join(' ')}), then run the command again.`,
+  });
 }
 
 // @ref LLP 0017#the-launch-group -- the group is signalled only while its recorded leader is running
 async function stopLaunch(app: MacosProcess, operation?: StimContext): Promise<void> {
-  if (process.platform === 'win32' || inspectProcessIdentity(app) !== 'same') {
+  const leader = inspectProcessIdentity(app);
+  if (process.platform === 'win32' || leader === 'gone' || leader === 'different') {
     await stopProcesses([app], undefined, operation);
     return;
   }
   const pids = await groupMembers(app.pid, operation);
+  if (leader === 'unknown') {
+    const others = pids.filter((pid) => pid !== process.pid);
+    if (others.length)
+      throw groupRefusal(
+        others,
+        `The macOS app (pid ${app.pid}) cannot be verified and processes remain in its process group; no signal was sent`,
+      );
+    await stopProcesses([app], undefined, operation);
+    return;
+  }
   if (pids.includes(process.pid))
     throw Object.assign(
       groupRefusal(
-        app.pid,
-        pids,
-        `This stop runs as pid ${process.pid} inside the macOS app's process group, so it cannot end that group`,
+        pids.filter((pid) => pid !== process.pid),
+        `This stop runs as pid ${process.pid} inside the macOS app's process group, so it cannot end that group; no signal was sent`,
       ),
       { remedy: 'Run stim stop from outside the app, for example from a terminal.' },
     );
@@ -182,14 +181,17 @@ async function stopLaunch(app: MacosProcess, operation?: StimContext): Promise<v
   await stopProcesses([app, ...members], undefined, operation);
 }
 
-async function refuseRemainingGroup(app: MacosProcess, operation?: StimContext): Promise<void> {
+async function refuseRemainingGroup(app: MacosProcess, signalled: boolean, operation?: StimContext): Promise<void> {
   if (process.platform === 'win32') return;
   const leader = inspectProcessIdentity(app);
-  if (leader === 'different' || !processGroupAlive(app.pid)) return;
+  if (leader === 'different') return;
+  const remaining = (await groupMembers(app.pid, operation)).filter((pid) => pid !== process.pid);
+  if (!remaining.length) return;
   throw groupRefusal(
-    app.pid,
-    await groupMembers(app.pid, operation),
-    `The macOS app (pid ${app.pid}) ${leader === 'gone' ? 'exited' : 'cannot be verified'} but processes remain in its process group`,
+    remaining,
+    signalled
+      ? `Processes remain in the process group of the macOS app (pid ${app.pid}) after it was stopped`
+      : `The macOS app (pid ${app.pid}) ${leader === 'gone' ? 'exited' : 'cannot be verified'} but processes remain in its process group; no signal was sent to them`,
   );
 }
 
@@ -221,6 +223,7 @@ async function stopMacosAppRecorded(
     await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
   const app = readMacosRecord(root)?.app ?? record?.app;
   const launchGroup = app && record?.supervisor?.pid === app.pid ? app : undefined;
+  const signalled = launchGroup !== undefined && inspectProcessIdentity(launchGroup) === 'same';
   if (launchGroup) await stopLaunch(launchGroup, operation);
   else if (app) await stopProcesses([app], undefined, operation);
   await stopProcesses(started, undefined, operation);
@@ -228,7 +231,7 @@ async function stopMacosAppRecorded(
   await stopProcesses(instances, undefined, operation);
   operation?.signal.throwIfAborted();
   if (!record) return instances.length > 0;
-  if (launchGroup) await refuseRemainingGroup(launchGroup, operation);
+  if (launchGroup) await refuseRemainingGroup(launchGroup, signalled, operation);
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
     throw Object.assign(

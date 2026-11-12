@@ -38,3 +38,12 @@ export async function outputWriters(files: readonly string[]): Promise<number[] 
   const pids = parseLsofPids(stdout);
   return pids && [...new Set(pids)].filter((pid) => pid !== process.pid);
 }
+
+/** The pids in `ps -axo pid=,pgid=,stat=` output that belong to process group `pgid` and are not zombies. */
+export function liveGroupPids(psOutput: string, pgid: number): number[] {
+  return psOutput
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([pid, group, stat]) => pid && Number(group) === pgid && !stat?.startsWith('Z'))
+    .map(([pid]) => Number(pid));
+}
