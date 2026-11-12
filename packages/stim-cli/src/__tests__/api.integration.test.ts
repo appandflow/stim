@@ -735,6 +735,7 @@ test('logs clients read independent homes with bounded tails and reject invalid 
     expect(spawn).not.toHaveBeenCalled();
     expect(process.env).toEqual(environment);
     const stim = createStim({ projectRoot: first.root, home: first.home });
+    const untyped: { logs(options: object): Promise<unknown> } = stim;
     for (const options of [
       { tail: -1 },
       { tail: 0.5 },
@@ -742,7 +743,7 @@ test('logs clients read independent homes with bounded tails and reject invalid 
       { minLevel: 'loud' },
       { since: '5m', grep: '(' },
     ])
-      await expect(stim.logs(options as Parameters<typeof stim.logs>[0])).rejects.toMatchObject({
+      await expect(untyped.logs(options)).rejects.toMatchObject({
         code: 'STIM_BAD_ARG',
       });
     expect(await stim.logs({ tail: 0 })).toEqual([]);
