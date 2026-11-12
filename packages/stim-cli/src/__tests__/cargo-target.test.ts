@@ -200,7 +200,7 @@ test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock
     const result = await trimCargoTarget(target, { needBytes: 0 });
 
     expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual(['debug: a build holds its .cargo-lock']);
+    expect(result.kept).toEqual(['debug: a build holds its .cargo-build-lock']);
   } finally {
     resetExecutor();
   }

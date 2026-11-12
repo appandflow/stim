@@ -48,6 +48,16 @@ describe('selectCargoTargets', () => {
     );
     expect(next.measured.map(({ dir }) => dir)).toContain('/b/target');
   });
+
+  it('breaks ties among never-measured targets differently from hour to hour, so a restart does not repeat the same few', () => {
+    const targets = Array.from({ length: 12 }, (_, i) => candidate(`/t${i}/target`, true, null));
+    const picks = [0, 1, 2, 3, 4, 5].map((hour) =>
+      selectCargoTargets(targets, 6, hour * 3_600_000)
+        .measured.map(({ dir }) => dir)
+        .join(),
+    );
+    expect(new Set(picks).size).toBeGreaterThan(1);
+  });
 });
 
 describe('the Cargo target cap over a root target/', () => {
