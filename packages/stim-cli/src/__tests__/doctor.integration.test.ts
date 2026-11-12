@@ -1,4 +1,5 @@
 import { reactNativeProjectDoctor, reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
+import { writeEndedOwnerRecord } from './_parity-fixture.ts';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -1416,9 +1417,17 @@ test('an aborted parity check unregisters its worktree and removes its directory
         return executor.runFileAsync(file, args, options);
       },
     });
-    const operation = { ...processContext(repo), signal: controller.signal };
+    const custom = join(base, 'custom-tmp');
+    mkdirSync(custom);
+    const leftover = join(custom, 'stim-parity-ended1');
+    mkdirSync(join(leftover, 'head'), { recursive: true });
+    await writeEndedOwnerRecord(leftover, repo);
+    const context = processContext(repo);
+    const operation = { ...context, env: { ...context.env, STIM_TMPDIR: custom }, signal: controller.signal };
     await expect(detectFingerprintParity(repo, { operation })).rejects.toThrow('aborted');
     assert(temporaryWorktree);
+    expect(dirname(dirname(temporaryWorktree))).toBe(realpathSync.native(custom));
+    expect(existsSync(leftover)).toBe(false);
     expect(existsSync(dirname(temporaryWorktree))).toBe(false);
     expect(
       git('worktree', 'list', '--porcelain')

@@ -1,5 +1,5 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { gitQuietAsync } from '../workspace/git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
@@ -63,10 +63,22 @@ export async function removeParityLeftover(
   if (kept || !marker) return { removed: false, kept: kept ?? 'it has no Stim record' };
   const { repo } = marker;
   const options = { write: true, timeoutMs: GIT_TIMEOUT_MS, signal };
-  const repoExists = lstatSync(repo, { throwIfNoEntry: false })?.isDirectory() === true;
-  if (repoExists) await gitQuietAsync(repo, ['worktree', 'remove', '--force', '--force', join(base, 'head')], options);
+  const head = join(realpathSync.native(base), 'head');
+  let registered = false;
+  if (lstatSync(repo, { throwIfNoEntry: false })?.isDirectory() === true) {
+    const listed = await gitQuietAsync(repo, ['worktree', 'list', '--porcelain', '-z'], {
+      timeoutMs: GIT_TIMEOUT_MS,
+      signal,
+    });
+    registered =
+      listed !== null &&
+      listed
+        .split('\0')
+        .some((line) => line.startsWith('worktree ') && relative(head, line.slice('worktree '.length)) === '');
+  }
+  if (registered) await gitQuietAsync(repo, ['worktree', 'remove', '--force', '--force', head], options);
   await removeTemporaryEntryAsync(base, signal);
-  if (repoExists) await gitQuietAsync(repo, ['worktree', 'prune'], options);
+  if (registered) await gitQuietAsync(repo, ['worktree', 'prune'], options);
   return { removed: true, kept: null };
 }
 
@@ -85,7 +97,6 @@ export async function sweepParityLeftovers(root: string, signal?: AbortSignal): 
       if ((await removeParityLeftover(base, signal)).removed) removed.push(base);
     } catch (error) {
       signal?.throwIfAborted();
-      if (error instanceof Error && 'reportCleanup' in error) throw error;
     }
   }
   return removed;

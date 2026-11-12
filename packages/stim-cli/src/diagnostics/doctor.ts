@@ -1593,9 +1593,6 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
-  try {
-    await sweepParityLeftovers(temporaryRoot(projectRoot, operation), AbortSignal.timeout(10_000));
-  } catch {}
   const skipped = fingerprintReportGate(operation);
   if (skipped)
     return finding(
@@ -1604,6 +1601,14 @@ export async function detectFingerprintParity(
       skipped,
       'Run stim doctor in a terminal to get the check.',
     );
+  try {
+    await sweepParityLeftovers(
+      temporaryRoot(projectRoot, operation),
+      AbortSignal.any([operation?.signal ?? new AbortController().signal, AbortSignal.timeout(10_000)]),
+    );
+  } catch {
+    operation?.signal.throwIfAborted();
+  }
   const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
   const context = operation ?? processContext(projectRoot);
   let base: string;

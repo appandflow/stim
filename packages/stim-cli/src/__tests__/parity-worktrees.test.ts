@@ -1,9 +1,9 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { captureProcessToken } from '../process-identity.ts';
+import { writeEndedOwnerRecord } from './_parity-fixture.ts';
 import { sweepParityLeftovers, writeParityMarker } from '../diagnostics/parity-worktrees.ts';
 
 let dir: string;
@@ -41,23 +41,9 @@ function parityDirectory(name: string): string {
   return base;
 }
 
-async function endedProcessMarker(base: string): Promise<void> {
-  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
-  const pid = child.pid ?? 0;
-  const token = captureProcessToken(pid);
-  expect(token).not.toBeNull();
-  const exited = new Promise((resolve) => child.once('exit', resolve));
-  child.kill('SIGKILL');
-  await exited;
-  writeFileSync(
-    join(base, 'stim-parity.json'),
-    JSON.stringify({ version: 1, repo, owner: { pid, processToken: token } }),
-  );
-}
-
 test('a leftover of a killed run is removed and unregistered from its repository', async () => {
   const base = parityDirectory('stim-parity-dead123');
-  await endedProcessMarker(base);
+  await writeEndedOwnerRecord(base, repo);
   expect(registered()).toHaveLength(2);
 
   expect(await sweepParityLeftovers(root)).toEqual([base]);
@@ -89,4 +75,40 @@ test("a similarly named directory without Stim's record is left alone", async ()
   expect(existsSync(join(base, 'head'))).toBe(true);
   expect(existsSync(join(elsewhere, 'head'))).toBe(true);
   expect(registered()).toHaveLength(3);
+});
+
+test('a record naming a repository with no worktree at its head removes only the directory', async () => {
+  const other = join(dir, 'other');
+  mkdirSync(other);
+  const gitOther = (...args: string[]) => execFileSync('git', ['-C', other, ...args], { encoding: 'utf8' });
+  gitOther('init', '-q');
+  gitOther('config', 'user.email', 'test@example.com');
+  gitOther('config', 'user.name', 'test');
+  writeFileSync(join(other, 'a.txt'), 'a');
+  gitOther('add', '.');
+  gitOther('commit', '-qm', 'init');
+  const mine = join(dir, 'user-worktree');
+  gitOther('worktree', 'add', '-q', '--detach', mine, 'HEAD');
+  rmSync(mine, { recursive: true });
+  const base = join(root, 'stim-parity-planted1');
+  mkdirSync(join(base, 'head'), { recursive: true });
+  await writeEndedOwnerRecord(base, other);
+
+  expect(await sweepParityLeftovers(root)).toEqual([base]);
+
+  expect(existsSync(base)).toBe(false);
+  expect(gitOther('worktree', 'list', '--porcelain')).toContain('user-worktree');
+});
+
+test('a symlinked parity entry is ignored', async () => {
+  const base = parityDirectory('stim-parity-target1');
+  await writeEndedOwnerRecord(base, repo);
+  const links = join(dir, 'links');
+  mkdirSync(links);
+  symlinkSync(base, join(links, 'stim-parity-link1'));
+
+  expect(await sweepParityLeftovers(links)).toEqual([]);
+
+  expect(existsSync(join(base, 'head'))).toBe(true);
+  expect(registered()).toHaveLength(2);
 });

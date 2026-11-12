@@ -93,7 +93,9 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
-Metro, CocoaPods and fingerprint parity; [Exact](#exact-apps) checks cover
+Metro, CocoaPods and fingerprint parity (the parity check uses a temporary
+git worktree; doctor first removes the leftovers of ended Stim processes and
+unregisters them in the repository they were created for); [Exact](#exact-apps) checks cover
 Bun, rustup and the exact2 checkout. Shared findings appear before
 framework findings. Each run in a supported native app is recorded for the
 inspected platforms in Stim's state, which also registers the project for
@@ -2547,7 +2549,7 @@ volume is not mounted, is kept and counted under "Skipped".
 `stim-server-*`, `stim-ws-*`, `stim-parity-*`), xctrace recordings (`instruments*.ktrace`),
 SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
 Jest's cache (`jest_<uid in base 36>`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
-temp directory only when nothing in it changed for 24 hours. It keeps a directory that contains or sits
+temp directory only when nothing in it changed for 24 hours. It removes a `stim-parity-*` directory, with its git worktree registration, only when its Stim record names a process that has ended. It keeps a directory that contains or sits
 inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
 cannot be read, and keeps every recording while `xctrace` or Instruments runs and every

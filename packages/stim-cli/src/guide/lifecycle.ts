@@ -2321,7 +2321,10 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   \`stim doctor\` recomputes the current fingerprint and reports inputs it
   cannot safely evaluate or offload. Its determinism and worktree parity checks
   run project config and autolinking in an isolated child, so run doctor only
-  in a checkout whose project code you trust. Untracked, non-gitignored native files can
+  in a checkout whose project code you trust. The parity check makes a
+  temporary git worktree of HEAD; before it runs, doctor removes the leftover
+  ones of ended Stim processes and unregisters them in the repository they
+  were created for. Untracked, non-gitignored native files can
   move the key on one machine and not another.`,
     },
     concurrency: {
