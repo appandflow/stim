@@ -525,7 +525,7 @@
       }
     },
     {
-      "files": ["**/*.test.ts"],
+      "files": ["**/*.test.ts", "packages/server/__tests__/server-harness.ts"],
       "rules": {
         "unicorn/consistent-function-scoping": "off",
         "vitest/no-standalone-expect": [
