@@ -11,6 +11,7 @@ interface PendingFence {
   children: Set<Promise<void>>;
   peers: Set<PendingFence>;
   failure: unknown;
+  lazy: boolean;
   unverified: unknown[];
   done: Promise<void>;
   resolve: () => void;
@@ -42,9 +43,10 @@ function finishFence(state: PendingFence): void {
   }
   const child = failure ? soleReportChild(peers.flatMap((peer) => peer.unverified)) : null;
   for (const peer of peers) {
-    if (failure && child) {
+    if (failure) {
       try {
-        setClaimChild(peer.claim, child);
+        if (child) setClaimChild(peer.claim, child);
+        else markClaimChildPending(peer.claim);
       } catch {}
     }
     if (failure) {
@@ -110,7 +112,16 @@ export function trackClaimActivity(claim: ClaimHandle): { settle: (error?: unkno
   return { settle: (error) => (error ? reject(error) : resolve()) };
 }
 
-export function fenceDeclaredSpawns(context: StimContext): {
+/**
+ * Holds `context`'s declaring claims for work that starts declared children. The claim reads as having a pending child
+ * from the moment the fence opens, unless `lazy`: a lazy fence marks a pending child only while a child is being
+ * spawned or several overlap, and records the one child in flight, so an owner that ends between children leaves a
+ * claim that reads as free and one that ends while a child runs leaves a claim that names it.
+ */
+export function fenceDeclaredSpawns(
+  context: StimContext,
+  { lazy = false }: { lazy?: boolean } = {},
+): {
   claims: ClaimHandle[];
   finish: (failure?: unknown) => Promise<void>;
 } {
@@ -128,7 +139,7 @@ export function fenceDeclaredSpawns(context: StimContext): {
       let state = fences.get(key);
       if (state?.failure) throw state.failure;
       if (!state) {
-        markClaimChildPending(claim);
+        if (!lazy) markClaimChildPending(claim);
         let resolve!: () => void;
         let reject!: (error: unknown) => void;
         const done = new Promise<void>((yes, no) => {
@@ -142,6 +153,7 @@ export function fenceDeclaredSpawns(context: StimContext): {
           children: new Set(),
           peers: new Set(),
           failure: null,
+          lazy,
           unverified: [],
           done,
           resolve,
@@ -246,6 +258,8 @@ export function spawnDeclared(
   if (refusal !== null) throw new Error(refusal);
   const claims = [...declaring];
   if (claims.length === 0) return spawn();
+  const lazy = (claim: ClaimHandle) => fences.get(claimKey(claim))?.lazy === true;
+  const alone = new Set(claims.filter((claim) => !declaredChildren.get(claimKey(claim))?.size));
   const forget = () => {
     for (const claim of claims) {
       if (fences.has(claimKey(claim))) continue;
@@ -254,24 +268,33 @@ export function spawnDeclared(
       } catch {}
     }
   };
+  const forgetUnstarted = () => {
+    forget();
+    for (const claim of claims) {
+      if (!lazy(claim) || !alone.has(claim)) continue;
+      try {
+        clearClaimChild(claim);
+      } catch {}
+    }
+  };
   let child: ChildProcess;
   try {
-    for (const claim of claims) if (!fences.has(claimKey(claim))) markClaimChildPending(claim);
+    for (const claim of claims) if (!fences.has(claimKey(claim)) || lazy(claim)) markClaimChildPending(claim);
     child = spawn();
   } catch (error) {
-    forget();
+    forgetUnstarted();
     throw error;
   }
   const pid = child.pid;
   if (pid === undefined) {
-    forget();
+    forgetUnstarted();
     return child;
   }
   running.add(child);
   const captured = captureProcessIdentity(pid);
   if (captured.ok) {
     for (const claim of claims) {
-      if (fences.has(claimKey(claim))) continue;
+      if (fences.has(claimKey(claim)) && !(lazy(claim) && alone.has(claim))) continue;
       try {
         setClaimChild(claim, { pid, processToken: captured.token });
       } catch {}
