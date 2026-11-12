@@ -40,7 +40,6 @@ import { inspectProcessIdentity } from '../../process-identity.ts';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import { detectIsExpo } from '../../workspace/project.ts';
 import {
   idleMinutesSetting,
   metroPortSetting,
@@ -83,12 +82,15 @@ import {
   clearExpoMetroTunnel,
   clearManagedMetroTunnel,
   clearWorkspaceSupervisor,
+  detectDevServer,
   MODE_BARE,
   MODE_COMMAND,
   MODE_EXPO,
+  MODE_REPACK,
   readMetroTunnel,
   type ManagedTunnelRecord,
 } from './state.ts';
+import { repackRecords, startRepackServer } from './server-repack.ts';
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 type Answer = Record<string, unknown>;
@@ -471,6 +473,7 @@ function record(child: MetroChild, hmrUpdates: boolean): void {
 function outputRecord(mode: string): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
   if (mode === MODE_COMMAND) return (chunk, stream) => recordFromLine(chunk, { stream, source: 'command' });
   if (mode === MODE_EXPO) return (chunk, stream) => recordFromLine(chunk, { stream });
+  if (mode === MODE_REPACK) return repackRecords();
   return (chunk, stream) => {
     const entry = recordFromLine(chunk, { stream });
     return entry?.raw ? { ...entry, event: `host_${stream}` } : entry;
@@ -569,7 +572,7 @@ async function start(
   mkdirSync(logsDir, { recursive: true });
   const settings = resolveProjectSettings(root).settings;
   const command = runnableMetroCommand(settings);
-  const mode = command ? MODE_COMMAND : detectIsExpo(root) ? MODE_EXPO : MODE_BARE;
+  const { mode } = detectDevServer(root, command);
   const digest = injectedDigest();
   const details = { port, mode, digest, engineDir: ownStoreEngine()?.build ?? null, ...launch };
   const attempt = tryAcquireClaim({ root: claimRoot(root, 'metro'), mode: 'exclusive', label: 'Metro', details });
@@ -644,7 +647,19 @@ async function start(
             resetCache,
             onTunnelUrl,
           })
-        : spawnHost(root, port, output, env, writer, baseEnv, spawn, resetCache);
+        : mode === MODE_REPACK
+          ? await startRepackServer({
+              root,
+              port,
+              logsDir,
+              writer: writer,
+              output,
+              extraEnv: env,
+              spawnFn: spawn,
+              baseEnv,
+              resetCache,
+            })
+          : spawnHost(root, port, output, env, writer, baseEnv, spawn, resetCache);
   } catch (error) {
     if (spawned?.pid) {
       writer.close();
@@ -652,7 +667,15 @@ async function start(
     }
     releaseClaim(claim);
     writer.close();
-    return { op: 'error', code: 'metro-start', message: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    const refusal =
+      error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')
+        ? {
+            code: error.code,
+            ...('remedy' in error && typeof error.remedy === 'string' ? { remedy: error.remedy } : {}),
+          }
+        : { code: 'metro-start' };
+    return { op: 'error', ...refusal, message };
   } finally {
     for (const fd of output.fds) closeSync(fd);
   }

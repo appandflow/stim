@@ -3,7 +3,8 @@ import { readIdleStop } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import type { DevServerStart } from '../engine/build-facts.ts';
 import { resolveProjectMetro } from '../metro.ts';
-import { metroPortSetting } from '../workspace/settings.ts';
+import { metroCommandSetting, metroPortSetting } from '../workspace/settings.ts';
+import { repackReachRefusal } from '../stimd/metro/server-repack.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorageAsync } from '../workspace/paths.ts';
@@ -36,6 +37,7 @@ export async function ensureDevServer({
   settings,
   settingsContext,
   remote,
+  reach = null,
   hostedPorts,
   env,
   note,
@@ -49,6 +51,8 @@ export async function ensureDevServer({
   settings: StartDevServerRequest['settings'];
   settingsContext: StartDevServerRequest['settingsContext'];
   remote: boolean;
+  /** How a device that is neither remote nor on this Mac's localhost reaches the dev server. */
+  reach?: 'hosted' | 'device' | null;
   hostedPorts?: StartDevServerRequest['hostedPorts'];
   env?: NodeJS.ProcessEnv;
   note: (line: string) => void;
@@ -57,6 +61,9 @@ export async function ensureDevServer({
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
+  const via = reach ?? (remote ? 'remote' : null);
+  const refusal = via && repackReachRefusal(root, metroCommandSetting(settings), via);
+  if (refusal) return { ok: false, ...refusal, lines: [] };
   const pin = metroPortSetting(settings, env);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;

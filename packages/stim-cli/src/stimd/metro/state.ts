@@ -7,6 +7,7 @@ import {
 } from '../../workspace/workspace-state.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from '../../devices/device-slots.ts';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { detectIsExpo, detectRepackConfig } from '../../workspace/project-files.ts';
 import { supervisorPidFile, workspaceStateFile } from '../../workspace/paths.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { sameProcessRecord } from '../../process-identity.ts';
@@ -15,10 +16,25 @@ import type { ProcessRecord } from '@stim-cli/core/process-identity';
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
 export const MODE_COMMAND = 'command-child';
+export const MODE_REPACK = 'repack-child';
 
-export function workspaceDevServerMode(root: string, isExpo: boolean): string {
+/**
+ * The dev server Stim runs for `root`, with the config file that decided it: metro.command, then a Rock or React
+ * Native CLI config that imports Re.Pack, then Expo, then Stim's in-process Metro.
+ */
+export function detectDevServer(
+  root: string,
+  command: readonly string[] | null = null,
+): { mode: string; config: string | null } {
+  if (command) return { mode: MODE_COMMAND, config: null };
+  const repack = detectRepackConfig(root);
+  if (repack) return { mode: MODE_REPACK, config: repack.config };
+  return { mode: detectIsExpo(root) ? MODE_EXPO : MODE_BARE, config: null };
+}
+
+export function workspaceDevServerMode(root: string): string {
   const mode = readWorkspaceState(root)?.supervisor?.mode;
-  return typeof mode === 'string' ? mode : isExpo ? MODE_EXPO : MODE_BARE;
+  return typeof mode === 'string' ? mode : detectDevServer(root).mode;
 }
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';

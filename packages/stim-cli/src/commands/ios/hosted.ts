@@ -154,7 +154,6 @@ export async function finishHostedIosRun({
         logsDir,
         launchedAt,
         metroPort,
-        isExpo,
         bundleId,
         udid: run.placement.device?.udid ?? '',
         scheme: devClientScheme,
