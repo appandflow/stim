@@ -345,3 +345,33 @@ test('an exact reload that finds no matching peer broadcasts nothing to the othe
     expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
   });
 });
+
+// @callstack/repack-dev-server 5.x drops any message whose version is not the string "2", and answers getpeers with
+// ERR_INVALID_URL once another client is connected (source read from the published 5.4.3 package).
+test('a Re.Pack reload sends the string protocol version and broadcasts after getpeers errors', async () => {
+  const messages: { version: unknown; method?: string }[] = [];
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/message' });
+  await once(server, 'listening');
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const message: { version: unknown; method?: string; id?: string } = JSON.parse(raw.toString());
+      if (message.version !== '2') return;
+      messages.push(message);
+      if (message.method === 'getpeers')
+        socket.send(JSON.stringify({ version: 2, id: message.id, error: { code: 'ERR_INVALID_URL' } }));
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+  const { port } = address;
+  try {
+    await expect(reloadThroughMetro(port, { role: 'ios', protocolVersion: '2' })).resolves.toEqual({
+      ok: true,
+      broadcast: true,
+    });
+    await delay(50);
+    expect(messages.map((message) => message.method)).toEqual(['getpeers', 'reload']);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

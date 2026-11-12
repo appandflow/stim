@@ -676,49 +676,52 @@ describe('the ladder stim gc forces', () => {
     );
   };
 
-  test('rung 9 plans the other tools cache cleaners only at critical, and never from a scoped home', async () => {
-    setExecutor({
-      ...getExecutor(),
-      runFileAsync: async () => '',
-      runFileQuietAsync: async (file) =>
-        file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
-      findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
-    });
-    mkdirSync(join(projects, '.npm'), { recursive: true });
-    const unscoped = testContext({
-      env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
-    });
-    const planned = async (
-      level: 'high' | 'critical',
-      operation = unscoped,
-      options: { measured?: boolean; lastRung?: number } = {},
-    ) => (await forced(level, 9, operation, options)).actions.filter((action) => action.kind === 'clean-tool-cache');
+  test.skipIf(process.platform === 'win32')(
+    'rung 9 plans the other tools cache cleaners only at critical, and never from a scoped home',
+    async () => {
+      setExecutor({
+        ...getExecutor(),
+        runFileAsync: async () => '',
+        runFileQuietAsync: async (file) =>
+          file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
+        findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
+      });
+      mkdirSync(join(projects, '.npm'), { recursive: true });
+      const unscoped = testContext({
+        env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
+      });
+      const planned = async (
+        level: 'high' | 'critical',
+        operation = unscoped,
+        options: { measured?: boolean; lastRung?: number } = {},
+      ) => (await forced(level, 9, operation, options)).actions.filter((action) => action.kind === 'clean-tool-cache');
 
-    expect(await planned('high')).toEqual([]);
-    expect(await planned('critical', testContext())).toEqual([]);
-    expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
-    expect(await planned('critical', unscoped, { lastRung: 8 })).toEqual([]);
+      expect(await planned('high')).toEqual([]);
+      expect(await planned('critical', testContext())).toEqual([]);
+      expect(await planned('critical')).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
+      expect(await planned('critical', unscoped, { lastRung: 8 })).toEqual([]);
 
-    const cacheDevice = statSync(join(projects, '.npm')).dev;
-    const disk = vi.spyOn(daemonMeasure, 'measureDisk');
-    disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024, device: cacheDevice }]);
-    expect(await planned('critical', unscoped, { measured: true })).toEqual([]);
-    disk.mockResolvedValue([{ volume: '/', freeMb: 1024, device: cacheDevice }]);
-    expect(await planned('critical', unscoped, { measured: true })).toEqual([
-      expect.objectContaining({ rung: 9, outcome: 'would' }),
-    ]);
-    disk.mockResolvedValue([
-      { volume: '/', freeMb: 1024, device: cacheDevice + 1 },
-      { volume: '/', freeMb: 500 * 1024, device: cacheDevice },
-    ]);
-    expect(await planned('critical', unscoped, { measured: true })).toEqual([
-      expect.objectContaining({
-        rung: 9,
-        outcome: 'kept',
-        detail: expect.stringContaining('not under the critical level'),
-      }),
-    ]);
-  });
+      const cacheDevice = statSync(join(projects, '.npm')).dev;
+      const disk = vi.spyOn(daemonMeasure, 'measureDisk');
+      disk.mockResolvedValue([{ volume: '/', freeMb: 500 * 1024, device: cacheDevice }]);
+      expect(await planned('critical', unscoped, { measured: true })).toEqual([]);
+      disk.mockResolvedValue([{ volume: '/', freeMb: 1024, device: cacheDevice }]);
+      expect(await planned('critical', unscoped, { measured: true })).toEqual([
+        expect.objectContaining({ rung: 9, outcome: 'would' }),
+      ]);
+      disk.mockResolvedValue([
+        { volume: '/', freeMb: 1024, device: cacheDevice + 1 },
+        { volume: '/', freeMb: 500 * 1024, device: cacheDevice },
+      ]);
+      expect(await planned('critical', unscoped, { measured: true })).toEqual([
+        expect.objectContaining({
+          rung: 9,
+          outcome: 'kept',
+          detail: expect.stringContaining('not under the critical level'),
+        }),
+      ]);
+    },
+  );
 });
 
 describe('the ladder a build runs for its headroom', () => {
