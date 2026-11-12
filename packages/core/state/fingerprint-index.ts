@@ -28,12 +28,12 @@ export function fingerprintIndexLock(home?: string): string {
   return join(home ?? configDir(), 'fingerprint.lock');
 }
 
-export function warmedNpmInstallFile(project: string): string {
-  return join(workspaceStateDir(project), 'warmed-npm-install.json');
+export function warmedInstallFile(project: string): string {
+  return join(workspaceStateDir(project), 'warmed-install.json');
 }
 
-export function readWarmedNpmInstall(project: string): { stamp: string; inputStats: string } | null {
-  const record = readJsonObject(warmedNpmInstallFile(project));
+export function readWarmedInstall(project: string): { stamp: string; inputStats: string } | null {
+  const record = readJsonObject(warmedInstallFile(project));
   return typeof record?.stamp === 'string' && typeof record.inputStats === 'string'
     ? { stamp: record.stamp, inputStats: record.inputStats }
     : null;
