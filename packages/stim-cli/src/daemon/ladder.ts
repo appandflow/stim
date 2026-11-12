@@ -53,6 +53,8 @@ const GIB = 1024 ** 3;
 const SIZE_TIMEOUT_MS = 120_000;
 /** Under high pressure the dormant stage takes workspaces idle this long (ladder rung 4). */
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
+const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
+let unownedRunAt = -Infinity;
 
 export interface LadderInput {
   config: Config;
@@ -647,10 +649,13 @@ async function historyRung(context: RungContext): Promise<void> {
  * process of that tool runs, with its size before and after; Android NDKs, unused system images and Exact's cache are
  * only reported with the command a person runs. At critical always, at high only while free disk stays under
  * `disk.minFreeGb` after the rungs above, and never from a home STIM_HOME scopes, since those caches are machine-wide.
+ * The stim-daemon's own ladder runs it at most hourly; `stim gc` runs it every time.
  */
 async function unownedRung(context: RungContext): Promise<void> {
   if (isScopedHome(context.operation?.env ?? process.env)) return;
+  if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
   if (context.level === 'high' && !(await diskShort(context))) return;
+  if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
     const result = await cleanToolCache(plan, context.act, context.operation);
     const freed =

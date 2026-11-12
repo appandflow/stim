@@ -248,6 +248,8 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(at('pinned'), '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
     const child = spawn('sleep', ['60'], { cwd: at('busy'), stdio: 'ignore' });
     try {
+      await quietly(() => runGc({ dryRun: true, pressure: 'normal' }));
+      expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
       await quietly(() => runGc({ pressure: 'normal' }));
     } finally {
       child.kill('SIGKILL');

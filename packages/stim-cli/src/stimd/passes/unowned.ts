@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -246,7 +247,7 @@ export async function cleanToolCache(
         env: toolEnv(operation?.env ?? process.env),
         cwd: homedir(),
       });
-    } else for (const path of cache.paths) rmSync(path, { recursive: true, force: true });
+    } else for (const path of cache.paths) await rm(path, { recursive: true, force: true });
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
     signal?.throwIfAborted();
