@@ -306,7 +306,7 @@ test.each(['darwin', 'win32'] as const)(
 
     const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
     const unseen = await plan(device(claimed), platform);
-    expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
+    expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device session/) })]);
 
     const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
     const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }), platform);
