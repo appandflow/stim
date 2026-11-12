@@ -167,9 +167,10 @@ route; it never enables Funnel, never runs sudo or elevates, and never touches p
 unit names the engine's `bin/stimd` shim and follows the engine. `stim engine update`
 and `stim engine rollback` move it through the engine store's drain and switch,
 and a crash-looping build is rolled back to `previous` by its own next boot. A Linux or Windows worker takes Android
-builds only; setup there approves `build` and refuses `device-host`, and off macOS
-stim-server refuses device-host requests and grants. A client approved for `build` or
-`device-host` can update this machine's engine over an authenticated network connection
+builds only; setup there approves `build` and refuses `device-host`, Linux setup
+also approves `test` and Windows setup refuses it (LLP 0018), and off macOS
+stim-server refuses device-host requests and grants. A client approved for `build`,
+`device-host` or `test` can update this machine's engine over an authenticated network connection
 (`engine.update`, which runs this build's `engine-select` as an unattended
 promotion), and no other connection can. An exact npm release needs no setting; a client's own
 packages are taken only while `server.acceptClientBuilds` is `true`, its
