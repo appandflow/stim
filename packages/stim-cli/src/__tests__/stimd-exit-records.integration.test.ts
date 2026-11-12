@@ -78,6 +78,8 @@ beforeEach(() => {
     join(dir, 'throw.mjs'),
     `setTimeout(() => {
   if (process.env.STIM_TEST_THROW === 'rejection') Promise.reject(new Error('rejected for the test'));
+  else if (process.env.STIM_TEST_THROW === 'refusal')
+    throw Object.assign(new Error('refused for the test'), { code: 'STIM_SOCKET_REFUSED', remedy: 'none' });
   else throw new Error('thrown for the test');
 }, 1500);\n`,
   );
@@ -299,5 +301,15 @@ describe.skipIf(process.platform === 'win32')('every stimd exit leaves a record'
     expect(boots().filter((boot) => boot.abnormal)).toMatchObject([
       { pid: child.pid, cause: 'home', reason: expect.stringContaining('config.json') },
     ]);
+  }, 60_000);
+
+  test('an uncaught refusal is no crash: it is not recorded as an exit code, and the next stimd finds no lost predecessor', async () => {
+    const refusal = { NODE_OPTIONS: `--import=${join(dir, 'throw.mjs')}`, STIM_TEST_THROW: 'refusal' };
+    for (let each = 0; each < 3; each++) expect(await exited(start(refusal))).toBe(1);
+    expect(boots().some((boot) => boot.abnormal)).toBe(false);
+    const next = start();
+    await bound(next);
+    expect(logged().some((entry) => entry.event === 'stimd_predecessor_lost')).toBe(false);
+    expect(logged().some((entry) => entry.event === 'engine_crash_hold')).toBe(false);
   }, 60_000);
 });

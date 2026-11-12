@@ -58,6 +58,13 @@ Each abnormal boot carries a cause, and only some can blame a build.
   process answers" refusals, a socket EACCES or EPERM outside the home, a sandbox
   denial. They log `startup_refused` and count toward nothing.
 
+Two consequences, chosen by the coordinating session and the reviews, not the
+maintainer. The counter of `engine` and `home` boots and the counter of `unknown`
+boots are independent: two `engine` boots and three `unknown` ones hold nothing. A
+silent death of the engine itself (a native crash, an out-of-memory kill caused by a
+leak) is `unknown`, so it stops a restart loop after five but never rolls the engine
+back or marks the build bad.
+
 A full home may be unable to record the boot. The write never throws; such a loop is
 then visible only through the log writer's line on stderr.
 

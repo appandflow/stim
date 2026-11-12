@@ -827,9 +827,11 @@ async function runStimdInner(
     markAbnormal = null;
     await writer.close();
   };
+  let refused = false;
   markAbnormal = (reason, cause, kind) => {
-    if (!own || keepOwn) return;
-    if (recordBoot(reason, cause, kind) === 'recorded') keepClaim();
+    if (!own || keepOwn || refused) return;
+    refused = recordBoot(reason, cause, kind) === 'refusal';
+    keepClaim();
   };
   rmSync(stimdSuccessorMissingFile(), { force: true });
   recordLostPredecessors(leftover, log);
