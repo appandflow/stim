@@ -144,7 +144,7 @@ jobs:
             mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
-      - name: Packed manifests name the exact tag, not a range
+      - name: Packed manifests name the exact tag, and a caret on it for peers
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for p in $PACKAGE_DIRS; do
@@ -458,7 +458,7 @@ jobs:
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
 
-      - name: Packed manifests name the exact version
+      - name: Packed manifests name the exact version, and a caret on it for peers
         if: steps.version.outputs.version != ''
         env:
           VERSION: ${{ steps.version.outputs.version }}
