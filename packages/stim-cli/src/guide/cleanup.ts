@@ -136,9 +136,20 @@ In on mode a pass runs, cheapest to rebuild first:
      stale profiles: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap. Without Exact's
-     ledger, a build that changes nothing leaves no trace in a profile's
-     directory times. Each is renamed
+     remaining profile, largest first, until under the cap. At critical only,
+     the idle build units of each remaining profile go too, where Exact's
+     ledger shows their use (see CARGO UNITS below). The disk level of the volume holding a target/
+     tightens this: at high every recognised target/, in use or not, loses all
+     its stale profiles and all incremental/ data whatever the cap, and
+     at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
+     to every target/. The level is read when the trim is planned, which is at
+     the hourly size scan, or hourly on its own while host load defers the size
+     scan (the cap is never held back by load, and its du runs at low priority,
+     one target/ at a time, 120 seconds at most each, ended at once by a
+     handover; the planning du, the trim's du, lsof and ps run niced, while
+     reading the units' directories is in-process and short), and at once
+     for stim gc. Without Exact's ledger, a build that changes nothing leaves
+     no trace in a profile's directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
      moved back if a build took one of the profile's lock files (.cargo-lock,
      .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
@@ -1628,6 +1639,32 @@ setting measured on the selected API 36 profile. Set
 project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
+
+CARGO UNITS
+  A unit is one build of one crate in a profile: .fingerprint/<crate>-<hash>,
+  build/<crate>-<hash> and the deps/ files carrying the hash. Cargo keeps the
+  old ones whenever a crate's version, features or dependencies change. Cargo
+  does not touch the fingerprint of a fresh dependency, so modification times
+  say nothing about use; only Exact's .exact-sweep.json ledger does: its sweep
+  stamps a unit (<profile>#<hash>) when a build read the unit's fingerprint,
+  even if it compiled nothing. Units are swept only in a target that has that
+  ledger. A unit is idle when its stamp is over a day old and no build read
+  its fingerprint since that sweep (the access time Exact's sweep resets); a
+  unit with no stamp stays, and so does one unit per crate name, the most
+  recently used (its other units, whatever their kind, can go when idle). A
+  ledger whose own time is over 3 days old shows no use and its target keeps
+  its units. Units are swept at critical only. The
+  work goes in chunks of 25 units: the three lock files (.cargo-lock,
+  .cargo-build-lock, .cargo-artifact-lock) are checked before and after each
+  chunk and the sweep of that profile stops when one is held. A chunk is
+  renamed aside, fingerprints first, then build/, then deps/. When a lock turns
+  up after a chunk, the chunk is put back path by path without overwriting:
+  a path a build recreated since is left alone and its old copy deleted.
+  A unit removed while no build holds a lock costs a rebuild of that crate. The
+  remaining window is one chunk: a build that starts after a chunk's first
+  check and judged a unit fresh before that chunk moved it can still fail with
+  a missing file, and the next build recovers. Hard links Cargo made in the
+  profile root keep the bytes of a removed deps/ file.
 
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
