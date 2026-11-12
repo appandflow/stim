@@ -1069,8 +1069,9 @@ with its `stimd`, so `stimd` waits for `stim stop` in that workspace; elsewhere
 the successor takes the dev server over. Otherwise `stim share`, `share list` and `share stop` refuse with
 `STIM_DAEMON_UNAVAILABLE`, naming the running build and what holds it, and other commands run
 without `stimd`; `stimd` keeps serving until nothing runs in the home, and the
-next command starts its own build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it
-starts. `report` logs what
+next command starts its own build's `stimd`. `stimd` does not start while a `stim-daemon` from Stim 1.40 to 1.42 holds the
+daemon claim exclusively: `daemon.ndjson` names its pid; stop it with `kill <pid>`, or update the stim that project pins.
+`report` logs what
 each pass would do and acts on nothing. `off` runs no pass. In every mode
 `stimd` runs each workspace's Metro and tunnel and collects device logs, so
 `start`, `ios`, `android`, `web` and `revive` start it when they need one, also

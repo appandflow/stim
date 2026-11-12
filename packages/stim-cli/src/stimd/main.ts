@@ -92,9 +92,6 @@ import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
-// compat C22 until removal-minor
-import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
-// compat end
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -177,7 +174,6 @@ async function takeClaim(
   mode: 'exclusive' | 'shared',
   label: string,
   details: Record<string, unknown>,
-  beforeRetry: () => Promise<unknown> = async () => {},
   retries = CLAIM_TRIES,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
@@ -185,9 +181,16 @@ async function takeClaim(
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
     if (tries >= retries) return null;
-    await beforeRetry();
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
+}
+
+/** Why stimd cannot start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon claim exclusively. */
+export function daemonClaimRefusal(): string {
+  const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
+  return pid === undefined
+    ? "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it."
+    : `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start. Stop it with \`kill ${pid}\`; it also exits on its own after its workspaces stop. If a project pins stim 1.40-1.42: npm i -D stim@latest there; for npx: npx stim@latest`;
 }
 
 function answers(path: string): Promise<boolean> {
@@ -651,7 +654,7 @@ interface RunStimdOptions {
 
 /**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
- * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
+ * shared, which a stim-daemon from Stim 1.40 to 1.42 holding it exclusively refuses; serves the CLI socket,
  * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
  * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
  * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
@@ -729,7 +732,7 @@ async function runStimdInner(
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
+  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -807,21 +810,13 @@ async function runStimdInner(
     writer.close();
     return true;
   }
-  // compat C22 until removal-minor
-  let stopped: number | null = null;
-  const takeOver = async () => {
-    stopped = (await takeOverLegacyDaemon()) ?? stopped;
-  };
-  await takeOver();
-  // compat end
   startup.signal.throwIfAborted();
-  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
+  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
   startup.signal.throwIfAborted();
-  if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
     releaseClaim(own);
-    log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
+    log('warn', 'stimd_claim_held', daemonClaimRefusal());
     writer.close();
     return false;
   }

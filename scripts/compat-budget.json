@@ -75,11 +75,6 @@
       "end": "permanent",
       "mechanism": "removed flags and API methods name their replacement through one path"
     },
-    "C22": {
-      "loc": 60,
-      "end": "removal minor",
-      "mechanism": "the resident daemon takes over an older daemon's exclusive claim"
-    },
     "C26": {
       "loc": 25,
       "end": "permanent",
