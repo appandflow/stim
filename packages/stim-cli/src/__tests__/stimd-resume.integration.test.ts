@@ -15,8 +15,9 @@ import {
   cancelCliOp,
   ensureMetroThroughStimd,
   releaseDeviceTicket,
+  releaseOrphanedTicket,
 } from '../daemon/client.ts';
-import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import * as spawnEntry from '../spawn-entry.ts';
@@ -219,6 +220,39 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
     expect(stimdPid()).toBe(second);
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
+  }, 60_000);
+
+  test('releaseOrphanedTicket releases only when the issuing admission is lost, and only by its own token', async () => {
+    const root = workspace('app');
+    const first = await startStimd();
+    await admitCli(root);
+    const operation = context(root);
+    const result = await acquireDeviceTicket({ ...leaseParams(root), waitSeconds: 0 }, operation, () => {});
+    expect(result).toMatchObject({ status: 'leased' });
+    const ticket = String(result.ticket);
+    releaseOrphanedTicket(ticket);
+    expect(listLeaseFiles()).toHaveLength(1);
+    first.kill('SIGKILL');
+    await vi.waitFor(() => expect(alive(Number(first.pid))).toBe(false), { timeout: 10_000, interval: 50 });
+    await new Promise((done) => setTimeout(done, 1500));
+    const held = listLeaseFiles()[0]?.lease;
+    releaseRunLease({ root, platform: 'ios', slot: 'default', token: String(held?.token) });
+    takeLease({ root, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
+    releaseOrphanedTicket(ticket);
+    expect(listLeaseFiles()).toHaveLength(1);
+    releaseOrphanedTicket(ticket);
+  }, 60_000);
+
+  test('a lease granted before stimd was killed is released by releaseOrphanedTicket', async () => {
+    const root = workspace('app');
+    const first = await startStimd();
+    await admitCli(root);
+    const result = await acquireDeviceTicket({ ...leaseParams(root), waitSeconds: 0 }, context(root), () => {});
+    first.kill('SIGKILL');
+    await vi.waitFor(() => expect(alive(Number(first.pid))).toBe(false), { timeout: 10_000, interval: 50 });
+    await new Promise((done) => setTimeout(done, 1500));
+    releaseOrphanedTicket(String(result.ticket));
+    expect(listLeaseFiles()).toEqual([]);
   }, 60_000);
 
   test('a lease wait cancelled during the resume stops at once and is not admitted again', async () => {

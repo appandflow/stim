@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
+import { releaseRunLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
@@ -1360,6 +1361,9 @@ export async function acquireDeviceTicket(
       opToken: issuer,
       lease: { root: params.root, platform: params.platform, slot: params.slot, token: result.token },
     });
+  const issuedTicket = ticket;
+  if (result.status === 'leased' && result.token)
+    operationState(operation).exitCleanups.add(() => releaseOrphanedTicket(issuedTicket));
   return { ...result, ticket };
 }
 
@@ -1384,7 +1388,7 @@ export async function releaseDeviceTicket(ticket: string, operation: StimContext
       : await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
   if (reply?.op === 'lease.released') return;
   if (issued && (issued.opToken !== opToken || (await admissionLost(opToken, true)))) {
-    (await import('../engine/device-lease.ts')).releaseRunLease(issued.lease);
+    releaseRunLease(issued.lease);
     return;
   }
   throw new Error(typeof reply?.message === 'string' ? reply.message : 'stimd did not release the device lease');
@@ -1394,11 +1398,11 @@ export async function releaseDeviceTicket(ticket: string, operation: StimContext
  * Releases by its token the lease `ticket` holds when the stimd that issued it went away: a cancelled operation relies
  * on the issuing stimd to drop it, which a successor cannot.
  */
-export async function releaseOrphanedTicket(ticket: string): Promise<void> {
+export function releaseOrphanedTicket(ticket: string): void {
   const issued = issuedTickets.get(ticket);
   if (!issued || !admissions.get(issued.opToken)?.lost) return;
   issuedTickets.delete(ticket);
-  (await import('../engine/device-lease.ts')).releaseRunLease(issued.lease);
+  releaseRunLease(issued.lease);
 }
 
 export async function checkPhysicalIosLog(operation?: StimContext): Promise<{ error: string; remedy: string } | null> {
@@ -1579,7 +1583,9 @@ export async function holdExistingStimd(
             console.error(
               pinned
                 ? 'Stim: stimd restarted; the CI job holds the new stimd.'
-                : 'Stim: stimd stopped during the CI job and no stimd took its place.',
+                : refused
+                  ? `Stim: stimd stopped during the CI job and its replacement cannot be held: ${otherBuildRefusal()?.message ?? 'it hosts another command'}`
+                  : 'Stim: stimd stopped during the CI job and no stimd took its place.',
             );
           return undefined;
         },
