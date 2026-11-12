@@ -97,3 +97,23 @@ describe('the bundle URL an app requested earlier', () => {
     expect(await warm()).toEqual([APP_URL]);
   });
 });
+
+test('a Re.Pack workspace sends no warmup request', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-warmup-home-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-warmup-root-'));
+  vi.stubEnv('STIM_HOME', home);
+  try {
+    writeFileSync(join(root, 'rock.config.mjs'), "import { pluginRepack } from '@rock-js/plugin-repack';\n");
+    const requests: string[] = [];
+    const port = await listen((req, res) => {
+      requests.push(String(req.url));
+      res.end('ready');
+    });
+    await warmMetro({ port, platform: 'ios', isExpo: false, root });
+    expect(requests).toEqual([]);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
