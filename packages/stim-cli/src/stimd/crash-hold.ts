@@ -23,12 +23,7 @@ import { getConfigDir } from '../workspace/config.ts';
 const SELECT_TIMEOUT_MS = 10 * 60_000;
 const REASON_CHARS = 500;
 const STACK_CHARS = 8000;
-const REFUSAL_CODES = [
-  'STIM_ENGINE_SWITCHED',
-  'STIM_ENGINE_UNAVAILABLE',
-  'STIM_SANDBOX_BLOCKED',
-  'STIM_SOCKET_REFUSED',
-];
+const REFUSAL_CODES = ['STIM_ENGINE_SWITCHED', 'STIM_ENGINE_UNAVAILABLE', 'STIM_SANDBOX_BLOCKED', 'socket-refused'];
 const HOME_CODES = ['EACCES', 'EPERM', 'EROFS', 'EISDIR', 'ENOTDIR'];
 
 const bounded = (text: string, max = REASON_CHARS): string => (text.length > max ? `${text.slice(0, max)}...` : text);

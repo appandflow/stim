@@ -111,7 +111,7 @@ describe('failure classification', () => {
     ['EISDIR on a state file in the home', fault('EISDIR', join(home, 'run', 'stimd.json')), 'home'],
     ['a sibling directory that only shares the home path as a prefix', fault('EACCES', `${home}-agent/x`), 'engine'],
     ['a claim another stimd holds', fault('STIM_CLAIM_REFUSED'), 'refusal'],
-    ['a socket another process answers on', fault('STIM_SOCKET_REFUSED'), 'refusal'],
+    ['a socket another process answers on', fault('socket-refused'), 'refusal'],
     [
       'a socket denied outside the home',
       fault('EACCES', undefined, { syscall: 'listen', address: '/x/s.sock' }),

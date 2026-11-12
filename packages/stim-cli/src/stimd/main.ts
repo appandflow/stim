@@ -257,7 +257,7 @@ async function listen(path: string, server: Server): Promise<void> {
     throw Object.assign(
       new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`),
       {
-        code: 'STIM_SOCKET_REFUSED',
+        code: 'socket-refused',
         remedy: 'Remove that directory or fix its owner, then run the command again.',
       },
     );
@@ -265,7 +265,7 @@ async function listen(path: string, server: Server): Promise<void> {
   if (existsSync(path)) {
     if (await answers(path))
       throw Object.assign(new Error(`another process answers on ${path}`), {
-        code: 'STIM_SOCKET_REFUSED',
+        code: 'socket-refused',
         remedy: 'Stop the process that answers on that socket, then run the command again.',
       });
     rmSync(path, { force: true });

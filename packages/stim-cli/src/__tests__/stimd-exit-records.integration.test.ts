@@ -79,7 +79,7 @@ beforeEach(() => {
     `setTimeout(() => {
   if (process.env.STIM_TEST_THROW === 'rejection') Promise.reject(new Error('rejected for the test'));
   else if (process.env.STIM_TEST_THROW === 'refusal')
-    throw Object.assign(new Error('refused for the test'), { code: 'STIM_SOCKET_REFUSED', remedy: 'none' });
+    throw Object.assign(new Error('refused for the test'), { code: 'socket-refused', remedy: 'none' });
   else throw new Error('thrown for the test');
 }, 1500);\n`,
   );
