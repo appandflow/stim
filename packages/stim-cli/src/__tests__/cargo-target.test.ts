@@ -75,6 +75,17 @@ test('an Exact ledger stamp keeps a profile whose directories were not written f
   expect(staleCargoTargetPaths(target, Date.now())).toEqual({ paths: ['debug'] });
 });
 
+test('a target triple holding anything but Cargo files and profiles loses only its stale profiles', () => {
+  makeProfile('apple-modules/host-dev', 3 * DAY);
+  writeFileSync(join(target, 'apple-modules', 'kept-crates-host-dev.json'), '{}');
+  makeProfile('aarch64-apple-ios/release', 3 * DAY);
+  writeFileSync(join(target, 'aarch64-apple-ios', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  writeFileSync(join(target, 'aarch64-apple-ios', '.rustc_info.json'), '{}');
+
+  const stale = staleCargoTargetPaths(target, Date.now());
+  expect('paths' in stale ? stale.paths.toSorted() : stale).toEqual(['aarch64-apple-ios', 'apple-modules/host-dev']);
+});
+
 test('a ledger that is not a unit ledger refuses the whole target', () => {
   makeProfile('debug', 3 * DAY);
   writeFileSync(join(target, '.exact-sweep.json'), '{"units":');
@@ -171,6 +182,25 @@ test('a directory that cannot be put back after a build took its lock is never d
     const stranded = readdirSync(target).filter((name) => name.startsWith('.stim-not-restored-'));
     expect(stranded).toHaveLength(1);
     expect(existsSync(join(target, stranded[0] ?? '', '.fingerprint'))).toBe(true);
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock files the build holds', async () => {
+  try {
+    makeProfile('debug', 3 * DAY);
+    writeFileSync(join(target, 'debug', '.cargo-build-lock'), '');
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(join(target, 'debug'), old, old);
+    stubProcesses({
+      lsof: (args) => (args.includes('-t') && args.some((arg) => arg.endsWith('.cargo-build-lock')) ? '4242\n' : ''),
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual(['debug: a build holds its .cargo-build-lock']);
   } finally {
     resetExecutor();
   }

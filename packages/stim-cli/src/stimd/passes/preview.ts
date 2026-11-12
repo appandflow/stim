@@ -158,7 +158,13 @@ export async function plannedMaintenance(
       pinned,
       recentlyUsed: (workspace) => recentUse(workspace, settings),
     });
-    const cargo = await planCargoTargets({ sizes: currentSizes, settings, pinned, now: Date.now() });
+    const cargo = await planCargoTargets({
+      sizes: currentSizes,
+      settings,
+      pinned,
+      now: Date.now(),
+      signal: operation?.signal,
+    });
     merge('caps', {
       actions: [...capped.actions, ...cargo.actions],
       blocked: [...capped.blocked, ...cargo.blocked],
