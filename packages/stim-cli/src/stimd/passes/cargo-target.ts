@@ -186,14 +186,14 @@ async function bytesOfMany(
   return total;
 }
 
-/** Whether a target still over its cap after the other steps loses its idle units too, at normal and high; one place to turn off. */
+/** Whether a target still over its cap after the other steps would lose its idle units too, at normal and high; `'none'` turns that step off. */
 const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'none';
 
 /**
  * What a trim of a Cargo `target/` removes at a disk level: normal covers the overage with stale profiles, then
  * `incremental` data; high removes every stale profile and all `incremental` data whatever the cap; critical also
- * removes every idle unit (which needs Exact's usage ledger). While still over the cap after those steps, idle units go
- * too at normal and high.
+ * removes every idle unit (which needs Exact's usage ledger). Idle units are never removed at normal or high
+ * (`UNITS_WHEN_OVER_CAP`).
  */
 function cargoTrimPolicy(level: PressureLevel): {
   incremental: 'toNeed' | 'all';
@@ -297,7 +297,7 @@ export async function planCargoTargets({
         plan.blocked.push(`${why}; every profile was used in the last day and none has anything idle to remove`);
       continue;
     }
-    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}, then the build units unused for a day${tightened === 'critical' ? ' (all of them)' : ' while still over the cap'}`;
+    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}${tightened === 'critical' ? ', then the build units unused for a day (all of them)' : ''}`;
     plan.actions.push({
       kind: 'would-clear-build-dirs',
       target: dir,
