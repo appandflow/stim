@@ -221,7 +221,7 @@ test('an agent-device session whose commands cannot be dated keeps the workspace
       path: root,
       outcome: 'kept',
       detail:
-        'its simulator stim-agent-undated (iPhone 17 26.0) has a live agent-device session whose activity cannot be found',
+        'its simulator stim-agent-undated (iPhone 17 26.0) has a live agent-device claim whose last command cannot be dated',
     }),
   ]);
   expect(tornDown).toEqual([]);

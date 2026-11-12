@@ -333,6 +333,12 @@ function sessionDirActedAt(dir: string): number | null {
   }
 }
 
+/**
+ * The `unknown` entry for a live agent-device claim, lease or runner whose last command cannot be dated. Another
+ * record's dated session never masks it: the newest `agent-action` of the device is not its evidence.
+ */
+export const AGENT_DEVICE_UNDATED = 'agent-device-undated';
+
 /** The bases of the evidence that an agent-device session, rather than another tool, drives a device. */
 const AGENT_DEVICE_BASES: ReadonlySet<string> = new Set([
   'agent-device-claim',
@@ -351,7 +357,14 @@ export function drivenOnlyByAgentDevice(activity: DeviceActivity): boolean {
  * once it is older than the idle threshold it does not keep the device.
  */
 export function driversKeepDevice(activity: DeviceActivity): boolean {
-  return activity.state === 'driven' && !(drivenOnlyByAgentDevice(activity) && activity.recent?.['agent-action']);
+  return (
+    activity.state === 'driven' &&
+    !(
+      drivenOnlyByAgentDevice(activity) &&
+      activity.recent?.['agent-action'] &&
+      !activity.unknown?.includes(AGENT_DEVICE_UNDATED)
+    )
+  );
 }
 
 export function readAgentDeviceRecords(home: string, env: NodeJS.ProcessEnv = process.env): AgentDeviceRecord[] {
@@ -592,6 +605,7 @@ export function createActivityReader({
             ? sessionDirActedAt(record.sessionDir)
             : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
+        else evidence.unknown.push(AGENT_DEVICE_UNDATED);
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);
       }
@@ -633,6 +647,7 @@ export function createActivityReader({
         );
         const actedAt = lease?.record.sessionDir ? sessionDirActedAt(lease.record.sessionDir) : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
+        else evidence.unknown.push(AGENT_DEVICE_UNDATED);
       } else if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
     }
 

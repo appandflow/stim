@@ -189,7 +189,12 @@ export function isBuildDirPath(path: string): boolean {
  * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
  * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
-export async function regenerableDirProblem(root: string, path: string, signal?: AbortSignal): Promise<string | null> {
+export async function regenerableDirProblem(
+  root: string,
+  path: string,
+  signal?: AbortSignal,
+  { processes = true }: { processes?: boolean } = {},
+): Promise<string | null> {
   const rel = relative(root, path);
   try {
     if (!lstatSync(path).isDirectory()) return 'it is not a directory';
@@ -204,7 +209,11 @@ export async function regenerableDirProblem(root: string, path: string, signal?:
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
-  if (basename(path) === CARGO_TARGET && (await readAsync(exactTargetDirs(dirname(path)))).includes(path)) {
+  if (
+    processes &&
+    basename(path) === CARGO_TARGET &&
+    (await readAsync(exactTargetDirs(dirname(path)))).includes(path)
+  ) {
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;

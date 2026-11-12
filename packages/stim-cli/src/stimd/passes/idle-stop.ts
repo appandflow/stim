@@ -37,7 +37,7 @@ import {
   workspaceProcessLockError,
 } from '../../engine/workspace-process-lock.ts';
 import { pidExists } from '../../metro.ts';
-import { decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
+import { activityWindowMs, decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { METRO_REQUEST_EVENTS } from '../../stimd/metro/idle-stop.ts';
 import { resolveSupervisorTarget } from '../../stimd/metro/ownership.ts';
@@ -129,9 +129,13 @@ function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform
   const { activity } = device;
   const what = `its ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
   if (driversKeepDevice(activity)) {
-    return drivenOnlyByAgentDevice(activity)
-      ? `${what} has a live agent-device session whose activity cannot be found`
-      : `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
+    if (!drivenOnlyByAgentDevice(activity)) return `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
+    const kind = activity.basis.includes('agent-device-runner')
+      ? 'runner'
+      : activity.basis.includes('agent-device-claim')
+        ? 'claim'
+        : 'lease';
+    return `${what} has a live agent-device ${kind} whose last command cannot be dated`;
   }
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
@@ -294,13 +298,14 @@ export async function idleStopEvidence(
       at: Date.parse(at),
     })),
   ].filter(({ at }) => Number.isFinite(at));
-  if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep: [] };
+  if (activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs))) return { activity, keep: [] };
   const keep = await keepReasons(root, devices, { now, platform, locked, operation });
   if (keep.length) return { activity, keep };
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
-  if (!activity.some(({ at }) => now - at < idleMs)) keep.push(...(await hostedKeepReasons(hostedFacts(root))));
+  if (!activity.some(({ at, basis }) => now - at < activityWindowMs(basis, idleMs)))
+    keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return { activity, keep };
 }
 

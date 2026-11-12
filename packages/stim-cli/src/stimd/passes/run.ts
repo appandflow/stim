@@ -32,6 +32,7 @@ import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferre
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
+import { executedActionName } from '../../maintenance-kind.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -157,8 +158,6 @@ function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome
   });
 }
 
-const executedKind = (action: MaintenanceAction) => action.kind.replace(/^would-/, '');
-
 function describeDone(action: MaintenanceAction): string {
   const name = basename(action.workspace ?? action.target);
   switch (action.kind) {
@@ -189,9 +188,7 @@ function describeDone(action: MaintenanceAction): string {
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
-      return action.workspace
-        ? `Trimmed the Cargo target ${action.target}`
-        : `Cleared the build directory ${action.target}`;
+      return `Trimmed the Cargo target ${action.target}`;
     case 'would-delete-dependencies':
       return `Deleted the installed dependencies ${action.target}`;
     case 'would-stop-gradle-daemons':
@@ -532,7 +529,7 @@ export async function runMaintenance(
         if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));
         const fields = {
           action: {
-            kind: executedKind(action),
+            kind: executedActionName(action),
             target: action.target,
             bytes: outcome.bytes,
             durationMs: Date.now() - began,

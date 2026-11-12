@@ -1462,7 +1462,9 @@ RULES
                    last input a stim-server client sent the device; frames it
                    only streams leave it out
   unknown          for "driven" only: the checks that could not be read, in
-                   basis's vocabulary; absent when every check was read
+                   basis's vocabulary, plus agent-device-undated for a live
+                   agent-device claim, lease or runner whose last command
+                   cannot be dated; absent when every check was read
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { mkdir, readdir, rename, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 
@@ -12,7 +12,7 @@ const NOT_PROFILES = new Set(['.exact-swept', ASIDE]);
 export interface CargoProfile {
   /** The profile directory relative to `target/`: `debug` or `<triple>/<profile>`. */
   path: string;
-  /** When a build last wrote or read it, in ms, or null when that cannot be read. */
+  /** When a build last wrote it or Exact's ledger last stamped it, in ms, or null when that cannot be read. */
   lastUsedMs: number | null;
 }
 
@@ -117,24 +117,11 @@ function newestMtime(profile: string): number | null {
   return newest;
 }
 
-/** Whether any fingerprint file of the profile was read since `since`: Cargo reads one per unit it considers. */
-function fingerprintReadSince(profile: string, since: number): boolean | null {
-  const root = join(profile, '.fingerprint');
-  try {
-    for (const unit of readdirSync(root)) {
-      for (const file of readdirSync(join(root, unit)))
-        if (statSync(join(root, unit, file)).atimeMs >= since) return true;
-    }
-    return false;
-  } catch (error) {
-    return errorCode(error) === 'ENOENT' ? false : null;
-  }
-}
-
 /**
  * What of an Exact app's Cargo `target/` no build used for a day, as paths relative to it, or why that cannot be told.
- * A profile is in use when a build wrote its directories, when Exact's ledger stamps one of its units that recently, or
- * when a build read one of its fingerprint files. Anything unreadable is in use.
+ * A profile is in use when a build wrote its directories or Exact's ledger stamps one of its units that recently; reads
+ * leave no trace here, since APFS records an access time only for the first read after a write. Anything unreadable is
+ * in use.
  */
 export function staleCargoTargetPaths(
   target: string,
@@ -158,55 +145,193 @@ export function staleCargoTargetPaths(
   }
   const profiles: CargoProfile[] = listed.profiles.map((path) => {
     const written = newestMtime(join(target, path));
-    if (written === null) return { path, lastUsedMs: null };
-    const stamped = Math.max(written, ledger.get(path) ?? 0);
-    if (now - stamped <= idleMs) return { path, lastUsedMs: stamped };
-    const read = fingerprintReadSince(join(target, path), now - idleMs);
-    return { path, lastUsedMs: read === false ? stamped : read === true ? now : null };
+    return { path, lastUsedMs: written === null ? null : Math.max(written, ledger.get(path) ?? 0) };
   });
   return { paths: staleCargoPaths(profiles, listed.extras, now, idleMs) };
 }
 
-/** Whether a process has the profile's `.cargo-lock` open, as a running Cargo build does; true when lsof cannot say. */
-async function buildHoldsProfile(profile: string, signal?: AbortSignal): Promise<boolean> {
-  const lock = join(profile, '.cargo-lock');
-  if (!existsSync(lock)) return false;
-  try {
-    return Boolean((await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal })).trim());
-  } catch (error) {
-    return !(isRecord(error) && error.status === 1 && (error.stdout === '' || error.stdout === undefined));
-  }
+/** The profile directories of `target/` as absolute paths, or null when it cannot be listed. */
+export function cargoProfileDirs(target: string): string[] | null {
+  return profilePaths(target)?.profiles.map((path) => join(target, path)) ?? null;
+}
+
+type LsofOutcome = { stdout: string } | { status: unknown; stdout: unknown };
+
+/** Whether a process holds a file open, from an lsof run: output names a holder, and anything but a clean no-match holds. */
+function lockHeld(outcome: LsofOutcome): boolean {
+  if ('status' in outcome) return !(outcome.status === 1 && (outcome.stdout === '' || outcome.stdout === undefined));
+  return outcome.stdout.trim().length > 0;
 }
 
 /**
- * Removes the stale profiles of `target`: each is renamed into `target/.stim-trimmed` first, so a build that starts
- * meanwhile makes a fresh one, then deleted. A profile a build holds open stays. Returns what was freed and kept.
+ * Whether a rename of a profile that passed the lock check stands: it is rolled back when a Cargo build holds the
+ * profile's `.cargo-lock` after the move, or when that cannot be told.
+ */
+export function renameStands(afterMove: LsofOutcome): boolean {
+  return !lockHeld(afterMove);
+}
+
+/**
+ * The `<profile>/incremental` directories to remove, largest first, until `needBytes` are covered; all of them when
+ * they cannot cover it.
+ */
+export function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
+  const chosen: string[] = [];
+  let covered = 0;
+  for (const { path, bytes } of candidates.toSorted((a, b) => b.bytes - a.bytes)) {
+    if (covered >= needBytes) break;
+    chosen.push(path);
+    covered += bytes;
+  }
+  return chosen;
+}
+
+async function lockOutcome(profile: string, signal?: AbortSignal): Promise<LsofOutcome> {
+  const lock = join(profile, '.cargo-lock');
+  if (!existsSync(lock)) return { stdout: '' };
+  try {
+    return { stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal }) };
+  } catch (error) {
+    return isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
+  }
+}
+
+/** The absolute paths under `target` that `lsof -Fn` lists as open or executed, and `ps` lists in a command line. */
+function targetPathsInUse(target: string, lsofNames: string, commandLines: string): string[] {
+  const prefix = `${target}/`;
+  const found = new Set<string>();
+  for (const line of lsofNames.split('\n'))
+    if (line.startsWith('n') && (line.slice(1) === target || line.slice(1).startsWith(prefix)))
+      found.add(line.slice(1));
+  for (const line of commandLines.split('\n'))
+    for (let at = line.indexOf(prefix); at !== -1; at = line.indexOf(prefix, at + 1)) {
+      const end = line.slice(at).search(/\s/);
+      found.add(end === -1 ? line.slice(at) : line.slice(at, at + end));
+    }
+  return [...found];
+}
+
+/** Whether a path in `used` is `dir` or inside it. */
+function inUse(used: readonly string[], dir: string): boolean {
+  return used.some((path) => path === dir || path.startsWith(`${dir}/`));
+}
+
+/**
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; null when
+ * either cannot be read, which keeps everything.
+ */
+async function readTargetUse(target: string, signal?: AbortSignal): Promise<string[] | null> {
+  const exec = getExecutor();
+  try {
+    const lsof = await exec.runFileAsync('lsof', ['-nP', '-w', '-Fn'], { timeoutMs: 60_000, signal });
+    const ps = await exec.runFileAsync('ps', ['-axww', '-o', 'args='], { timeoutMs: 30_000, signal });
+    return targetPathsInUse(target, lsof, ps);
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+export interface CargoTrimResult {
+  /** Bytes moved aside, which are freed once the delete at the end succeeds. */
+  bytes: number;
+  removed: string[];
+  kept: string[];
+  /** Why the final delete failed; what was moved aside stays under `target/.stim-trimmed` for the next pass. */
+  deleteError?: string;
+}
+
+async function sizeOf(path: string, signal?: AbortSignal): Promise<number> {
+  return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal })) ?? 0;
+}
+
+/**
+ * Removes the stale profiles of `target`, then, while `needBytes` are not covered, the `incremental` directory of each
+ * remaining profile, largest first. A directory is renamed into `target/.stim-trimmed` after its lock check, so a build
+ * that starts meanwhile makes a fresh one, and the lock is read again at the new path: a build that took it in between
+ * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
+ * open, and a profile whose `.cargo-lock` a build holds, stays.
  */
 export async function trimCargoTarget(
   target: string,
-  paths: readonly string[],
-  signal?: AbortSignal,
-): Promise<{ bytes: number; removed: string[]; kept: string[] }> {
+  { needBytes, now = Date.now(), signal }: { needBytes: number; now?: number; signal?: AbortSignal },
+): Promise<CargoTrimResult> {
   const aside = join(target, ASIDE);
-  await rm(aside, { recursive: true, force: true });
-  const removed: string[] = [];
-  const kept: string[] = [];
-  let bytes = 0;
-  for (const path of paths) {
-    signal?.throwIfAborted();
-    const dir = join(target, path);
-    const profiles = existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir);
-    if ((await Promise.all(profiles.map((profile) => buildHoldsProfile(profile, signal)))).some(Boolean)) {
-      kept.push(`${path}: a build holds its .cargo-lock`);
-      continue;
-    }
-    bytes += (await measuredDirectorySizeAsync(dir, { timeoutMs: 120_000, signal })) ?? 0;
-    await mkdir(aside, { recursive: true });
-    await rename(dir, join(aside, String(removed.length)));
-    removed.push(path);
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  try {
+    await rm(aside, { recursive: true, force: true });
+  } catch (error) {
+    return {
+      ...result,
+      kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
+    };
   }
-  await rm(aside, { recursive: true, force: true });
-  return { bytes, removed, kept };
+  const used = await readTargetUse(target, signal);
+  if (used === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
+  const stale = staleCargoTargetPaths(target, now);
+  if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
+  let moved = 0;
+  const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));
+  const move = async (
+    dir: string,
+    label: string,
+    bytes: number | null,
+    locks: (where: string) => Promise<string[]>,
+  ): Promise<boolean> => {
+    signal?.throwIfAborted();
+    const profiles = await locks(dir);
+    if (inUse(used, dir)) {
+      result.kept.push(`${label}: a process uses it`);
+      return false;
+    }
+    for (const profile of profiles)
+      if (lockHeld(await lockOutcome(profile, signal))) {
+        result.kept.push(`${label}: a build holds its .cargo-lock`);
+        return false;
+      }
+    await mkdir(aside, { recursive: true });
+    const there = join(aside, String(moved++));
+    await rename(dir, there);
+    for (const profile of await locks(there))
+      if (!renameStands(await lockOutcome(profile, signal))) {
+        try {
+          await rename(there, dir);
+          result.kept.push(`${label}: a build took its .cargo-lock during the move`);
+        } catch {
+          result.kept.push(
+            `${label}: a build took its .cargo-lock during the move and the directory could not be put back; it stays in ${there}`,
+          );
+        }
+        return false;
+      }
+    result.bytes += bytes ?? (await sizeOf(there, signal));
+    result.removed.push(label);
+    return true;
+  };
+  for (const path of stale.paths) await move(join(target, path), path, null, profilesAt);
+  if (result.bytes < needBytes) {
+    const removedStale = new Set(stale.paths.map((path) => join(target, path)));
+    const candidates: { path: string; bytes: number }[] = [];
+    for (const profile of cargoProfileDirs(target) ?? [])
+      if (
+        ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)) &&
+        !inUse(used, profile)
+      ) {
+        const incremental = join(profile, 'incremental');
+        if (existsSync(incremental)) candidates.push({ path: incremental, bytes: await sizeOf(incremental, signal) });
+      }
+    for (const path of selectIncremental(candidates, needBytes - result.bytes)) {
+      const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
+      const parent = dirname(path);
+      await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
+    }
+  }
+  try {
+    await rm(aside, { recursive: true, force: true });
+  } catch (error) {
+    result.deleteError = `${aside} could not be deleted: ${error instanceof Error ? error.message : error}`;
+  }
+  return result;
 }
 
 async function childProfiles(dir: string): Promise<string[]> {

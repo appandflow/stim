@@ -13,6 +13,7 @@ import { classifyPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { runDormantReduction, runForcedLadder } from '../../daemon/passes.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
+import { executedActionName } from '../../maintenance-kind.ts';
 import { measureSizes } from './measure.ts';
 import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
@@ -65,7 +66,7 @@ async function measureLevel(operation?: StimContext): Promise<DaemonPressure> {
 function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRunAction {
   return {
     rung: null,
-    kind: action.kind.replace(/^would-/, ''),
+    kind: executedActionName(action),
     target: action.target,
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: outcome.status,

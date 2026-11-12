@@ -387,7 +387,7 @@ async function deleteDevices(action: MaintenanceAction, context: ActContext): Pr
 }
 
 async function clearArtifacts(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  return clearArtifact(action, action.kind === 'would-delete-dependencies' ? 'dependencies' : 'build', {
+  return clearArtifact(action, 'dependencies', {
     windowMs: protectWindowMs(context.settings),
     protectedRoot: context.protectedRoot,
     pinned: maintenancePinnedReader(context.operation),
@@ -543,7 +543,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
-      return action.workspace ? trimCargoTargetAction(action, context.operation) : clearArtifacts(action, context);
+      return trimCargoTargetAction(action, context.operation);
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':

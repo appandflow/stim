@@ -134,12 +134,7 @@ export async function measureSizes(
     });
   }
   sizes.push(
-    ...(await measureCargoTargets(
-      Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
-      now,
-      failure,
-      operation,
-    )),
+    ...(await measureCargoTargets(Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath), now, operation)),
   );
   const known: {
     name: string;

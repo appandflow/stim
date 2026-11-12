@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { staleCargoPaths, staleCargoTargetPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import {
+  renameStands,
+  selectIncremental,
+  staleCargoPaths,
+  staleCargoTargetPaths,
+  trimCargoTarget,
+} from '../workspace/cargo-target.ts';
 
 const DAY = 24 * 3_600_000;
 const NOW = Date.parse('2026-11-11T20:00:00Z');
@@ -53,19 +60,12 @@ function makeProfile(path: string, ageMs: number): void {
     utimesSync(entry, at, at);
 }
 
-test('Exact ledger stamps and fingerprint reads keep a profile whose directories were not written for days', () => {
+test('an Exact ledger stamp keeps a profile whose directories were not written for days', () => {
   makeProfile('debug', 3 * DAY);
   makeProfile('release', 3 * DAY);
-  makeProfile('host-dev', 3 * DAY);
   writeFileSync(
     join(target, '.exact-sweep.json'),
     JSON.stringify({ at: Date.now(), units: { 'release#0123456789abcdef': Date.now() - 1000 } }),
-  );
-  const read = new Date();
-  utimesSync(
-    join(target, 'host-dev', '.fingerprint', 'unit-0123456789abcdef', 'lib'),
-    read,
-    new Date(Date.now() - 3 * DAY),
   );
 
   expect(staleCargoTargetPaths(target, Date.now())).toEqual({ paths: ['debug'] });
@@ -78,17 +78,42 @@ test('a ledger that is not a unit ledger refuses the whole target', () => {
 });
 
 test('trimming removes the stale profiles, keeps the rest and leaves nothing aside', async () => {
-  makeProfile('debug', 3 * DAY);
-  makeProfile('aarch64-linux-android/host-dev', 3 * DAY);
-  makeProfile('release', 0);
-  const stale = staleCargoTargetPaths(target, Date.now());
-  if ('refusal' in stale) throw new Error(stale.refusal);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) =>
+      file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
+  });
+  try {
+    makeProfile('debug', 3 * DAY);
+    makeProfile('aarch64-linux-android/host-dev', 3 * DAY);
+    makeProfile('release', 0);
 
-  const result = await trimCargoTarget(target, stale.paths);
+    const result = await trimCargoTarget(target, { needBytes: 0 });
 
-  expect(result.removed.toSorted()).toEqual(['aarch64-linux-android', 'debug']);
-  expect(existsSync(join(target, 'debug'))).toBe(false);
-  expect(existsSync(join(target, 'aarch64-linux-android'))).toBe(false);
-  expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
-  expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+    expect(result.removed.toSorted()).toEqual(['aarch64-linux-android', 'debug']);
+    expect(existsSync(join(target, 'debug'))).toBe(false);
+    expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('the incremental pass takes the largest directories until the overage is covered', () => {
+  const candidates = [
+    { path: 'a', bytes: 5 },
+    { path: 'b', bytes: 9 },
+    { path: 'c', bytes: 2 },
+  ];
+  expect(selectIncremental(candidates, 12)).toEqual(['b', 'a']);
+  expect(selectIncremental(candidates, 100)).toEqual(['b', 'a', 'c']);
+  expect(selectIncremental(candidates, 0)).toEqual([]);
+});
+
+test('a move is rolled back when a build holds the lock afterwards or lsof cannot say', () => {
+  expect(renameStands({ stdout: '' })).toBe(true);
+  expect(renameStands({ status: 1, stdout: '' })).toBe(true);
+  expect(renameStands({ stdout: '4242\n' })).toBe(false);
+  expect(renameStands({ status: 2, stdout: '' })).toBe(false);
 });
