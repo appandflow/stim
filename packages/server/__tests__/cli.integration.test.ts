@@ -99,7 +99,9 @@ test.skipIf(process.platform === 'win32')(
   async () => {
     const holder = createServer();
     await new Promise<void>((done) => holder.listen(0, '127.0.0.1', done));
-    const { port } = holder.address() as { port: number };
+    const address = holder.address();
+    assert(address && typeof address === 'object');
+    const { port } = address;
     try {
       const result = spawnSync(process.execPath, [BIN, '--port', String(port), '--loopback-only'], {
         env: { ...process.env, STIM_HOME: home },

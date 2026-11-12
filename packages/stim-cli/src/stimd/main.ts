@@ -186,6 +186,7 @@ async function takeClaim(
 }
 
 /** Why stimd cannot start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon claim exclusively. */
+// @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
 export function daemonClaimRefusal(): string {
   const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
   return pid === undefined

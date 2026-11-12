@@ -193,6 +193,7 @@ export async function serve(
     lanSetting.stop();
     lan.close?.();
     tailnet.close();
+    // @ref LLP 0015#a-held-server-port-is-named-by-pid -- the refusal names the holder and its remedy
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       const [pid] = await listenerPids(port);
       throw new NetRefusal(
