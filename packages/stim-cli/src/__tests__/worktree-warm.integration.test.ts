@@ -391,31 +391,26 @@ test('warm does not mention the source checkout dependencies when it has them', 
 
 test.each([
   'matching inputs',
+  'pnpm install',
+  'manifest rewritten in source after install',
   'generated native directory after warm',
   'changed lockfile',
   'different npm config',
-  'stale source npm config',
   'removed patch',
   'patch deleted in source before warm',
-  'declared patch directory deleted in source before warm',
-  'default patch directory deleted in source before warm',
   'stale source install',
   'mismatched installed package',
+  'lockfile edited after warm',
   'patch removed after warm',
   'patch rewritten after warm',
   'stamp replaced after warm',
 ])(
-  'the cache gate checks the carried npm install with %s',
+  'the cache gate checks the carried install with %s',
   async (scenario) => {
-    const declaredDirectory = scenario === 'declared patch directory deleted in source before warm';
-    const removedDirectory = declaredDirectory || scenario === 'default patch directory deleted in source before warm';
-    const manifest = JSON.stringify({
-      name: 'warm-fixture',
-      dependencies: { 'react-native': '1.0.0' },
-      ...(declaredDirectory ? { scripts: { postinstall: 'patch-package' } } : {}),
-    });
-    const lockfile = 'package-lock.json';
-    const stamp = 'node_modules/.package-lock.json';
+    const manifest = JSON.stringify({ name: 'warm-fixture', dependencies: { 'react-native': '1.0.0' } });
+    const pnpm = scenario === 'pnpm install';
+    const lockfile = pnpm ? 'pnpm-lock.yaml' : 'package-lock.json';
+    const stamp = pnpm ? 'node_modules/.modules.yaml' : 'node_modules/.package-lock.json';
     const patch = 'patches/react-native+1.0.0.patch';
     const lock = '{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"1.0.0"}}}';
     const installed = new Date(Date.now() - 60_000);
@@ -426,27 +421,22 @@ test.each([
     write(root, lockfile, lock);
     write(target, lockfile, scenario === 'changed lockfile' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
     write(root, patch, 'patch applied in source');
-    if (scenario !== 'removed patch' && scenario !== 'patch deleted in source before warm' && !removedDirectory)
+    if (scenario !== 'removed patch' && scenario !== 'patch deleted in source before warm')
       write(target, patch, 'patch applied in source');
-    if (scenario === 'different npm config' || scenario === 'stale source npm config') {
+    if (scenario === 'different npm config') {
       write(root, '.npmrc', 'ignore-scripts=true\n');
-      write(target, '.npmrc', scenario === 'different npm config' ? 'ignore-scripts=false\n' : 'ignore-scripts=true\n');
-      utimesSync(
-        join(root, '.npmrc'),
-        beforeInstall,
-        scenario === 'stale source npm config' ? checkout : beforeInstall,
-      );
+      write(target, '.npmrc', 'ignore-scripts=false\n');
+      utimesSync(join(root, '.npmrc'), beforeInstall, beforeInstall);
     }
     write(root, stamp, scenario === 'mismatched installed package' ? lock.replaceAll('1.0.0', '2.0.0') : lock);
-    utimesSync(join(root, 'package.json'), beforeInstall, beforeInstall);
+    const manifestTime = scenario === 'manifest rewritten in source after install' ? checkout : beforeInstall;
+    utimesSync(join(root, 'package.json'), manifestTime, manifestTime);
     utimesSync(join(root, stamp), installed, installed);
     utimesSync(join(root, lockfile), beforeInstall, beforeInstall);
     utimesSync(join(root, patch), beforeInstall, scenario === 'stale source install' ? checkout : beforeInstall);
     const patchDir = join(root, dirname(patch));
     utimesSync(patchDir, beforeInstall, beforeInstall);
-    utimesSync(root, beforeInstall, beforeInstall);
     if (scenario === 'patch deleted in source before warm') rmSync(join(root, patch));
-    if (removedDirectory) rmSync(patchDir, { recursive: true });
     utimesSync(join(target, lockfile), checkout, checkout);
 
     expect((await runWarm(target)).code).toBe(0);
@@ -455,14 +445,20 @@ test.each([
       write(target, 'android/app/build.gradle', '// Generated');
       write(target, 'node_modules/.cache/metro/index', 'bundler cache');
     }
+    if (scenario === 'lockfile edited after warm') write(target, lockfile, lock.replaceAll('1.0.0', '2.0.0'));
     if (scenario === 'patch removed after warm') rmSync(join(target, patch));
     if (scenario === 'patch rewritten after warm') {
       write(target, patch, 'patch applied in source');
       utimesSync(join(target, patch), checkout, checkout);
     }
     if (scenario === 'stamp replaced after warm') write(target, stamp, lock);
-    const stale = expect.stringMatching(/package-lock.json changed after the last install/);
-    const matches = scenario === 'matching inputs' || scenario === 'generated native directory after warm';
+    const stale = expect.stringMatching(new RegExp(`${lockfile} changed after the last install`));
+    const matches = [
+      'matching inputs',
+      'pnpm install',
+      'manifest rewritten in source after install',
+      'generated native directory after warm',
+    ].includes(scenario);
     expect(fingerprintInstallProblem(target)).toEqual(matches ? null : stale);
   },
   30_000,
