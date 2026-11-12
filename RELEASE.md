@@ -140,6 +140,15 @@ preparation, `git status --short` may show only the draft
    runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
    and a workspace build first.
 
+   For a new major (`.github/next-version` names it, and the candidate
+   version commit deletes that file), point the settings schema at it in the
+   same commit: `SETTINGS_SCHEMA_URL` in
+   `packages/core/state/settings-schema.ts` and the `$schema` example in
+   `website/docs/settings.md` become `https://unpkg.com/stim@<major>/dist/settings.schema.json`.
+   The URL resolves only once that stable version is published, and the
+   website deploys from `main`, so make this change in the version commit and
+   not before.
+
    Workspace links stay at `workspace:*` during a bump, including Stim's
    development dependencies, except peer dependencies, which stay at
    `workspace:^` so `@stim-cli/cache-s3` accepts any later `stim` of the same

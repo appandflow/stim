@@ -2,7 +2,7 @@ import { SETTINGS, shownSettingType, type SettingDefinition, type SettingScope }
 
 export const SETTINGS_SCHEMA_FILE = 'settings.schema.json';
 
-export const SETTINGS_SCHEMA_URL: string = `https://unpkg.com/stim@2/dist/${SETTINGS_SCHEMA_FILE}`;
+export const SETTINGS_SCHEMA_URL: string = `https://unpkg.com/stim/dist/${SETTINGS_SCHEMA_FILE}`;
 
 type JsonSchema = Record<string, unknown>;
 
