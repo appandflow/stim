@@ -398,8 +398,8 @@ function watchOf(value: unknown): MetroWatchState {
 }
 
 /** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
-function forgetExited(child: MetroChild, code: number | null, signal: string | null): void {
-  const stop = stopRecord(child.root, child.processToken, { kind: 'server-exit', mode: child.mode, code, signal });
+function forgetExited(child: MetroChild, code: number | null, signal: string | null, at?: string): void {
+  const stop = stopRecord(child.root, child.processToken, { kind: 'server-exit', mode: child.mode, code, signal }, at);
   forget(child, endedMessage(child.mode, child.pid, stop), stop ? devServerStopLevel(stop) : 'warn', stop, child.roots);
 }
 
@@ -410,7 +410,7 @@ function forgetExited(child: MetroChild, code: number | null, signal: string | n
 async function settleHelperEnded(child: MetroChild): Promise<void> {
   if (child.gone || !child.helper) return;
   const exit = exitOf(child.root, child);
-  if (exit) return settleExited(child, exit.code, exit.signal);
+  if (exit) return settleExited(child, exit.code, exit.signal, exit.exitedAt);
   const why = `the dev-server helper pid ${child.helper.pid} ended without recording how dev server pid ${child.pid} ended`;
   child.stopping = true;
   try {
@@ -433,10 +433,10 @@ async function settleHelperEnded(child: MetroChild): Promise<void> {
  * only a live tree: there the exit of a node this stimd spawned is its whole tree, but a `metro.command` wrapper such as
  * cmd or yarn can leave Metro running as an orphan, so its claim stays unresolved.
  */
-function settleExited(child: MetroChild, code: number | null, signal: string | null): void {
+function settleExited(child: MetroChild, code: number | null, signal: string | null, at?: string): void {
   if (!GROUPS && child.mode === MODE_COMMAND)
     failedCleanup(unverifiedChild(child.claim, child, `Could not confirm the dev-server tree exited.`));
-  else forgetExited(child, code, signal);
+  else forgetExited(child, code, signal, at);
 }
 
 async function gone(alive: () => boolean, ms: number): Promise<boolean> {
