@@ -13,9 +13,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
-import { discoverCheckouts, discoveredOutside, selectDiscovered, type DiscoveryChild } from '../workspace/discovery.ts';
+import {
+  discoverCheckouts,
+  discoveredOutside,
+  isBroadFolder,
+  selectDiscovered,
+  type DiscoveryChild,
+} from '../workspace/discovery.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+
+describe('isBroadFolder', () => {
+  it('refuses the home folder, a folder holding it and the filesystem root, and accepts a folder below it', () => {
+    expect(isBroadFolder('/Users/me', '/Users/me')).toBe(true);
+    expect(isBroadFolder('/Users', '/Users/me')).toBe(true);
+    expect(isBroadFolder('/', '/Users/me')).toBe(true);
+    expect(isBroadFolder('/Users/me/Developer', '/Users/me')).toBe(false);
+    expect(isBroadFolder('/Users/mentor', '/Users/me')).toBe(false);
+  });
+});
 
 describe('selectDiscovered', () => {
   const child = (path: string, recognised = true) =>

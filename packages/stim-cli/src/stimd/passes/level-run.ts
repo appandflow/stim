@@ -23,7 +23,12 @@ import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { existsSync } from 'node:fs';
-import { discoverCheckouts, discoveredOutside, type DiscoveredCheckout } from '../../workspace/discovery.ts';
+import {
+  broadDiscoverRoots,
+  discoverCheckouts,
+  discoveredOutside,
+  type DiscoveredCheckout,
+} from '../../workspace/discovery.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
@@ -130,6 +135,10 @@ export async function runMaintenanceAtLevel({
     onAction?.(action);
   };
   const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);
+  for (const root of broadDiscoverRoots(loadConfig(), env))
+    blocked.push(
+      `maintenance.discoverRoots entry ${root} is too broad (the home folder, a folder holding it or /), so nothing is discovered there`,
+    );
   const outside = await discoveredOutside(loadConfig(), listedRoots(), operation);
   const now = Date.now();
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);

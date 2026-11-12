@@ -142,9 +142,14 @@ export function missingDiscoverRoots(config: Config | null, env: NodeJS.ProcessE
   });
 }
 
-/** The home directory and the filesystem root hold too much to count as a folder Stim manages. */
-function isBroadFolder(folder: string): boolean {
-  return folder === canonicalPath(homedir()) || folder === parse(folder).root;
+/** The home directory, any folder holding it (such as `/Users`) and the filesystem root are too broad to manage. */
+export function isBroadFolder(folder: string, home: string = canonicalPath(homedir())): boolean {
+  return folder === parse(folder).root || home === folder || home.startsWith(`${folder}${sep}`);
+}
+
+/** The `maintenance.discoverRoots` entries that name a too broad folder once symlinks resolve, which discovery ignores. */
+export function broadDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
+  return configuredRoots(config, env).roots.filter((root) => existsSync(root) && isBroadFolder(canonicalPath(root)));
 }
 
 const inside = (path: string, folder: string) => path === folder || path.startsWith(`${folder}${sep}`);
@@ -208,7 +213,10 @@ async function computeDiscovered(
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
   const { roots } = configuredRoots(config, env);
-  const canonicalRoots = roots.filter((root) => existsSync(root)).map(canonicalPath);
+  const canonicalRoots = roots
+    .filter((root) => existsSync(root))
+    .map(canonicalPath)
+    .filter((root) => !isBroadFolder(root));
   const repositories: { entries: { path: string }[]; main: string }[] = [];
   const folders = new Map<string, string>();
   const children: DiscoveryChild[] = [];
