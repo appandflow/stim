@@ -2,7 +2,7 @@ import type { StimClient, StimOptions } from './api/types.ts';
 import { GOVERNED_COMMANDS, removedEnvironmentRefusal } from './daemon/mode.ts';
 import { removedSettingFindings, settingsLayers, projectSettingsContext } from './workspace/settings.ts';
 import { loadConfig } from './workspace/config.ts';
-import { findProjectRoot } from './workspace/project.ts';
+import { findCommandWorkspace, findProjectRoot } from './workspace/project.ts';
 import { readRecords, engineRoot } from './engine-store/store.ts';
 import { STIM_VERSION } from './stim-version.ts';
 
@@ -69,9 +69,9 @@ export async function runOperation(
       removedConfigRefusal(command, entry.cwd, entry.env));
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
-  if ((operationCommand === 'ios' || operationCommand === 'android') && !findProjectRoot(entry.cwd))
-    return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(operationCommand);
+  if (creates && !commandWorkspace(operationCommand, entry.cwd))
+    return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
   if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];
@@ -166,4 +166,9 @@ function removedConfigRefusal(command: string, cwd: string, env: NodeJS.ProcessE
     message: found.map((entry) => entry.message).join(' '),
     remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again.`,
   };
+}
+
+/** The workspace a state-creating command resolves from `cwd`, as the command does; null is the command's own `STIM_NO_PROJECT` refusal. */
+function commandWorkspace(command: string, cwd: string): string | null {
+  return command === 'web' || command === 'revive' ? findCommandWorkspace(cwd, () => {}) : findProjectRoot(cwd);
 }

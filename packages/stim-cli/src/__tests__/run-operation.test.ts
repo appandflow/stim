@@ -70,7 +70,7 @@ describe('runOperation', () => {
     await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
   });
 
-  it.each(['ios', 'android'])(
+  it.each(['start', 'ios', 'android', 'web', 'macos', 'revive'])(
     'starts no daemon and records nothing for `stim %s` outside a project',
     async (command) => {
       const client = await import('../daemon/client.ts');
