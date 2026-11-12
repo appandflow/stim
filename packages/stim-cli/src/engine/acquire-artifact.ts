@@ -158,7 +158,9 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
         ...lifecycle.build,
         compile: async (placement, preparation) => {
           await headroom?.begin();
-          return lifecycle.build.compile(placement, preparation);
+          const compiled = await lifecycle.build.compile(placement, preparation);
+          await headroom?.finish();
+          return compiled;
         },
       },
       release: async (failure) => {
@@ -202,7 +204,6 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
         if (cleanupError !== undefined) throw cleanupError;
       },
     });
-    await headroom?.finish();
     return { ok: true, artifact, release: owned.transfer() };
   } catch (error) {
     if (unresolvedCleanup(error)) {

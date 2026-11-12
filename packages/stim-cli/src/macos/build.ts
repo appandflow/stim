@@ -283,6 +283,7 @@ export async function buildMacosBundle({
         await headroom.begin();
         progress.step('compile');
         const bin = await recipe.compile({ scratch, writer, note });
+        await headroom.finish();
         progress.step('install');
         const staged = join(staging, `${recipe.product}.app`);
         await recipe.stage(bin, staged, bundleId, displayName);
@@ -291,7 +292,6 @@ export async function buildMacosBundle({
         slot = undefined;
         await save(staged);
         promote(staged);
-        await headroom.finish();
         return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
       } finally {
         releaseBuildSlot(slot);

@@ -6,6 +6,7 @@ import type { DaemonPressure } from '@stim-cli/core/state';
 import {
   diskUsageCacheFile,
   IDLE_STOP_KEY,
+  ladderRunClaims,
   readDormantStage,
   readIdleStage,
   readJsonObject,
@@ -16,6 +17,8 @@ import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import { runLadderToFree } from '../daemon/passes.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim } from '../devices/sim-pool.ts';
@@ -715,6 +718,74 @@ describe('the ladder stim gc forces', () => {
         detail: expect.stringContaining('not under the critical level'),
       }),
     ]);
+  });
+});
+
+describe('the ladder a build runs for its headroom', () => {
+  const DEVICE = 4242;
+
+  function parked(count: number) {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    vi.spyOn(gcDevices, 'deleteParkedSims').mockImplementation(async (sims) => {
+      deleted.push(...sims.map((sim) => sim.udid));
+      return sims.length;
+    });
+    const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+    saveConfig({
+      ...loadConfig()!,
+      parked: {
+        ios: Array.from({ length: count }, (_, index) => ({
+          ...sim,
+          udid: `PARKED-${index}`,
+          name: `stim-parked-${index}`,
+          parkedAt: new Date(Date.now() - (10 - index) * DAY_MS).toISOString(),
+        })),
+      },
+    });
+  }
+
+  function freeOnBuildDevice(startGb: number, perDeletionGb: number) {
+    const disk = vi.spyOn(daemonMeasure, 'measureDisk');
+    disk.mockImplementation(async () => [
+      { volume: '/', freeMb: (startGb + deleted.length * perDeletionGb) * 1024, device: DEVICE },
+      { volume: '/other', freeMb: 1024, device: DEVICE + 1 },
+    ]);
+    return disk;
+  }
+
+  const run = (targetGb: number) =>
+    runLadderToFree({
+      operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+      signal: new AbortController().signal,
+      device: DEVICE,
+      freeMb: targetGb * 1024,
+      protectedRoot: join(projects, 'build'),
+    });
+
+  test('frees only what the target needs on the build device, below and above disk.minFreeGb, and ignores other volumes', async () => {
+    parked(4);
+    freeOnBuildDevice(22, 1);
+    await run(24);
+    expect(deleted).toEqual(['PARKED-0', 'PARKED-1']);
+
+    deleted.length = 0;
+    freeOnBuildDevice(35, 5);
+    await run(50);
+    expect(deleted).toEqual(['PARKED-0', 'PARKED-1', 'PARKED-2']);
+  });
+
+  test('does nothing while another process holds the ladder claim', async () => {
+    parked(2);
+    const disk = freeOnBuildDevice(10, 1);
+    const held = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' }).acquired;
+    if (!held) throw new Error('claim not acquired');
+    try {
+      await run(24);
+    } finally {
+      releaseClaim(held);
+    }
+    expect(deleted).toEqual([]);
+    expect(disk).not.toHaveBeenCalled();
   });
 });
 

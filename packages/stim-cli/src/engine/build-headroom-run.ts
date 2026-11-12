@@ -71,7 +71,8 @@ export function createBuildHeadroom({
     const volume = await space();
     if (!volume || volume.device === undefined || volume.freeMb >= requiredMb) return;
     await runLadderToFree({
-      operation: { ...context, signal },
+      operation: context,
+      signal,
       device: volume.device,
       freeMb: requiredMb,
       protectedRoot: root,

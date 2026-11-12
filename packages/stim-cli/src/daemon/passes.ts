@@ -274,15 +274,16 @@ async function runCommandLadder(
   trigger: string,
   env: NodeJS.ProcessEnv,
   protectedRoot?: string,
-  headroom?: { device: number; freeMb: number; operation: StimContext },
+  headroom?: HeadroomRun,
 ): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
   if (!config || mode === 'off') return;
   const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
-  const classify = async () => {
-    const [disk, memory] = await Promise.all([measureDisk(config, headroom?.operation.signal), measureMemory()]);
+  const classify = async (): Promise<DaemonPressure> => {
+    if (headroom) return headroomPressure(config, headroom);
+    const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
     const pressure = classifyPressure({
       disk,
       memory,
@@ -291,22 +292,15 @@ async function runCommandLadder(
       now: Date.now(),
     });
     warningSince = pressure.memoryWarningSince;
-    const short = headroom && disk.find((volume) => volume.device === headroom.device);
-    if (headroom && short && pressure.level === 'normal' && short.freeMb < headroom.freeMb) {
-      return {
-        ...pressure,
-        level: 'high' as const,
-        disk: 'high' as const,
-        reasons: [
-          `${(short.freeMb / 1024).toFixed(1)} GB free on ${short.volume}, under the ${(headroom.freeMb / 1024).toFixed(1)} GB the next build needs`,
-        ],
-      };
-    }
     return pressure;
   };
   const pressure = await classify();
   if (pressure.level === 'normal') return;
-  const measured = await measureTick(config, Date.now());
+  const measured = await measureTick(
+    config,
+    Date.now(),
+    headroom ? { probe: false, signal: headroom.stop, operation: headroom.operation } : {},
+  );
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
     await runLadder(
@@ -328,6 +322,48 @@ async function runCommandLadder(
   } finally {
     writer.close();
   }
+}
+
+/** What a ladder run for a build's headroom judges by: the build's device, the target there, and when to stop. */
+interface HeadroomRun {
+  device: number;
+  freeMb: number;
+  operation: StimContext;
+  /** Aborts when the build is cancelled or the run's deadline passes. */
+  stop: AbortSignal;
+}
+
+const NORMAL_PRESSURE: DaemonPressure = {
+  level: 'normal',
+  disk: 'normal',
+  memory: 'normal',
+  reasons: [],
+  memoryWarningSince: null,
+};
+
+/**
+ * The level of a headroom run: high while the build's device has less free than the target, else normal. It ignores
+ * every other volume and memory, and is normal once `stop` aborts, which ends the run between two rungs or two actions.
+ */
+async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<DaemonPressure> {
+  if (headroom.stop.aborted) return NORMAL_PRESSURE;
+  let disk;
+  try {
+    disk = await measureDisk(config, headroom.stop);
+  } catch (error) {
+    if (headroom.stop.aborted) return NORMAL_PRESSURE;
+    throw error;
+  }
+  const volume = disk.find((entry) => entry.device === headroom.device);
+  if (!volume || volume.freeMb >= headroom.freeMb) return NORMAL_PRESSURE;
+  return {
+    ...NORMAL_PRESSURE,
+    level: 'high',
+    disk: 'high',
+    reasons: [
+      `${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}, under the ${(headroom.freeMb / 1024).toFixed(1)} GB the next build needs`,
+    ],
+  };
 }
 
 export interface ForcedLadder {
@@ -517,22 +553,30 @@ export async function runLadderNow(
   } catch {}
 }
 
+const HEADROOM_DEADLINE_MS = 60_000;
+
 /**
- * Runs the pressure ladder once, in this process and with no daemon tick, until `freeMb` is free on the volume with device id `device` or its
- * rungs are spent: the other volumes keep their usual thresholds. It holds the machine-wide `ladderRunClaims` claim and
- * returns at once when another process holds it, so concurrent builds run one ladder. Throws only on abort.
+ * Runs the pressure ladder for a build once, in this process, until the volume with device id `device` has `freeMb`
+ * free or the rungs are spent, at the high level (rungs 2 to 8, never rung 9) whatever that target is relative to
+ * `disk.minFreeGb`; other volumes and memory do not count. It asks the daemon for nothing and returns at once when a
+ * stimd of another build refused this process or another process holds the `ladderRunClaims` claim. It stops after
+ * 60 seconds: the deadline and `signal` are checked at every re-measurement, which each rung makes before every
+ * action, so a step in flight finishes and no step is left half done. Throws only when `signal` aborts.
  */
 export async function runLadderToFree({
   operation,
+  signal,
   device,
   freeMb,
   protectedRoot,
 }: {
   operation: StimContext;
+  signal: AbortSignal;
   device: number;
   freeMb: number;
   protectedRoot: string;
 }): Promise<void> {
+  if (stimdRefused()) return;
   let claim: ClaimHandle | null = null;
   try {
     const attempt = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' });
@@ -542,10 +586,11 @@ export async function runLadderToFree({
     return;
   }
   if (!claim) return;
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(HEADROOM_DEADLINE_MS)]);
   try {
-    await runCommandLadder('command', operation.env, protectedRoot, { device, freeMb, operation });
+    await runCommandLadder('command', operation.env, protectedRoot, { device, freeMb, operation, stop });
   } catch {
-    operation.signal.throwIfAborted();
+    signal.throwIfAborted();
   } finally {
     releaseClaim(claim);
   }
