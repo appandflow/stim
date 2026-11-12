@@ -115,7 +115,7 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
         const inspect = vi.spyOn(identity, 'inspectProcessIdentity').mockImplementation((record) => {
           if (record?.pid !== pid) return original(record);
           checks++;
-          return checks <= (when === 'before TERM' ? 1 : 2) ? 'same' : 'different';
+          return checks <= (when === 'before TERM' ? 0 : 1) ? 'same' : 'different';
         });
         const signal = vi.spyOn(metro, 'signalProcessTree').mockReturnValue(true);
         vi.useFakeTimers();

@@ -1021,7 +1021,12 @@ function adoptAt(path: string, log: Log): void {
   for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
     const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
     if (claim && holder.child)
-      tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url), startedAt: holder.startedAt });
+      tunnels.set(path, {
+        claim,
+        ...holder.child,
+        url: String(holder.details.url),
+        startedAt: typeof holder.details.startedAt === 'string' ? holder.details.startedAt : holder.startedAt,
+      });
   }
 }
 
@@ -1234,7 +1239,13 @@ function adoptRecordedTunnel(root: string): { tunnel: TunnelChild } | { refusal:
     root: claimRoot(root, 'tunnel'),
     mode: 'exclusive',
     label: 'tunnel',
-    details: { provider: recorded.provider, port: recorded.port, url: recorded.url, logFile: recorded.logFile },
+    details: {
+      provider: recorded.provider,
+      port: recorded.port,
+      url: recorded.url,
+      logFile: recorded.logFile,
+      startedAt: recorded.startedAt,
+    },
   });
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired) return null;
@@ -1354,6 +1365,7 @@ async function startTunnelChild(
     releaseClaim(claim);
     return unreachable(`Could not start a managed Metro tunnel for port ${port}.`, started.reason);
   }
+  const startedAt = new Date().toISOString();
   const tunnel: TunnelChild = {
     claim:
       updateClaimDetails(claim, {
@@ -1361,11 +1373,12 @@ async function startTunnelChild(
         port,
         url: normalizeUrl(started.url),
         logFile: started.logFile,
+        startedAt,
       }) ?? claim,
     pid: started.pid,
     processToken: started.processToken,
     url: normalizeUrl(started.url),
-    startedAt: new Date().toISOString(),
+    startedAt,
   };
   try {
     recordTunnel(root, tunnel);

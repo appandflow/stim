@@ -48,8 +48,9 @@ function stimdTunnel(provider: 'ngrok' | 'cloudflared' | 'tailscale', url: strin
       startedAt: 'T',
       processToken: 'linux:100',
     };
+    const running = readMetroTunnel(root)?.kind === 'managed';
     writeWorkspaceState(root, { metroTunnel: { kind: 'managed', ...record } });
-    return { op: 'tunnel', reused, ...record };
+    return { op: 'tunnel', reused: reused || running, ...record };
   };
 }
 

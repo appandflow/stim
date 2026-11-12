@@ -866,7 +866,8 @@ require('node:http')
     write(join(dir, 'bin', 'ngrok'), '#!/bin/sh\nexit 1\n', 0o755);
     await startStimd();
     const port = await freePort();
-    const stateOf = () => JSON.parse(readFileSync(workspaceStateFile(root), 'utf8'));
+    const stateOf = () =>
+      existsSync(workspaceStateFile(root)) ? JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')) : {};
 
     const first = await ask('tunnel.ensure', { root, mode: 'auto', port, requireReachable: false });
     expect(first).toMatchObject({
@@ -928,7 +929,7 @@ require('node:http')
       startedAt: 'T',
       processToken: token,
     };
-    writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: recordedTunnel }));
+    write(workspaceStateFile(root), JSON.stringify({ metroTunnel: recordedTunnel }));
     try {
       await startStimd();
       await expect(ask('tunnel.stop', { root, pid: old.pid, processToken: 'someone-else' })).resolves.toMatchObject({
@@ -946,7 +947,11 @@ require('node:http')
         state: 'stopped',
       });
       expect(alive(old.pid)).toBe(false);
-      expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel).toBeUndefined();
+      expect(
+        existsSync(workspaceStateFile(root))
+          ? JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).metroTunnel
+          : undefined,
+      ).toBeUndefined();
     } finally {
       if (alive(old.pid)) process.kill(-oldPid, 'SIGKILL');
     }
