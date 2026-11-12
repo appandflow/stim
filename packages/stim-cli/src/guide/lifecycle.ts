@@ -2142,10 +2142,12 @@ THE BUILD CACHE HAS THREE LEVELS
   On Windows, use a double-quoted literal path without environment expansion.
 
   On the first build after this change, older build-cache entries miss. If a
-  generated Expo native directory has an old prebuild record, use the same Stim
-  version in the project and globally, preserve any changes, then move or remove
-  that generated ios/ or android/ directory and retry. Stim generates it again.
-  Tracked native directories are not removed. Builds in one Stim home share the
+  generated Expo native directory has a prebuild record from an earlier Stim
+  (including Stim 1.40's), Stim runs expo prebuild over it once and records the
+  result; it deletes nothing. A record this Stim cannot read, written by a newer
+  Stim or damaged, refuses with STIM_PREBUILD_FAILED: preserve any changes, move
+  the directory aside (mv ios ios.bak) and retry. A tracked native directory is
+  never regenerated. Builds in one Stim home share the
   workspace native-run lock; separate Stim homes do not share that lock.
 
   An approved build worker receives the keyed environment values for install,

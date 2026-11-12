@@ -219,15 +219,19 @@ test('warm carry skips while a build holding native-run waits for the warm claim
   }
 });
 
-test('a foreign record refuses until its generated directory is moved aside and rebuilt', async () => {
+test('a record of an earlier Stim regenerates an untracked directory and a record Stim cannot read refuses', async () => {
   process.env.STIM_HOME = join(root, 'stim-home');
   try {
     mkdirSync(join(root, 'ios'));
-    writeWorkspaceState(root, { prebuild: { ios: 'legacy-fingerprint' } });
     const options = { isExpo: true, fingerprint: 'new-fingerprint', native: 'generated' as const };
+    for (const earlier of ['legacy-fingerprint', { schema: FINGERPRINT_SCHEMA - 1, hash: 'old-fingerprint' }]) {
+      writeWorkspaceState(root, { prebuild: { ios: earlier } });
+      expect(await planPrebuildAsync(root, 'ios', options)).toBe('regenerate');
+      expect(await planPrebuildAsync(root, 'ios', { ...options, native: 'tracked' })).toBe('none');
+    }
+    writeWorkspaceState(root, { prebuild: { ios: { schema: FINGERPRINT_SCHEMA + 1, hash: 'future-fingerprint' } } });
     expect(await planPrebuildAsync(root, 'ios', options)).toBe('refuse');
-    expect(await planPrebuildAsync(root, 'ios', { ...options, native: 'tracked' })).toBe('none');
-    expect(prebuildPlanRefusal(root, 'ios').remedy).toContain('move or remove ios/');
+    expect(prebuildPlanRefusal(root, 'ios').remedy).toContain('mv ios ios.bak');
     rmSync(join(root, 'ios'), { recursive: true });
     expect(await planPrebuildAsync(root, 'ios', { ...options, native: 'tracked' })).toBe('refuse');
     expect(await planPrebuildAsync(root, 'ios', options)).toBe('generate');
@@ -243,8 +247,10 @@ describe('the prebuild record', () => {
   test.each([
     ['an unfinished prebuild', null, null, { kind: 'unfinished' }],
     ['no record', undefined, null, { kind: 'unrecorded' }],
-    ['a legacy record', 'abc', 'abc', { kind: 'foreign' }],
-    ['another schema', { schema: FINGERPRINT_SCHEMA + 1, hash: 'abc' }, 'abc', { kind: 'foreign' }],
+    ['the bare hash Stim 1.40 wrote', 'abc', 'abc', { kind: 'earlier' }],
+    ['a lower schema', { schema: FINGERPRINT_SCHEMA - 1, hash: 'abc' }, 'abc', { kind: 'earlier' }],
+    ['a higher schema', { schema: FINGERPRINT_SCHEMA + 1, hash: 'abc' }, 'abc', { kind: 'foreign' }],
+    ['a record without a hash', { schema: FINGERPRINT_SCHEMA }, 'abc', { kind: 'foreign' }],
     [
       'a record equal to the fingerprint',
       { schema: FINGERPRINT_SCHEMA, hash: 'abc' },

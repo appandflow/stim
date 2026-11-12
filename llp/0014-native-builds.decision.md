@@ -83,6 +83,25 @@ distribution remain out of scope.
 
 An ordinary build must not create profiles or register devices in an Apple Developer account. The install gate verifies the exact app and hardware, and the separate provisioning command shows account changes before applying them. [Device signing design](../docs/specs/2026-09-01-ios-device-release-design.md), [Explicit provisioning](https://github.com/appandflow/stim/pull/3841).
 
+## A prebuild record of an earlier Stim does not block a build
+
+A generated, untracked Expo `ios/` or `android/` whose workspace prebuild record
+an earlier Stim wrote is regenerated: the record is the bare hash string of Stim
+1.40 (compat C31, ends 2.1.0) or an object with a lower fingerprint schema. Such a
+record proves that Stim generated the directory, but its hash cannot be compared
+with the current one, so Stim treats it like a record of another fingerprint: it
+runs `expo prebuild` over the directory without deleting anything, then records
+the result. A directory Git tracks is never regenerated. A record this Stim cannot
+read, a higher schema or a shape no Stim wrote, still refuses with
+`STIM_PREBUILD_FAILED`, and the remedy names `mv ios ios.bak`.
+
+Reason: a schema bump, or the move from Stim 1.40, would otherwise refuse every
+Expo worktree once, with advice that did not fit an upgrade (#5623). The
+coordinator chose this in the lane brief for #5623 on 2026-11-12, not the
+maintainer; the issue left it as a product decision. A prebuild over an existing
+directory keeps what earlier config plugins wrote, which `staleNativeDirRemedy`
+already explains.
+
 ## Code
 
 - [Exact invocation](../packages/stim-cli/src/integrations/exact-ios.ts), [EAS build selection](../packages/stim-cli/src/engine/eas-build.ts), and [iOS profile validation](../packages/stim-cli/src/engine/ios-profile.ts).
