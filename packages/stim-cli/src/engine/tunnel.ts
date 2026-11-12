@@ -607,7 +607,8 @@ export async function startTunnel({
       exited || childExited,
     );
   }
-  if (!initialProcessToken) return failAfterCleanup(`${provider} exited before its tunnel could be recorded.`, true);
+  if (!initialProcessToken)
+    return failAfterCleanup(`${provider} exited before its tunnel could be recorded.`, childExited);
   if (!outputFile) resumeChildPipes(child);
 
   if (requireReachable) {
