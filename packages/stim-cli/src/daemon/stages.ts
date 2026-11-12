@@ -7,6 +7,7 @@ import {
   readDormantStage,
   readIdleStage,
   readInteractions,
+  workspaceMetadataFile,
   workspaceStateFile,
   type DaemonLadderAction,
   type DormantStageRecord,
@@ -33,7 +34,11 @@ import {
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { discoverCheckouts } from '../workspace/discovery.ts';
+import { discoveredEvidence } from '../workspace/discovered-activity.ts';
+import { processReader, type RunningProcesses } from '../workspace/running-from.ts';
+import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
@@ -127,11 +132,19 @@ async function idleFor(
   path: string,
   thresholdMs: number,
   setting: string,
-  { locked = false, operation }: { locked?: boolean; operation?: StimContext } = {},
+  {
+    locked = false,
+    operation,
+    processes = processReader(operation?.signal),
+  }: { locked?: boolean; operation?: StimContext; processes?: () => Promise<RunningProcesses | null> } = {},
 ): Promise<number | null> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
-  const evidence = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
+  const stim = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
+  const evidence =
+    getProject(path) || existsSync(workspaceMetadataFile(path))
+      ? stim
+      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, processes, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return null;
   try {
@@ -145,6 +158,10 @@ async function idleFor(
   return decision.idleMs;
 }
 
+function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, b: T): T {
+  return { ...a, activity: [...a.activity, ...b.activity], keep: [...a.keep, ...b.keep] };
+}
+
 async function idleWorkspaces(
   config: Config,
   reading: DeviceReading,
@@ -153,14 +170,18 @@ async function idleWorkspaces(
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs'> & { idleMs: number | null })[] = [];
-  for (const [path, project] of Object.entries(config.projects)) {
+  const processes = processReader(reading.operation?.signal);
+  const discovered = (await discoverCheckouts(config, listedRoots(), reading.operation)).map(
+    ({ path }): [string, ProjectRecord] => [path, {}],
+  );
+  for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
     try {
       const idleMs = (await runsSomething(path, project, reading))
         ? null
-        : await idleFor(path, thresholdMs, setting, { operation: reading.operation });
+        : await idleFor(path, thresholdMs, setting, { operation: reading.operation, processes });
       readings.push({ path, project, idleMs });
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;

@@ -30,7 +30,10 @@ type IdleStopBasis =
   | 'Metro request'
   | 'agent-device command'
   | 'stim-server input'
-  | 'Simulator or emulator window';
+  | 'Simulator or emulator window'
+  | 'file edit'
+  | 'git write'
+  | 'git commit';
 
 export interface IdleStopEvidence {
   activity: { basis: IdleStopBasis; at: number }[];

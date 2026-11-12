@@ -54,6 +54,8 @@ export function gcDetailLines(run: LevelRun): string[] {
     lines.push(
       `${action.outcome}\t${formatBytes(action.bytes)}\t${action.rung === null ? 'maintenance' : `rung ${action.rung}`}\t${action.kind}\t${action.target}\t${[action.reason, action.detail].filter(Boolean).join('; ')}${action.restore ? `; restore with ${action.restore}` : ''}`,
     );
+  for (const checkout of run.discovered)
+    lines.push(`discovered\t${checkout.origin}\t${checkout.path}\tfrom ${checkout.from}`);
   for (const reason of run.blocked) lines.push(`blocked\t${reason}`);
   return lines;
 }
@@ -92,6 +94,19 @@ export function formatGcSummary(
     for (const action of largest)
       lines.push(`    ${action.bytes ? `${formatBytes(action.bytes)}  ` : ''}${action.target}`);
     if (actions.length > largest.length) lines.push(`    and ${actions.length - largest.length} more`);
+  }
+  if (run.discovered.length) {
+    lines.push(`Discovered checkouts no stim command ran in (${run.discovered.length}), treated as workspaces:`);
+    for (const checkout of run.discovered.slice(0, LARGEST_SHOWN * 4)) {
+      const mine = checkout.actions.filter((action) => action.outcome === (act ? 'done' : 'would'));
+      const freed = mine.reduce((sum, action) => sum + action.bytes, 0);
+      const what = mine.length
+        ? mine.map((action) => action.kind.replaceAll('-', ' ')).join(', ')
+        : (checkout.actions.find((action) => action.outcome === 'kept')?.detail ?? 'nothing to do');
+      lines.push(`  ${freed ? `${formatBytes(freed)}  ` : ''}${checkout.path} (${checkout.origin}): ${what}`);
+    }
+    if (run.discovered.length > LARGEST_SHOWN * 4)
+      lines.push(`  and ${run.discovered.length - LARGEST_SHOWN * 4} more`);
   }
   const reported = run.actions.filter((action) => action.kind === 'report-tool-cache');
   if (failed.length || run.blocked.length || reported.length) {

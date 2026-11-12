@@ -61,6 +61,8 @@ import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
+import { discoverCheckouts } from '../../workspace/discovery.ts';
+import { processReader, runningFromReason } from '../../workspace/running-from.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -93,8 +95,10 @@ export interface WorktreeFacts {
   locked: boolean;
   /** `maintenance.keep` pins one of the worktree's workspaces, or its pins could not be read. */
   pinned?: boolean;
-  /** No project in the registry and no workspace record of this Stim home lies in the worktree, so Stim never ran in it. */
+  /** No project in the registry, no workspace record and no discovery source of this Stim home names the worktree. */
   unregistered?: boolean;
+  /** Discovery found it: no stim command ran in it, so dirty work is kept, never archived, and processes are checked. */
+  discovered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
   unpushed: string[] | null;
@@ -162,6 +166,8 @@ interface WorktreeCandidate {
   skipped: string | null;
   eligibleAt: number | null;
   activity: WorktreeActivity | null;
+  /** Discovery found it; see `WorktreeFacts.discovered`. */
+  discovered?: boolean;
   /** How many uncommitted or untracked entries removal archives first; absent or 0 for a clean worktree. */
   dirty?: number;
   buildState?: WorktreeBuildState;
@@ -309,7 +315,7 @@ function removalBlocker(
   if (facts.unregistered) {
     return skip(
       'not-registered',
-      'not registered in this Stim home: no project or workspace record names it, so no stim command ran in it; stim worktree warm in it makes it one Stim manages',
+      'not known to this Stim home: no project, workspace record or discovery source names it, so no stim command ran in it; stim worktree warm in it makes it one Stim manages',
     );
   }
   if (facts.locked) return skip('locked', LOCKED_REASON);
@@ -629,7 +635,10 @@ export function candidateRoots(): string[] {
     .toSorted();
 }
 
-export async function candidateRootsAsync(operation?: StimContext): Promise<string[]> {
+export async function candidateRootsAsync(
+  operation?: StimContext,
+  discovered?: readonly { path: string }[],
+): Promise<string[]> {
   operation?.signal.throwIfAborted();
   const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
@@ -643,7 +652,10 @@ export async function candidateRootsAsync(operation?: StimContext): Promise<stri
     for (const entry of entries)
       if (!entry.bare && !entry.prunable && entry.path !== source.path) linked.add(entry.path);
   }
-  return [...new Set([...registered, ...recorded, ...linked])].filter((root) => existsSync(root)).toSorted();
+  const found = discovered ?? (await discoverCheckouts(loadConfig(), listedRoots(), operation));
+  return [...new Set([...registered, ...recorded, ...linked, ...found.map(({ path }) => path)])]
+    .filter((root) => existsSync(root))
+    .toSorted();
 }
 
 function linkedWorktreesOf(roots: readonly string[]): string[] {
@@ -787,7 +799,9 @@ export async function collectWorktreeSweep({
   operation?.signal.throwIfAborted();
   const read = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const outside: WorktreeCandidate[] = [];
-  const candidates = await candidateRootsAsync(operation);
+  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
+  const discoveredPaths = new Set(discovered.map(({ path }) => path));
+  const candidates = await candidateRootsAsync(operation, discovered);
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   const matched: ReturnType<typeof matchWorktreeEntry>[] = [];
@@ -826,7 +840,9 @@ export async function collectWorktreeSweep({
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
     const dirty = linked ? dirtyLines(porcelain).length : 0;
-    const archiveDirty = dirty > 0 && !('refusal' in worktreeArchiveLimits(path, operation?.env));
+    const managed = roots.some((root) => registry.has(root));
+    const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
+    const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
       const edited = await uncommittedActivityOf(path, operation);
@@ -838,7 +854,8 @@ export async function collectWorktreeSweep({
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
       pinned: linked ? await anyPinned(keys, operation) : false,
-      unregistered: !roots.some((root) => registry.has(root)),
+      unregistered: !managed && !discoveredOnly,
+      discovered: discoveredOnly,
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
@@ -862,6 +879,7 @@ export async function collectWorktreeSweep({
         skipped: null,
         eligibleAt: null,
         activity,
+        ...(discoveredOnly ? { discovered: true } : {}),
         ...(archiveDirty ? { dirty } : {}),
       },
       facts,
@@ -890,6 +908,14 @@ export async function collectWorktreeSweep({
       operation?.signal,
     );
     registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
+  }
+  const found = linked.filter(({ facts }) => facts.discovered);
+  if (found.length) {
+    const processes = processReader(operation?.signal);
+    for (const { candidate, facts } of found) {
+      const running = runningFromReason(candidate.path, await processes());
+      if (running) facts.inUse.push(running);
+    }
   }
   if (refresh) await lookUpPullRequests(inspected, operation);
   else readCachedPullRequests(inspected, now, freshMs);
@@ -1004,6 +1030,9 @@ export async function removeWorktrees(
         ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
         ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
         ...(agents.get(candidate.path) ?? []),
+        ...(candidate.discovered
+          ? [runningFromReason(candidate.path, await processReader(operation?.signal)())].flatMap((r) => (r ? [r] : []))
+          : []),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head

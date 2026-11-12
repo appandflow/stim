@@ -848,6 +848,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
+    key: 'maintenance.discoverRoots',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      'Absolute folders whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
+  },
+  {
     key: 'maintenance.keep',
     type: BOOLEAN,
     scopes: PROJECT,

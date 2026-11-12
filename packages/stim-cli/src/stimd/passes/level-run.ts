@@ -19,6 +19,8 @@ import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
+import { discoverCheckouts, type DiscoveredCheckout } from '../../workspace/discovery.ts';
+import { listedRoots } from '../../commands/gc/worktrees.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
 export interface LevelRunAction {
@@ -42,6 +44,8 @@ export interface LevelRun {
   actions: LevelRunAction[];
   /** What the run could not decide or reach, each for a person to look at. */
   blocked: string[];
+  /** Checkouts no stim command ran in that this run treats as workspaces, with the actions it took or would take in each. */
+  discovered: (DiscoveredCheckout & { actions: LevelRunAction[] })[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
 }
@@ -119,6 +123,7 @@ export async function runMaintenanceAtLevel({
     actions.push(action);
     onAction?.(action);
   };
+  const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const now = Date.now();
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
   const sizes = [
@@ -180,10 +185,19 @@ export async function runMaintenanceAtLevel({
     });
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
+  const discovered = found.map((checkout) =>
+    Object.assign({}, checkout, {
+      actions: actions.filter((action) =>
+        [action.target, action.workspace].some(
+          (path) => path !== undefined && (path === checkout.path || path.startsWith(`${checkout.path}/`)),
+        ),
+      ),
+    }),
+  );
   const usage = sizes
     .filter((size) => size.bytes > 0)
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 10)
     .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
-  return { pressure, level, actions, blocked, usage };
+  return { pressure, level, actions, blocked, discovered, usage };
 }
