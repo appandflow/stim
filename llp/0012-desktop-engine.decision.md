@@ -11,9 +11,12 @@
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads state and runs Stim operations through the
-matching-home stim-server, the net thread inside that home's stimd. It never
-reads or writes `$STIM_HOME` beyond `run/stimd.json` and `run/desktop.key`, and
-never falls back to an external Stim CLI. It proves the key in `run/desktop.key`
+matching-home stim-server, the net thread inside that home's stimd. Desktop
+reads `run/stimd.json` and `run/desktop.key` to connect, and accesses workspace
+and operation state only through the server. It reads the separate machine
+engine pointer and manages its bootstrap runtime when needed. That store is
+independent of `STIM_HOME`, even though the default paths share `~/.stim`.
+Desktop never falls back to an external Stim CLI. It proves the key in `run/desktop.key`
 (0600, written by stimd when it starts) with `desktop.authenticate` for its
 Desktop-only methods; a local connection without that proof keeps the local
 read and control capabilities only. A separately installed CLI is optional for
@@ -49,5 +52,5 @@ Viewing another server and asking a remote worker to run a local workspace have 
 
 ## Code
 
-- [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).
+- [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).
 - [stimd socket](../packages/stim-cli/src/stimd/main.ts) and [Desktop bootstrap proof](../packages/server/src/desktop-bootstrap.ts).

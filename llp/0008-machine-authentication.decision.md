@@ -9,12 +9,13 @@
 
 ## Authenticate the key
 
-Every network connection to
-stim-server, loopback TCP included, runs protocol 2's Noise handshake
-(`@stim-cli/core/noise-session`) before any request, as
-[the authentication design](../docs/specs/2026-10-13-pluggable-transports-design.md#authentication) specifies. A record holds the client's public key; capabilities come only from
-it. The network address, `tailscale whois` and `X-Forwarded-For` label records
-and key rate limits; they never authenticate.
+Every network machine-RPC connection to stim-server, including loopback TCP,
+runs protocol 2's Noise handshake (`@stim-cli/core/noise-session`) before any RPC,
+as [the authentication design](../docs/specs/2026-10-13-pluggable-transports-design.md#authentication)
+specifies. The separate HTTP `/health` endpoint reports service readiness.
+Capabilities come only from approved records for the proved client key. The
+network address, `tailscale whois` and `X-Forwarded-For` label records and key
+rate limits.
 
 The same identity and grant must survive a transport change. Binding authority to a tailnet address would make the private LAN transport depend on Tailscale and would conflate a network observation with proof of the client key. [Protocol 2](https://github.com/appandflow/stim/pull/3741), [Private LAN transport](https://github.com/appandflow/stim/pull/4458).
 

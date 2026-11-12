@@ -133,6 +133,9 @@ thread runs.
 
 A chosen slug is public enough to guess, so it needs a password. The share transport uses WebSocket. The former WebRTC path helped only on private links and its measured tail latency and dependency cost outweighed the median gain. [Share secrets](https://github.com/appandflow/stim/pull/4806), [WebRTC removal](https://github.com/appandflow/stim/pull/5252).
 
+Maintainer decision: "Lets remove and keep stats panel", 2026-11-05.
+[Issue #5250](https://github.com/appandflow/stim/issues/5250).
+
 ## Code
 
 - [Viewer sessions](../packages/server/src/share.ts), [password permissions](../packages/server/src/share-identity.ts), and [route claim](../packages/server/src/share-route.ts).

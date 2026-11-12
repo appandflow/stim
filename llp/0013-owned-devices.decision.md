@@ -54,20 +54,27 @@ high or critical disk pressure, or automatic maintenance's age sweep after
 route uses centralized teardown and ownership revalidation. `gc` deletes parked
 hosted devices through their owning session home.
 
-A pool avoids booting a new device and reinstalling a cache-hit build for every worktree. Adoption separates the retained installed app from the previous workspace’s data. A byte check is the condition for skipping install. [Pool design](../docs/specs/2026-09-02-simulator-pool-design.md), [First pooled adoption](https://github.com/appandflow/stim/pull/286).
+A pool avoids booting a new device and reinstalling a cache-hit build for every
+worktree. Adoption resets privacy grants and the keychain at iOS boot, then
+terminates the retained app before clearing its data so it cannot recreate
+the old state. Keeping Xcode's runners saves reinstalling test tooling.
+A byte check is the condition for skipping install.
+[Pool design](../docs/specs/2026-09-02-simulator-pool-design.md),
+[First pooled adoption](https://github.com/appandflow/stim/pull/286),
+[Clean app state](https://github.com/appandflow/stim/pull/4584).
 
 ## Unused runtimes and unavailable simulators
 
-Simulator runtimes are not Stim-owned. Deleting an unused one through
-`xcrun simctl runtime delete <identifier>` is the one deliberate exception: `gc`
-and automatic maintenance do it at every level, only when simctl marks the image
-deletable and no simulator on the machine, user-created ones included, uses it.
-The only installed runtime stays, and when no runtime is used the newest stays.
-An owned simulator whose runtime is gone and that no registered workspace
-records is deleted through centralized teardown. Stim never deletes a user-created unavailable simulator and never runs
-`simctl delete unavailable`.
+Unused simulator runtimes are the exception to per-home device ownership.
+`gc` and automatic maintenance can remove an eligible image at every pressure
+level with `xcrun simctl runtime delete <identifier>`. Removing an unused
+runtime frees shared disk, so the check considers every simulator on the
+machine. [LLP 0002](./0002-cleanup-never-deletes.decision.md#runtimes-the-one-exception-to-ownership)
+defines the full deletion criteria.
 
-Removing an unused runtime frees shared disk, so the check considers every simulator on the machine. The rest of the protections are in [LLP 0002](./0002-cleanup-never-deletes.decision.md#runtimes-the-one-exception-to-ownership).
+An owned simulator whose runtime is gone and that no registered workspace
+records is deleted through centralized teardown. Stim leaves user-created
+unavailable simulators alone and never runs `simctl delete unavailable`.
 
 ## Booted grace and deferred shutdown
 

@@ -85,9 +85,10 @@ An interrupted upload or lost install reply must not admit a partial app or laun
 
 ## Capture and input stay with the session
 
-Hosted view and input resolve only a ready session's exact private ledger-owned
-iOS device while this server holds its session claim. Track the capture helper
-as that claim's child. Give native posture input its own core child-aware claim
+Hosted view and input require a ready session and its held claim. Re-prove the
+exact ledger-owned iOS simulator, Android emulator or macOS app before granting
+access. Track the capture helper as a child of the session claim. Give native
+posture input its own core child-aware claim
 and refuse restarted ownership or native work while that input is live or
 unresolved. Close capture and control before installation or
 native teardown. Wait for native input still running after disconnect or
@@ -98,9 +99,9 @@ actions as presence (`device-host.presence.subscribe`) only to the client that
 owns the session; the client keeps only agent participants from it.
 Hosting approval never widens ordinary workspace read or phone control.
 
-An old capture helper or input child can outlive a connection. Holding the same device’s claims across capture, installation and teardown prevents it from acting on a replacement. [Hosted control](https://github.com/appandflow/stim/pull/2359), [Recorder cleanup](https://github.com/appandflow/stim/pull/5031).
+An old capture helper or input child can outlive a connection. Holding the same device’s claims across capture, installation and teardown prevents it from acting on a replacement. [iOS control](https://github.com/appandflow/stim/pull/2359), [Android control](https://github.com/appandflow/stim/pull/2721), [macOS control](https://github.com/appandflow/stim/pull/2485), [Recorder cleanup](https://github.com/appandflow/stim/pull/5031).
 
 ## Code
 
-- [Session admission, resume and teardown](../packages/server/src/device-host.ts).
+- [Session admission, resume and teardown](../packages/server/src/device-host.ts), [capture and input](../packages/server/src/hosted-view.ts).
 - [Bridge RPCs](../packages/server/src/handlers/device-host.ts), [Metro forwarding](../packages/stim-cli/src/device-host/metro-request.ts), and [native worker](../packages/stim-cli/src/device-host/worker.ts).

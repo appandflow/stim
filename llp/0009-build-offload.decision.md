@@ -36,16 +36,23 @@ Running a project build grants the client code execution on the worker. A worker
 
 ## Placement and fallback
 
-`remote.build` places iOS simulator builds and Android emulator
-builds and macOS SwiftPM Debug builds with the placement words every
-workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
-trying the machines of `remote.machines` in that order, each only while it
-has a free slot and a load under its own `server.maxLoadPerCore`;
-every offload failure falls back to a local build unless the selection is
-`remote-only` or one machine, and no failure path
-writes the cache.
+`remote.build` places iOS simulator, Android emulator and macOS SwiftPM Debug
+builds. Use `local`, `auto`, `remote`, `remote-only` or one machine.
+`auto` prefers the eligible local machine while it has capacity. `remote`
+prefers workers. Automatic placement skips members in
+`remote.buildPoolDisabled` and considers the remaining workers in
+`remote.machines` order with a free slot and load under their own
+`server.maxLoadPerCore`. A worker with the exact completed artifact can go
+ahead of this order. An explicit machine selects only that worker and bypasses
+the automatic load filter. `auto` and `remote` fall back after an offload
+failure only while local placement is enabled. `remote-only` and named
+placement refuse when remote placement fails. No failure path writes the cache.
 
-An explicit machine or `remote-only` selection fixes where the build may run. The other selections can keep development moving when the worker is busy or unreachable. [Build placement](https://github.com/appandflow/stim/pull/1842).
+Explicit selection fixes where a build may run. Automatic selection can
+keep development moving when workers are busy or unreachable. An existing
+exact artifact saves a build, so it ranks ahead of a cold offer.
+[Placement rules](https://github.com/appandflow/stim/pull/4331),
+[Remote artifact reuse](https://github.com/appandflow/stim/pull/3594).
 
 ## Signing stays with the client
 
@@ -85,9 +92,12 @@ from a checkout or `stim engine use <path>`, which the client packs, only while
 `server.acceptClientBuilds` is `true`. stimd passes each Noise message of the
 connection to the job as one frame (a 4-byte big-endian length, then the
 message's type byte and body) and each frame the job writes back as one
-message, and parses neither; a closed connection ends the job's stdin, a
-dropped one keeps the job for `job.start {attach}`, and SIGTERM cancels it.
-This spawn and framing are frozen.
+message, and parses neither. A closed connection ends the job's stdin. An
+unexpected disconnect leaves it open for `job.start {attach}` during the
+detach grace period. Cancellation ends stdin and sends SIGTERM off Windows.
+On Windows, EOF gives the job a chance to cancel its build because Node
+implements SIGTERM there with `TerminateProcess`. This spawn and framing
+are frozen.
 
 Executing the client’s version keeps a worker update from changing the build recipe or forcing an otherwise eligible run back to the client. The resident server carries frames across versions while the job interprets its own protocol. [Exact client jobs](https://github.com/appandflow/stim/pull/5373), [Engine integration](https://github.com/appandflow/stim/pull/5380).
 
