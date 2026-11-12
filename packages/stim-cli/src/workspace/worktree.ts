@@ -720,11 +720,6 @@ function normalizePorcelainLine(line: string): string {
   return ` ${line}`;
 }
 
-export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
-  if (!paths || paths.length === 0) return false;
-  return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
-}
-
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
 export async function unpushedCommitsAsync(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {

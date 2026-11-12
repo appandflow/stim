@@ -1175,10 +1175,23 @@ describe('linked worktree sweep classification', () => {
     ).toBe('merged into origin/main, 2 uncommitted files archived first');
   });
 
-  test('pod install churn alone does not keep a worktree', () => {
+  test('pod install churn proven by its output does not keep a worktree, and the same files unproven do', () => {
+    const porcelain = [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'];
     expect(
-      worktreeSkipReason(linked({ porcelain: [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'] }), 7),
+      worktreeSkipReason(linked({ porcelain, podChurn: ['ios/Podfile.lock', 'ios/App.xcodeproj/project.pbxproj'] }), 7),
     ).toBe(null);
+    expect(worktreeSkipReason(linked({ porcelain }), 7)?.code).toBe('dirty');
+    expect(worktreeSkipReason(linked({ porcelain, podChurn: ['ios/Podfile.lock'] }), 7)?.code).toBe('dirty');
+  });
+
+  test('a tracked file hidden from git status keeps the worktree even when its changes could be archived', () => {
+    const hidden = 'its tracked file a.txt is marked skip-worktree, so git status may not show an edit to it';
+    expect(worktreeSkipReason(linked({ hiddenEdit: hidden, archiveDirty: true, merge: merged() }), null)).toMatchObject(
+      {
+        code: 'dirty',
+        text: `dirty: ${hidden}`,
+      },
+    );
   });
 
   test('watchman cookies alone do not keep a worktree', () => {
@@ -1517,9 +1530,13 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
   return { repo, remote, worktrees, git };
 }
 
-function repoWithTwoBranches({ registerWorktrees = true }: { registerWorktrees?: boolean } = {}) {
+function repoWithTwoBranches({
+  registerWorktrees = true,
+  files = {},
+}: { registerWorktrees?: boolean; files?: Record<string, string> } = {}) {
   const { repo, remote, worktrees, git } = gitRepoWithWorktrees(['merged', 'open'], 'repo', {
-    '.gitignore': '.claude/\n',
+    '.gitignore': '.claude/\nPods/\n',
+    ...files,
   });
   git('remote set-head origin --auto');
   for (const [name, path] of Object.entries(worktrees)) {
@@ -1556,11 +1573,15 @@ test.each(['remove', 'branch delete', 'pod restore'] as const)(
     const { repo, worktrees } = gitRepoWithWorktrees(
       ['cleanup-refusal'],
       'repo',
-      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original' } : {},
+      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original', '.gitignore': 'Pods/\n' } : {},
     );
     const path = worktrees['cleanup-refusal'];
     if (!path) throw new Error('The fixture worktree is missing');
-    if (phase === 'pod restore') writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
+    if (phase === 'pod restore') {
+      writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
+      mkdirSync(join(path, 'ios', 'Pods'), { recursive: true });
+      writeFileSync(join(path, 'ios', 'Pods', 'Manifest.lock'), 'pod churn');
+    }
     upsertProject(path, { metroPort: null, worktreeBranch: 'cleanup-refusal', worktreeBranchOwned: true });
     resetExecutor();
     const executor = getExecutor();
@@ -2916,6 +2937,67 @@ test.skipIf(process.platform === 'win32')(
   },
   240_000,
 );
+
+test('a sparse checkout alone does not keep a finished registered worktree', async () => {
+  const wt = repoWithTwoBranches({ files: { 'notes.txt': 'tracked\n', 'ios/a.txt': 'a\n' } }).worktrees.merged ?? '';
+  execSync('git sparse-checkout set --no-cone /ios/', { cwd: wt, timeout: 15_000 });
+  expect(existsSync(join(wt, 'notes.txt'))).toBe(false);
+  const found = (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() })).worktrees.find(
+    (w) => realpathSync.native(w.path) === wt,
+  );
+  expect(found).toMatchObject({ skipCode: null });
+}, 240_000);
+
+describe('a finished registered worktree whose uncommitted state is pod churn, a hand edit or hidden from git status', () => {
+  const PBX = ['// !$*UTF8*$!', '{', '\tDEVELOPMENT_TEAM = AAA;', '\tname = App;', '}', ''];
+  const files = {
+    'ios/Podfile.lock': 'PODS: []\n',
+    'ios/App.xcodeproj/project.pbxproj': PBX.join('\n'),
+    'notes.txt': 'tracked\n',
+  };
+  const verdict = async (path: string) =>
+    (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now() })).worktrees.find(
+      (w) => realpathSync.native(w.path) === path,
+    );
+  const install = (wt: string) => {
+    writeFileSync(join(wt, 'ios', 'Podfile.lock'), 'PODS:\n  - Yoga\n');
+    mkdirSync(join(wt, 'ios', 'Pods'), { recursive: true });
+    writeFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'PODS:\n  - Yoga\n');
+  };
+
+  test('only churn that matches a pod install in that worktree lets it go', async () => {
+    const wt = repoWithTwoBranches({ files }).worktrees.merged ?? '';
+    install(wt);
+    expect(await verdict(wt)).toMatchObject({ skipCode: null });
+
+    writeFileSync(
+      join(wt, 'ios', 'App.xcodeproj', 'project.pbxproj'),
+      PBX.join('\n').replace('DEVELOPMENT_TEAM = AAA', 'DEVELOPMENT_TEAM = ZZZ'),
+    );
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
+    execSync('git checkout -- ios/App.xcodeproj/project.pbxproj', { cwd: wt, timeout: 15_000 });
+
+    install(wt);
+    rmSync(join(wt, 'ios', 'Pods'), { recursive: true });
+    expect(await verdict(wt)).toMatchObject({ skipCode: 'dirty' });
+  }, 240_000);
+
+  test.each([
+    ['assume-unchanged', 'update-index --assume-unchanged notes.txt', /notes\.txt is marked assume-unchanged/],
+    ['skip-worktree', 'update-index --skip-worktree notes.txt', /notes\.txt is marked skip-worktree/],
+  ])(
+    '%s keeps it',
+    async (_name, command, message) => {
+      const wt = repoWithTwoBranches({ files }).worktrees.merged ?? '';
+      execSync(`git ${command}`, { cwd: wt, timeout: 15_000 });
+      if (command.includes('update-index')) writeFileSync(join(wt, 'notes.txt'), 'edited\n');
+      const found = await verdict(wt);
+      expect(found).toMatchObject({ skipCode: 'dirty' });
+      expect(found?.skipped).toMatch(message);
+    },
+    240_000,
+  );
+});
 
 test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
   const { worktrees } = repoWithTwoBranches();

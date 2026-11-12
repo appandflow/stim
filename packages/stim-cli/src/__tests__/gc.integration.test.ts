@@ -783,6 +783,8 @@ function easGcHarness({
   get?: Record<string, EasResponse>;
   stop?: Record<string, EasResponse>;
 }) {
+  const appJson = join(project, 'app.json');
+  if (!existsSync(appJson)) writeFileSync(appJson, '{"expo":{}}');
   const calls: EasCall[] = [];
   let page = 0;
   return {

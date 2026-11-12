@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
+import { podLockHash, readLockHashes } from './lightened-pod-locks.ts';
 import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadataFile } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
@@ -20,11 +21,17 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
-function readRecord(root: string): { dirs: string[]; pending: string[] } {
+interface LightenedRecord {
+  dirs: string[];
+  pending: string[];
+  locks: Record<string, string>;
+}
+
+function readRecord(root: string): LightenedRecord {
   const record = readJsonObject(workspaceLightenedFile(root));
   return isJsonObject(record)
-    ? { dirs: strings(record.dirs), pending: strings(record.pending) }
-    : { dirs: [], pending: [] };
+    ? { dirs: strings(record.dirs), pending: strings(record.pending), locks: readLockHashes(record) }
+    : { dirs: [], pending: [], locks: {} };
 }
 
 /** The keys among `keys` that have a Stim workspace, which is what restores a lightened worktree. */
@@ -106,10 +113,7 @@ export async function restoreProblem(
     : null;
 }
 
-function writeRecord(
-  key: string,
-  update: (record: { dirs: string[]; pending: string[] }) => { dirs: string[]; pending: string[] },
-): void {
+function writeRecord(key: string, update: (record: LightenedRecord) => LightenedRecord): void {
   withWorkspaceStateLock(key, () => {
     const file = workspaceLightenedFile(key);
     mkdirSync(dirname(file), { recursive: true });
@@ -126,16 +130,33 @@ function writeRecord(
  * it stays pending until `finishLightened`, so a deletion that stops part-way is still restored.
  */
 export function recordLightened(keys: readonly string[], dir: string): void {
+  const lock = installedPodLock(dir);
   for (const key of workspaceKeys(keys))
-    writeRecord(key, ({ dirs, pending }) => ({
+    writeRecord(key, ({ dirs, pending, locks }) => ({
       dirs: [...new Set([...dirs, dir])],
       pending: [...new Set([...pending, dir])],
+      locks: lock ? { ...locks, [lock.path]: lock.hash } : locks,
     }));
+}
+
+function installedPodLock(dir: string): { path: string; hash: string } | null {
+  if (basename(dir) !== 'Pods') return null;
+  try {
+    const lock = readFileSync(join(dirname(dir), 'Podfile.lock'), 'utf-8');
+    if (podLockHash(lock) !== podLockHash(readFileSync(join(dir, 'Manifest.lock'), 'utf-8'))) return null;
+    return { path: join(realpathSync(dirname(dir)), 'Podfile.lock'), hash: podLockHash(lock) };
+  } catch {
+    return null;
+  }
 }
 
 export function finishLightened(keys: readonly string[], dir: string): void {
   for (const key of workspaceKeys(keys))
-    writeRecord(key, ({ dirs, pending }) => ({ dirs, pending: pending.filter((entry) => entry !== dir) }));
+    writeRecord(key, ({ dirs, pending, locks }) => ({
+      dirs,
+      pending: pending.filter((entry) => entry !== dir),
+      locks,
+    }));
 }
 
 function depsFailure(

@@ -2331,6 +2331,17 @@ repository directory is refused because it is not a worktree. `--force` permits 
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
 
+Removal restores a modified `ios/Podfile.lock` itself only when
+`Pods/Manifest.lock`, the copy `pod install` makes, holds the same text, or when
+gc deleted `Pods` while they matched and the lock has not changed since. A
+deliberate `pod update` followed by an install leaves the same evidence, so
+commit it before removing. Any other change to the lock, and every change to
+`project.pbxproj`, is treated as your edit and refused like any uncommitted
+change. A tracked file marked `assume-unchanged`, or `skip-worktree` with the
+file on disk, hides edits from `git status`, so removal refuses and names it
+with the `git update-index` command that shows it, until you pass `--force`.
+Files a sparse checkout leaves out are not on disk and do not count.
+
 ## `gc`
 
 ```text
@@ -2356,7 +2367,8 @@ What each level deletes. A level includes the ones below it.
   stale records (the device ledger, the EAS ledger, gone Stim homes, dead build
   locks and slots, empty process locks, stale status caches, expired device
   leases), archives past retention, workspace logs over 8 MiB, parked hosted
-  devices, orphaned EAS sessions of the current Expo project, unused iOS
+  devices, orphaned EAS sessions of the current project when it has an Expo
+  config file, unused iOS
   simulator runtimes, and finished (merged, or pull request merged or closed)
   linked worktrees once `gc.worktreeGraceMinutes` have passed. It also reduces
   every workspace with no activity for `idle.dormantDays` (1 by default) to its

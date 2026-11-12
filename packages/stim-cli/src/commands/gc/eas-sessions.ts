@@ -68,6 +68,16 @@ const EAS_OPERATION_TIMEOUT_MS = 30000;
 const EAS_COLLECTION_TIMEOUT_MS = 60000;
 const EAS_MAX_LIST_PAGES = 100;
 const EAS_LOCK_WAIT_MS = 0;
+const EXPO_CONFIG_FILES = [
+  'app.json',
+  'app.config.json',
+  'app.config.ts',
+  'app.config.mts',
+  'app.config.cts',
+  'app.config.mjs',
+  'app.config.cjs',
+  'app.config.js',
+];
 const EAS_LOCK_SNAPSHOT_RETRIES = 3;
 const PROXY_CREDENTIAL_ENV = ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] as const;
 
@@ -164,6 +174,16 @@ function claimStateAbsence(claim: EasSessionClaim): { absent: boolean; notice: s
   return { absent: sessionId !== claim.sessionId, notice: null };
 }
 
+function hasExpoConfig(projectRoot: string): boolean {
+  return EXPO_CONFIG_FILES.some((name) => {
+    try {
+      return statSync(join(projectRoot, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): Promise<EasSessionSweep> {
   const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
   const empty = (notices: string[] = []): EasSessionSweep => ({
@@ -174,6 +194,7 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
   });
   if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) return empty();
   if (deps.easSweepBlockedNotice) return empty([deps.easSweepBlockedNotice]);
+  if (!hasExpoConfig(projectRoot)) return empty();
 
   const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(projectRoot);
   if (!eas) return empty(['EAS session sweep skipped: eas-cli is not available for the current Expo project.']);
@@ -207,6 +228,13 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
       return empty([...recorded.notices, `EAS session list exceeded its total time limit for ${projectRoot}.`]);
     }
 
+    // EAS CLI's simulator:list creates app.json if the checkout has no Expo config when the child reads it.
+    if (!hasExpoConfig(projectRoot)) {
+      return empty([
+        ...recorded.notices,
+        `EAS session list stopped because ${projectRoot} no longer has an Expo config.`,
+      ]);
+    }
     let stdout: string;
     try {
       stdout = await run(eas.file, listOwnedSessionsArgs(after), {

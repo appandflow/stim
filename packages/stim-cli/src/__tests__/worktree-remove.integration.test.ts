@@ -13,7 +13,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { excludePodChurn, porcelainPath, removeOp, removeWorktreeTarget, removalRemedy } from '../commands/worktree.ts';
+import {
+  excludePodChurn,
+  porcelainPath,
+  provenPodChurn,
+  removeOp,
+  removeWorktreeTarget,
+  removalRemedy,
+} from '../commands/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { serviceRunningFrom } from '../workspace/service-guard.ts';
@@ -21,6 +28,7 @@ import { startOp } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordLightened } from '../workspace/lightened.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -31,13 +39,6 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
   expect(porcelainPath('?? "we\u00e4rd path"')).toBe('we\u00e4rd path');
   expect(porcelainPath('   ')).toBe(null);
-});
-
-test('pod-install churn keeps its exact restore command', () => {
-  const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
-  expect(lines).toMatch(/pod install` rewrites/);
-  expect(lines).toMatch(/ios\/Podfile\.lock/);
-  expect(lines).not.toMatch(/clean -fd/);
 });
 
 test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
@@ -168,6 +169,7 @@ function makeExecutor({
       }
       if (/status --porcelain/.test(cmd)) return statusAnswers.length ? (statusAnswers.shift() ?? null) : dirty;
       if (/ls-files --stage/.test(cmd)) return staged;
+      if (/ls-files -v -z/.test(cmd)) return '';
       if (/--git-common-dir/.test(cmd)) return commonDir;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
@@ -1659,19 +1661,47 @@ test('action: the bare repository directory itself is refused as a removal targe
   expect(errs.join('\n')).toMatch(/is the bare repository, not a worktree/);
 });
 
-test('excludePodChurn restores pod-install churn in an app whose Xcode project is outside ios/', () => {
-  const rnTester = { dir: 'packages/rn-tester', project: 'RNTesterPods' };
-  const { lines, restore } = excludePodChurn(
-    [' M packages/rn-tester/Podfile.lock', ' M packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj'],
-    [rnTester],
-  );
-  expect(restore).toEqual([
-    'packages/rn-tester/Podfile.lock',
-    'packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj',
-  ]);
-  expect(lines).toEqual([]);
-  expect(excludePodChurn([' M packages/rn-tester/Desktop.xcodeproj/project.pbxproj'], [rnTester]).restore).toEqual([]);
-  expect(excludePodChurn([' M packages/other/Podfile.lock'], [rnTester]).restore).toEqual([]);
+test('a lock gc saw match its Manifest.lock stays churn after gc deletes Pods, until the lock changes', () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-pod-lightened-')));
+  try {
+    const ios = join(base, 'ios');
+    mkdirSync(join(ios, 'Pods'), { recursive: true });
+    writeFileSync(join(ios, 'Podfile.lock'), 'PODS: []\n');
+    writeFileSync(join(ios, 'Pods', 'Manifest.lock'), 'PODS: []\n');
+    ensureWorkspaceStorage(base);
+    const lock = [' M ios/Podfile.lock'];
+    recordLightened([base], join(ios, 'Pods'));
+    rmSync(join(ios, 'Pods'), { recursive: true });
+    expect(provenPodChurn(base, lock, [], [base])).toEqual(['ios/Podfile.lock']);
+    writeFileSync(join(ios, 'Podfile.lock'), 'PODS:\n  - edited\n');
+    expect(provenPodChurn(base, lock, [], [base])).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('pod-install churn is recognised in an app whose Xcode project is outside ios/, and only with the install output beside it', () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-pod-custom-')));
+  try {
+    const rnTester = { dir: 'packages/rn-tester' };
+    const app = join(base, 'packages', 'rn-tester');
+    mkdirSync(join(app, 'Pods'), { recursive: true });
+    writeFileSync(join(app, 'Podfile.lock'), 'PODS: []\n');
+    const lock = ' M packages/rn-tester/Podfile.lock';
+    const pbxproj = ' M packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj';
+    expect(provenPodChurn(base, [lock], [rnTester])).toEqual([]);
+    writeFileSync(join(app, 'Pods', 'Manifest.lock'), 'PODS: []\n');
+    expect(provenPodChurn(base, [lock], [rnTester])).toEqual(['packages/rn-tester/Podfile.lock']);
+    expect(provenPodChurn(base, [pbxproj], [rnTester])).toEqual([]);
+    expect(provenPodChurn(base, [' M packages/other/Podfile.lock'], [rnTester])).toEqual([]);
+    expect(excludePodChurn([lock], ['packages/rn-tester/Podfile.lock'])).toEqual({
+      lines: [],
+      restore: ['packages/rn-tester/Podfile.lock'],
+    });
+    expect(excludePodChurn([lock, '?? x'], ['packages/rn-tester/Podfile.lock']).restore).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 function cookieRepo(base: string): string {
@@ -1755,6 +1785,34 @@ test('against a real repo: an untracked file beside watchman cookies is still re
   }
 }, 30_000);
 
+const PBXPROJ = [
+  '// !$*UTF8*$!',
+  '{',
+  '\tbuildSettings = {',
+  '\t\tDEVELOPMENT_TEAM = AAA;',
+  '\t\tname = Tlon;',
+  '\t};',
+  '}',
+  '',
+];
+const PBXPROJ_TEXT = PBXPROJ.join('\n');
+const PBXPROJ_HAND_EDIT = PBXPROJ_TEXT.replace('DEVELOPMENT_TEAM = AAA', 'DEVELOPMENT_TEAM = ZZZ');
+
+async function removeAndRead(wt: string): Promise<string> {
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  console.error = (m) => errs.push(String(m));
+  console.log = () => {};
+  try {
+    await captureAction(removeOp)(wt, {});
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+  }
+  return errs.join('\n');
+}
+
 function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean } = {}) {
   const repo = join(base, 'repo');
   const bareRemote = join(base, 'remote.git');
@@ -1766,21 +1824,20 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
   git('git config user.email test@example.com');
   git('git config user.name test');
   git(`git remote add origin "${bareRemote}"`);
-  writeFileSync(join(repo, '.gitignore'), '.stim/\n');
+  writeFileSync(join(repo, '.gitignore'), '.stim/\nPods/\n');
   writeFileSync(join(repo, 'apps', 'app', 'ios', 'Podfile.lock'), 'PODS:\n  - hermes-engine\n');
-  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n');
+  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), PBXPROJ_TEXT);
   writeFileSync(join(repo, 'apps', 'app', 'App.tsx'), 'export default 1;\n');
   git('git add -A');
   git('git commit -q -m init');
   git('git push -q -u origin HEAD');
-  const wt = join(base, 'wt');
+  const wt = join(base, 'wt dir');
   git(`git worktree add -q "${wt}" -b feat-pods`);
 
-  writeFileSync(
-    join(wt, 'apps', 'app', 'ios', 'Podfile.lock'),
-    `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`,
-  );
-  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n// regenerated\n');
+  const installed = `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`;
+  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), installed);
+  mkdirSync(join(wt, 'apps', 'app', 'ios', 'Pods'), { recursive: true });
+  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Pods', 'Manifest.lock'), installed);
   if (extraDirt) writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 2;\n');
   return wt;
 }
@@ -1795,7 +1852,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
   try {
     const wt = podChurnRepo(base);
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 }).trim()).toBe(
-      'M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
+      'M apps/app/ios/Podfile.lock',
     );
 
     console.error = (m) => errs.push(String(m));
@@ -1809,7 +1866,6 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
     expect(process.exitCode).not.toBe(1);
     expect(existsSync(wt)).toBe(false);
     expect(text).toMatch(/restored apps\/app\/ios\/Podfile\.lock \(pod install churn; the worktree is being removed\)/);
-    expect(text).toMatch(/restored apps\/app\/ios\/Tlon\.xcodeproj\/project\.pbxproj \(pod install churn/);
   } finally {
     console.error = originalError;
     console.log = originalLog;
@@ -1850,6 +1906,102 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+const KEPT_EDITS: [string, (wt: string) => void, RegExp][] = [
+  [
+    'a hand edit to project.pbxproj beside real Podfile.lock churn',
+    (wt) => writeFileSync(join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), PBXPROJ_HAND_EDIT),
+    /M apps\/app\/ios\/Tlon\.xcodeproj\/project\.pbxproj/,
+  ],
+  [
+    'a pbxproj edit that adds only Pods references, with a matching install',
+    (wt) =>
+      writeFileSync(
+        join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'),
+        PBXPROJ.toSpliced(4, 0, '\t\tbaseConfigurationReference = BBB /* Pods-Tlon.debug.xcconfig */;').join('\n'),
+      ),
+    /M apps\/app\/ios\/Tlon\.xcodeproj\/project\.pbxproj/,
+  ],
+  [
+    'a hand edit to Podfile.lock after the install',
+    (wt) => writeFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'PODS:\n  - hand-edited\n'),
+    /M apps\/app\/ios\/Podfile\.lock/,
+  ],
+  [
+    'a Podfile.lock change with no install output in the worktree',
+    (wt) => rmSync(join(wt, 'apps', 'app', 'ios', 'Pods'), { recursive: true }),
+    /M apps\/app\/ios\/Podfile\.lock/,
+  ],
+  [
+    'an edit hidden with assume-unchanged',
+    (wt) => {
+      execSync('git update-index --assume-unchanged apps/app/App.tsx', { cwd: wt, timeout: 15_000 });
+      writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 3;\n');
+    },
+    /apps\/app\/App\.tsx is marked assume-unchanged/,
+  ],
+  [
+    'an edit hidden with skip-worktree',
+    (wt) => {
+      execSync('git update-index --skip-worktree apps/app/App.tsx', { cwd: wt, timeout: 15_000 });
+      writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 3;\n');
+    },
+    /apps\/app\/App\.tsx is marked skip-worktree/,
+  ],
+];
+
+test('against a real repo: a sparse checkout alone does not keep the worktree, but a skip-worktree file on disk does', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-sparse-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = podChurnRepo(base);
+    execSync('git sparse-checkout set --no-cone /apps/app/ios/', { cwd: wt, timeout: 15_000 });
+    expect(existsSync(join(wt, 'apps', 'app', 'App.tsx'))).toBe(false);
+    await removeAndRead(wt);
+    expect(process.exitCode).not.toBe(1);
+    expect(existsSync(wt)).toBe(false);
+  } finally {
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test.each(KEPT_EDITS)(
+  'against a real repo: worktree remove refuses %s and changes nothing',
+  async (_name, change, message) => {
+    resetExecutor();
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-kept-')));
+    const originalCwd = process.cwd();
+    try {
+      const wt = podChurnRepo(base);
+      change(wt);
+      const status = () => execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 });
+      const before = status();
+      const lock = readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8');
+      const text = await removeAndRead(wt);
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(wt)).toBe(true);
+      expect(text).toContain(`Refusing to remove ${wt}`);
+      expect(text).toMatch(message);
+      const kind = /skip-worktree/.test(message.source)
+        ? 'skip-worktree'
+        : /assume-unchanged/.test(message.source)
+          ? 'assume-unchanged'
+          : null;
+      expect(text).toContain(kind ? `git -C '${wt}' update-index --no-${kind} 'apps/app/App.tsx'` : '');
+      expect(text).not.toMatch(/restored/);
+      expect(status()).toBe(before);
+      expect(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8')).toBe(lock);
+    } finally {
+      process.chdir(originalCwd);
+      process.exitCode = 0;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 test('action: removal releases this workspace lease and leaves another workspace lease alone', async () => {
   upsertProject(mainDir, { metroPort: 8086 });

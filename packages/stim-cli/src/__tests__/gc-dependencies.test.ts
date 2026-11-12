@@ -28,6 +28,7 @@ import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.t
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
+import { podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { testContext } from './_context.ts';
 
 function recordedDirs(root: string): unknown {
@@ -289,6 +290,22 @@ test.skipIf(process.platform === 'win32')(
     expect(paths.some((path) => path.startsWith(`${roots.keyless}/`))).toBe(false);
   },
   60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'lightening ios/Pods records the hash of the Podfile.lock its Manifest.lock matches',
+  () => {
+    const root = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    writeFileSync(join(root, 'ios', 'Podfile.lock'), 'PODS: []\n');
+    writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODS: []\n');
+    recordLightened([root], join(root, 'ios', 'Pods'));
+    expect(readJsonObject(workspaceLightenedFile(root))?.locks).toEqual({
+      [join(root, 'ios', 'Podfile.lock')]: podLockHash('PODS: []\n'),
+    });
+    writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODS:\n  - other\n');
+    recordLightened([root], join(root, 'ios', 'Pods'));
+    expect(Object.keys(readJsonObject(workspaceLightenedFile(root))?.locks ?? {})).toHaveLength(1);
+  },
 );
 
 test.skipIf(process.platform === 'win32')(

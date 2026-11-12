@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, test } from 'node:test';
+import { after, afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { killStimdUnder } from '../../vitest.kill-run-processes.ts';
 
 const packageRoot = new URL('../../packages/stim-cli/', import.meta.url);
 const version = JSON.parse(readFileSync(new URL('package.json', packageRoot), 'utf8')).version;
@@ -16,6 +17,8 @@ beforeEach(() => {
   process.env.STIM_HOME = home;
   process.env.STIM_NO_UPDATE_CHECK = '1';
 });
+
+after(() => killStimdUnder(tmpdir()));
 
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -133,6 +136,7 @@ for (const entry of entries) {
     );
   });
 
+  // ios and android start a stimd before they refuse outside a project: https://github.com/appandflow/stim/issues/5535
   test(`${entry}: every project command refuses outside a project with STIM_NO_PROJECT`, () => {
     const outside = mkdtempSync(join(tmpdir(), 'stim-cli-e2e-outside-'));
     const options = { cwd: outside, env: { ...process.env, HOME: home } };
