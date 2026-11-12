@@ -60,14 +60,21 @@ child started.
 
 A child killed before it writes `observing.json` (starved during module load,
 before its signal handler runs) keeps the claim as `{"record":null}`; that is a
-known remaining way to a stuck claim, rare because reports and the daemon
-precompute do not start children under load.
+known remaining way to a stuck claim.
 
 The child answers a SIGTERM during its module load itself, because a signal
-before its handler exists would kill it unacknowledged. A Desktop report with too
-little budget left, or on a host above the precompute's load limit, does not
-start a fingerprint child: the prebuild-record check, the fingerprint notes and
-the parity check are each replaced by a note saying so.
+before its handler exists would kill it unacknowledged.
+
+Only the read-only doctor report is gated: with too little budget left, or on a
+host above the precompute's load limit, it does not start a fingerprint child,
+and the prebuild-record check, the fingerprint notes and the parity check are each
+replaced by a note saying so. The repair, plan and warm reports are actions the
+person asked for and need the fingerprint, so they still start a fingerprint
+child under load. The kill-and-settle rule above covers them, and a child killed
+before it writes `observing.json` on those paths still leaves a null claim.
+
+The start-time comparison reads the process start times in the two process
+records; on macOS these are wall-clock times.
 
 The rule, including the start-time condition, was chosen by the coordinator and
 the reviews of #5547, not by the maintainer.
