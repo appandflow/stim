@@ -1021,7 +1021,7 @@
     "out": "",
     "err": "",
     "exitCode": 1,
-    "error": "error: '--cache' was removed: stim gc runs one pass at the measured level and empties the shared caches only at critical; use --pressure critical to run that level"
+    "error": "error: '--cache' was removed: no flag selects one cache now; stim gc runs one pass at the measured level, and stim gc --dry-run --pressure critical shows what the widest pass would remove"
   },
   "[\"gc\",\"--older-than\",\"30\"]": {
     "out": "",

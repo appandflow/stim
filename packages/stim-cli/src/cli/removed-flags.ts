@@ -11,7 +11,7 @@ const REMOVED_FLAGS: Readonly<Record<string, Readonly<Record<string, string>>>> 
     '--delete': 'stim gc deletes by default; use --dry-run to report what it would delete',
     '--older-than': 'age limits are the maintenance.olderThanDays and idle.dormantDays settings',
     '--cache':
-      'stim gc runs one pass at the measured level and empties the shared caches only at critical; use --pressure critical to run that level',
+      'no flag selects one cache now; stim gc runs one pass at the measured level, and stim gc --dry-run --pressure critical shows what the widest pass would remove',
     '--worktrees':
       'the maintenance.removeFinishedWorktrees and maintenance.removeIdleWorktrees settings decide which worktrees the pass removes; use stim worktree remove for one worktree',
   },

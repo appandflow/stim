@@ -32,9 +32,9 @@ async function refusal(op: typeof gc, args: string[]): Promise<string> {
 test.each([
   [['--delete'], '--delete', '--dry-run'],
   [['--older-than', '3d'], '--older-than', 'maintenance.olderThanDays'],
-  [['--cache', 'parked'], '--cache', '--pressure critical'],
+  [['--cache', 'parked'], '--cache', 'gc --dry-run --pressure critical'],
   [['--worktrees'], '--worktrees', 'stim worktree remove'],
-  [['--cache=all'], '--cache', '--pressure critical'],
+  [['--cache=all'], '--cache', 'gc --dry-run --pressure critical'],
 ])('stim gc %j is refused with the replacement and runs no pass', async (args, flag, replacement) => {
   const message = await refusal(gc, args);
 

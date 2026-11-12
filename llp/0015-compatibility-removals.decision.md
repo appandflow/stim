@@ -54,8 +54,10 @@ until the old daemon ends.
 2.0 (LLP 0001). A command line that carries one exits 1 with
 `error: '<flag>' was removed: <replacement>` and runs no pass, so a script written for
 1.40 never deletes something narrower or wider than it meant. The replacements
-are `--dry-run` (report; deleting is the default), `--pressure critical` for the
-caches (a pass cannot be narrowed to one cache), the maintenance settings for
+are `--dry-run` (report; deleting is the default), nothing for `--cache` (no flag
+selects one cache, and `--pressure critical` is the widest pass: it also removes
+worktrees, `node_modules` and other tools' caches, so the message points only to
+`gc --dry-run --pressure critical` to see what it would remove), the maintenance settings for
 age (`maintenance.olderThanDays`, `idle.dormantDays`) and for worktrees
 (`maintenance.removeFinishedWorktrees`, `maintenance.removeIdleWorktrees`), and
 `stim worktree remove` for one worktree. The parser's unknown-option path looks
