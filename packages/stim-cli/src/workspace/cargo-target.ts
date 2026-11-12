@@ -324,7 +324,7 @@ export async function trimCargoTarget(
       return false;
     }
     for (const profile of await locks(there))
-      if (!renameStands(await lockOutcome(profile, signal))) {
+      if (!renameStands(await lockOutcome(profile))) {
         try {
           await rename(there, dir);
           result.kept.push(`${label}: a build took its .cargo-lock during the move`);
