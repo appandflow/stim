@@ -10,6 +10,14 @@ import {
   type DependencyInstallRecord,
 } from '@stim-cli/core/state';
 
+/**
+ * Whether an absent tree is shown gone rather than on a volume that is not mounted. On Linux the mounted volumes Stim
+ * lists are only `/`, so there its parent directory must still exist.
+ */
+function goneFromMountedVolume(tree: string, volumes: string[]): boolean {
+  return (process.platform !== 'linux' || existsSync(dirname(tree))) && isOnMountedVolume(tree, volumes);
+}
+
 /** Rewrites the record of `tree` under its lock; a null update deletes it. */
 export function updateDependencyInstall(
   tree: string,
@@ -50,7 +58,7 @@ export function pruneDependencyInstallRecords(): void {
       updateDependencyInstall(tree, (record) => {
         const saved = record.saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')));
         // @ref LLP 0002#fail-closed -- an absent tree on an unmounted volume is not proof it is gone
-        if (!saved.length && !existsSync(tree) && isOnMountedVolume(tree, volumes)) return null;
+        if (!saved.length && !existsSync(tree) && goneFromMountedVolume(tree, volumes)) return null;
         return { ...record, saved };
       });
     } catch {}

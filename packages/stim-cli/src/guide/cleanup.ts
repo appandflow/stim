@@ -654,10 +654,13 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Stim runs an install it records the edits, and after an install it did not
   run, a file changed since the previous reference stays an edit unless its
   package (its package.json, or the pod's directory) was reinstalled; with no
-  record yet the previous reference is the stamp file's creation time. Not
+  record yet the previous reference is the stamp file's creation time. In a
+  package added since, a file changed more than 5 seconds after the
+  package's package.json was created stays an edit. Not
   counted: the package manager's state files, dot-directories at a
-  node_modules root other than .pnpm, .bun and .bin (.cache, .vite,
-  .vitest-cache), .gradle,
+  node_modules root other than .pnpm, .bun, .deno and .bin, which are
+  treated as tool caches and not checked (.cache, .vite, .vitest-cache, a
+  custom pnpm virtual-store directory), .gradle,
   .kotlin and .cxx in a package's android directory or beside a Gradle build
   script, a build directory there holding Gradle output (intermediates,
   generated, outputs, tmp, .transforms, kotlin, classes) that the package's
@@ -665,7 +668,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   xcuserdata. Not seen: an edit that keeps an older modification time (cp -p,
   rsync -t, tar), a file deleted by hand, edits inside those directories, and
   after an install Stim did not run, unrecorded edits of a package whose
-  package.json was replaced by an edit (sed -i, save by rename).
+  package.json was replaced by an edit (sed -i, save by rename), and an edit
+  inside the first script window once a project install moves the stamp.
   Below critical a tree with edits is kept, and the kept action, \`stim
   status\` (--json dependencyEdits) and \`stim doctor\` name them. At critical
   the edits, and files inside the install window, are copied (checked by size

@@ -2447,8 +2447,9 @@ manager's stamp; a 10-minute window after the stamp counts as install output
 only when the root `package.json` declares `preinstall`, `install`,
 `postinstall` or `prepare`. An edit found once stays an edit while the file is
 unchanged, and a later install does not hide it unless it reinstalled that
-package. Tool caches (dot-directories at the `node_modules` root other than `.pnpm`,
-`.bun` and `.bin`, such as `.cache` and `.vite`) and Gradle, CMake and Xcode
+package. Dot-directories at the `node_modules` root other than `.pnpm`, `.bun`,
+`.deno` and `.bin` are treated as tool caches (`.cache`, `.vite`, a custom
+pnpm virtual-store directory) and not checked, and Gradle, CMake and Xcode
 output (`.gradle`,
 `.kotlin`, `.cxx` and Gradle's `build` in a package's `android` directory or
 beside a Gradle build script, a package's `ios/build`, Pods' `xcuserdata`)
@@ -2462,7 +2463,8 @@ tree with more than 1000 changed files or 64 MB, or a directory that cannot be
 read, is kept even at critical. Not seen: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
 hand, and, after an install Stim did not run, unrecorded edits of a package
-whose `package.json` an edit replaced (`sed -i`, save by rename). An edit in `node_modules` is never durable: make it a patch with
+whose `package.json` an edit replaced (`sed -i`, save by rename), and an edit
+inside the first script window once a project install moves the stamp. An edit in `node_modules` is never durable: make it a patch with
 `pnpm patch`, `yarn patch` or `patch-package`.
 
 Everything `gc` deletes, by category (N normal, H high, C critical):

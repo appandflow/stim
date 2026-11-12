@@ -47,6 +47,12 @@ const POD_GRACE_MS = 60_000;
  * tree, and are saved at critical.
  */
 const LINKED_GRACE_MS = 60_000;
+/**
+ * How long after a package's `package.json` was created an install still writes that package's files: 0.5 s at most
+ * measured with npm, pnpm, Yarn and Bun, esbuild's postinstall included, and 1 ms for a pod. A later change inside a
+ * package added since the previous reference is an edit.
+ */
+const PACKAGE_WRITE_MS = 5_000;
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
 /** Changed files listed before a walk stops listing; a tree with more is kept even at critical. */
 const LISTED_EDITS = 1000;
@@ -66,7 +72,7 @@ const STAMPS: Record<TreeKind, readonly string[]> = {
 /** What `pod install` generates afresh for every pod, rather than a pod's own sources. */
 const POD_GENERATED = ['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs'];
 /** The dot-directories at a node_modules root that hold packages; every other one is a tool's cache (`.cache`, `.vite`). */
-const TREE_DOT_DIRS = ['.pnpm', '.bun', '.bin'];
+const TREE_DOT_DIRS = ['.pnpm', '.bun', '.deno', '.bin'];
 const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
 /** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
 const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
@@ -187,6 +193,8 @@ interface ScanWindow {
   born: number | null;
   /** Where the window that ends at `before` starts: a change after it in a package not reinstalled is saved at critical. */
   beforeFrom: number | null;
+  /** True when no stamp covers the tree and its directory's modification time stands in for one. */
+  unstamped: boolean;
 }
 
 /**
@@ -252,7 +260,9 @@ async function scanEdits(tree: string, window: ScanWindow, signal?: AbortSignal)
       const file = { rel: path.join('/'), mtimeMs: stat.mtimeMs, size: stat.size };
       const kept =
         stat.mtimeMs > window.graceEnd ||
-        (window.before !== null && stat.mtimeMs > window.before && unitBorn <= window.before);
+        (window.before !== null &&
+          stat.mtimeMs > window.before &&
+          (unitBorn <= window.before || stat.mtimeMs > unitBorn + PACKAGE_WRITE_MS));
       const carried =
         window.beforeFrom !== null &&
         window.before !== null &&
@@ -330,7 +340,15 @@ function reference(tree: string, worktree: string, record: DependencyInstallReco
       stampTree = current;
     }
   if (recorded !== null && (stampedAt === null || recorded >= stampedAt))
-    return { since: recorded, graceEnd: recorded, saveFrom: recorded, before: null, born: null, beforeFrom: null };
+    return {
+      since: recorded,
+      graceEnd: recorded,
+      saveFrom: recorded,
+      before: null,
+      born: null,
+      beforeFrom: null,
+      unstamped: false,
+    };
   let linkedOnly = false;
   if (stampedAt === null) {
     const linked = [mtimeOf(tree), mtimeOf(join(tree, '.bin'))].filter((at): at is number => at !== null);
@@ -342,7 +360,15 @@ function reference(tree: string, worktree: string, record: DependencyInstallReco
     kind === 'node_modules' && [installRoot, root].some((dir) => declaresInstallScript(dir)) ? SCRIPT_GRACE_MS : 0;
   const grace = Math.max(kind === 'Pods' ? POD_GRACE_MS : scripts, linkedOnly ? LINKED_GRACE_MS : 0);
   const born = linkedOnly ? (birthOf(join(tree, '.bin')) ?? birthOf(tree)) : birthOf(stampFile(stampTree) ?? tree);
-  return { since: stampedAt, graceEnd: stampedAt + grace, saveFrom: stampedAt, before: null, born, beforeFrom: null };
+  return {
+    since: stampedAt,
+    graceEnd: stampedAt + grace,
+    saveFrom: stampedAt,
+    before: null,
+    born,
+    beforeFrom: null,
+    unstamped: linkedOnly,
+  };
 }
 
 function unchanged(tree: string, file: DependencyEditFile): boolean {
@@ -360,15 +386,24 @@ function merge(...lists: DependencyEditFile[][]): DependencyEditFile[] {
   return [...files.values()].toSorted(byPath);
 }
 
+const AFTER_INSTALL = 'changed after its install';
+
+function afterWhat(window: ScanWindow): string {
+  return window.unstamped ? 'changed after the tree itself last changed (it has no install stamp)' : AFTER_INSTALL;
+}
+
 function countText(count: number, complete: boolean): string {
   return `${complete ? '' : 'at least '}${count} file${count === 1 && complete ? '' : 's'}`;
 }
 
 /** Why maintenance keeps a dependency tree whose files changed after its install. */
-export function editsKeptReason(edits: { count: number; complete: boolean; files: readonly string[] }): string {
+export function editsKeptReason(
+  edits: { count: number; complete: boolean; files: readonly string[] },
+  after: string = AFTER_INSTALL,
+): string {
   const shown = edits.files.slice(0, SHOWN).join(', ');
   const more = edits.count > SHOWN || !edits.complete ? ', ...' : '';
-  return `${countText(edits.count, edits.complete)} in it changed after its install (${shown}${more}), so maintenance keeps it until critical pressure; make the change a patch (pnpm patch, yarn patch or patch-package) so a reinstall keeps it`;
+  return `${countText(edits.count, edits.complete)} in it ${after} (${shown}${more}), so maintenance keeps it until critical pressure; make the change a patch (pnpm patch, yarn patch or patch-package) so a reinstall keeps it`;
 }
 
 export interface SavedEdits {
@@ -491,7 +526,10 @@ export async function checkDependencyEdits(
     } catch {}
   if (level !== 'critical')
     return edits.length
-      ? { keep: editsKeptReason({ count: edits.length, complete, files: edits.map((f) => f.rel) }), edited: true }
+      ? {
+          keep: editsKeptReason({ count: edits.length, complete, files: edits.map((f) => f.rel) }, afterWhat(window)),
+          edited: true,
+        }
       : { delete: true };
   const toSave = merge(edits, scan.grace);
   if (!toSave.length) return { delete: true };
@@ -499,13 +537,13 @@ export async function checkDependencyEdits(
   if (!complete || bytes > SAVE_CAP_BYTES)
     return {
       edited: true,
-      keep: `${countText(toSave.length, complete)} in it changed after its install, more than the ${LISTED_EDITS} files or ${SAVE_CAP_BYTES / 1024 ** 2} MB maintenance saves before deleting, so it stays even at critical pressure (${toSave
+      keep: `${countText(toSave.length, complete)} in it ${afterWhat(window)}, more than the ${LISTED_EDITS} files or ${SAVE_CAP_BYTES / 1024 ** 2} MB maintenance saves before deleting, so it stays even at critical pressure (${toSave
         .slice(0, SHOWN)
         .map((f) => f.rel)
         .join(', ')}, ...)`,
     };
   if (readOnly)
-    return { delete: true, note: `it would first save ${countText(toSave.length, true)} changed after its install` };
+    return { delete: true, note: `it would first save ${countText(toSave.length, true)} ${afterWhat(window)}` };
   try {
     const saved = await saveEdits(tree, worktree, toSave, level, signal);
     try {
@@ -522,7 +560,7 @@ export async function checkDependencyEdits(
     signal?.throwIfAborted();
     return {
       edited: true,
-      keep: `${countText(toSave.length, true)} in it changed after its install and could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+      keep: `${countText(toSave.length, true)} in it ${afterWhat(window)} and could not be saved: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }

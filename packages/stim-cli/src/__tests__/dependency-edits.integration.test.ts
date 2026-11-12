@@ -119,6 +119,20 @@ test('with no record, an edit stays an edit after a later install rewrites the s
   expect(savedOf(await checkDependencyEdits(tree, { level: 'critical', worktree }))).toEqual(['pkg/index.js']);
 });
 
+test('an edit inside a package added after the first install stays an edit after a later install', async () => {
+  const pause = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+  installAt(ago(0));
+  await pause();
+  write(join(tree, 'added', 'package.json'), '{}');
+  write(join(tree, 'added', 'index.js'), 'installed');
+  await pause(5_200);
+  write(join(tree, 'added', 'index.js'), 'patched by hand');
+  await pause();
+  writeFileSync(join(tree, '.package-lock.json'), '{"rewritten":true}');
+
+  expect(savedOf(await checkDependencyEdits(tree, { level: 'critical', worktree }))).toEqual(['added/index.js']);
+}, 15_000);
+
 test('in a tree no stamp covers, an edit in the first minute does not keep it but is saved at critical', async () => {
   const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
   write(join(tree, 'pkg', 'package.json'), '{}');
