@@ -731,8 +731,10 @@ describe('the ladder a build runs for its headroom', () => {
       return taken.length;
     });
     const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+    const config = loadConfig();
+    if (!config) throw new Error('the test home has no config');
     saveConfig({
-      ...loadConfig()!,
+      ...config,
       parked: {
         ios: Array.from({ length: count }, (_, index) => ({
           ...sim,
