@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { observeDetachedChildren } from '../exec.ts';
 import type { FingerprintPrecomputeRequest } from '../fingerprint-precompute.ts';
-import { recordDetachedGroups } from './detached-groups.ts';
+import { markObserving, recordDetachedGroups } from './detached-groups.ts';
 import { fingerprintNotes } from './doctor.ts';
 import { fingerprint, useParentFingerprintOwnership } from './evaluate.ts';
 import { precomputePass } from './precompute.ts';
@@ -21,6 +21,7 @@ export async function runPrecomputeChild(
 ): Promise<string | undefined> {
   const { root, platform, task, embedMode, pendingFile, ownership, ...target } = input;
   useParentFingerprintOwnership(ownership.directory);
+  markObserving(ownership.directory);
   observeDetachedChildren(recordDetachedGroups(ownership.directory));
   let result;
   let output: string | undefined;

@@ -78,6 +78,12 @@ export interface DetachedChildObserver {
 
 let detachedObserver: DetachedChildObserver | null = null;
 
+const quietly = (call: () => void): void => {
+  try {
+    call();
+  } catch {}
+};
+
 export function observeDetachedChildren(observer: DetachedChildObserver | null): void {
   detachedObserver = observer;
 }
@@ -500,12 +506,13 @@ const defaultExecutor: Executor = {
       try {
         child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
       } catch (error) {
-        if (observed && watch !== undefined) observed.settled(watch);
+        if (observed && watch !== undefined) quietly(() => observed.settled(watch));
         throw error;
       }
       if (observed && watch !== undefined) {
-        if (child.pid === undefined) observed.settled(watch);
-        else observed.started(watch, child.pid);
+        const pid = child.pid;
+        if (pid === undefined) quietly(() => observed.settled(watch));
+        else quietly(() => observed.started(watch, pid));
       }
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
@@ -555,7 +562,7 @@ const defaultExecutor: Executor = {
         void lifetime?.closed.catch(reject);
         if (observed && watch !== undefined && child.pid !== undefined)
           void lifetime?.closed.then(
-            () => observed.settled(watch),
+            () => quietly(() => observed.settled(watch)),
             () => {},
           );
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
@@ -706,12 +713,13 @@ const defaultExecutor: Executor = {
     try {
       child = spawnReportProbe(cmd, args, childOpts);
     } catch (error) {
-      if (observed && watch !== undefined) observed.settled(watch);
+      if (observed && watch !== undefined) quietly(() => observed.settled(watch));
       throw error;
     }
     if (observed && watch !== undefined) {
-      if (child.pid === undefined) observed.settled(watch);
-      else observed.started(watch, child.pid);
+      const pid = child.pid;
+      if (pid === undefined) quietly(() => observed.settled(watch));
+      else quietly(() => observed.started(watch, pid));
     }
     const lifetime = reportChild(
       child,
@@ -731,7 +739,7 @@ const defaultExecutor: Executor = {
     );
     if (observed && watch !== undefined && child.pid !== undefined)
       void lifetime?.closed.then(
-        () => observed.settled(watch),
+        () => quietly(() => observed.settled(watch)),
         () => {},
       );
     return child;

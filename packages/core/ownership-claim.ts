@@ -168,6 +168,13 @@ export function claimRemoveCommand(path: string): string {
   return `rm ${onlyThisFile ? '-f' : '-rf'} ${quotedPath(path)}`;
 }
 
+/** `claimRemoveCommand` that, for a claim file, also names its child file. */
+export function claimFilesRemoveCommand(path: string): string {
+  return path.endsWith(CLAIM_SUFFIX)
+    ? `rm -f ${quotedPath(path)} ${quotedPath(childPath(path))}`
+    : claimRemoveCommand(path);
+}
+
 /** An unresolved claim as one line: why, who held it, and the command that removes it once nothing uses it. */
 export function describeClaimProblem(problem: ClaimProblem): string {
   const status = problem.owner ? inspectProcessIdentity(problem.owner) : null;
@@ -176,10 +183,7 @@ export function describeClaimProblem(problem: ClaimProblem): string {
         status === 'gone' ? 'is no longer running' : status === 'same' ? 'is running' : 'could not be identified'
       }`
     : '';
-  const files = problem.path.endsWith(CLAIM_SUFFIX)
-    ? `rm -f ${quotedPath(problem.path)} ${quotedPath(childPath(problem.path))}`
-    : claimRemoveCommand(problem.path);
-  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, run: ${files}`;
+  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, run: ${claimFilesRemoveCommand(problem.path)}`;
 }
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {

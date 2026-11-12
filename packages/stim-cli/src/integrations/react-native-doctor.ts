@@ -6,6 +6,7 @@ import { readFingerprintNotes } from '../fingerprint-precompute.ts';
 import {
   checkMainCheckout,
   detectFingerprintParity,
+  fingerprintReportGate,
   mainCheckoutProjectRoot,
   reactNativeDoctorFindings,
   type DoctorPlatform,
@@ -84,7 +85,15 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
         fingerprintInputs,
         embedMode: 'development' as const,
       };
-      const fingerprintNotes = await readFingerprintNotes(operation ?? processContext(root), request);
+      const skippedNotes = fingerprintReportGate(operation);
+      const fingerprintNotes = skippedNotes
+        ? [
+            {
+              message: `Fingerprint notes were not computed: ${skippedNotes}`,
+              remedy: 'Run stim doctor in a terminal to get them.',
+            },
+          ]
+        : await readFingerprintNotes(operation ?? processContext(root), request);
       const parity = await detectFingerprintParity(root, { ...request, operation });
       return [
         ...source,

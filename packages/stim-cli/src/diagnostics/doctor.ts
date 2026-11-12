@@ -1553,7 +1553,15 @@ async function appPathInRepository(projectRoot: string): Promise<string> {
   return path.startsWith('..') ? '' : path;
 }
 
-const PARITY_MIN_REPORT_MS = 30_000;
+const FINGERPRINT_MIN_REPORT_MS = 30_000;
+
+export function fingerprintReportGate(operation: StimContext | undefined): string | null {
+  const remaining = reportTimeRemainingMs(operation);
+  if (remaining === undefined) return null;
+  if (remaining < FINGERPRINT_MIN_REPORT_MS) return 'The report had too little time left to start a fingerprint child.';
+  if (sizeScanDeferred()) return 'The host load is too high to start a fingerprint child inside a report.';
+  return null;
+}
 
 export async function detectFingerprintParity(
   projectRoot: string,
@@ -1574,15 +1582,13 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
-  const remaining = reportTimeRemainingMs(operation);
-  if (remaining !== undefined && (remaining < PARITY_MIN_REPORT_MS || sizeScanDeferred()))
+  const skipped = fingerprintReportGate(operation);
+  if (skipped)
     return finding(
       'note',
       'Fingerprint parity was not checked',
-      remaining < PARITY_MIN_REPORT_MS
-        ? 'The report had too little time left to compare the checkout with a clean worktree.'
-        : 'The host load is too high to compare the checkout with a clean worktree inside a report.',
-      'Run stim doctor again when the machine is idle.',
+      skipped,
+      'Run stim doctor in a terminal to get the check.',
     );
   const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
   const context = operation ?? processContext(projectRoot);

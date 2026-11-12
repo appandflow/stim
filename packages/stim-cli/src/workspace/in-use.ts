@@ -11,7 +11,13 @@ import { bundleInstancePids, bundleInstancePidsAsync } from '../macos/instances.
 import { lstatSync, rmdirSync } from 'node:fs';
 import { lstat, readdir, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describeClaimProblem, isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
+import {
+  claimFilesRemoveCommand,
+  describeClaimProblem,
+  isClaimRefusal,
+  isClaimUnavailable,
+  readClaimSet,
+} from '../ownership-claim.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { managedLockHolders } from '../engine/tunnel.ts';
@@ -196,7 +202,7 @@ export async function withIdleWorkspace<T>(
         ran: false,
         reasons: [
           isClaimRefusal(error)
-            ? `its native-run.lock cannot be taken: ${error.reason}; the claim is at ${error.claimPath}. If nothing is using it, run: ${error.removeCommand}`
+            ? `its native-run.lock cannot be taken: ${error.reason}; the claim is at ${error.claimPath}. If nothing is using it, run: ${error.removeCommand.startsWith('rm ') ? claimFilesRemoveCommand(error.claimPath) : error.removeCommand}`
             : `its native-run.lock cannot be taken: ${error.reason}`,
         ],
       };
