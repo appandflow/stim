@@ -1,3 +1,51 @@
+import { lstatSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+
+function hasDaemonClaims(home, path) {
+  const root = join(home, path);
+  const stat = lstatSync(root, { throwIfNoEntry: false });
+  if (!stat) return false;
+  if (!stat.isDirectory()) return true;
+  try {
+    return readdirSync(root, { withFileTypes: true }).some((entry) => {
+      if (!entry.isDirectory() || !['shared', 'exclusive'].includes(entry.name)) return true;
+      return readdirSync(join(root, entry.name)).length > 0;
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') return true;
+    throw error;
+  }
+}
+
+export function assertGoldenDaemonStopped(home) {
+  if (hasDaemonState(home)) throw activeGoldenDaemon(home);
+}
+
+function hasDaemonState(home) {
+  return (
+    Boolean(lstatSync(join(home, 'run', 'stimd.json'), { throwIfNoEntry: false })) ||
+    hasDaemonClaims(home, 'run/stimd') ||
+    hasDaemonClaims(home, 'daemon/claim')
+  );
+}
+
+function activeGoldenDaemon(home) {
+  return new Error(
+    `Benchmark Stim home ${home} still has daemon state. Wait for its daemon to exit before copying it.`,
+  );
+}
+
+export async function waitForGoldenDaemonToStop(home) {
+  if (!hasDaemonState(home)) return;
+  process.stderr.write(`Waiting for the benchmark seed daemon in ${home} to exit.\n`);
+  const deadline = Date.now() + 12 * 60_000;
+  while (hasDaemonState(home)) {
+    if (Date.now() >= deadline) throw activeGoldenDaemon(home);
+    await setTimeout(1000);
+  }
+}
+
 export const ANDROID_BENCHMARK_AVD_CONFIG = Object.freeze({
   'disk.dataPartition.size': String(8 * 1024 ** 3),
   'hw.device.name': 'pixel_6',
