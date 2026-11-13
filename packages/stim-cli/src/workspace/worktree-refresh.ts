@@ -20,6 +20,7 @@ import { git, gitQuiet } from './git.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
 import type { IosProjectDir } from './settings.ts';
+import { noteEditsBeforeInstall, recordDependencyInstall } from './dependency-edits.ts';
 
 export interface RefreshFailure {
   code: string;
@@ -590,6 +591,7 @@ export async function runDependencyInstall({
     return null;
   };
   const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
+  await noteEditsBeforeInstall([join(dependencies.root, 'node_modules')]);
   const installFailure = await runStep(
     dependencies.command,
     subject,
@@ -604,6 +606,7 @@ export async function runDependencyInstall({
     );
     if (postinstallFailure) return postinstallFailure;
   }
+  recordDependencyInstall([join(dependencies.root, 'node_modules')]);
   writeInstallEvidence(dependencies.root, {
     ...consumed,
     completed: true,

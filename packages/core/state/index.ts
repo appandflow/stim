@@ -31,6 +31,7 @@ export * from './status-derived.ts';
 export * from './status-measures.ts';
 export * from './stim-build.ts';
 export * from './workspace-state.ts';
+export * from './dependency-installs.ts';
 export * from './share-links.ts';
 export * from './viewers.ts';
 export * from './daemon.ts';
