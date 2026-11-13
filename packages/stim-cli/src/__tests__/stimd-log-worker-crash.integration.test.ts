@@ -174,15 +174,15 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       const worker = captured.workers.at(-1);
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
-      await vi.waitFor(() => expect(streams.running()).toBe(false));
-      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
-      expect(readWorkspaceState(root)?.collectors).toBeUndefined();
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/));
+      await vi.waitFor(() => expect(Number(readFileSync(pidFile, 'utf8'))).not.toBe(pid));
       expect(messages.some((message) => message.includes('logs worker failed'))).toBe(true);
       const replacement = await streams.start(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
       expect(await streams.stop(root, 'ios', 'default', replacement.streamId)).toBe(true);
+      expect(readWorkspaceState(root)?.collectors).toBeUndefined();
     } finally {
       await streams.close().catch(() => {});
       if (child && inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
