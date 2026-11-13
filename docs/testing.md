@@ -185,7 +185,7 @@ pnpm run test:integration packages/server/__tests__/server.integration.test.ts -
 ```
 
 The captured fixture has 25 workspaces. The baseline is about 36 KB and two
-messages on each subscribe, and 346 bytes and one message for the update.
+messages on each subscribe, and 2.1 KB and one message for the update.
 The measurement counts decoded WebSocket payloads, including the subscribe
 reply, after authentication.
 

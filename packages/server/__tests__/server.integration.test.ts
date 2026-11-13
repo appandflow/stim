@@ -1752,8 +1752,8 @@ describe('status views', () => {
   it('measures the phone workspace snapshot, delta and reconnect', async () => {
     const statusFile = join(root, 'phone-transfer.json');
     const fixture = JSON.parse(readFileSync(new URL('./fixtures/captured-status.json', import.meta.url), 'utf8'));
-    const changed = fixture.environments[0];
-    assert(changed);
+    const changed = fixture.environments.find((row: { live: boolean; logs: unknown }) => row.live && row.logs);
+    assert(changed?.logs);
     writeFileSync(statusFile, JSON.stringify(fixture));
     const port = await start({ env: { FAKE_STIM_STATUS_FILE: statusFile } });
     const { keyPair } = await pair(port);
@@ -1774,8 +1774,7 @@ describe('status views', () => {
     expect(first.snapshot?.workspaces).toHaveLength(fixture.environments.length);
     const initial = read();
 
-    const errorsSinceMarker = (changed.logs?.errorsSinceMarker ?? 0) + 1;
-    changed.logs = { ...changed.logs, errorsSinceMarker };
+    const errorsSinceMarker = ++changed.logs.errorsSinceMarker;
     const nextStatus = `${statusFile}.next`;
     writeFileSync(nextStatus, JSON.stringify(fixture));
     renameSync(nextStatus, statusFile);
