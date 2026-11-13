@@ -13,11 +13,16 @@ export function planChecks(files, base, platform, exists = () => true) {
   const pnpm = (...args) => checks.push(['pnpm', ...args]);
   const code = files.filter((file) => !/\.(?:md|mdx)$/.test(file));
   const touches = (prefix) => code.some((file) => file.startsWith(prefix));
+  const mobileFiles = files.some((file) => file.startsWith('apps/mobile/'));
   const scoped =
     /^(?:packages\/|scripts\/|\.github\/actions\/stim-ci\/|apps\/(?:desktop|mobile|demo-server)\/|website\/)/;
   const shared =
     /(?:^|\/)(?:package\.json|[jt]sconfig[^/]*\.json|[^/]*\.config\.[^/]+|[Ff]ixtures\/|[^/]*-fixture[s]?\.[^/]+$)/;
-  const broad = !base || code.some((file) => !scoped.test(file) || shared.test(file) || !exists(file));
+  const broad =
+    !base ||
+    code.some(
+      (file) => !scoped.test(file) || shared.test(file) || !exists(file) || file === 'scripts/ci-unit-test-pattern.mjs',
+    );
   const testFiles = [
     ...new Set(
       code.flatMap((file) => {
@@ -48,7 +53,9 @@ export function planChecks(files, base, platform, exists = () => true) {
     const direct = testFiles.filter((file) => file.includes('.integration.test.') === integration);
     if (broad) pnpm('run', stage);
     else {
-      if (rootSource) pnpm('run', stage, '--changed', base, '--passWithNoTests');
+      if (rootSource) {
+        pnpm('run', stage, '--changed', base, '--passWithNoTests', ...direct.flatMap((file) => ['--exclude', file]));
+      }
       if (direct.length) pnpm('run', stage, ...direct.map((file) => `./${file}`));
     }
   }
@@ -61,8 +68,9 @@ export function planChecks(files, base, platform, exists = () => true) {
     'packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts',
   ];
   if (broad || benchmarkInputs.some(touches)) pnpm('run', 'test:bench');
+  if (mobile || mobileFiles) pnpm('--filter', 'stim-mobile', 'run', 'format:check');
   if (mobile) {
-    for (const script of ['format:check', 'lint', 'typecheck', 'test']) {
+    for (const script of ['lint', 'typecheck', 'test']) {
       pnpm('--filter', 'stim-mobile', 'run', script);
     }
   }

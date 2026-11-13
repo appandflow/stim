@@ -4,6 +4,10 @@ const plan = (files, base = 'base', exists) => planChecks(files, base, 'linux', 
 
 test('a prose change formats, and an integration test uses the integration runner', () => {
   expect(plan(['docs/testing.md'])).toEqual(['pnpm run format:check']);
+  expect(plan(['apps/mobile/README.md'])).toEqual([
+    'pnpm run format:check',
+    'pnpm --filter stim-mobile run format:check',
+  ]);
   const file = 'packages/server/__tests__/changed.integration.test.ts';
   const commands = plan([file]);
   expect(commands).toContain('pnpm run typecheck');
@@ -15,6 +19,7 @@ test('a deleted file or generated fixture selects the full test stages', () => {
   const cases = [
     plan(['packages/server/__tests__/old.test.ts'], 'base', () => false),
     plan(['apps/mobile/mock-server/fixtures/status.json']),
+    plan(['scripts/ci-unit-test-pattern.mjs']),
     plan([], null),
   ];
   for (const commands of cases) {
@@ -33,9 +38,10 @@ test('a shared core change checks consumers outside the root Vitest suite', () =
 
 test('includes a regression that invokes the changed script as a subprocess', () => {
   const file = 'scripts/ci-unit-test-files.mjs';
-  expect(plan([file], 'base', (path) => [file, 'scripts/ci-unit-test-files.test.mjs'].includes(path))).toContain(
-    'pnpm run test:unit ./scripts/ci-unit-test-files.test.mjs',
-  );
+  const testFile = 'scripts/ci-unit-test-files.test.mjs';
+  const commands = plan([file], 'base', (path) => [file, testFile].includes(path));
+  expect(commands).toContain(`pnpm run test:unit --changed base --passWithNoTests --exclude ${testFile}`);
+  expect(commands).toContain(`pnpm run test:unit ./${testFile}`);
 });
 
 test('a shared mobile fixture checks both consumers without rewriting locale files', () => {
