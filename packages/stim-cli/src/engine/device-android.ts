@@ -355,8 +355,6 @@ export async function ensureOwnedAndroidDevice({
         ...(await bootAvdOnFreshPort({
           avdName: created.avdName,
           metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
-          signal: flags.allowPendingAndroidBoot ? flags.deviceSlotWait?.signal : undefined,
-          teardownAvd,
           projectPath,
           slot,
           deviceName: created.avdName,
@@ -432,8 +430,6 @@ async function liveAndroidConsolePorts(): Promise<number[]> {
 
 interface FreshPortBoot extends EmulatorLogging {
   avdName: string;
-  signal?: AbortSignal;
-  teardownAvd?: typeof teardownOwnedAvd;
   metadata?: OwnedDeviceRecord;
   projectPath: string;
   slot?: string;
@@ -448,8 +444,6 @@ async function bootAvdOnFreshPort({
   slot,
   deviceName,
   out,
-  signal,
-  teardownAvd = teardownOwnedAvd,
   logFile = null,
   alive = pidExists,
 }: FreshPortBoot): Promise<OwnedDeviceRecord> {
@@ -458,21 +452,11 @@ async function bootAvdOnFreshPort({
     claimAndroidConsolePort({ projectPath, slot, avdName, deviceName, livePorts, metadata }),
   );
   const serial = `emulator-${claim.consolePort}`;
-  let pid: number | null = null;
   try {
-    signal?.throwIfAborted();
     reportAndroidMemoryPressure(out);
-    pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+    const pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
-    const result = await waitForAndroidBoot({
-      serial,
-      timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS,
-      pid,
-      alive,
-      out,
-      signal,
-    });
-    signal?.throwIfAborted();
+    const result = await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
     if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
     const running = await getAvdNameForSerialAsync(serial);
     if (running && running !== avdName) {
@@ -485,15 +469,7 @@ async function bootAvdOnFreshPort({
     const { bootPending: _booted, ...booted } = claim;
     return { ...booted, serial, setup: true };
   } catch (error) {
-    if (signal?.aborted && pid !== null) {
-      const result = await teardownAvd(avdName, { owner: { projectPath, slot } });
-      if (result.status !== 'torn-down' && result.status !== 'missing') {
-        out(phaseLine('device', `Could not stop ${avdName}: ${result.reason}; waiting for its boot to settle.`));
-        await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
-      }
-    } else {
-      await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
-    }
+    await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
     throw error;
   }
 }
@@ -590,17 +566,15 @@ async function waitForAndroidBoot({
   pid = null,
   alive = pidExists,
   out,
-  signal,
 }: {
   serial: string;
   timeoutMs: number;
   pid?: number | null;
   alive?: Liveness;
   out: Notify;
-  signal?: AbortSignal;
 }): Promise<BootResult> {
   const aborted = () => pid !== null && !alive(pid);
-  const wait = (windowMs: number) => waitForBoot(serial, windowMs, { aborted, commandTimeoutMs: 5000, signal });
+  const wait = (windowMs: number) => waitForBoot(serial, windowMs, { aborted, commandTimeoutMs: 5000 });
   let result = await wait(timeoutMs);
   if (result.ok) return { ok: true, serial };
   let pressure = readHostMemoryPressure();

@@ -1,6 +1,5 @@
 import * as hostMemory from '../host-memory.ts';
 import { deviceSlotPlatforms } from '../devices/device-slots.ts';
-import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2463,55 +2462,6 @@ describe('ensureOwnedDevice: android', () => {
     } finally {
       delete process.env.STIM_MAX_DEVICES;
       for (const marker of held) releaseClaim(marker);
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('a cancelled fresh emulator retains boot admission until its owned shutdown completes', async () => {
-    const root = projectDir();
-    const cancellation = new AbortController();
-    let spawned!: () => void;
-    const spawning = new Promise<void>((resolve) => {
-      spawned = resolve;
-    });
-    let finishShutdown!: () => void;
-    const shutdown = new Promise<void>((resolve) => {
-      finishShutdown = resolve;
-    });
-    const { exec } = androidExecutor({ bootCompletes: false, onSpawn: spawned });
-    const teardown = vi.fn<typeof teardownOwnedAvd>(async () => {
-      await shutdown;
-      return { status: 'torn-down' };
-    });
-    setExecutor(exec);
-    try {
-      const device = await ensureOwnedDevice({
-        platform: 'android',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-        flags: { allowPendingAndroidBoot: true, deviceSlotWait: { signal: cancellation.signal } },
-        teardownAvd: teardown,
-        alive: () => true,
-      });
-      assert(device.androidBoot);
-      const outcome = device.androidBoot.catch((error) => error);
-      await spawning;
-      cancellation.abort();
-      try {
-        await vi.waitFor(() =>
-          expect(teardown).toHaveBeenCalledWith('stim-app', { owner: { projectPath: root, slot: undefined } }),
-        );
-        expect(readClaimSet(join(tmpHome, 'device-boots')).live.map((claim) => claim.details.key)).toContain(
-          'stim-app',
-        );
-      } finally {
-        finishShutdown();
-      }
-      expect(await outcome).toBeInstanceOf(Error);
-      expect(readClaimSet(join(tmpHome, 'device-boots')).live).toEqual([]);
-    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

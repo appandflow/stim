@@ -635,17 +635,6 @@ test('waitForBoot keeps waiting after the boot properties until the package mana
   expect(calls.filter((cmd) => /getprop/.test(cmd)).length).toBeGreaterThanOrEqual(3);
 });
 
-test('an interrupted emulator boot stops polling without collecting timeout diagnostics', async () => {
-  const controller = new AbortController();
-  const probe = vi.fn<() => string>(() => '0');
-  setExecutor({ runFileQuiet: probe });
-  const pending = waitForBoot('emulator-5554', 60_000, { signal: controller.signal });
-  await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-  expect(probe).toHaveBeenCalledTimes(2);
-});
-
 test.each([25, 2000])('boot timeout retains diagnostics within a separate budget (query cost %sms)', async (costMs) => {
   vi.useFakeTimers();
   vi.setSystemTime(0);

@@ -1308,15 +1308,13 @@ export async function waitForBoot(
     aborted = () => false,
     pollMs = 1000,
     commandTimeoutMs,
-    signal,
-  }: { aborted?: () => boolean; pollMs?: number; commandTimeoutMs?: number; signal?: AbortSignal } = {},
+  }: { aborted?: () => boolean; pollMs?: number; commandTimeoutMs?: number } = {},
 ): Promise<BootResult> {
   const exec = getExecutor();
   const start = Date.now();
   let exited = false;
   const probeTimeout = () => Math.max(1, Math.min(commandTimeoutMs ?? timeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
-    signal?.throwIfAborted();
     const booted =
       (await getprop(exec, serial, 'sys.boot_completed', probeTimeout())) === '1' ||
       (await getprop(exec, serial, 'dev.bootcomplete', probeTimeout())) === '1';
@@ -1325,12 +1323,13 @@ export async function waitForBoot(
       exited = true;
       break;
     }
-    await cancellableSleep(
-      commandTimeoutMs === undefined ? pollMs : Math.min(pollMs, Math.max(0, timeoutMs - (Date.now() - start))),
-      { signal, what: 'Android emulator boot' },
+    await new Promise((r) =>
+      setTimeout(
+        r,
+        commandTimeoutMs === undefined ? pollMs : Math.min(pollMs, Math.max(0, timeoutMs - (Date.now() - start))),
+      ),
     );
   }
-  signal?.throwIfAborted();
   const diagnosticDeadline = Date.now() + Math.min(commandTimeoutMs ?? 5000, 5000);
   const diagnosticQuery = async (args: string[]): Promise<string> => {
     const remaining = diagnosticDeadline - Date.now();
