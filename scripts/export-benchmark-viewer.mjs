@@ -977,7 +977,12 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
     arm: record.arm,
     platform: meta.platform ?? 'ios',
     activities: evidence.activities,
-    setup: { worktree: record.worktree, avdConfig: meta.expectedControlAvdConfig },
+    setup: {
+      worktree: record.worktree,
+      avdConfig: meta.expectedControlAvdConfig,
+      device: record.simulator?.udid,
+      deviceName: record.simulator?.name,
+    },
     reviewedDiagnostics: review.diagnosticCommands ?? [],
   });
   const recovery = launchCrashRecovery(commands, {
