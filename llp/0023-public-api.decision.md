@@ -108,6 +108,12 @@ declaration and union branch, and whether it sits in a parameter list.
 - A pull request and the merge queue also compare the reports with the base
   branch's baselines, so a hand-edited baseline fails.
 
+A known limit: the gate reads a `(` that ends a line as grouping, because
+nothing follows it on that line. A callback parameter list split over lines
+(`onProgress?: (` then `event: StimProgress`) is then not marked as parameters,
+so adding a parameter to it reads as a new required member and asks for a bump.
+This errs toward a bump, and no such line is in the reports today.
+
 The reports were reset once, in #5613, with `--reset`, so every integer is 1
 at 2.0.0. The base comparison accepts a reset only when the base's own
 `.github/next-version` names a later major than the base's packages carry,
