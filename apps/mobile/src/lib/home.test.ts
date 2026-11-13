@@ -1,6 +1,7 @@
 import fixture from '../../mock-server/fixtures/status.json';
 import tones from '../../../desktop/Tests/StimKitTests/Fixtures/usage-tone-vectors.json';
 
+import { macosBuildLabel } from '@/lib/format';
 import {
   allStatuses,
   budgetRows,
@@ -29,6 +30,11 @@ import {
   type DeviceTileItem,
   type HomeStatus,
 } from '@/lib/home';
+import { rowLabel, rowStatus } from '@/lib/home-list';
+import { workspaceStage } from '@/lib/workspace-view';
+import { worktreeDevices } from '@/lib/worktree-page';
+import { worktreeRowLabel, worktreeRowSummary } from '@/lib/worktree-row';
+import { runningBuild } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
@@ -651,6 +657,89 @@ describe('runningDevices', () => {
     expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
     expect(keys({ platforms: ['android'] })).toEqual(['idle-with-sim/android']);
     expect(keys({ platforms: ['ios'] })).toEqual(['idle-with-sim/ios', 'other/ios']);
+  });
+
+  it('hides a deleted workspace from live lists while retaining its registration', () => {
+    const ios: EnvironmentState['ios'] = {
+      udid: '',
+      owned: false,
+      state: 'ready',
+      name: 'stim-hosted',
+      host: {
+        machine: 'mini',
+        session: 'session',
+        selected: 'mini',
+        state: 'ready',
+        device: null,
+        agent: { driver: 'none', setting: 'hosting.agentDriver' },
+      },
+    };
+    const build: EnvironmentState['build'] = {
+      ...payload.environments.find((entry) => entry.build)!.build!,
+      state: 'running',
+    };
+    const macos: EnvironmentState['macos'] = {
+      launchId: 'app',
+      product: 'App',
+      arguments: [],
+      state: 'running',
+      bundle: '/App.app',
+      bundleId: 'dev.app',
+      executable: '/App.app/Contents/MacOS/App',
+      build: { state: 'running', startedAt: build.startedAt },
+    };
+    const slots = [{ slot: 'tablet', ios }];
+    const items = mergeWorkspaces([
+      {
+        id: 'a',
+        name: 'Paired machine',
+        status: status([
+          env('/u/app/deleted', {
+            ios,
+            slots,
+            live: true,
+            pathMissing: true,
+            build,
+            macos,
+            stage: { kind: 'building', since: build.startedAt, platform: build.platform, closedApps: [] },
+          }),
+          env('/u/app/available', { ios, slots, live: true }),
+        ]),
+      },
+    ]);
+    expect(items.map((item) => [item.title, entryStatus(item)])).toEqual([
+      ['available', 'live'],
+      ['deleted', 'idle'],
+    ]);
+    const deleted = items.find((item) => item.title === 'deleted')!;
+    const now = Date.parse('2026-11-12T12:00:00Z');
+    expect(runningBuild(deleted.env)).toBeNull();
+    expect(macosBuildLabel(macos, deleted.env.pathMissing)).toBe('Unknown');
+    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, buildingOnly: true }, ['a']).shown).toEqual([]);
+    const summary = worktreeRowSummary([deleted], now, null);
+    expect(worktreeRowLabel(deleted.title, summary, null)).toBe('deleted, Idle, iOS idle, macOS idle');
+    expect(
+      rowLabel({
+        item: deleted,
+        now,
+        status: rowStatus(deleted.env, now, null),
+        problems: [],
+        sessions: [],
+        folder: false,
+        showsMachine: false,
+      }),
+    ).toBe('deleted, Idle');
+    expect(workspaceStage(deleted.env, now)).toMatchObject({ label: 'Workspace Not Found', subtitle: null });
+    expect(
+      worktreeDevices(
+        items.map((item) => item.env),
+        now,
+      ).map(({ path }) => path),
+    ).toEqual(['/u/app/available', '/u/app/available']);
+    expect(runningDevices(items, DEFAULT_FILTERS, ['a']).map(({ item }) => item.title)).toEqual([
+      'available',
+      'available',
+    ]);
   });
 });
 

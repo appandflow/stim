@@ -6,6 +6,7 @@ import type { ReplayRange } from '@/protocol/types';
 export function deviceUnavailable({
   hasStatus,
   workspaceListed,
+  pathMissing,
   hasArchive,
   recordingDisabled,
   hasFootage,
@@ -14,12 +15,14 @@ export function deviceUnavailable({
 }: {
   hasStatus: boolean;
   workspaceListed: boolean;
+  pathMissing?: boolean;
   hasArchive: boolean;
   recordingDisabled: boolean;
   hasFootage: boolean;
   range: ReplayRange | null;
   device?: DeviceRef;
 }): string {
+  if (pathMissing) return t`This workspace is no longer on the machine.`;
   if (!device?.running && !hasFootage) {
     if (hasStatus && !workspaceListed && !hasArchive) return t`This workspace is no longer on the machine.`;
     if (recordingDisabled) return t`Recording was off for this workspace.`;
