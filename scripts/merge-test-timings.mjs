@@ -30,15 +30,10 @@ export function compare(slowest, history) {
 }
 
 function run() {
-  const {
-    GITHUB_REPOSITORY: repo,
-    GITHUB_RUN_ID: runId,
-    GITHUB_RUN_ATTEMPT: attempt,
-    GITHUB_STEP_SUMMARY: summary,
-  } = process.env;
+  const { GITHUB_REPOSITORY: repo, GITHUB_RUN_ID: runId, GITHUB_STEP_SUMMARY: summary } = process.env;
   const api = (path) => JSON.parse(execFileSync('gh', ['api', `repos/${repo}/actions/${path}`], { encoding: 'utf8' }));
   const jobs = (id, runAttempt) => api(`runs/${id}/attempts/${runAttempt}/jobs?per_page=100`).jobs;
-  const current = measure(jobs(runId, attempt));
+  const current = measure(api(`runs/${runId}/jobs?filter=latest&per_page=100`).jobs);
   if (!current) throw new Error('No complete two-shard timing for this run.');
 
   const report = (lines) => appendFileSync(summary, `${lines.join('\n')}\n`);

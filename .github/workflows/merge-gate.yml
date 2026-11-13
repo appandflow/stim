@@ -35,7 +35,7 @@ jobs:
           # Waits for every other check run, workflow run and commit status on
           # the head SHA, then fails if any ended unsuccessfully.
           api() {
-            for attempt in 1 2 3; do
+            for _ in 1 2 3; do
               if out=$(gh api --paginate "$@"); then
                 jq -s . <<<"$out"
                 return 0
@@ -51,11 +51,13 @@ jobs:
             checks=$(api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
               --jq '.check_runs[] | {id, name, status, conclusion, suite: .check_suite.id}')
             runs=$(api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
-              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id, path, title: .display_title}')
+              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id, event, path, title: .display_title}')
             statuses=$(api "repos/$REPO/commits/$SHA/status?per_page=100" \
               --jq '.statuses[] | {context, state}')
             result=$(jq -n -c --argjson c "$checks" --argjson r "$runs" --argjson s "$statuses" --argjson self "$RUN_ID" '
-              def ignored: .path == ".github/workflows/e2e-native.yml" and .title == "Native E2E (unrelated label)";
+              def ignored:
+                (.path == ".github/workflows/e2e-native.yml" and .title == "Native E2E (unrelated label)")
+                or (.path == ".github/workflows/merge-gate.yml" and .event == "workflow_dispatch");
               ($r | map(select(.id != $self and (ignored | not)))) as $runs
               | ($r | map(select(ignored) | .suite)) as $ignored
               | ($c | map(select(.name != "merge gate"))
