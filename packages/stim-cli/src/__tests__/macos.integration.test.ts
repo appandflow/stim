@@ -994,14 +994,16 @@ describe('macOS build placement and promotion', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('failed launch registration', () => {
-    test.each(['delayed supervisor', 'unrecorded app'])('drains the %s', async (mode) => {
+    test.each(['delayed supervisor', 'unrecorded app', 'app startup crash'])('drains the %s', async (mode) => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
       const resumed = join(dir, 'resume-supervisor');
       const marker = join(dir, 'late-app-started');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.arguments', [
         '-e',
-        `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000)`,
+        mode === 'app startup crash'
+          ? 'process.stderr.write("native startup exception\\n");process.exit(23)'
+          : `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000)`,
       ]);
       const cached = remoteBundle();
       copyFileSync(process.execPath, join(cached, 'Contents', 'MacOS', 'Sample'));
@@ -1019,6 +1021,10 @@ describe('macOS build placement and promotion', () => {
       let app: MacosProcess | undefined;
       const wait = registration.waitForMacosRegistration;
       vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(async (project, launchId, child) => {
+        if (mode === 'app startup crash') {
+          await once(child, 'exit');
+          return null;
+        }
         const [message] = await once(child, 'message');
         if (message.error) throw new Error(message.error);
         if (!message.gated) app = macosProcess(message.pid);
@@ -1047,7 +1053,9 @@ describe('macOS build placement and promotion', () => {
           const script =
             mode === 'delayed supervisor'
               ? `import{watch,existsSync}from'node:fs';await new Promise(r=>{const w=watch(${JSON.stringify(dir)},()=>{if(existsSync(${JSON.stringify(resumed)})){w.close();r()}});process.send({gated:true})});const{runMacosSupervisor}=await import(${JSON.stringify(entry)});await runMacosSupervisor(${JSON.stringify(root)},${JSON.stringify(args[2])});`
-              : `import{spawn}from'node:child_process';const app=spawn(${JSON.stringify(executable)},['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','inherit','ipc']});app.once('error',e=>process.send({error:e.message}));app.once('message',()=>process.send({pid:app.pid}));setInterval(()=>{},1000);`;
+              : mode === 'app startup crash'
+                ? `const{runMacosSupervisor}=await import(${JSON.stringify(entry)});await runMacosSupervisor(${JSON.stringify(root)},${JSON.stringify(args[2])});`
+                : `import{spawn}from'node:child_process';const app=spawn(${JSON.stringify(executable)},['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','inherit','ipc']});app.once('error',e=>process.send({error:e.message}));app.once('message',()=>process.send({pid:app.pid}));setInterval(()=>{},1000);`;
           const child = real.spawn(process.execPath, ['--input-type=module', '-e', script], {
             ...options,
             env: { ...options?.env, DYLD_LIBRARY_PATH: join(dirname(process.execPath), '..', 'lib') },
@@ -1059,7 +1067,12 @@ describe('macOS build placement and promotion', () => {
         },
       });
       try {
-        await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('did not register');
+        const message = mode === 'app startup crash' ? 'native startup exception' : 'did not register';
+        const code = mode === 'app startup crash' ? 'STIM_LAUNCH_FAILED' : undefined;
+        const failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error) => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure.message).toContain(message);
+        expect(failure.code).toBe(code);
         expect(inspectProcessIdentity(supervisor)).toBe('gone');
         expect(app ? inspectProcessIdentity(app) : null).toBe(mode === 'unrecorded app' ? 'gone' : null);
         writeFileSync(resumed, 'resume');
@@ -1987,6 +2000,21 @@ describe('waitForLaunchServices', () => {
       ['find', 'bundleid=dev.sample.stim.test', 'pid=4242'],
       ['find', 'bundleid=dev.sample.stim.test', 'pid=4242'],
     ]);
+  });
+
+  test.skipIf(process.platform !== 'darwin')('reports an owned app that exits before registration', async () => {
+    const app = await ownedProcess();
+    const child = children.at(-1);
+    assert(child);
+    const runFileAsync = vi.fn<() => Promise<string>>(async () => {
+      const closed = once(child, 'close');
+      child.kill('SIGTERM');
+      await closed;
+      return '';
+    });
+    setExecutor({ runFileAsync });
+    await expect(waitForLaunchServices(record({ app }), Date.now() + 20_000)).resolves.toBe('exited');
+    expect(runFileAsync).toHaveBeenCalledTimes(1);
   });
 
   test('skips a hosted launch, which has no local pid', async () => {

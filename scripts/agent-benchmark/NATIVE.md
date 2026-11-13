@@ -79,7 +79,10 @@ against the before-run inventory. Close the run's agent-device session. Record
 cleanup before publishing results.
 
 Report task elapsed time and token use separately for each native backend.
-These times include the complete turn and evidence collection; they are not
+The run record also reports `interactionSeconds` from dispatch through the
+standalone interaction or follow-up snapshot that first confirms `Count: 1`.
+The screenshot and other evidence run separately.
+Total elapsed time includes the complete turn and evidence collection; they are not
 the Trailhead screenshot-ready metric. A tiny sample supports a pilot
 comparison, not a broad performance claim. Native Xcode projects can benefit
 from Stim's reusable artifacts and compiler cache. Native Gradle and macOS

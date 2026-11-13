@@ -31,6 +31,7 @@ export interface OwnedDeviceRecord {
   adopted?: boolean;
   /** This call created, adopted or booted the device on Android. Never persisted. */
   setup?: boolean;
+  androidBoot?: Promise<OwnedDeviceRecord>;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
   schemeApprovals?: string[];
@@ -84,6 +85,7 @@ export interface DeviceFlags {
    * pending creation in `creating`, instead of waiting for the slot and the creation.
    */
   allowPendingCreation?: boolean;
+  allowPendingAndroidBoot?: boolean;
 }
 
 export type Notify = (msg: string) => void;

@@ -314,7 +314,11 @@ export async function ensureOwnedAndroidDevice({
       };
     }
   }
-  return withDeviceBootAdmission(
+  let announcePrepared!: (device: OwnedDeviceRecord) => void;
+  const ready = new Promise<OwnedDeviceRecord>((resolve) => {
+    announcePrepared = resolve;
+  });
+  const done = withDeviceBootAdmission(
     { platform: 'android', key: uncreatedDeviceKey() },
     async (admitted): Promise<OwnedDeviceRecord> => {
       const created = await prepareOwnedAvd({
@@ -337,7 +341,17 @@ export async function ensureOwnedAndroidDevice({
         out(chalk.dim(phaseLine('device', `recovered ${created.avdName} (unrecorded from a prior run)`)));
         if (created.serial) return { ...created, owned: true, deviceName: created.avdName };
       }
+      const facts = {
+        avdName: created.avdName,
+        deviceName: created.avdName,
+        owned: true,
+        created: created.created,
+        systemImage: created.systemImage,
+        deviceProfile: created.deviceProfile,
+      };
+      if (created.created && flags.allowPendingAndroidBoot) announcePrepared({ ...facts, setup: true });
       return {
+        ...facts,
         ...(await bootAvdOnFreshPort({
           avdName: created.avdName,
           metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
@@ -348,13 +362,12 @@ export async function ensureOwnedAndroidDevice({
           logFile,
           alive,
         })),
-        created: created.created,
-        systemImage: created.systemImage,
-        deviceProfile: created.deviceProfile,
       };
     },
     { ...flags.deviceSlotWait, root: projectPath, out },
   );
+  if (!flags.allowPendingAndroidBoot) return done;
+  return Promise.race([done, ready.then((device) => ({ ...device, androidBoot: done }))]);
 }
 
 export interface AndroidConsolePortClaim {

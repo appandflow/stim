@@ -336,6 +336,16 @@ function makeAndroidBuildFailure(
   return { ok: false, diagnostics: [], truncated: 0, durationMs: 0, lastLines: [], ...fields };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDependencies, 'build'> = {}) {
   const calls: Calls = {
     ensureDevice: [],
@@ -2000,6 +2010,79 @@ describe('a cache miss', () => {
     expect(result.facts?.cacheKey).toBe(abiKey);
     expect(JSON.parse(h.stdout[0] ?? '{}').cacheKey).toBe(abiKey);
     expect(readState().lastBuild.cacheKey).toBe(abiKey);
+  });
+
+  test.each([false, true])(
+    'builds during a fresh emulator boot and gates installation (boot failure: %s)',
+    async (failBoot) => {
+      const boot = deferred<Awaited<ReturnType<typeof ensureOwnedDevice>>>();
+      const building = deferred<BuildArgs>();
+      void boot.promise.catch(() => {});
+      const device = {
+        avdName: 'stim-app-412',
+        owned: true,
+        setup: true,
+        created: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      };
+      const h = harness({
+        ensureDevice: async ({ flags }: Parameters<typeof ensureOwnedDevice>[0]) => {
+          expect(flags?.allowPendingAndroidBoot).toBe(true);
+          return { ...device, androidBoot: boot.promise };
+        },
+        ensureDeviceBooted: never('a second emulator boot'),
+        build: async (args) => {
+          building.resolve(args);
+          return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1, lastLines: [] });
+        },
+      });
+      const run = h.run();
+      try {
+        const build = await Promise.race([
+          building.promise,
+          run.then(() => {
+            throw new Error('The command finished before starting Gradle.');
+          }),
+        ]);
+        expect(build.abi).toBe('arm64-v8a');
+        expect(h.calls.install).toEqual([]);
+      } finally {
+        if (failBoot) boot.reject(new Error('emulator failed before readiness'));
+        else boot.resolve({ ...device, serial: 'emulator-5584', consolePort: 5584 });
+      }
+      const result = await run;
+      expect(result.ok).toBe(!failBoot);
+      expect(result.error?.code).toBe(failBoot ? NO_DEVICE : undefined);
+      expect(result.error?.message?.includes('failed before readiness')).toBe(failBoot ? true : undefined);
+      expect(result.facts?.serial).toBe(failBoot ? undefined : 'emulator-5584');
+      expect(h.calls.install).toHaveLength(failBoot ? 0 : 1);
+    },
+  );
+
+  test('cancellation while waiting for a cold emulator prevents APK installation', async () => {
+    const boot = deferred<Awaited<ReturnType<typeof ensureOwnedDevice>>>();
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const device = { avdName: 'stim-app-412', owned: true, setup: true, created: true };
+    const h = harness({
+      context,
+      ensureDevice: async () => ({ ...device, androidBoot: boot.promise }),
+      ensureDeviceBooted: never('a second emulator boot'),
+    });
+    const run = withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    try {
+      await vi.waitFor(() => expect(h.calls.build).toHaveLength(1));
+      await vi.waitFor(() => expect(h.stderr).toContainEqual(expect.stringMatching(/build +ok/)));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.abort('SIGINT');
+    } finally {
+      boot.resolve({ ...device, serial: 'emulator-5584', consolePort: 5584 });
+    }
+    expect((await run).error?.code).toBe('STIM_CANCELLED');
+    expect(h.calls.install).toEqual([]);
+    expect(h.calls.launch).toEqual([]);
   });
 
   test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {

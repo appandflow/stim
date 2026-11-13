@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -25,7 +25,12 @@ import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './nat
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
+import {
+  nativeInteractionSeconds,
+  nativeProcessIdentityValid,
+  nativeSourceProof,
+  nativeTaskPrompt,
+} from './native-task.mjs';
 
 if (!process.env.STIM_BENCH_ROOT) throw new Error('STIM_BENCH_ROOT is required');
 const root = resolve(process.env.STIM_BENCH_ROOT);
@@ -65,6 +70,7 @@ const coordinatorHashes = () =>
     [
       'native-driver.mjs',
       'native-task.mjs',
+      'run-guards.mjs',
       'runner.mjs',
       'stamp.mjs',
       'shell-environment.mjs',
@@ -338,6 +344,47 @@ async function dispatch() {
   const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { env: runnerEnv });
   if (arm === 'control' && resolved) throw new Error('Control resolved Stim');
   if (arm === 'stim' && resolved !== join(root, 'bin', 'stim')) throw new Error('Stim shim mismatch');
+  const screenshotDirectory = mkdtempSync('/tmp/stim-native-bench-screen-');
+  try {
+    await dispatchRunner({
+      runDir,
+      runId,
+      worktree,
+      proofDirectory,
+      stateDirectory,
+      screenshotDirectory,
+      runnerKind,
+      actual,
+      samples,
+      runnerEnv,
+      crash,
+      taskFixture,
+      claudeGuidance,
+      toolBin,
+      swiftWrapper,
+    });
+  } finally {
+    rmSync(screenshotDirectory, { recursive: true, force: true });
+  }
+}
+
+async function dispatchRunner({
+  runDir,
+  runId,
+  worktree,
+  proofDirectory,
+  stateDirectory,
+  screenshotDirectory,
+  runnerKind,
+  actual,
+  samples,
+  runnerEnv,
+  crash,
+  taskFixture,
+  claudeGuidance,
+  toolBin,
+  swiftWrapper,
+}) {
   const isolation = prepareRunnerIsolation({
     policy: runnerIsolationPolicy({
       protectedRoots: [root],
@@ -356,6 +403,7 @@ async function dispatch() {
           join(runDir, 'runner-home'),
           join(runDir, 'shell-home'),
           proofDirectory,
+          screenshotDirectory,
           stateDirectory,
           runnerEnv.STIM_HOME,
           runnerEnv.TMPDIR,
@@ -404,6 +452,7 @@ async function dispatch() {
     proofDirectory,
     session: runId,
     stateDirectory,
+    screenshotDirectory,
   });
   writeFileSync(join(runDir, 'prompt.txt'), prompt);
   const meta = {
@@ -548,6 +597,7 @@ function collect(runDir) {
     variant: meta.variant ?? 'standalone',
     arm: meta.arm,
     elapsedSeconds: (Date.parse(meta.finishedAt) - Date.parse(meta.dispatchAt)) / 1000,
+    interactionSeconds: nativeInteractionSeconds(evidence.commands, meta),
     usage,
     source,
     runnerResult: meta.runnerResult,
