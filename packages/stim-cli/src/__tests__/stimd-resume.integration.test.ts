@@ -1,13 +1,14 @@
+import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
-import { isJsonObject, stimdBootsFile, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
-import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { isJsonObject, stimdBootsFile, stimdClaimRoot, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
+import { processGroupAlive, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
   acquireDeviceTicket,
@@ -459,7 +460,68 @@ describe.skipIf(process.platform === 'win32')('an operation held through the API
   }, 90_000);
 });
 
+const attachedHold = { op: 'op.begun', attached: true, instance: 'other-job' };
+const otherBuildHold = { op: 'engine-changed', build: 'aaaaaaaaaaaa', version: '2.0.0-other' };
+
+async function withCIHoldServer(replies: Record<string, unknown>[], run: (connections: Socket[]) => Promise<void>) {
+  const path = stimdSocket();
+  mkdirSync(join(path, '..'), { recursive: true });
+  const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired;
+  if (!claim) throw new Error('Could not claim the test stimd socket.');
+  const connections: Socket[] = [];
+  const server = createServer((socket) => {
+    const reply = replies[connections.length];
+    connections.push(socket);
+    socket.once('data', () => {
+      if (reply?.op === 'engine-changed') socket.end(JSON.stringify(reply) + '\n');
+      else socket.write(JSON.stringify({ op: 'hello' }) + '\n' + JSON.stringify(reply ?? { op: 'op.begun' }) + '\n');
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => server.once('error', reject).listen(path, resolve));
+    await run(connections);
+  } finally {
+    for (const socket of connections) socket.destroy();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    releaseClaim(claim);
+  }
+}
+
 describe.skipIf(process.platform === 'win32')('a CI hold', () => {
+  test.each([
+    ['an attached stimd', attachedHold],
+    ["another build's stimd", otherBuildHold],
+  ] as const)('refuses the first pin against %s without retrying', async (_name, reply) => {
+    await withCIHoldServer([reply], async (connections) => {
+      await expect(holdCIStimd({ ...process.env }, dir, null)).rejects.toThrow(
+        'Could not pin the Stim daemon for this CI job.',
+      );
+      expect(connections).toHaveLength(1);
+    });
+  });
+
+  test('reports that a replacement cannot be held when it belongs to another command', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withCIHoldServer([{ op: 'op.begun' }, { ...otherBuildHold, attached: true }], async (connections) => {
+      const release = await holdCIStimd({ ...process.env }, dir, null);
+      try {
+        const first = connections[0];
+        assert(first);
+        first.end();
+        await vi.waitFor(() => {
+          expect(errors).toHaveBeenCalledWith(
+            expect.stringContaining(
+              "replacement cannot be held: This Stim home's stimd runs Stim 2.0.0-other as the child of another command.",
+            ),
+          );
+        });
+        expect(connections).toHaveLength(2);
+      } finally {
+        release();
+      }
+    });
+  });
+
   test('pins a fresh stimd when the one it asked ends instead of answering', async () => {
     const path = stimdSocket();
     mkdirSync(join(path, '..'), { recursive: true });
