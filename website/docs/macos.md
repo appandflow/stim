@@ -189,6 +189,8 @@ Use `macos.remote` for a default. A named Mac is strict and never launches local
 
 The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. The installed guide covers driver setup, build inputs and placement.
 
+For screenshots and scrolling while sharing a hosted app's window on macOS 27, use agent-device 0.21.37 or later on the hosting Mac. [Agent-device 0.21.37](https://github.com/callstack/agent-device/releases/tag/v0.21.37) fixes selection of the macOS window-sharing indicator instead of the app window.
+
 <StimTabs code="stim guide macos" />
 
 ## Try Stim Desktop itself

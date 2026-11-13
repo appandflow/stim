@@ -1593,7 +1593,7 @@ stim settings unset ios.deviceType --scope workspace
 An unknown key, a layer the key is not read from, or a value of the wrong
 shape refuses with `STIM_BAD_ARG`, names the expected shape, and writes
 nothing. `set` and `get` of a [removed setting](./settings.md#stim-daemon)
-refuse with `STIM_BAD_ARG` naming its replacement, and `unset` removes a
+refuse with `STIM_BAD_ARG` as an unknown setting, and `unset` removes a
 leftover one from every layer that has it, or from the one `--scope` names.
 Machine-file writes take the config lock and replace the file
 atomically. A committed write keeps the file's other keys and indentation.
