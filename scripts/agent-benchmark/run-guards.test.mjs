@@ -373,6 +373,8 @@ describe('temporary-directory platform prefixes', () => {
     'STIM_TMPDIR="$TMPDIR" PATH=/other stim android',
     'STIM_TMPDIR="$OTHER" stim android',
     'STIM_TMPDIR="$TMPDIR" stim android "$FLAGS"',
+    'false && STIM_TMPDIR="$TMPDIR" stim android',
+    'PATH=/other; STIM_TMPDIR="$TMPDIR" stim android',
     'env STIM_TMPDIR=$(pwd) stim android',
     'env STIM_TMPDIR=/tmp/run echo stim android',
     'env STIM_TMPDIR=/tmp/run stim android$(echo suffix)',
