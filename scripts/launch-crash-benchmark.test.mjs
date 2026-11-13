@@ -69,6 +69,29 @@ describe('launch crash benchmark', () => {
       output: `› Opening exp+trailhead://dev-client on ${deviceName}`,
     };
     expect(launchCrashDiagnosis([direct, logs], options)).toMatchObject({ valid: true, commandId: 'logs' });
+    const foreground = {
+      ...launch,
+      command: launch.command.replace(' --detach --wait-ready', ''),
+      endedAt: null,
+      exitCode: null,
+      output: `Opened the app on the ${platform === 'ios' ? 'iOS simulator' : 'Android device'}.`,
+    };
+    expect(launchCrashDiagnosis([foreground, logs], options)).toMatchObject({ valid: true, commandId: 'logs' });
+    expect(launchCrashDiagnosis([{ ...foreground, output: 'Bundler ready' }, logs], options)).toMatchObject({
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+    expect(launchCrashDiagnosis([{ ...direct, endedAt: null, exitCode: null }, logs], options)).toMatchObject({
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+    expect(
+      launchCrashDiagnosis(
+        [
+          { ...direct, command: `${direct.command} 2>&1` },
+          { ...logs, command: `${logs.command} 2>&1` },
+        ],
+        options,
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
     expect(
       launchCrashDiagnosis(
         [{ ...direct, output: '› Opening exp+trailhead://dev-client on another device' }, logs],
