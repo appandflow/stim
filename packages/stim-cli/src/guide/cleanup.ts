@@ -1481,8 +1481,9 @@ THE ONE CASE GC WILL NOT REAP
   so \`stop\` is what stands between a teardown and a log stream that outlives
   the device it was reading. A fresh \`ios\` / \`android\` run replaces the
   previous stream, or shares it when the same device and app use another slot.
-  An automatic engine update waits while any device stream is active. Run
-  \`stim stop\` in that workspace to end its streams and let the update proceed.
+  An automatic engine update does not wait for device streams: the new stimd
+  restarts simulator and emulator streams and takes over a physical iPhone's
+  console, which runs under its own helper process.
 
   A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
   hardware the collector IS the launch. \`devicectl\` connects an app's
@@ -1498,7 +1499,9 @@ THE ONE CASE GC WILL NOT REAP
   --console\` keeps the app attached to the launching process, so anything that
   ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc\`,
   \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
-  a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
+  a crash of its helper process, the host sleeping, or the cable coming out.
+  A stimd restart does not: the console runs under that helper, which writes
+  device.ndjson itself, and the next stimd takes it over. Measured: SIGTERM to the
   collector alone terminates the app. The phone has no owned-device registry
   entry. \`stop\` closes the app and releases this workspace's leases.
   Nothing is uninstalled, and the next \`ios --device\` starts it again.

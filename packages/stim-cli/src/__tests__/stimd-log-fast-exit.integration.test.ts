@@ -113,7 +113,7 @@ test.skipIf(process.platform === 'win32')(
     const writers = createLogWriters(() => {});
     try {
       const sink = await writers.open(
-        { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+        { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', attribution: {} },
         () => {},
       );
       fault.capture = true;
@@ -165,7 +165,7 @@ test.skipIf(process.platform === 'win32')('history drains the final record after
   const writers = createLogWriters(() => {});
   try {
     const sink = await writers.open(
-      { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     await backfillDeviceLog({

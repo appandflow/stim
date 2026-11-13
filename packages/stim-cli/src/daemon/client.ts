@@ -295,12 +295,14 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
         `${stimd} runs Stim ${version} as the child of another command.`,
         'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
       ]
-    : heldBy === 'logs'
+    : // compat C34 until 2.1.0
+      heldBy === 'logs'
       ? [
           `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
           `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
         ]
-      : heldBy === 'dev-servers'
+      : // compat end
+        heldBy === 'dev-servers'
         ? [
             `${stimd} runs Stim ${version} and the dev servers of ${workspaces.join(', ')}, which stop when it exits on Windows; it restarts on this build once they stop.`,
             `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'}; then run the command again.`,

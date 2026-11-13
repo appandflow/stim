@@ -51,7 +51,6 @@ test('unverified history cleanup after spawn leaves the child claim pending', as
     endBackfill: async () => {
       throw new Error('sink failed');
     },
-    beforeFinish: () => {},
     addAlias: async () => {},
     removeAlias: async () => {},
     closed: async () => {},
@@ -105,7 +104,6 @@ test('a queued live write failure during PID resolution prevents a warm history 
     },
     backfillLine: () => {},
     endBackfill: async () => {},
-    beforeFinish: () => {},
     addAlias: async () => {},
     removeAlias: async () => {},
     closed: async () => {},

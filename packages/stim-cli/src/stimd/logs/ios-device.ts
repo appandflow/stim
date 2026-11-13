@@ -1,5 +1,3 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { getExecutor } from '../../exec.ts';
 import type { NdjsonRecord } from '../../ndjson.ts';
 
 // os_log only reaches a process's stderr when OS_ACTIVITY_DT_MODE is set in its
@@ -57,6 +55,9 @@ export function rustPanics(text: string): string[] {
 }
 
 export const TOOL_ERROR_PREFIX = 'ERROR: ';
+export const CONSOLE_RUN_ACCEPT = 'console-run-accept';
+/** How long the console's helper waits for devicectl's process group to end after SIGTERM before killing it. */
+export const CONSOLE_STOP_MS = 3000;
 
 const MIRROR_LINE =
   /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+-]\d{4}) (.+?)\[(\d+):(\d+)\] ?(?:\[([^\]\s]+)\] )?([\s\S]*)$/;
@@ -126,22 +127,4 @@ export function deviceConsoleArgs({
   args.push(bundleId);
   if (payloadUrl) args.push('--', ...DEV_MENU_LAUNCH_ARGS);
   return args;
-}
-
-export function startIosDeviceConsole({
-  udid,
-  bundleId,
-  payloadUrl = null,
-  spawnFn = null,
-}: {
-  udid: string;
-  bundleId: string;
-  payloadUrl?: string | null;
-  spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
-}): ChildProcess {
-  const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
-  return spawn('xcrun', deviceConsoleArgs({ udid, bundleId, payloadUrl }), {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false,
-  });
 }

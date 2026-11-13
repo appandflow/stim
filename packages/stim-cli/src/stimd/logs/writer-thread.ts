@@ -6,7 +6,6 @@ import { isJsonObject } from '@stim-cli/core/state';
 import { createNdjsonWriter, type NdjsonWriter } from '../../ndjson.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { parseLogcatLine } from './android.ts';
-import { parseDeviceConsoleLine } from './ios-device.ts';
 import { parseLogStreamLine } from './ios.ts';
 import { createOwnedStreams } from './owned.ts';
 
@@ -15,10 +14,7 @@ const port = parentPort;
 type Entry = {
   writer: NdjsonWriter;
   platform: 'ios' | 'android';
-  physical: boolean;
-  bundleId?: string;
   attributions: Map<string, Record<string, unknown>>;
-  captured: number;
   observedGeneration: number | null;
   recent: Map<string, number>;
   recentEvictedAt: number;
@@ -33,7 +29,7 @@ const owned = createOwnedStreams(
 
 function nativeTimestamp(stream: Entry, line: string): unknown {
   // https://github.com/appandflow/stim/issues/5387: different native timestamp spellings may preserve duplicate evidence.
-  if (stream.platform === 'ios' && !stream.physical) return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
+  if (stream.platform === 'ios') return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
   return /^\s*(\d+\.\d{3,6})\s/.exec(line)?.[1];
 }
 
@@ -48,8 +44,6 @@ type Message =
       streamId: string;
       root: string;
       platform: 'ios' | 'android';
-      physical: boolean;
-      bundleId?: string;
       runId?: string;
       slotKey: string;
       attribution: Record<string, unknown>;
@@ -68,7 +62,6 @@ type Message =
   | { op: 'backfill.begin'; requestId: number; streamId: string; since: number }
   | { op: 'backfill.end'; requestId: number; streamId: string }
   | { op: 'sync'; requestId: number; streamId: string }
-  | { op: 'before-finish'; streamId: string; signalled: boolean }
   | { op: 'close'; requestId: number; streamId: string };
 
 const limit = 16_384;
@@ -113,7 +106,6 @@ function handleOwnedRequest(message: OwnedRequest): void {
   );
 }
 
-// oxlint-disable-next-line complexity -- The worker dispatches the existing message protocol in one handler.
 port.on('message', (message: Message) => {
   try {
     if (isOwnedRequest(message)) {
@@ -136,10 +128,7 @@ port.on('message', (message: Message) => {
       streams.set(message.streamId, {
         writer,
         platform: message.platform,
-        physical: message.physical,
-        bundleId: message.bundleId,
         attributions: new Map([[message.slotKey, message.attribution]]),
-        captured: 0,
         observedGeneration: null,
         recent: new Map(),
         recentEvictedAt: 0,
@@ -211,8 +200,7 @@ port.on('message', (message: Message) => {
         ...(failed ? { error: 'device log backfill could not persist its records' } : {}),
       });
     } else if (message.op === 'line' || message.op === 'backfill.line') {
-      const parse =
-        stream.platform === 'ios' ? (stream.physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
+      const parse = stream.platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
       const record = parse(message.line, { now: Date.now, clockOffsetMs: message.clockOffsetMs });
       if (record) {
         if (message.op === 'backfill.line' && stream.backfill && (record.ts ?? 0) < stream.backfill.since) return;
@@ -240,7 +228,6 @@ port.on('message', (message: Message) => {
         }
         let persisted = duplicate;
         if (!duplicate) {
-          stream.captured++;
           if (write({ ...record, platform: stream.platform }))
             port.postMessage({ event: 'changed', streamId: message.streamId });
           persisted = complete;
@@ -271,15 +258,6 @@ port.on('message', (message: Message) => {
           port.postMessage({ event: 'observed', streamId: message.streamId, generation: message.generation });
         }
       }
-    } else if (message.op === 'before-finish' && stream.physical && stream.captured === 0 && !message.signalled) {
-      const written = write({
-        src: 'device',
-        platform: stream.platform,
-        level: 'warn',
-        event: 'collector_empty',
-        msg: `the device console produced no output for ${stream.bundleId}; devicectl only connects the app's streams when it starts the app, and os_log below the info level never reaches them`,
-      });
-      if (written) port.postMessage({ event: 'changed', streamId: message.streamId });
     } else if (message.op === 'close') {
       const result = stream.writer.close();
       streams.delete(message.streamId);

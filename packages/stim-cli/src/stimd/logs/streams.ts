@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { isJsonObject, readDevServerStop, type DevServerStopRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
 import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
+import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
@@ -16,6 +17,7 @@ import {
   releaseClaim,
   setClaimChild,
   type ClaimHandle,
+  type ClaimHolder,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { adbCommand, isLogCleanupError, startAndroidLogcat } from './android.ts';
@@ -32,7 +34,15 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { readWebRecord } from '../../web/state.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { backfillDeviceLog } from './backfill.ts';
-import { startIosDeviceConsole } from './ios-device.ts';
+import {
+  adoptConsole,
+  consoleEnded,
+  consoleHolder,
+  settleConsole,
+  startConsole,
+  stopConsole,
+  type ConsoleStream,
+} from './console.ts';
 import { startIosLogStream } from './ios.ts';
 import {
   handedOverStream,
@@ -158,10 +168,8 @@ export interface StreamTable {
     coverage?: 'pending' | 'covered' | 'failed';
   }>;
   running(): boolean;
-  /** Whether a stream runs that a successor stimd cannot resume: a physical iPhone's console launches its app. */
-  holdsRelaunch(): boolean;
-  /** The workspaces whose streams hold a relaunch. */
-  heldRoots(): string[];
+  /** The engine builds the physical iPhone consoles' helpers run from, which the engine store must keep. */
+  engineDirs(): string[];
   /** Restarts the streams a predecessor stimd handed over in these workspaces, with this process's environment. */
   resume(paths: string[], env: Record<string, string>): void;
   /** With `handover`, each stopped stream that can be resumed keeps its record, marked for the successor. */
@@ -397,6 +405,7 @@ function spawnChild(
 
 const noop = () => {};
 const NO_LINE_LOOKBACK_MS = 5 * 60_000;
+const PREDECESSOR_WAIT_MS = 10_000;
 class AndroidPidChanged extends Error {}
 
 function environmentHash(env: Record<string, string>): string {
@@ -415,7 +424,6 @@ const matches = (stream: Stream, input: StreamSpec, root: string, envHash: strin
   stream.root === root &&
   stream.envHash === envHash &&
   !input.physical &&
-  !stream.spec.physical &&
   !stream.controller.signal.aborted &&
   stream.spec.platform === input.platform &&
   stream.spec.udid === input.udid &&
@@ -431,7 +439,8 @@ const streamRecord = (streamId: string, spec: StreamSpec, runId: string | undefi
   kind: 'stream',
   streamId,
   startedAt: new Date().toISOString(),
-  ...(spec.physical ? {} : { spec, ...(runId ? { runId } : {}) }),
+  spec,
+  ...(runId ? { runId } : {}),
 });
 
 const stopStimdRemedy = () =>
@@ -455,6 +464,35 @@ export function createStreams(
   let closing = false;
   let closePromise: Promise<void> | null = null;
   let ownedRunning = true;
+  const consoles = new Map<string, ConsoleStream>();
+  let consoleWatch: NodeJS.Timeout | null = null;
+  const settleConsoleAt = (key: string, entry: ConsoleStream, requested: boolean): Promise<void> => {
+    entry.settling ??= (requested ? stopConsole(entry) : settleConsole(entry)).then(
+      () => {
+        if (consoles.get(key) === entry) consoles.delete(key);
+        if (!consoles.size && consoleWatch) {
+          clearInterval(consoleWatch);
+          consoleWatch = null;
+        }
+        return undefined;
+      },
+      (error: unknown) => {
+        entry.settling = null;
+        throw error;
+      },
+    );
+    return entry.settling;
+  };
+  const watchConsoles = () => {
+    consoleWatch ??= setInterval(() => {
+      for (const [key, entry] of consoles)
+        if (!entry.settling && consoleEnded(entry))
+          void serialize(entry.root, async () => {
+            if (consoles.get(key) === entry) await settleConsoleAt(key, entry, false);
+          }).catch((error: unknown) => log(`device console ${entry.id} could not be settled: ${errorText(error)}`));
+    }, 1000);
+    consoleWatch.unref();
+  };
   const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const result = (queues.get(key) ?? Promise.resolve()).then(work);
     const done = result.then(
@@ -522,7 +560,7 @@ export function createStreams(
         log(`the logs worker failed: ${error.message}`);
         const lost = [...new Set(streams.values())];
         for (const stream of lost) {
-          if (!closing && !stream.spec.physical && !stream.stopping) {
+          if (!closing && !stream.stopping) {
             stream.handover = true;
             stream.interruptedBy = `the logs worker failed (${error.message})`;
           }
@@ -585,12 +623,6 @@ export function createStreams(
     env: Record<string, string>,
     through: number,
   ): HistoryCoverage => {
-    if (stream.spec.physical)
-      return {
-        status: 'failed' as const,
-        warm: true,
-        startedAt: Infinity,
-      };
     const existing = stream.historySeen.get(signal);
     if (existing) {
       if (
@@ -744,6 +776,8 @@ export function createStreams(
     const slotKey = deviceSlotKey(input.platform, slot);
     const key = `${root}\0${slotKey}`;
     signal?.throwIfAborted();
+    const runningConsole = consoles.get(key);
+    if (runningConsole) await settleConsoleAt(key, runningConsole, true);
     const previous = streams.get(key);
     if (previous && matches(previous, input, root, envHash)) return { streamId: previous.id };
     if (previous) await removeAlias(previous, key, slotKey);
@@ -778,6 +812,40 @@ export function createStreams(
       releaseClaim(claim);
       signal.throwIfAborted();
     }
+    if (input.physical) {
+      if (!input.udid || !input.bundleId) {
+        releaseClaim(claim);
+        throw new Error('the iOS device console has no device id or bundle id');
+      }
+      const engineDir = ownStoreEngine()?.build;
+      registerCollector(root, slotKey, {
+        kind: 'stream',
+        streamId: id,
+        startedAt: new Date().toISOString(),
+        ...(runId ? { runId } : {}),
+        ...(engineDir ? { engineDir } : {}),
+      });
+      try {
+        const entry = await startConsole({
+          id,
+          root,
+          claim,
+          udid: input.udid,
+          bundleId: input.bundleId,
+          payloadUrl: input.payloadUrl ?? null,
+          runId: runId ?? null,
+          attribution: attribution(slot, input),
+          env,
+        });
+        consoles.set(key, entry);
+        watchConsoles();
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'))
+          unregisterStreamAll(root, id);
+        throw error;
+      }
+      return { streamId: id };
+    }
     const controller = new AbortController();
     let stream: Stream;
     let sink: LogSink;
@@ -790,8 +858,6 @@ export function createStreams(
           slotKey,
           root,
           platform: input.platform,
-          physical: input.physical === true,
-          bundleId: input.bundleId,
           runId,
           attribution: attribution(slot, input),
         },
@@ -976,7 +1042,6 @@ export function createStreams(
       },
       writer: sink.writer,
       recordLine: (line, clockOffsetMs, child) => sink.line(line, clockOffsetMs, generations.get(child)),
-      beforeFinish: sink.beforeFinish,
       startStream: (options) => {
         if (stream.stopping) throw new Error('the device log stream is stopping');
         stream.generation++;
@@ -992,15 +1057,7 @@ export function createStreams(
             spawnFn,
           });
         } else if (!input.udid) throw new Error('the iOS log stream has no device id');
-        else if (input.physical) {
-          if (!input.bundleId) throw new Error('the iOS device console has no bundle id');
-          child = startIosDeviceConsole({
-            udid: input.udid,
-            bundleId: input.bundleId,
-            payloadUrl: input.payloadUrl,
-            spawnFn,
-          });
-        } else {
+        else {
           if (!input.appName) throw new Error('the iOS log stream has no app name');
           child = startIosLogStream({
             udid: input.udid,
@@ -1057,7 +1114,6 @@ export function createStreams(
         slotKey,
         root,
         platform,
-        physical: true,
         runId,
         attribution: slot === 'default' ? {} : { slot, deviceId: spec?.udid ?? spec?.serial },
       },
@@ -1065,6 +1121,42 @@ export function createStreams(
     );
     sink.writer.write(record);
     await sink.closed();
+  };
+  /**
+   * Takes over a physical iPhone console whose helper an earlier stimd started, once that stimd is gone; a predecessor
+   * still exiting gets `PREDECESSOR_WAIT_MS`. A console that ended meanwhile is settled from what its helper recorded.
+   * @ref LLP 0018#the-physical-iphone-consoles-helper -- a later stimd takes the console over, never relaunching it
+   */
+  const takeOverConsole = async (root: string, slotKey: string, id: string, holder: ClaimHolder): Promise<void> => {
+    for (
+      const deadline = Date.now() + PREDECESSOR_WAIT_MS;
+      inspectProcessIdentity(holder.owner) === 'same' && Date.now() < deadline;
+    )
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    const owner = streamOwnerGone(root, id);
+    const current = consoleHolder(root, id);
+    if (!owner.gone || !current) {
+      ownedLog(
+        'warn',
+        'device_log_stream_unverified',
+        `device console ${id} in ${root} was not taken over: ${owner.gone ? 'its claim changed' : owner.reason}`,
+      );
+      return;
+    }
+    const entry = adoptConsole(root, id, current);
+    if (!entry) return;
+    const key = `${root}\0${slotKey}`;
+    consoles.set(key, entry);
+    watchConsoles();
+    ownedLog(
+      'info',
+      'device_console_adopted',
+      `took over device console ${id} in ${root} (devicectl pid ${entry.leader.pid})`,
+    );
+    if (consoleEnded(entry))
+      await settleConsoleAt(key, entry, false).catch((error: unknown) =>
+        ownedLog('warn', 'device_console_unsettled', `device console ${id} in ${root}: ${errorText(error)}`),
+      );
   };
   // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
   const resumeIn = async (
@@ -1084,7 +1176,7 @@ export function createStreams(
     >();
     const state = readWorkspaceState(root);
     const devServerStop = readDevServerStop(state);
-    const live = new Set([...streams.values()].map((stream) => stream.id));
+    const live = new Set([...streams.values(), ...consoles.values()].map((stream) => stream.id));
     const file = join(workspaceLogsDir(root), 'device.ndjson');
     for (const [slotKey, record] of Object.entries(state?.collectors ?? {})) {
       if (!isJsonObject(record) || record.kind !== 'stream' || typeof record.streamId !== 'string') continue;
@@ -1092,6 +1184,11 @@ export function createStreams(
       if (live.has(id) || skip.has(id)) continue;
       const handedOver = handedOverStream(record);
       if (!handedOver && typeof record.interruptedAt === 'string') continue;
+      const holder = consoleHolder(root, id);
+      if (holder) {
+        await takeOverConsole(root, slotKey, id, holder);
+        continue;
+      }
       const crashed = !handedOver;
       const reason =
         typeof record.interruptedBy === 'string'
@@ -1224,18 +1321,10 @@ export function createStreams(
           resumeIn(root, first[0]?.env ?? {}, envs, new Set(again.map((stream) => stream.id))),
         ).catch((failure: unknown) => log(`device log streams in ${root} were not restarted: ${String(failure)}`));
       }
-      const stopped = [
-        ...again.map((stream) => ({
-          stream,
-          reason: `the logs worker failed again (${error.message}) after stimd restarted this stream; logging stopped here. The next stim ios|android in this workspace, or a stimd restart, starts it again`,
-        })),
-        ...lost
-          .filter((stream) => stream.spec.physical && !stream.stopping)
-          .map((stream) => ({
-            stream,
-            reason: `the logs worker failed (${error.message}); restarting a physical device console would launch the app again`,
-          })),
-      ];
+      const stopped = again.map((stream) => ({
+        stream,
+        reason: `the logs worker failed again (${error.message}) after stimd restarted this stream; logging stopped here. The next stim ios|android in this workspace, or a stimd restart, starts it again`,
+      }));
       for (const { stream, reason } of stopped) {
         const platform = stream.spec.platform;
         await writeLost(
@@ -1251,6 +1340,38 @@ export function createStreams(
       for (const root of unverified) if (!closing) await syncRoot(root);
     })().catch((failure: unknown) => log(`logs worker recovery failed: ${String(failure)}`));
   }
+  /**
+   * A readiness wait on a physical iPhone console. Its helper writes the device log itself, so a change in the log's
+   * size wakes the wait. Coverage is always `failed`: the console has no history to replay.
+   */
+  const waitConsole = async (
+    key: string,
+    entry: ConsoleStream,
+    after: number,
+    deadline: number,
+    signal: AbortSignal | undefined,
+    withCoverage: boolean,
+    checkCoverage: boolean,
+  ): Promise<{ revision: number; gone?: true; coverage?: 'failed' }> => {
+    const coverage = withCoverage ? { coverage: 'failed' as const } : {};
+    if (entry.revision > after || (withCoverage && checkCoverage)) return { revision: entry.revision, ...coverage };
+    const file = join(workspaceLogsDir(entry.root), 'device.ndjson');
+    const size = () => {
+      try {
+        return statSync(file).size;
+      } catch {
+        return -1;
+      }
+    };
+    const start = size();
+    for (;;) {
+      signal?.throwIfAborted();
+      if (consoles.get(key) !== entry) return { revision: after, gone: true, ...coverage };
+      if (size() !== start) return { revision: ++entry.revision, ...coverage };
+      if (Date.now() >= deadline) return { revision: entry.revision, ...coverage };
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+    }
+  };
   return {
     async ownedSync(root) {
       if (root !== undefined) return syncRoot(root);
@@ -1309,6 +1430,12 @@ export function createStreams(
       }
       const key = `${canonicalRoot}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       return serialize(canonicalRoot, async () => {
+        const entry = consoles.get(key);
+        if (entry) {
+          if (entry.id !== streamId) throw new Error('the device log stream changed');
+          await settleConsoleAt(key, entry, true);
+          return true;
+        }
         const stream = streams.get(key);
         if (!stream) {
           const recorded = readCollectors(root)[deviceSlotKey(platform, slot)];
@@ -1337,10 +1464,13 @@ export function createStreams(
       checkCoverage = false,
     ) {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
+      const deadline = Date.now() + timeoutMs;
+      const entry = consoles.get(key);
+      if (entry?.id === streamId)
+        return waitConsole(key, entry, after, deadline, signal, Boolean(signal && env), checkCoverage);
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
-      const deadline = Date.now() + timeoutMs;
-      if (checkCoverage && (stream.spec.physical || (signal && stream.historySeen.get(signal)?.status === 'covered'))) {
+      if (checkCoverage && signal && stream.historySeen.get(signal)?.status === 'covered') {
         const synced = await new Promise<boolean>((resolve, reject) => {
           let settled = false;
           const cleanup = () => {
@@ -1380,9 +1510,7 @@ export function createStreams(
       }
       const coverage = signal && env ? scheduleBackfill(stream, since, signal, env, through) : undefined;
       const coverageStatus = () => {
-        if (stream.spec.physical && stream.writeFailures) return 'failed' as const;
         if (
-          !stream.spec.physical &&
           coverage?.status === 'covered' &&
           (coverage.generation !== stream.generation ||
             coverage.failureVersion !== stream.writeFailures ||
@@ -1424,11 +1552,11 @@ export function createStreams(
         if (signal?.aborted) abort();
       });
     },
-    running: () => streams.size > 0,
-    holdsRelaunch: () => [...streams.values()].some((stream) => stream.spec.physical),
-    heldRoots: () => [
-      ...new Set([...streams.values()].filter((stream) => stream.spec.physical).map((stream) => stream.root)),
-    ],
+    running: () => streams.size > 0 || consoles.size > 0,
+    engineDirs: () =>
+      [...consoles.values()].flatMap((entry) =>
+        typeof entry.claim.details.engineDir === 'string' ? [entry.claim.details.engineDir] : [],
+      ),
     resume(paths, env) {
       for (const path of paths) {
         let root: string;
@@ -1444,9 +1572,11 @@ export function createStreams(
     },
     async close(options): Promise<void> {
       closing = true;
+      if (consoleWatch) clearInterval(consoleWatch);
+      consoleWatch = null;
       closePromise ??= (async () => {
         await Promise.all(queues.values());
-        if (options?.handover) for (const stream of streams.values()) stream.handover = !stream.spec.physical;
+        if (options?.handover) for (const stream of streams.values()) stream.handover = true;
         const results = await Promise.allSettled([...new Set(streams.values())].map((stream) => stop(stream, false)));
         const recovery = await Promise.allSettled([writerRecovery]);
         const owned = await Promise.allSettled([writers?.ownedClose()]);
