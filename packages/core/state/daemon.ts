@@ -155,6 +155,17 @@ export interface DaemonStatus {
   recent?: DaemonRecentAction[];
   /** The children the running daemon stays up for, from its claim. */
   unverified?: UnverifiedCleanup[];
+  /** Set while stimd refuses to start after three abnormal exits in 10 minutes. */
+  crashHold?: { build: string; count: number; until: string; remedy: string };
+  /** The last abnormal stimd exits of the last day, oldest first. */
+  abnormalExits?: {
+    at: string;
+    build: string;
+    pid: number;
+    reason: string;
+    cause: 'engine' | 'home' | 'unknown';
+    home?: string;
+  }[];
 }
 
 function isDaemonSnapshot(record: Record<string, unknown> | null): record is Record<string, unknown> & DaemonSnapshot {

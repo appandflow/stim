@@ -1510,7 +1510,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   image that has it, or an sdkmanager install when none does.
   \`gc --pressure <level>\` refuses with STIM_BAD_ARG when the level is not
   normal, high or critical. \`stim settings
-  set\` and \`get\` refuse a removed setting, naming what replaced it, and
+  set\` and \`get\` refuse a removed setting as an unknown one, and
   \`start\`, \`ios\`, \`android\`, \`web\`, \`macos\`, \`revive\` and \`gc\` refuse
   while the environment sets a removed setting's variable, such as
   STIM_MAINTENANCE, or a config file still holds a removed setting's old value

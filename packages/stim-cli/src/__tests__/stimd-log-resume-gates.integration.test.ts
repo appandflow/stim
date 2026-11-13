@@ -210,11 +210,13 @@ process.kill(process.pid, 'SIGKILL');`;
     await deadClaim('s-lost');
     const streams = await resume();
     try {
-      await vi.waitFor(() => expect(interrupted()).toHaveLength(1));
+      await vi.waitFor(() => {
+        expect(interrupted()).toHaveLength(1);
+        expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
+      });
       expect(interrupted()[0]?.msg).toContain(says);
       expect(interrupted()[0]).toMatchObject({ level: 'warn', streamId: 's-lost' });
       expect(startCount()).toBe(0);
-      expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
       await streams.close();
       const again = await resume();
       await new Promise((done) => setTimeout(done, 500));

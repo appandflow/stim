@@ -1496,6 +1496,49 @@ describe('benchmark viewer export', () => {
     const original = JSON.parse(readFileSync(recordPath, 'utf8'));
     const eventsPath = join(runDir, 'events.jsonl');
     const originalEvents = readFileSync(eventsPath, 'utf8');
+    const device = 'A1B2C3D4-ABCD-ABCD-ABCD-0123456789AB';
+    const deviceName = 'Trailhead private-run-id';
+    const expoEvents =
+      originalEvents
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const stamped = JSON.parse(line);
+          const event = JSON.parse(stamped.line);
+          if (event.item.id === 'launch') {
+            event.item.command = `expo-agent-cli run:ios --device ${device} --no-bundler`;
+            if (event.type === 'item.completed')
+              event.item.aggregated_output = `› Opening exp+trailhead://dev on ${deviceName}`;
+          }
+          if (event.item.id === 'logs') {
+            event.item.command = 'expo-agent-cli dev:logs';
+            if (event.type === 'item.completed') event.item.aggregated_output = `Error: ${token}\nRootLayout`;
+          }
+          return JSON.stringify({ ...stamped, line: JSON.stringify(event) });
+        })
+        .join('\n') + '\n';
+    writeFileSync(eventsPath, expoEvents);
+    const expoRecord = {
+      ...original,
+      arm: 'expo-agent-cli',
+      simulator: { udid: device, name: deviceName },
+      dispatchToDiagnosisSeconds: 30,
+      diagnosisCommandCount: 5,
+      diagnosisUsage: null,
+      diagnosis: { ...original.diagnosis, observedAt: '2026-09-04T12:00:30.000Z', commandId: 'logs' },
+      evidenceSha256: { ...original.evidenceSha256, events: sha256(eventsPath) },
+    };
+    writeFileSync(recordPath, JSON.stringify(expoRecord));
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof')).runs[0]).toMatchObject({
+      arm: 'expo-agent-cli',
+      launchCrashAudit: { initialLaunchCommandId: 'launch', errorCaptureCommandId: 'logs', diagnosisCommandId: 'logs' },
+    });
+    writeFileSync(recordPath, JSON.stringify({ ...expoRecord, simulator: { udid: device, name: 'Other simulator' } }));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(recordPath, JSON.stringify(original));
+    writeFileSync(eventsPath, originalEvents);
     const unfamiliar = `/bin/zsh -lc "printf 'SETUP_COMPLETE\\n'"`;
     const reviewedEvents =
       originalEvents

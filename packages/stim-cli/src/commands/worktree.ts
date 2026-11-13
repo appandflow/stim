@@ -407,7 +407,7 @@ export async function warmWorktreeTarget(opts: {
         return null;
       }
       for (const key of unknownSettingKeys(settings)) {
-        out(chalk.yellow(inertSettingWarning(settings, key)));
+        out(chalk.yellow(inertSettingWarning(key)));
       }
       return settings;
     };

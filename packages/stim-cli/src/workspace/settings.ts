@@ -20,7 +20,6 @@ import {
   setSettingValueAt,
   coerceSettingText,
   placementWord,
-  replacementAdvice,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
@@ -552,16 +551,8 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
-export function inertSettingWarning(settings: unknown, key: string): string {
-  const advice = replacementAdvice(key, settingValueAt(settings, key));
-  const instead = advice
-    ? advice.command
-      ? ` Run \`${advice.command}\` instead.`
-      : advice.key
-        ? ` Use ${advice.key} instead.`
-        : ` ${advice.replacement.charAt(0).toUpperCase()}${advice.replacement.slice(1)}.`
-    : '';
-  return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
+export function inertSettingWarning(key: string): string {
+  return `Warning: setting "${key}" is not read by Stim and will be ignored.`;
 }
 
 export function readCommittedSettings(directory?: string | null): SettingsObject {

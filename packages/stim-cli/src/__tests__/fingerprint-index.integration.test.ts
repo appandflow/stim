@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { fingerprint } from '../fingerprint/evaluate.ts';
-import { fingerprintForBuild } from '../fingerprint/operation.ts';
+import { fingerprintForBuild, fingerprintInstallWarning } from '../fingerprint/operation.ts';
 import { testContext } from './_context.ts';
 import {
   checkRead,
@@ -43,6 +43,50 @@ import { fingerprintNotes } from '../fingerprint/doctor.ts';
 import { canonicalJson, isUncertain, sha256 } from '../fingerprint/key.ts';
 import { precomputePass } from '../fingerprint/precompute.ts';
 import { disagreementCount, takeDisagreements, verifyHit, verifyPending } from '../fingerprint/verify.ts';
+
+test('names npm install at the governing lockfile directory for a stale npm install', () => {
+  const root = join(base, 'checkout');
+  const project = join(root, 'apps', 'example');
+  const installed = join(root, 'node_modules', '.package-lock.json');
+  write(join(project, 'package.json'), '{}');
+  write(join(root, 'package-lock.json'), '{}');
+  write(installed, '{}');
+  const beforeCheckout = new Date(Date.now() - 60_000);
+  utimesSync(installed, beforeCheckout, beforeCheckout);
+  expect(fingerprintInstallWarning(project)).toBe(
+    `${join(root, 'package-lock.json')} changed after the last install; the build will be installed but not cached. Run \`npm install\` in ${JSON.stringify(root)} before the next build.`,
+  );
+  const afterCheckout = new Date(Date.now() + 60_000);
+  utimesSync(installed, afterCheckout, afterCheckout);
+  expect(fingerprintInstallWarning(project)).toBeNull();
+});
+
+test.each([
+  { name: 'no lock', lockfiles: [], stamp: '.modules.yaml', declared: 'pnpm@11.0.0' },
+  { name: 'mixed locks', lockfiles: ['package-lock.json', 'yarn.lock'], stamp: '.package-lock.json' },
+  {
+    name: 'conflicting declaration',
+    lockfiles: ['package-lock.json'],
+    stamp: '.package-lock.json',
+    declared: 'pnpm@11.0.0',
+  },
+  { name: 'different manager stamp', lockfiles: ['package-lock.json'], stamp: '.modules.yaml' },
+  { name: 'pnpm lock', lockfiles: ['pnpm-lock.yaml'], stamp: '.modules.yaml' },
+  { name: 'Yarn lock', lockfiles: ['yarn.lock'], stamp: '.yarn-integrity' },
+])('keeps the generic stale install warning with $name', ({ lockfiles, stamp, declared }) => {
+  const root = join(base, 'ambiguous-install');
+  const patch = join(root, 'patches', 'some-package.patch');
+  const installed = join(root, 'node_modules', stamp);
+  write(join(root, 'package.json'), JSON.stringify({ packageManager: declared }));
+  write(patch, 'changed patch');
+  write(installed, 'old stamp');
+  for (const lockfile of lockfiles) write(join(root, lockfile), '{}');
+  const beforeEdit = new Date(Date.now() - 60_000);
+  utimesSync(installed, beforeEdit, beforeEdit);
+  const warning = fingerprintInstallWarning(root);
+  expect(warning).toContain('changed after the last install; the build will be installed but not cached');
+  expect(warning).not.toContain('Run `');
+});
 
 test('install freshness follows declared custom patches and nested patch-package files', () => {
   const root = join(base, 'patch-project');
@@ -61,13 +105,13 @@ test('install freshness follows declared custom patches and nested patch-package
   write(stamp, 'layoutVersion: 5\n');
   const past = new Date(Date.now() - 60_000);
   utimesSync(stamp, past, past);
-  expect(newerThanInstall({ project: root, install: root })).toBe(declared);
+  expect(newerThanInstall({ project: root, install: root })).toEqual({ input: declared, stamp });
   const future = new Date(Date.now() + 60_000);
   utimesSync(stamp, future, future);
   expect(newerThanInstall({ project: root, install: root })).toBeNull();
   const newer = new Date(Date.now() + 120_000);
   utimesSync(nested, newer, newer);
-  expect(newerThanInstall({ project: root, install: root })).toBe(nested);
+  expect(newerThanInstall({ project: root, install: root })).toEqual({ input: nested, stamp });
 });
 const request = (root: string) => ({ root, target: { platform: 'ios' as const }, embedMode: 'development' as const });
 

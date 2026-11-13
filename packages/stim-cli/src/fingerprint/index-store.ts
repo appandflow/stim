@@ -611,7 +611,7 @@ export function prepareInstallCarry(sourceProject: string, project: string): ((c
  * A patch or the lockfile written after the newest install stamp, which an install has not applied yet; null when
  * every one is older, no stamp exists, or worktree warm verified the copied install against these inputs.
  */
-export function newerThanInstall(roots: Roots): string | Uncertain | null {
+export function newerThanInstall(roots: Roots): { input: string; stamp: string } | Uncertain | null {
   try {
     const installed = installStamp(roots);
     if (!installed) return null;
@@ -620,7 +620,7 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
     const pending = inputs.paths.find((path) => (mtime(path) ?? 0) > installed.at);
     if (!pending) return null;
     const record = readWarmedInstall(roots.project);
-    if (!record) return pending;
+    if (!record) return { input: pending, stamp: installed.path };
     const stamp = statKey(installed.path);
     if (
       stamp &&
@@ -630,7 +630,7 @@ export function newerThanInstall(roots: Roots): string | Uncertain | null {
       statKey(installed.path)?.key === stamp.key
     )
       return null;
-    return pending;
+    return { input: pending, stamp: installed.path };
   } catch {
     return { uncertain: 'patch inputs could not be inspected' };
   }

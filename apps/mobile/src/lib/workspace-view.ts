@@ -50,6 +50,7 @@ export function appPresence(device: DeviceRef): 'none' | 'closed' | null {
  * `WorkspaceView.swift`; both replay apps/desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json.
  */
 export function workspaceStage(env: EnvironmentState, now: number): WorkspaceStage {
+  if (env.pathMissing) return { kind: 'stopped', label: t`Workspace Not Found`, tone: 'tertiary', subtitle: null };
   const facts = env.stage;
   if (!facts) return { kind: 'unknown', label: t`Unknown`, tone: 'tertiary', subtitle: null };
   const since = ago(now, facts.since);

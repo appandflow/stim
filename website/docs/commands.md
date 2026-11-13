@@ -135,7 +135,9 @@ line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
 log with the last pass. It reports a daemon that stopped ticking, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
-the child, and that stopping that stimd is safe and ends the wait, a daemon claim it cannot
+the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
+three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
+day, a daemon claim it cannot
 resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
 
@@ -710,13 +712,13 @@ never runs the app's code.
 
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
-runs the same `./exact.mjs ios --no-install` in a checkout folder named like
-this app's, with `EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
+runs the same `./exact.mjs ios --no-install` in the app's directory, with
+`EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
 this Mac installs the `.app` on its owned simulator. Nothing is cached. The
 values of the settings `app.json` `env` declares travel with the build: this
 shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
 `app.json` declares native modules, an `exact2` checkout with local changes and
-an app folder name that is not a plain ASCII file name build here. See
+repository-root apps whose folder name is not a plain ASCII file name build here. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
 what the worker needs; `stim doctor` reports what each machine in
 `remote.machines` lacks.
@@ -1592,7 +1594,7 @@ stim settings unset ios.deviceType --scope workspace
 An unknown key, a layer the key is not read from, or a value of the wrong
 shape refuses with `STIM_BAD_ARG`, names the expected shape, and writes
 nothing. `set` and `get` of a [removed setting](./settings.md#stim-daemon)
-refuse with `STIM_BAD_ARG` naming its replacement, and `unset` removes a
+refuse with `STIM_BAD_ARG` as an unknown setting, and `unset` removes a
 leftover one from every layer that has it, or from the one `--scope` names.
 Machine-file writes take the config lock and replace the file
 atomically. A committed write keeps the file's other keys and indentation.
@@ -1798,12 +1800,13 @@ Plain `status` prints a `Daemon` line for the
 last ticked, and the pressure level with its reasons. A `Last daemon action`
 line follows once a daemon of this home has acted, then a line for each run
 waiting for a build slot or a device boot, and one for each child whose cleanup
-the running daemon could not verify, with its remedy. Each workspace prints a
+the running daemon could not verify, with its remedy, and a line for the crash
+hold and for each of the last abnormal stimd exits. Each workspace prints a
 `stage:` line with where the daemon's idle model has it: `running` with its last
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting`, `unverified` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 

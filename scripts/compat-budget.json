@@ -16,9 +16,9 @@
       "mechanism": "home and machine state schema, snapshot and rollback to an equal schema"
     },
     "C5": {
-      "loc": 60,
+      "loc": 33,
       "end": "permanent",
-      "mechanism": "one map of removed settings and environment variables to their replacements"
+      "mechanism": "removed settings and environment variables whose old value turned a mechanism off refuse the command and name the commands that keep the old behavior"
     },
     "C6": {
       "loc": 30,
@@ -69,11 +69,6 @@
       "loc": 5,
       "end": "permanent",
       "mechanism": "the share viewer reloads on a new build id"
-    },
-    "C20": {
-      "loc": 20,
-      "end": "permanent",
-      "mechanism": "removed flags and API methods name their replacement through one path"
     },
     "C26": {
       "loc": 25,

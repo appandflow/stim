@@ -377,7 +377,7 @@ export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
         });
       }
       for (const key of unknownSettingKeys(settings)) {
-        note(chalk.yellow(inertSettingWarning(settings, key)));
+        note(chalk.yellow(inertSettingWarning(key)));
       }
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
