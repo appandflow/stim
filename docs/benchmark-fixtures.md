@@ -116,8 +116,10 @@ crash. Proof: the token appears in command output before any command names the
 source file (`nativeCrashReproduced`), the source equals the original byte for
 byte afterwards (`launchCrashRepair`), only that file differs from the crash
 commit, then the existing screenshot and process-identity proof. An injected
-native crash changes native source, so each arm builds once more after the fix;
-both arms start from the same warm outputs.
+native crash changes native source, so each arm builds once more after the fix.
+Both Exact arms start with a fresh target directory because Exact's build
+outputs contain paths to the original checkout. The other native fixtures
+start from warm outputs.
 
 The Swift injection was type-checked with `swiftc`. Kotlin and Exact injection,
 and whether the logs surface the token, are validated only by a first real run.

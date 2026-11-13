@@ -71,6 +71,7 @@ const coordinatorHashes = () =>
       'runner-isolation.mjs',
       'command-evidence.mjs',
       'native-crash-setup.mjs',
+      'native-fixtures.mjs',
       'matrix.mjs',
       'golden-state.mjs',
     ].map((name) => [name, sha256(fileURLToPath(new URL(name, import.meta.url)))]),
