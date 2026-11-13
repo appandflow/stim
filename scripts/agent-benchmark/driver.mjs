@@ -556,9 +556,10 @@ function controlAndroidForCleanup(runDir, preferredSerial, expectedName, recorde
   if (liveCandidates.length === 1) {
     const [device] = liveCandidates;
     if (preferredSerial && device.udid !== preferredSerial) throw new Error('recorded emulator serial changed');
+    if (recordedPath && device.configPath !== recordedPath) throw new Error('recorded emulator configuration changed');
     return device;
   }
-  if (recordedPath) {
+  if (recordedPath && existsSync(recordedPath)) {
     return androidAvdDescription(expectedName, {
       reportedPath: dirname(recordedPath),
       allowedRoots: [runDir],
@@ -2339,6 +2340,7 @@ function cleanup(runDir) {
     }
   } else if (meta.arm !== 'stim') {
     const expected = meta.expectedControlSimulator ?? {};
+    const privateDirectory = meta.arm === 'expo-agent-cli' ? join(runDir, 'tmp', 'avd') : undefined;
     let simulator;
     try {
       simulator =
@@ -2348,14 +2350,20 @@ function cleanup(runDir) {
               appAlive.simulator?.udid,
               expected.name,
               appAlive.simulator?.configPath,
-              meta.arm === 'expo-agent-cli' ? join(runDir, 'tmp', 'avd') : undefined,
+              privateDirectory,
             )
           : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid, expected);
+      if (
+        !simulator &&
+        appAlive.simulator?.udid &&
+        (meta.platform === 'android'
+          ? androidEmulatorTransports().some(({ serial }) => serial === appAlive.simulator.udid)
+          : simulatorSnapshot().includes(appAlive.simulator.udid))
+      ) {
+        throw new Error(`could not verify recorded device ${appAlive.simulator.udid}`);
+      }
     } catch (error) {
       actions.push(`failed: verify benchmark device for cleanup: ${error}`);
-    }
-    if (!simulator && appAlive.simulator?.udid) {
-      actions.push(`failed: could not verify recorded device ${appAlive.simulator.udid} for cleanup`);
     }
     if (simulator) {
       const udid = simulator.udid;
@@ -2375,6 +2383,18 @@ function cleanup(runDir) {
               Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
             }
             if (present()) throw new Error(`emulator ${udid} is still registered with adb`);
+          }
+          const current = androidAvdDescription(simulator.name, {
+            reportedPath: dirname(simulator.configPath),
+            allowedRoots: [runDir],
+            privateDirectory,
+          });
+          if (
+            current.configPath !== simulator.configPath ||
+            current.avdHome !== simulator.avdHome ||
+            !matchesExpectedAndroidEmulator(current, expected)
+          ) {
+            throw new Error('AVD registration changed during shutdown');
           }
           run('avdmanager', ['delete', 'avd', '-n', simulator.name], {
             timeout: 60_000,

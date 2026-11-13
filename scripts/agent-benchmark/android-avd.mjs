@@ -14,10 +14,14 @@ export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [],
         ? defaultDirectory
         : (privateDirectory ?? defaultDirectory)
       : reportedPath.trim().replace(/\r?\nOK$/, '');
-  const isPrivate = directory === privateDirectory;
-  if (!isAbsolute(directory) || /[\r\n]/.test(directory) || (!isPrivate && basename(directory) !== `${name}.avd`)) {
+  if (!isAbsolute(directory) || /[\r\n]/.test(directory)) {
     throw new Error('Unverified benchmark AVD path');
   }
+  const expectedPrivate = privateDirectory
+    ? join(realpathSync(dirname(dirname(privateDirectory))), 'tmp', 'avd')
+    : null;
+  const isPrivate = expectedPrivate && existsSync(directory) && realpathSync(directory) === expectedPrivate;
+  if (!isPrivate && basename(directory) !== `${name}.avd`) throw new Error('Unverified benchmark AVD path');
   const configPath = join(directory, 'config.ini');
   if (!existsSync(configPath)) {
     if (reportedPath === undefined) return { name, config: {} };
@@ -31,7 +35,9 @@ export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [],
   });
   if (
     !contained ||
-    (isPrivate ? canonicalConfig !== configPath : basename(dirname(canonicalConfig)) !== `${name}.avd`)
+    (isPrivate
+      ? canonicalConfig !== join(expectedPrivate, 'config.ini')
+      : basename(dirname(canonicalConfig)) !== `${name}.avd`)
   ) {
     throw new Error('Benchmark AVD path is outside its allowed roots');
   }

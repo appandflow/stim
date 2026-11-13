@@ -118,5 +118,15 @@ it('accepts the exact run-private Expo AVD only when its supplied home has the m
     systemImage: image,
   });
   expect(benchmarkAvdDescription(name, options).configPath).toBe(configPath);
+  const alias = join(realpathSync(root), 'run-alias');
+  symlinkSync(run, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  expect(
+    benchmarkAvdDescription(name, {
+      allowedRoots: [alias],
+      privateDirectory: join(alias, 'tmp', 'avd'),
+      reportedPath: privateDirectory,
+    }).configPath,
+  ).toBe(configPath);
+
   expect(() => benchmarkAvdDescription(name, { ...options, reportedPath: join(run, 'avd') })).toThrow('path');
 });
