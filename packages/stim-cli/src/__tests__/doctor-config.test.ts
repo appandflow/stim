@@ -35,41 +35,15 @@ function check(settings: SettingsObject, present: string[] = [], env: NodeJS.Pro
   });
 }
 
-test.each([
-  ['remote.buildMode', { remote: { buildMode: 'sometimes' } }, 'Set remote.build'],
-  [
-    'caches.injectMetroStore',
-    { caches: { injectMetroStore: false } },
-    'Run `stim settings set optimizations.metroSharedCache false --scope machine`',
-  ],
-])('%s names the setting that replaced it', (key, settings, remedy) => {
-  const [finding] = check(settings);
-  expect(finding?.fix).toBe(`${remedy}, then remove ${key} from ${MACHINE}.`);
-});
-
-test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement', () => {
-  const findings = check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' });
-  expect(findings).toEqual([
+test('a removed name in the config or the environment is an inert key, with no replacement named', () => {
+  expect(check({ remote: { buildMode: 'force' }, budget: { minFreeDiskGb: 12 } })).toEqual([
+    expect.objectContaining({ title: 'A key in the config is inert', fix: `Remove remote.buildMode from ${MACHINE}.` }),
     expect.objectContaining({
-      title: 'STIM_REMOTE_BUILD_MODE was replaced by remote.build',
-      fix: 'Run `stim settings set remote.build remote`, then unset STIM_REMOTE_BUILD_MODE.',
+      title: 'A key in the config is inert',
+      fix: `Remove budget.minFreeDiskGb from ${MACHINE}.`,
     }),
   ]);
-  expect(check({}, [], { STIM_REMOTE_BUILD_MODE: '  ' })).toEqual([]);
-});
-
-test('a removed setting in the config is reported with what replaced it', () => {
-  expect(check({ budget: { minFreeDiskGb: 12 }, maintenance: { capTargetPercent: 50 } })).toEqual([
-    expect.objectContaining({
-      title: 'budget.minFreeDiskGb was replaced by disk.minFreeGb',
-      fix: `Run \`stim settings set disk.minFreeGb 12\`, then remove budget.minFreeDiskGb from ${MACHINE}.`,
-    }),
-    expect.objectContaining({
-      title: 'maintenance.capTargetPercent is no longer read by Stim',
-      detail: `maintenance.capTargetPercent in ${MACHINE} is not read by Stim: nothing replaced it; the pressure ladder has fixed rules.`,
-      fix: `Remove maintenance.capTargetPercent from ${MACHINE}.`,
-    }),
-  ]);
+  expect(check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' })).toEqual([]);
 });
 
 test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_DAEMON', () => {

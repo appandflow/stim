@@ -814,6 +814,17 @@ function isDirectoryPath(path: string): boolean {
   }
 }
 
+// Android Emulator UpdateChecker.cpp stores integer timestamps keyed by encoded emulator and core versions.
+function isEmulatorUpdateCheck(name: string, contents: string): boolean {
+  return (
+    name === 'emu-update-last-check.ini' &&
+    contents
+      .trim()
+      .split(/\r?\n/)
+      .every((line) => /^_version\.3D[\w.]+\.26coreVersion\.3D[\w.]+[ \t]*=[ \t]*-?\d+$/.test(line.trim()))
+  );
+}
+
 export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirectory[] {
   const roots = avdStorageRoots();
   const stores = roots.filter(avdPathExists).map((root) => ({
@@ -827,7 +838,10 @@ export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirecto
       const path = join(root, name);
       const ini = readFileSync(path, 'utf8');
       const targets = new Set([...avdIniPaths(root, ini), ...avdIniPaths(canonicalRoot, ini)]);
-      if (!targets.size) throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      if (!targets.size) {
+        if (isEmulatorUpdateCheck(name, ini)) continue;
+        throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      }
       for (const target of targets) {
         try {
           registered.add(realpathSync(target));

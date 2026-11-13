@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/cache/tsconfig.json && tsc --noEmit -p packages/cache-s3/tsconfig.json && tsc --noEmit -p packages/agent-driver/tsconfig.json && tsc --noEmit -p packages/agent-driver-agent-device/tsconfig.json && tsc --noEmit -p packages/stim-cli/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/transport/tsconfig.json && tsc --noEmit -p packages/transport-tailscale/tsconfig.json && tsc --noEmit -p packages/transport-local/tsconfig.json && tsc --noEmit -p packages/ci/tsconfig.json && tsc --noEmit -p .github/actions/stim-ci/tsconfig.json",
-    "lint": "oxlint . && node scripts/ratchet.mjs && node scripts/build-compat.mjs && node scripts/compat-budget.mjs && node scripts/injected-imports.mjs && { command -v python3 >/dev/null || { echo 'lint: scripts/ref-check needs python3 on PATH' >&2; exit 1; }; } && python3 scripts/ref-check",
+    "lint": "oxlint . && node scripts/ratchet.mjs && node scripts/build-compat.mjs && node scripts/compat-budget.mjs && node scripts/injected-imports.mjs && node scripts/ref-check.mjs",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
