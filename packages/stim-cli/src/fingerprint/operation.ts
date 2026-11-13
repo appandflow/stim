@@ -110,7 +110,9 @@ export function fingerprintInstallWarning(root: string): string | null {
   if (!pending) return null;
   const consequence = 'the build will be installed but not cached';
   if (isUncertain(pending)) return `${pending.uncertain}; ${consequence}`;
-  return `${pending} changed after the last install; ${consequence}. Run \`${packageManagerInstall(install)}\` in ${JSON.stringify(install)} before the next build.`;
+  const warning = `${pending} changed after the last install; ${consequence}`;
+  const command = packageManagerInstall(install, 'refresh');
+  return command ? `${warning}. Run \`${command}\` in ${JSON.stringify(install)} before the next build.` : warning;
 }
 
 export async function settleFingerprintCheck(

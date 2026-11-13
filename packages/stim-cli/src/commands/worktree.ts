@@ -100,11 +100,11 @@ interface WorktreeSettings {
 
 export function dependencyInstallCommand(target: string, dir = '.'): string {
   const installRoot = resolve(target, dir);
-  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot, { clean: true })}`;
+  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot, 'replace')}`;
 }
 
 function cloneReplacementNote(target: string, dirs: string[]): string {
-  return dirs.some((dir) => packageManagerInstall(resolve(target, dir), { clean: true }) === 'npm ci')
+  return dirs.some((dir) => packageManagerInstall(resolve(target, dir), 'replace') === 'npm ci')
     ? ' `npm ci` deletes node_modules first, so it replaces the clone, which shares its disk with the source checkout, with a private copy of every package.'
     : '';
 }

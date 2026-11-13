@@ -65,6 +65,25 @@ test.each([
   expect(fingerprintInstallWarning(project)).toBeNull();
 });
 
+test.each([
+  { lockfiles: [] },
+  { lockfiles: ['package-lock.json'] },
+  { lockfiles: ['pnpm-lock.yaml', 'package-lock.json'] },
+])('reports stale dependencies without guessing a package manager from $lockfiles', ({ lockfiles }) => {
+  const root = join(base, 'ambiguous-install');
+  const patch = join(root, 'patches', 'some-package.patch');
+  const installed = join(root, 'node_modules', '.modules.yaml');
+  write(join(root, 'package.json'), '{"packageManager":"pnpm@11.0.0"}');
+  write(patch, 'changed patch');
+  write(installed, 'old stamp');
+  for (const lockfile of lockfiles) write(join(root, lockfile), '{}');
+  const beforeEdit = new Date(Date.now() - 60_000);
+  utimesSync(installed, beforeEdit, beforeEdit);
+  const warning = fingerprintInstallWarning(root);
+  expect(warning).toContain('changed after the last install; the build will be installed but not cached');
+  expect(warning).not.toContain('Run `');
+});
+
 test('install freshness follows declared custom patches and nested patch-package files', () => {
   const root = join(base, 'patch-project');
   const declared = join(root, 'vendor-patches', 'nested', 'declared.patch');
