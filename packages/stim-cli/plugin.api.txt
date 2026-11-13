@@ -156,22 +156,22 @@
 [agent-driver] type HostedAgentApp = { @@1 client: string;
 [agent-driver] type HostedAgentApp = { @@1 session: string;
 [agent-driver] type HostedAgentApp = { @branch1 @@0 } & ({
-[agent-driver] type HostedAgentApp = { @branch1 @@1p avdName?: never;
-[agent-driver] type HostedAgentApp = { @branch1 @@1p pid: number;
-[agent-driver] type HostedAgentApp = { @branch1 @@1p serial?: never;
-[agent-driver] type HostedAgentApp = { @branch1 @@1p udid?: never;
-[agent-driver] type HostedAgentApp = { @branch2 @@0p } | (HostedAgentDevice & {
-[agent-driver] type HostedAgentApp = { @branch2 @@1p pid?: never;
+[agent-driver] type HostedAgentApp = { @branch1 @@1 avdName?: never;
+[agent-driver] type HostedAgentApp = { @branch1 @@1 pid: number;
+[agent-driver] type HostedAgentApp = { @branch1 @@1 serial?: never;
+[agent-driver] type HostedAgentApp = { @branch1 @@1 udid?: never;
+[agent-driver] type HostedAgentApp = { @branch2 @@0 } | (HostedAgentDevice & {
+[agent-driver] type HostedAgentApp = { @branch2 @@1 pid?: never;
 [agent-driver] type HostedAgentDevice = {
 [agent-driver] type HostedAgentDevice = { @@1 session: string;
 [agent-driver] type HostedAgentDevice = { @branch1 @@0 } & ({
-[agent-driver] type HostedAgentDevice = { @branch1 @@1p avdName?: never;
-[agent-driver] type HostedAgentDevice = { @branch1 @@1p serial?: never;
-[agent-driver] type HostedAgentDevice = { @branch1 @@1p udid: string;
-[agent-driver] type HostedAgentDevice = { @branch2 @@0p } | {
-[agent-driver] type HostedAgentDevice = { @branch2 @@1p avdName: string;
-[agent-driver] type HostedAgentDevice = { @branch2 @@1p serial: string;
-[agent-driver] type HostedAgentDevice = { @branch2 @@1p udid?: never;
+[agent-driver] type HostedAgentDevice = { @branch1 @@1 avdName?: never;
+[agent-driver] type HostedAgentDevice = { @branch1 @@1 serial?: never;
+[agent-driver] type HostedAgentDevice = { @branch1 @@1 udid: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@0 } | {
+[agent-driver] type HostedAgentDevice = { @branch2 @@1 avdName: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@1 serial: string;
+[agent-driver] type HostedAgentDevice = { @branch2 @@1 udid?: never;
 [cache-provider] declare const CACHE_CONTRACT_CHECK_TIMEOUT_MS;
 [cache-provider] declare const CACHE_PROVIDER_API_VERSION: 1;
 [cache-provider] declare function loadCacheProvider({ projectRoot, config, env, timeoutMs }: {

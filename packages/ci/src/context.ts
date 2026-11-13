@@ -43,7 +43,10 @@ export function prepareCI<T extends CIContextOptions>(
   }
   // compat C33 until 2026-12-12
   if ('buildCache' in options)
-    throw new Error('buildCache was renamed to buildCacheDir; pass the directory as buildCacheDir.');
+    throw Object.assign(new Error('buildCache was renamed to buildCacheDir.'), {
+      code: 'STIM_BAD_ARG',
+      remedy: 'Pass the directory as buildCacheDir.',
+    });
   // compat end
   if (
     process.env.GITHUB_ACTIONS === 'true' &&

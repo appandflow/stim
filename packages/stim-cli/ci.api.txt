@@ -1,4 +1,5 @@
 // The stim/ci API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
 [*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
 [*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
 [*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
@@ -414,18 +415,18 @@
 [*] type PlatformBuildOptions = { @branch2 @@1 platform: "macos";
 [*] type PlatformBuildOptions = { @branch2 @@1 remoteBuild?: string;
 [*] type PlatformRunOptions = (NativeRunOptions & {
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p configuration?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p deviceType?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p platform: "ios";
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p runtime?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p scheme?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p simulatorApp?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0p }) | (NativeRunOptions & {
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p deviceProfile?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p platform: "android";
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p systemImage?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p variant?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0p }) | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 configuration?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 deviceType?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 platform: "ios";
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 runtime?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 scheme?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 simulatorApp?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0 }) | (NativeRunOptions & {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 deviceProfile?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 platform: "android";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 systemImage?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 variant?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0 }) | {
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 platform: "macos";
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remote?: string;
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remoteBuild?: string;
@@ -438,12 +439,12 @@
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
 [*] type StimBuildOptions = ((IosBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @@1p platform: "ios";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0p }) | (AndroidBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1p platform: "android";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0p }) | (MacosBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1p platform: "macos";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0p })) & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @@1 platform: "ios";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0 }) | (AndroidBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1 platform: "android";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0 }) | (MacosBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1 platform: "macos";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0 })) & {
 [*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@1 signal?: AbortSignal;
 [*] type StimBuildResult = {
 [*] type StimBuildResult = { @@1 facts: IosBuildFacts;

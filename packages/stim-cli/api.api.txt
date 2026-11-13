@@ -1,5 +1,6 @@
 // The stim API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
 // Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
+[*] @internal declare const RUN_OP_VERSION: typeof RUN_OP_WIRE;
 [*] @internal declare function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown>;
 [*] declare class StimError extends Error {
 [*] declare class StimError extends Error { @@1 constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
@@ -14,8 +15,8 @@
 [*] declare const LOG_LEVELS: readonly ["debug", "info", "warn", "error", "fatal"];
 [*] declare const LOG_SOURCES: readonly ["metro", "client", "device", "build", "agent", "maintenance", "placement"];
 [*] declare const PLACEMENT_DECISIONS: readonly ["here", "offloaded", "fell-back"];
-[*] declare const RUN_OP_VERSION: 1;
-[*] declare const STIM_API_VERSION: 2;
+[*] declare const RUN_OP_WIRE: 1;
+[*] declare const STIM_API_VERSION: 1;
 [*] declare const WATCHMAN_KIND;
 [*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
 [*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
@@ -711,15 +712,15 @@
 [*] interface LevelRun { @@1 outside: {
 [*] interface LevelRun { @@1 pressure: DaemonPressure;
 [*] interface LevelRun { @@1 usage: {
+[*] interface LevelRun { @@1 })[];
 [*] interface LevelRun { @@1 }[];
-[*] interface LevelRun { @@1p })[];
+[*] interface LevelRun { @@2 actions: LevelRunAction[];
 [*] interface LevelRun { @@2 bytes: number;
 [*] interface LevelRun { @@2 dir: string;
 [*] interface LevelRun { @@2 from: string;
+[*] interface LevelRun { @@2 kept?: string;
 [*] interface LevelRun { @@2 name: string;
 [*] interface LevelRun { @@2 path: string;
-[*] interface LevelRun { @@2p actions: LevelRunAction[];
-[*] interface LevelRun { @@2p kept?: string;
 [*] interface LevelRunAction {
 [*] interface LevelRunAction { @@1 bytes: number;
 [*] interface LevelRunAction { @@1 detail: string;
@@ -741,7 +742,7 @@
 [*] interface MachineCacheReport { @@1 orphanedDerivedData: (OwnSizedDir & {
 [*] interface MachineCacheReport { @@1 runnerBuilds: {
 [*] interface MachineCacheReport { @@1 simRuntimes: {
-[*] interface MachineCacheReport { @@1p })[];
+[*] interface MachineCacheReport { @@1 })[];
 [*] interface MachineCacheReport { @@2 agentDeviceVersion: string | null;
 [*] interface MachineCacheReport { @@2 checked: boolean;
 [*] interface MachineCacheReport { @@2 entries: SizedDir[];
@@ -753,12 +754,11 @@
 [*] interface MachineCacheReport { @@2 unreadableProjects: string[];
 [*] interface MachineCacheReport { @@2 unusedVersions: {
 [*] interface MachineCacheReport { @@2 usedVersions: {
+[*] interface MachineCacheReport { @@2 workspacePath: string;
 [*] interface MachineCacheReport { @@2 xcodeBuildVersion: string | null;
+[*] interface MachineCacheReport { @@2 }) | null;
+[*] interface MachineCacheReport { @@2 })[];
 [*] interface MachineCacheReport { @@2 }[];
-[*] interface MachineCacheReport { @@2p remedy: string;
-[*] interface MachineCacheReport { @@2p workspacePath: string;
-[*] interface MachineCacheReport { @@2p }) | null;
-[*] interface MachineCacheReport { @@2p })[];
 [*] interface MachineCacheReport { @@3 bytes: number | null;
 [*] interface MachineCacheReport { @@3 current: boolean | null;
 [*] interface MachineCacheReport { @@3 dirs: SizedDir[];
@@ -768,13 +768,12 @@
 [*] interface MachineCacheReport { @@3 packageVersion: string | null;
 [*] interface MachineCacheReport { @@3 projects: string[];
 [*] interface MachineCacheReport { @@3 remedy: string | null;
+[*] interface MachineCacheReport { @@3 remedy: string;
 [*] interface MachineCacheReport { @@3 transforms: (OwnSizedDir & {
 [*] interface MachineCacheReport { @@3 version: string;
 [*] interface MachineCacheReport { @@3 xcodeBuildVersion: string | null;
-[*] interface MachineCacheReport { @@3p remedy: string | null;
-[*] interface MachineCacheReport { @@3p remedy: string;
-[*] interface MachineCacheReport { @@3p }) | null;
-[*] interface MachineCacheReport { @@4p remedy: string;
+[*] interface MachineCacheReport { @@3 }) | null;
+[*] interface MachineCacheReport { @@4 remedy: string;
 [*] interface MachineCredential {
 [*] interface MachineCredential { @@1 address: string;
 [*] interface MachineCredential { @@1 deviceId?: string;
@@ -1613,18 +1612,18 @@
 [*] type PlatformBuildOptions = { @branch2 @@1 platform: "macos";
 [*] type PlatformBuildOptions = { @branch2 @@1 remoteBuild?: string;
 [*] type PlatformRunOptions = (NativeRunOptions & {
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p configuration?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p deviceType?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p platform: "ios";
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p runtime?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p scheme?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @@1p simulatorApp?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0p }) | (NativeRunOptions & {
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p deviceProfile?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p platform: "android";
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p systemImage?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1p variant?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0p }) | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 configuration?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 deviceType?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 platform: "ios";
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 runtime?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 scheme?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 simulatorApp?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0 }) | (NativeRunOptions & {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 deviceProfile?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 platform: "android";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 systemImage?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 variant?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0 }) | {
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 platform: "macos";
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remote?: string;
 [*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remoteBuild?: string;
@@ -1665,15 +1664,15 @@
 [*] type StatsReport = { @@1 project: ({
 [*] type StatsReport = { @@1 swiftpmCache: SwiftpmCacheUsage | null;
 [*] type StatsReport = { @@1 version: number;
-[*] type StatsReport = { @@1p } & StatsBuckets) | null;
-[*] type StatsReport = { @@2p key: string;
+[*] type StatsReport = { @@1 } & StatsBuckets) | null;
+[*] type StatsReport = { @@2 key: string;
 [*] type StimBuildOptions = ((IosBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @@1p platform: "ios";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0p }) | (AndroidBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1p platform: "android";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0p }) | (MacosBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1p platform: "macos";
-[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0p })) & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @@1 platform: "ios";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0 }) | (AndroidBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1 platform: "android";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0 }) | (MacosBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1 platform: "macos";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0 })) & {
 [*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@1 signal?: AbortSignal;
 [*] type StimBuildResult = {
 [*] type StimBuildResult = { @@1 facts: IosBuildFacts;
@@ -1693,11 +1692,11 @@
 [*] type StimOutput = (stream: "stdout" | "stderr", text: string) => void;
 [*] type StimPlan = BuildPlanPayload | MacosBuildPlanPayload;
 [*] type StimPlanOptions = ({
-[*] type StimPlanOptions = ({ @@1p platform: "ios" | "android";
-[*] type StimPlanOptions = ({ @@1p slot?: string;
-[*] type StimPlanOptions = ({ @branch1 @@0p } | {
-[*] type StimPlanOptions = ({ @branch1 @@1p platform: "macos";
-[*] type StimPlanOptions = ({ @branch2 @@0p }) & StimReadOptions;
+[*] type StimPlanOptions = ({ @@1 platform: "ios" | "android";
+[*] type StimPlanOptions = ({ @@1 slot?: string;
+[*] type StimPlanOptions = ({ @branch1 @@0 } | {
+[*] type StimPlanOptions = ({ @branch1 @@1 platform: "macos";
+[*] type StimPlanOptions = ({ @branch2 @@0 }) & StimReadOptions;
 [*] type StimPlatform = "ios" | "android" | "macos" | "web";
 [*] type StimReloadResult = ReloadFacts;
 [*] type StimRemoteMachines = RemoteListing;

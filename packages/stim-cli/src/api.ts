@@ -1,14 +1,15 @@
 import { clientProjectRoot, engineOptions, facadeClient, StimError } from './api/facade.ts';
 import type { RunOp } from './api/engine-route.ts';
+import { RUN_OP_WIRE } from './api/run-op-version.ts';
 import type { EngineClient, EngineOptions, StimClient, StimFailure, StimOptions } from './api/types.ts';
 
 export { StimError };
 
-/** @internal The integer of what `runOp` receives from another Stim build; see `runOp`. */
-export { RUN_OP_VERSION } from './api/run-op-version.ts';
+/** @internal The integer of what `runOp` receives from another Stim build, which that build checks; see `runOp`. */
+export const RUN_OP_VERSION: typeof RUN_OP_WIRE = RUN_OP_WIRE;
 
 /** The integer of the `stim` API. It goes up only when an export is removed, renamed or changes meaning. */
-export const STIM_API_VERSION = 2 as const;
+export const STIM_API_VERSION = 1 as const;
 export type {
   StimBuildOptions,
   StimBuildResult,

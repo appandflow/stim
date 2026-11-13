@@ -1,6 +1,7 @@
 // The stim/cache-manifest API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
-[*] declare function register(entry: CacheEntry, path?: string): CacheEntry;
-[*] declare function unregister(dir: string, path?: string): boolean;
+// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
+[*] declare function register(entry: CacheEntry): CacheEntry;
+[*] declare function unregister(dir: string): boolean;
 [*] export register
 [*] export type CacheEntry
 [*] export unregister
