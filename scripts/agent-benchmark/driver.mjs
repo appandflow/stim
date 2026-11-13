@@ -57,8 +57,10 @@ import { reconstructCommandEvidence } from './command-evidence.mjs';
 import {
   ANDROID_BENCHMARK_AVD_CONFIG,
   assertGoldenCleanup,
+  assertGoldenDaemonStopped,
   matchesGoldenPreparation,
   preparedAndroidEmulator,
+  waitForGoldenDaemonToStop,
 } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
@@ -690,13 +692,14 @@ async function waitForLoadGate() {
   return { passed: false, samples };
 }
 
-function prepare() {
+async function prepare() {
   ensureDirs();
   prepareAllowedBin();
   versionChecks();
   const readyPath = join(golden, 'READY.json');
   if (existsSync(readyPath)) {
     verifyGoldenCache('ios');
+    await waitForGoldenDaemonToStop(join(golden, 'stim-home'));
     process.stdout.write(readFileSync(readyPath));
     return;
   }
@@ -785,6 +788,7 @@ function prepare() {
   } catch (error) {
     throw new Error(`golden preparation failed; retained ${preparingHome}`, { cause: error });
   }
+  await waitForGoldenDaemonToStop(preparingHome);
   if (preparingHome === seedHome) renameSync(seedHome, finalHome);
   const parkedSimulator = verifyGoldenParkedSimulator();
   mkdirSync(controlTmp, { recursive: true });
@@ -812,7 +816,7 @@ function prepare() {
   process.stdout.write(`${JSON.stringify(ready, null, 2)}\n`);
 }
 
-function prepareAndroid() {
+async function prepareAndroid() {
   ensureDirs();
   prepareAllowedBin();
   versionChecks();
@@ -822,6 +826,7 @@ function prepareAndroid() {
   if (existsSync(readyPath)) {
     verifyGoldenCache('android', platformGolden);
     verifyGoldenParkedAndroidEmulator();
+    await waitForGoldenDaemonToStop(join(platformGolden, 'stim-home'));
     process.stdout.write(readFileSync(readyPath));
     return;
   }
@@ -906,6 +911,7 @@ function prepareAndroid() {
   } catch (error) {
     throw new Error(`Android golden preparation failed; retained ${preparingHome}`, { cause: error });
   }
+  await waitForGoldenDaemonToStop(preparingHome);
   if (preparingHome === seedHome) renameSync(seedHome, finalHome);
   const parkedEmulator = verifyParkedAndroidEmulator(finalHome, preparedDevice?.name);
   mkdirSync(controlTmp, { recursive: true });
@@ -1273,10 +1279,13 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   env.BENCH_STIM_HOME = env.STIM_HOME;
   mkdirSync(env.STIM_HOME, { recursive: true });
   if (arm === 'stim') {
-    run('cp', ['-cR', `${join(platformGolden, 'stim-home')}/.`, env.STIM_HOME], {
+    const goldenHome = join(platformGolden, 'stim-home');
+    assertGoldenDaemonStopped(goldenHome);
+    run('cp', ['-cR', `${goldenHome}/.`, env.STIM_HOME], {
       cwd: root,
       timeout: 10 * 60 * 1000,
     });
+    assertGoldenDaemonStopped(env.STIM_HOME);
   }
   const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env, platform) : null;
   const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
@@ -2763,8 +2772,8 @@ ensureDirs();
 if (command === 'preflight') {
   process.stdout.write(`${JSON.stringify(preflight(args[0]), null, 2)}\n`);
 } else if (command === 'prepare') {
-  if (checkedPlatform(args[0]) === 'android') prepareAndroid();
-  else prepare();
+  if (checkedPlatform(args[0]) === 'android') await prepareAndroid();
+  else await prepare();
 } else if (command === 'smoke') {
   smoke(args[0]);
 } else if (command === 'runner-smoke') {
