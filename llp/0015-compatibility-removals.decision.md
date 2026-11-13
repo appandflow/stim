@@ -21,12 +21,12 @@ that names its remedy:
 
 The release floors that C18 and C23 read (`release-floors.json` and the release
 prep that pinned it) went with them. `scripts/compat-budget.json` has no row for
-these four. Two other rows were marked for the removal minor and stay: C28 (a
+these four. One other row was marked for the removal minor and stays: C28 (a
 home with paired phones and no tailnet marker gets the marker at start) ends at
 the first minor after 2.0.0 is stable, since a 1.40 home never wrote the marker
-and removing it would stop a paired phone from connecting after an upgrade; C27
+and removing it would stop a paired phone from connecting after an upgrade. C27
 (stimd's browser observer leaving a Chrome to an older Stim's web supervisor)
-ends with #5558.
+was removed with #5558.
 
 Maintainer decision: "resume the full plan including S8", 2026-11-12. The plan
 (section 3.8, step s8) names these four removals; the coordinator relayed that
