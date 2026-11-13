@@ -188,4 +188,26 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
       await streams.close();
     }
   }, 30_000);
+
+  test('a helper that ends without recording the exit has stimd stop devicectl and record the failure', async () => {
+    const streams = createStreams(() => {});
+    try {
+      await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test', physical: true },
+        env,
+      );
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
+      const streamId = records()[0]?.streamId;
+      assert(typeof streamId === 'string');
+      const { helper, console } = claimed(streamId);
+      if (inspectProcessIdentity(helper) === 'same') process.kill(helper.pid, 'SIGKILL');
+      await vi.waitFor(() => expect(streams.running()).toBe(false), { timeout: 15_000 });
+      expect(processGroupAlive(console.pid)).toBe(false);
+      expect(records().at(-1)).toMatchObject({ streamId, event: 'collector_failed' });
+      expect(String(records().at(-1)?.msg)).toContain(`helper pid ${helper.pid} ended without recording`);
+      expect(readWorkspaceState(root)?.collectors).toBeUndefined();
+    } finally {
+      await streams.close();
+    }
+  }, 30_000);
 });

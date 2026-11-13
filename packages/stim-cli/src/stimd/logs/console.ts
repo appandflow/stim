@@ -16,6 +16,7 @@ import {
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
+import { getConfigDir } from '../../workspace/config.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import type { MetroRunMessage } from '../metro/child-server.ts';
 import { retakeClaim, stopHelperProcess, stopProcessGroup } from '../metro/group-stop.ts';
@@ -26,6 +27,7 @@ import { unregisterStreamAll } from './state.ts';
 const HANDSHAKE_MS = 20_000;
 const POLL_MS = 50;
 const LABEL = 'device log stream';
+const GROUP = 'device console';
 
 type Identity = { pid: number; processToken: string };
 
@@ -122,7 +124,7 @@ export async function startConsole({
       ],
       {
         cwd: root,
-        env,
+        env: { ...env, STIM_HOME: getConfigDir() },
         detached: true,
         stdio: ['ignore', logFd, logFd, 'ipc'],
       },
@@ -219,7 +221,7 @@ export async function settleConsole(entry: ConsoleStream): Promise<void> {
     CONSOLE_STOP_MS + 3000,
   );
   if (!exitOf(entry)) {
-    await stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS });
+    await stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP });
     let output = '';
     try {
       output = readFileSync(helperLog(entry.root, entry.id), 'utf8').slice(-4096).trim();
@@ -253,7 +255,7 @@ export async function stopConsole(entry: ConsoleStream): Promise<void> {
     await stopHelperProcess(entry.helper, {
       graceMs: CONSOLE_STOP_MS + 3000,
       label: 'device console helper',
-      stopGroup: () => stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS }),
+      stopGroup: () => stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP }),
     });
   await settleConsole(entry);
 }
@@ -276,11 +278,9 @@ export function adoptConsole(root: string, streamId: string, holder: ClaimHolder
   const helper = identityOf(holder.details.helper);
   if (!helper || !holder.child) return null;
   const path = claimPath(root, streamId);
-  const claim = retakeClaim(holder, path, LABEL) ?? {
-    ...holder,
-    root: path,
-    label: LABEL,
-  };
+  const retaken = retakeClaim(holder, path, LABEL);
+  if (!retaken && ['same', 'unknown'].includes(inspectProcessIdentity(holder.child))) return null;
+  const claim = retaken ?? { ...holder, root: path, label: LABEL };
   return {
     id: streamId,
     root,

@@ -105,14 +105,16 @@ async function runConsoleHelper(argv: readonly string[]): Promise<void> {
     let stopping: Promise<void> | null = null;
     const stop = () => {
       requested = true;
-      stopping ??= stopProcessGroup(leader, { termMs: CONSOLE_STOP_MS }).catch((error: unknown) => {
-        unverified = true;
-        record(
-          'error',
-          'collector_stop_unverified',
-          `the console helper could not stop devicectl pid ${leader.pid}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+      stopping ??= stopProcessGroup(leader, { termMs: CONSOLE_STOP_MS, label: 'device console' }).catch(
+        (error: unknown) => {
+          unverified = true;
+          record(
+            'error',
+            'collector_stop_unverified',
+            `the console helper could not stop devicectl pid ${leader.pid}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        },
+      );
     };
     const onMessage = (message: unknown) => {
       if (message !== CONSOLE_RUN_ACCEPT) return;

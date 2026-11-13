@@ -804,7 +804,13 @@ export function createStreams(
       if (typeof recorded.streamId !== 'string' || !recorded.streamId)
         throw new Error('the previous device log stream has no identity');
       const recordedId = recorded.streamId;
-      await clearStreamClaim(root, recordedId, () => unregisterStreamAll(root, recordedId), handedOverStream(recorded));
+      if (!(await stopUntabledConsole(root, slotKey, recordedId)))
+        await clearStreamClaim(
+          root,
+          recordedId,
+          () => unregisterStreamAll(root, recordedId),
+          handedOverStream(recorded),
+        );
     }
     const id = resumeId ?? randomUUID();
     const claim = await takeStreamClaim(root, id);
@@ -822,7 +828,6 @@ export function createStreams(
         kind: 'stream',
         streamId: id,
         startedAt: new Date().toISOString(),
-        ...(runId ? { runId } : {}),
         ...(engineDir ? { engineDir } : {}),
       });
       try {
@@ -1158,6 +1163,23 @@ export function createStreams(
         ownedLog('warn', 'device_console_unsettled', `device console ${id} in ${root}: ${errorText(error)}`),
       );
   };
+  /**
+   * Stops a recorded console this stimd has not taken over yet through its helper, after taking it over. Returns whether
+   * the record is settled; false leaves the record to the claim recovery of any other stream.
+   */
+  const stopUntabledConsole = async (root: string, slotKey: string, id: string): Promise<boolean> => {
+    const holder = consoleHolder(root, id);
+    if (!holder) return false;
+    await takeOverConsole(root, slotKey, id, holder);
+    const key = `${root}\0${slotKey}`;
+    const entry = consoles.get(key);
+    if (entry?.id === id) {
+      await settleConsoleAt(key, entry, true);
+      return true;
+    }
+    const recorded = readCollectors(root)[slotKey];
+    return !(isJsonObject(recorded) && recorded.streamId === id);
+  };
   // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
   const resumeIn = async (
     root: string,
@@ -1442,6 +1464,7 @@ export function createStreams(
           if (recorded === undefined) return false;
           if (!isJsonObject(recorded) || recorded.kind !== 'stream' || recorded.streamId !== streamId)
             throw new Error('the device log stream changed');
+          if (await stopUntabledConsole(canonicalRoot, deviceSlotKey(platform, slot), streamId)) return true;
           await clearStreamClaim(root, streamId, () => unregisterStreamAll(root, streamId), handedOverStream(recorded));
           return true;
         }

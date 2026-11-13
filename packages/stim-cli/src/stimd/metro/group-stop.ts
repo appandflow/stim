@@ -150,6 +150,7 @@ export async function stopProcessGroup(
   {
     termMs,
     killMs = 1000,
+    label = 'dev-server',
     groupAlive = processGroupAlive,
     signalGroup = (pgid) => {
       signalProcessTree(pgid, 'SIGTERM', { group: true });
@@ -160,6 +161,8 @@ export async function stopProcessGroup(
   }: {
     termMs: number;
     killMs?: number;
+    /** What the group runs, for the refusal. */
+    label?: string;
     groupAlive?: (pgid: number) => boolean;
     signalGroup?: (pgid: number) => void;
     killMember?: (pid: number) => void;
@@ -167,7 +170,7 @@ export async function stopProcessGroup(
 ): Promise<void> {
   const pgid = leader.pid;
   if (!groupAlive(pgid)) return;
-  const refuse = (detail: string) => new Error(`Could not stop the dev-server process group ${pgid}: ${detail}.`);
+  const refuse = (detail: string) => new Error(`Could not stop the ${label} process group ${pgid}: ${detail}.`);
   const recorded = new Map<number, string | null>();
   const status = inspectProcessIdentity(leader);
   if (status === 'same') {

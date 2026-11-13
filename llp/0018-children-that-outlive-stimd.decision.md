@@ -250,7 +250,8 @@ update (`heldBy: "logs"`) until `stim stop` (#5586).
 `console-<hash>.log`, the same file, and `ipc`, and `unref`s it. The helper
 runs the fixed `xcrun devicectl ... --console` invocation stimd builds
 (`deviceConsoleArgs`, invariant 3) in its own process group with piped stdout
-and stderr. The env is the stream's forwarded env, as before; it never reaches
+and stderr. The env is the stream's forwarded env, as before, with `STIM_HOME`
+set to stimd's home so the helper writes where stimd reads; it never reaches
 disk.
 
 **Claim.** The stream keeps its claim under `log-streams/` (LLP 0007, LLP 0019).
@@ -282,6 +283,8 @@ helper stops devicectl's group with `stopProcessGroup` (3 s to drain), records
 the stop and ends. A helper still running after 6 s is handled as for the dev
 server: stimd stops the group by the claim child, then kills the helper after
 an identity check. A start in the same slot stops the running console first.
+A stop or start that finds a recorded console this stimd has not taken over
+takes it over first, so the helper still records the stop.
 
 **Settling.** stimd settles a console once its helper wrote the exit file or is
 gone: it checks every second, and at takeover. With the exit file, the helper

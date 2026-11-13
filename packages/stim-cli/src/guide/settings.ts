@@ -729,7 +729,8 @@ run waiting to boot, and automatic maintenance.
           15 s for it. The new stimd resumes the simulator and emulator log
           streams the old one ran (stim guide logs); an iPhone console keeps
           running under its helper and the new stimd takes it over, since
-          starting it again would launch the app again. On Windows a dev
+          starting it again would launch the app again, until stim stop or
+          the idle stop in its workspace ends it. On Windows a dev
           server stops with its stimd; on macOS and Linux the new stimd
           takes it over.
           Otherwise stim share, share list and share stop refuse with
