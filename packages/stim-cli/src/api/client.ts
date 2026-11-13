@@ -721,7 +721,7 @@ export async function holdCIStimd(
     output: () => {},
   };
   return withAmbientContext(context, async () =>
-    (await import('../daemon/client.ts')).holdExistingStimd(ownedInstance, signal),
+    (await import('../daemon/client.ts')).holdExistingStimd(ownedInstance, signal, env),
   );
 }
 
