@@ -99,8 +99,8 @@ test('EXACT2 in the environment overrides the launcher default', () => {
   expect(exactOffloadPlan(app, { EXACT2: moved })).toMatchObject({ exact2: sha });
 });
 
-test('a non-ASCII directory is refused when it is the Git checkout root', () => {
-  const checkout = join(root, '\u5e97');
+test.each(['\u5e97', '\u5e97\u00a0'])('a non-ASCII Git checkout root %j is refused', (name) => {
+  const checkout = join(root, name);
   renameSync(app, checkout);
   git(checkout, 'init', '-q');
   expect(exactOffloadPlan(checkout, { EXACT2: exact2 })).toMatchObject({ unsupported: /plain ASCII file name/ });

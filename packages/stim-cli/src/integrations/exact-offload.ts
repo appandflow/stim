@@ -4,7 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { repoRoot } from '../workspace/worktree.ts';
+import { gitQuiet } from '../workspace/git.ts';
 
 /** The Rust target an Exact iOS simulator build compiles for; Exact's own setup does not install it. */
 export const EXACT_SIM_TARGET = 'aarch64-apple-ios-sim';
@@ -131,8 +131,7 @@ export function exactOffloadPlan(root: string, env: NodeJS.ProcessEnv): ExactOff
   const canonicalRoot = realpathSync(root);
   let name = basename(canonicalRoot);
   if (!APP_NAME.test(name)) {
-    const top = repoRoot(canonicalRoot);
-    if (!top || realpathSync(top) === canonicalRoot)
+    if (!gitQuiet(canonicalRoot, ['rev-parse', '--show-prefix']))
       return { unsupported: `the app directory name ${JSON.stringify(name)} is not a plain ASCII file name` };
     // The worker reads this required field only when the project is at the Git root.
     name = 'app';
