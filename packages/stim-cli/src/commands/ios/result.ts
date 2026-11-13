@@ -17,7 +17,7 @@ import type { StimOutput } from '@stim-cli/core';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
 import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
-import { formatDuration, phaseLine } from '../../command-output.ts';
+import { formatDuration, phaseLine, mobileAgentOpenCommand } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 
@@ -382,8 +382,10 @@ export function reportIosResult({
     facts.host = host;
     delete facts.agentDevice;
   }
+  const openCommand = launchState === true && !host && bundleId ? mobileAgentOpenCommand('ios', bundleId, slot) : null;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
+    if (openCommand) note(phaseLine('agent-device', openCommand));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
@@ -434,7 +436,7 @@ export function reportIosResult({
           ? 'command' in host.agent
             ? [phaseLine('agent-device', host.agent.command)]
             : []
-          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
+          : [phaseLine('agent-device', openCommand ?? `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
       ].join('\n'),
     );
     if (facts.webPreviewUrl) note(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));

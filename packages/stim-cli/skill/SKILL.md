@@ -1,6 +1,6 @@
 ---
 name: stim
-description: The React Native / Expo CLI for AI agents. Use when running or building a React Native or Expo app on a simulator, emulator, or device, including expo run:ios, expo run:android, react-native run-ios, react-native run-android, expo start, and Metro; when reading build, launch, redbox, or runtime errors from the app logs; when working in parallel worktrees; or when identifying the correct device for UI interaction.
+description: Use Stim to build, launch, and inspect Expo, React Native, native Xcode, Android Gradle, Swift Package macOS, and Exact iOS apps. Use for simulator, emulator, device and Metro workflows, app logs or launch errors, isolated worktrees, and handing a running app to UI automation.
 ---
 
 # Stim

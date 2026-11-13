@@ -189,7 +189,7 @@ test('a section name that no topic declares renders nothing', () => {
 
 test('a sectioned topic prints its preamble and an index of every section', () => {
   for (const name of topicNames().filter((topic) => sectionNames(topic).length > 0)) {
-    const body = renderTopic(name);
+    const body = renderSectionIndex(name);
     assert(body);
     expect(body).toContain('SECTIONS');
     for (const section of sectionNames(name)) {
@@ -576,7 +576,7 @@ test('every guide topic explains the npx fallback for short stim commands', () =
 });
 
 test('the agent asks before gc deletes', () => {
-  const agent = renderTopic('agent');
+  const agent = renderSection('agent', 'ownership');
   assert(agent);
   const askBefore = agent.match(/Ask the user before these actions:([\s\S]*?)\n\n[A-Z]/)?.[1];
   assert(askBefore);
@@ -587,7 +587,9 @@ test('the agent asks before gc deletes', () => {
 test('the agent workflow checks errors before and after edits, before cleanup', () => {
   const agent = renderTopic('agent');
   assert(agent);
-  const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
+  const normalWorkflow = renderSection('agent', 'react-native')?.match(
+    /NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/,
+  )?.[1];
   assert(normalWorkflow);
   expect(normalWorkflow.match(/stim logs --errors/g)).toHaveLength(2);
   expect(normalWorkflow.lastIndexOf('stim logs --errors')).toBeLessThan(normalWorkflow.lastIndexOf('stim stop'));
@@ -624,19 +626,16 @@ test('the agent and lifecycle guides name both workflows', () => {
   }
 });
 
-test('the agent guide routes situations to valid sections before listing every topic', () => {
+test('the agent guide routes each situation to a topic or section that renders', () => {
   const agent = renderTopic('agent');
   assert(agent);
-  const [situations, topicList] = agent.split('FULL TOPIC LIST');
-  assert(situations);
-  assert(topicList);
-  const rows = situations
+  const rows = agent
     .split('\n')
     .filter((line) => line.startsWith('| '))
     .slice(2);
   expect(rows.length).toBeGreaterThan(0);
   for (const row of rows) {
-    const route = /^stim guide ([a-z]+)(?: ([\w<>]+))?$/.exec(row.split('|')[2]?.trim() ?? '');
+    const route = /^stim guide ([a-z]+)(?: ([\w<>-]+))?$/.exec(row.split('|')[2]?.trim() ?? '');
     assert(route, row);
     const [, topic, section] = route;
     assert(topic);
@@ -644,19 +643,12 @@ test('the agent guide routes situations to valid sections before listing every t
       section ? renderSection(topic, section === '<CODE>' ? 'STIM_NO_METRO' : section) : renderTopic(topic),
     ).toBeTruthy();
   }
-  for (const topicName of topicNames().filter((name) => name !== 'agent')) {
-    expect(topicList).toContain(`guide ${topicName}`);
-  }
   expect(agent).toContain('stim guide errors <CODE>');
-  for (const route of [
-    'guide errors sandbox',
-    'guide facts devmenu',
-    'guide cleanup collector',
-    'guide lifecycle builds',
-    'guide lifecycle concurrency',
-  ]) {
-    expect(agent).toContain(route);
-  }
+  expect(agent).toContain('stim guide agent react-native');
+  expect(agent).toContain('stim guide lifecycle exact-ios');
+  expect(agent).toContain('stim guide macos');
+  expect(agent).not.toContain('stim start');
+  expect(renderSection('agent', 'react-native')).toContain('stim start');
 });
 
 test('tutorial prompts route to rendered sections', () => {
@@ -749,25 +741,25 @@ test('the agent guide tells agents to report Stim problems under the issue templ
   const template = readFileSync(new URL('../../../../.github/ISSUE_TEMPLATE/report.md', import.meta.url), 'utf-8');
   const headings = [...template.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
   expect(headings.length).toBeGreaterThan(0);
-  const agent = renderTopic('agent')?.replaceAll(/\s+/g, ' ');
+  const agent = renderSection('agent', 'report')?.replaceAll(/\s+/g, ' ');
   assert(agent);
   for (const heading of headings) expect(agent).toContain(`${heading} (`);
 });
 
 test('the agent guide protects other workspaces device lease files', () => {
-  const agent = renderTopic('agent');
+  const agent = renderSection('agent', 'ownership');
   expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
   expect(agent).toMatch(/gc removes expired\s+ones/);
 });
 
 test('the agent guide limits memory-pressure recovery to owned workspaces', () => {
   expect(renderTopic('agent')).toMatch(
-    /stop only devices in workspaces you own; ask before closing\s+other apps or other workspaces' devices/,
+    /stop only devices\s+in workspaces you own[.;] ask before closing\s+other apps or other workspaces' devices/i,
   );
 });
 
 test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
-  const agent = renderTopic('agent');
+  const agent = renderSection('agent', 'ownership');
   const cleanup = renderSection('cleanup', 'gc');
   assert(agent);
   assert(cleanup);
@@ -823,7 +815,7 @@ test('EAS guidance requires profile clarification when needed and authorization 
 });
 
 test('slot selection and shared Metro behavior are discoverable in operational guidance', () => {
-  expect(renderTopic('agent')).toContain('--slot <name>');
+  expect(renderSection('agent', 'device')).toContain('--slot <name>');
   expect(renderSection('lifecycle', 'options')).toContain('--slot <name>');
   expect(renderTopic('logs')).toContain('--slot <name>');
   expect(renderTopic('cleanup')).toContain('stop --slot <name>');
@@ -1042,14 +1034,13 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
     expect(body).toContain(env);
     expect(body).toMatch(/Agents never set/i);
     expect(body).toContain('stim setup');
-    expect(body).toMatch(/never approve requests|or approve requests/);
+    expect(body).toMatch(/never approve (?:access )?requests|or approve requests/);
   }
   expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
 test('agents tell the user about remote machines and the phone app and never set them up', () => {
-  for (const topic of ['agent', 'settings']) {
-    const rendered = renderTopic(topic);
+  for (const rendered of [renderSection('agent', 'react-native'), renderTopic('settings')]) {
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
     expect(body).toContain('Stim Desktop > Settings > Connections > This machine uses > Add');
@@ -1108,7 +1099,7 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
-  expect(renderTopic('agent')).toContain('stim agent-device');
+  expect(renderSection('agent', 'device')).toContain('stim agent-device');
 });
 
 test('the hosted device sections name every command the agent-device driver allows or refuses', () => {
@@ -1151,7 +1142,7 @@ test('hosted Android command and safety routing render through the guides', () =
 });
 
 test('the guide names the workspace agent-device state contract without setting a runner-cache override', () => {
-  const agent = renderTopic('agent');
+  const agent = renderSection('agent', 'device');
   assert(agent);
   expect(agent).toContain('AGENT_DEVICE_STATE_DIR');
   expect(agent).toContain('agentDevice.stateDir');

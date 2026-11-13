@@ -125,13 +125,23 @@ test('native previews remove metadata noise but full output preserves it and Jav
   const full = launchErrorPreview([record], undefined, { full: true }).join('\n');
   expect(full).toContain('BuildId: abc123');
   expect(full).toContain('[captured native frame]');
-  const java = launchErrorPreview([
-    {
-      msg: 'RuntimeException: failed\n  at wrapper (Runtime.java:5)\nCaused by: IllegalStateException: broken\n  at crash (MainApplication.kt:34)',
-    },
-  ]).join('\n');
-  expect(java).toContain('Error stack:\n  at wrapper');
-  expect(java).toContain('Caused-by stack:\n  at crash');
+  const crash = {
+    event: 'native_crash',
+    platform: 'android',
+    appId: 'dev.example',
+    msg: [
+      'RuntimeException: failed',
+      '  at android.app.Activity.performCreate(Activity.java:5)',
+      'Caused by: IllegalStateException: broken',
+      '  at dev.example.MainActivity.onCreate(MainActivity.kt:34)',
+    ].join('\n'),
+  };
+  const java = launchErrorPreview([crash]);
+  expect(java[0]).toContain('Caused by: IllegalStateException: broken');
+  expect(java[0]).toContain('MainActivity.kt:34');
+  expect(java.join('\n')).toContain('Error stack:\n  at android.app.Activity.performCreate');
+  expect(java.join('\n')).toContain('Caused-by stack:\n  at dev.example.MainActivity.onCreate');
+  expect(launchErrorPreview([crash], undefined, { full: true })[0]).toBe('RuntimeException: failed');
 });
 
 test('cross-source copies collapse only with matching title, location, platform and time', () => {

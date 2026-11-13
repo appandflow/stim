@@ -357,10 +357,8 @@ Run from the directory containing the .xcodeproj or .xcworkspace. A Node
 package.json is not required. React Native and Expo apps keep their existing
 integration.
 
-  stim doctor --platform ios
-  stim ios --scheme MyApp --configuration Debug --json
-  stim ios --scheme MyApp --configuration Release --json
-  stim logs --errors
+  stim ios --scheme MyApp --configuration Debug
+  stim agent-device open <bundle-id> --platform ios
   stim stop
 
 Use the project's actual scheme and configuration names. Shared Run schemes
@@ -374,7 +372,8 @@ Native Debug, Release and custom configurations do not start or require Metro,
 embed JavaScript, or swap a JavaScript bundle. The app is launched as a native
 process and reports metroPort: null. launched: true establishes a live process;
 verify the expected screen and interaction on the reported device separately.
-After a native source edit, rerun stim ios. stim reload is for JavaScript.
+After a native source edit, rerun stim ios. Read the printed diagnostic on
+failure, and use stim logs --errors when it needs more detail.
 The existing owned simulator, device lease, signing, log and teardown services
 still apply. Stim does not change signing accounts or provisioning profiles.
 
@@ -526,6 +525,14 @@ must support native Android process mode. Multiple application modules,
 density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported.
 Stim verifies the existing APK signature; it does not sign it.
+
+  stim android
+  stim agent-device open <package-id> --platform android
+  stim stop
+
+Use the app ID from the launch result. After a native edit rerun the platform
+command. Read the printed diagnostic on failure, and use stim logs --errors
+when it needs more detail.
 
 Local APK caching requires project-scoped \`android.artifactInputs\`:
 \`{"complete":true,"ignored":[],"outputs":["build","app/build"],"localFiles":["../signing/release.keystore"],"environment":["SIGNING_PASSWORD"]}\`.
