@@ -29,6 +29,7 @@ import {
   type DeviceTileItem,
   type HomeStatus,
 } from '@/lib/home';
+import { runningBuild } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
@@ -651,6 +652,47 @@ describe('runningDevices', () => {
     expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
     expect(keys({ platforms: ['android'] })).toEqual(['idle-with-sim/android']);
     expect(keys({ platforms: ['ios'] })).toEqual(['idle-with-sim/ios', 'other/ios']);
+  });
+
+  it('hides a deleted workspace from live lists while retaining its registration', () => {
+    const ios: EnvironmentState['ios'] = {
+      udid: '',
+      owned: false,
+      state: 'ready',
+      name: 'stim-hosted',
+      host: {
+        machine: 'mini',
+        session: 'session',
+        selected: 'mini',
+        state: 'ready',
+        device: null,
+        agent: { driver: 'none', setting: 'hosting.agentDriver' },
+      },
+    };
+    const build: EnvironmentState['build'] = {
+      ...payload.environments.find((entry) => entry.build)!.build!,
+      state: 'running',
+    };
+    const slots = [{ slot: 'tablet', ios }];
+    const items = mergeWorkspaces([
+      {
+        id: 'a',
+        name: 'Paired machine',
+        status: status([
+          env('/u/app/deleted', { ios, slots, live: true, pathMissing: true, build }),
+          env('/u/app/available', { ios, slots, live: true }),
+        ]),
+      },
+    ]);
+    expect(items.map((item) => [item.title, entryStatus(item)])).toEqual([
+      ['available', 'live'],
+      ['deleted', 'idle'],
+    ]);
+    expect(runningBuild(items.find((item) => item.title === 'deleted')!.env)).toBeNull();
+    expect(runningDevices(items, DEFAULT_FILTERS, ['a']).map(({ item }) => item.title)).toEqual([
+      'available',
+      'available',
+    ]);
   });
 });
 

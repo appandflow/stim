@@ -338,8 +338,8 @@ export function gridRows(tiles: DeviceTileItem[], aspects: ReadonlyMap<string, n
 }
 
 /**
- * Every running device the machine, project and platform filters keep, whatever the workspace activity,
- * errors, builds or remote sessions, in the list's order and each workspace's devices in `orderDevices` order.
+ * Running devices of workspaces whose folders are not confirmed missing, in the list's order and each
+ * workspace's devices in `orderDevices` order. Machine, project and platform filters apply.
  */
 export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: string[]): DeviceTileItem[] {
   const { shown } = filterWorkspaces(
@@ -347,11 +347,12 @@ export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: 
     { ...filters, statuses: [...STATUSES], errorsOnly: false, remoteOnly: false, buildingOnly: false },
     macIds,
   );
-  return shown.flatMap((item) =>
-    orderDevices(devicesOf(item.env))
+  return shown.flatMap((item) => {
+    if (item.env.pathMissing) return [];
+    return orderDevices(devicesOf(item.env))
       .filter((device) => device.running && (!filters.platforms.length || filters.platforms.includes(device.platform)))
-      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device })),
-  );
+      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device }));
+  });
 }
 
 export function projectNames(items: HomeEntry[]): string[] {

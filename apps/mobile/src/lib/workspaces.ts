@@ -16,6 +16,7 @@ import type {
 } from '@/protocol/types';
 
 export function isActive(env: EnvironmentState): boolean {
+  if (env.pathMissing) return false;
   return (
     env.live ||
     env.build?.state === 'running' ||
@@ -30,7 +31,7 @@ export function isActive(env: EnvironmentState): boolean {
 
 /** A workspace `stim worktree warm` is preparing, or has prepared and nothing has run in yet. */
 export function isSettingUp(env: EnvironmentState): boolean {
-  return !env.live && (env.phase === 'warming' || env.phase === 'ready');
+  return !env.pathMissing && !env.live && (env.phase === 'warming' || env.phase === 'ready');
 }
 
 /** Whether the home list shows the workspace under Active: it is active or being set up. */
@@ -223,7 +224,7 @@ export function runningBuild(
   device?: Pick<DeviceRef, 'platform' | 'slot'> & { physical?: boolean },
 ): BuildReport | null {
   const build = env.build;
-  if (!build || build.state !== 'running' || device?.physical) return null;
+  if (env.pathMissing || !build || build.state !== 'running' || device?.physical) return null;
   if (device && (build.platform !== device.platform || build.slot !== device.slot)) return null;
   return build;
 }
