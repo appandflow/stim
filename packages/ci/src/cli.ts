@@ -141,6 +141,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
   const controller = new AbortController();
   const interrupt = () => controller.abort();
+  let finished = false;
+  process.once('exit', (code) => {
+    if (!finished) process.stderr.write(`stim ci: the process exited with code ${code} before the run finished\n`);
+  });
   try {
     const invocation = parse(argv);
     process.on('SIGINT', interrupt);
@@ -161,6 +165,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.stderr.write(`stim ci: ${(error as Error).message}\n`);
     process.exitCode = 1;
   } finally {
+    finished = true;
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
   }

@@ -291,7 +291,20 @@ export async function runAction(): Promise<number> {
   if (options.artifacts) {
     try {
       result = currentResult(resultPath, options, started);
-      if (!result && code !== 0) core.error(`The run exited with code ${code} and wrote no ${resultPath}.`);
+      if (!result) {
+        core.error(`stim ci exited with code ${code} and wrote no ${resultPath}.`);
+        const home = options.home || process.env.STIM_HOME;
+        if (home) {
+          try {
+            const tail = readFileSync(join(home, 'run', 'stimd.log'), 'utf8')
+              .trim()
+              .split('\n')
+              .slice(-60)
+              .join('\n');
+            core.warning(`The end of ${join(home, 'run', 'stimd.log')}:\n${tail}`);
+          } catch {}
+        }
+      }
     } catch (error) {
       core.warning(String(error));
       return code || 1;
