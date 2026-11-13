@@ -1,4 +1,4 @@
-import { compare, measure } from './merge-test-timings.mjs';
+import { compare, measure } from './test-timings.mjs';
 
 const at = (seconds) => new Date(seconds * 1000).toISOString();
 
@@ -13,13 +13,27 @@ function shard(index, duration, conclusion = 'success') {
 }
 
 test('only complete two-shard runs contribute to the timing baseline', () => {
-  expect(measure([shard(1, 300), shard(2, 280)])).toEqual({
+  expect(measure([shard(1, 300), shard(2, 280)], 'merge')).toEqual({
     testSeconds: [300, 280],
-    slowest: 300,
+    duration: 300,
     runnerSeconds: 640,
   });
-  expect(measure([shard(1, 300)])).toBeNull();
-  expect(measure([shard(1, 300), shard(2, 280, 'cancelled')])).toBeNull();
+  expect(measure([shard(1, 300)], 'merge')).toBeNull();
+  expect(measure([shard(1, 300), shard(2, 280, 'cancelled')], 'merge')).toBeNull();
+});
+
+test('a main push measures completed test steps while its Node 24 job is still running', () => {
+  const unit = { name: 'Unit tests (vitest)', conclusion: 'success', started_at: at(10), completed_at: at(130) };
+  const integration = {
+    name: 'Integration tests (vitest)',
+    conclusion: 'success',
+    started_at: at(150),
+    completed_at: at(650),
+  };
+  const main = { name: 'test (node 24)', status: 'in_progress', steps: [unit, integration] };
+  expect(measure([main], 'main', true)?.duration).toBe(620);
+  expect(measure([main], 'main')).toBeNull();
+  expect(measure([{ ...main, steps: [unit] }], 'main', true)).toBeNull();
 });
 
 test('flags a material jump without warning on small samples, ordinary noise or small absolute changes', () => {

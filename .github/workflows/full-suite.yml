@@ -23,6 +23,9 @@ permissions:
 jobs:
   ci:
     if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ci-full') && (github.event.action != 'labeled' || github.event.label.name == 'ci-full'))
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/ci.yml
     with:
       full: true

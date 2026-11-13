@@ -116,7 +116,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/merge-test-timings.mjs
+        run: node scripts/test-timings.mjs merge
 
   merge-tests:
     name: merge tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})

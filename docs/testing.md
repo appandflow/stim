@@ -219,22 +219,22 @@ parent; checkout retains both parents. Agent-benchmark files are excluded from
 both unit selectors and run through the separate `test:bench` step. Other PR
 checks remain enabled.
 
-The merge queue runs the full unit and integration suite on its combined
-candidate before merging, on two Node 22 Vitest shards. Both shards must pass.
-The gate reports test and runner time, retains each shard's timings for seven
-days, and warns when the slower shard takes at least 20% and 60 seconds longer
-than the median of three to five recent successful two-shard merge runs. The
-warning is informational. Main pushes run the unit suite on Node 22
-and 24 and the integration suite on Node 24 only; scheduled validation and
-release validation retain their full suites. Focused PR selection never replaces the merge-candidate gate.
+When GitHub creates a merge queue candidate, it runs the full unit and
+integration suite on two Node 22 Vitest shards. Both shards must pass. The gate
+reports test and runner time and retains each shard's timings for seven days.
+Main pushes run the unit suite on Node 22 and 24 and the integration suite on
+Node 24 only. Scheduled and release validation retain their full suites.
+
+The workflow warns when the slower merge queue shard or the combined Node 24
+test time on main takes at least 20% and 60 seconds longer than the median of
+three to five comparable successful runs. The two baselines are separate, and
+the warnings do not fail CI.
 
 The Linux Node 22 and 24 jobs retain a `unit-test-timings-node-<version>` JSON
 artifact for seven days, including failing runs that produce a report. Manual
 runs also retain `integration-test-timings-node-<version>`, and main pushes
-retain it for Node 24. Use these
-reports to compare case and file costs on the same runner type. Required
-full suites still run before merge; local affected selection does not change
-that gate.
+retain it for Node 24. Use these reports to compare case and file costs on the
+same runner type.
 
 The Desktop workflow's full validation (`swift test`, the Release configuration
 compile, the `stim-frames` helper compile, the hardened-runtime server start and
