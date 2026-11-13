@@ -65,7 +65,8 @@ export function nativeInteractionSeconds(commands, { dispatchAt, runId, stateDir
   let incremented = false;
   for (const entry of commands) {
     if (entry.exitCode !== 0) continue;
-    const words = literalShellArguments(topLevelShellCommand(entry.command));
+    const source = topLevelShellCommand(entry.command);
+    const words = literalShellArguments(source.replace(/(?<=\s)(@e\d+)~(s\d+)(?=\s|$)/g, '$1\\~$2'));
     if (!words || !prefix.every((word, index) => words[index] === word)) continue;
     if (words.some((word) => /^--(?:session|state-dir)(?:=|$)/.test(word))) continue;
     const action = words[prefix.length];

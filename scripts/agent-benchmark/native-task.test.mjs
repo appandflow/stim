@@ -101,4 +101,6 @@ it('measures the first successful interaction that displays Count: 1', () => {
   const removed = { ...click, output: '- @e2 [text] "Count: 1"\n+ @e2 [text] "Count: 2"' };
   expect(nativeInteractionSeconds([removed], run)).toBeNull();
   expect(nativeInteractionSeconds([press, snapshot], run)).toBe(13);
+  const scoped = { ...press, command: press.command.replace('@e4', '@e4~s2') };
+  expect(nativeInteractionSeconds([scoped, snapshot], run)).toBe(13);
 });
