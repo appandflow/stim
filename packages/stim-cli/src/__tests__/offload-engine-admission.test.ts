@@ -120,33 +120,28 @@ test('build.start admits declared fingerprint inputs only when they match the ke
   }
 });
 
-test.each(['', 'apps/\u5e97'])(
-  'build.start admits an Exact build from project %j without fingerprint replay',
-  async (project) => {
-    const host = new BuildHost({ worker: 'unused', env: process.env });
-    const session = host.session('client', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
-    const launch = vi
-      .spyOn(host, 'launch')
-      .mockResolvedValue({ error: { code: 'build-refused', message: 'admitted' } });
-    try {
-      session.sync({ repo: 'repo', files: [], done: true });
-      expect(
-        await session.start({
-          repo: 'repo',
-          project,
-          platform: 'ios',
-          runtime: 'iOS-27-0',
-          stimBuild: 'b1',
-          compat: 6,
-          fingerprint: 'a'.repeat(64),
-          exact: { name: project ? 'app' : 'shop-app', exact2: 'b'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: {} },
-        }),
-      ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
-      expect(launch).toHaveBeenCalledTimes(1);
-    } finally {
-      launch.mockRestore();
-      session.close();
-      await host.close();
-    }
-  },
-);
+test.each(['', 'apps/\u5e97'])('build.start admits Exact project %j without fingerprint replay', async (project) => {
+  const host = new BuildHost({ worker: 'unused', env: process.env });
+  const session = host.session('client', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
+  const launch = vi.spyOn(host, 'launch').mockResolvedValue({ error: { code: 'build-refused', message: 'admitted' } });
+  try {
+    session.sync({ repo: 'repo', files: [], done: true });
+    expect(
+      await session.start({
+        repo: 'repo',
+        project,
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        stimBuild: 'b1',
+        compat: 6,
+        fingerprint: 'a'.repeat(64),
+        exact: { name: project ? 'app' : 'shop-app', exact2: 'b'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: {} },
+      }),
+    ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
+    expect(launch).toHaveBeenCalledTimes(1);
+  } finally {
+    launch.mockRestore();
+    session.close();
+    await host.close();
+  }
+});
