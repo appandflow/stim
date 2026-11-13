@@ -2,7 +2,7 @@ import type { StimClient, StimOptions } from './api/types.ts';
 import { GOVERNED_COMMANDS, removedEnvironmentRefusal } from './daemon/mode.ts';
 import { removedSettingFindings, settingsLayers, projectSettingsContext } from './workspace/settings.ts';
 import { loadConfig } from './workspace/config.ts';
-import { findProjectRoot } from './workspace/project.ts';
+import { findProjectRoot, projectProblem } from './workspace/project.ts';
 import { readRecords, engineRoot } from './engine-store/store.ts';
 import { STIM_VERSION } from './stim-version.ts';
 
@@ -69,11 +69,12 @@ export async function runOperation(
       removedConfigRefusal(command, entry.cwd, entry.env));
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
-  if ((operationCommand === 'ios' || operationCommand === 'android') && !findProjectRoot(entry.cwd))
-    return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(operationCommand);
-  if (creates && !findProjectRoot(entry.cwd))
+  if (entry.caller === 'api' && (operationCommand === 'ios' || operationCommand === 'android')) {
+    if (projectProblem(entry.cwd, operationCommand)) return { admitted: null };
+  } else if (creates && !findProjectRoot(entry.cwd)) {
     return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
+  }
   const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
   if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];
