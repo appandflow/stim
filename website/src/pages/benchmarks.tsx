@@ -121,7 +121,7 @@ export default function Benchmarks(): ReactNode {
                   {terra.model} results
                 </Heading>
                 <p>
-                  Recorded {terra.recordedOn} on a Mac mini with high reasoning and local builds. Each value is one
+                  Completed {terra.completedOn} on a Mac mini with high reasoning and local builds. Each value is one
                   audited run. These tables time from dispatch in seconds. Lower is better.
                 </p>
               </div>
