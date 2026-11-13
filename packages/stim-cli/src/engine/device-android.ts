@@ -356,6 +356,7 @@ export async function ensureOwnedAndroidDevice({
           avdName: created.avdName,
           metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
           signal: flags.allowPendingAndroidBoot ? flags.deviceSlotWait?.signal : undefined,
+          teardownAvd,
           projectPath,
           slot,
           deviceName: created.avdName,
@@ -432,6 +433,7 @@ async function liveAndroidConsolePorts(): Promise<number[]> {
 interface FreshPortBoot extends EmulatorLogging {
   avdName: string;
   signal?: AbortSignal;
+  teardownAvd?: typeof teardownOwnedAvd;
   metadata?: OwnedDeviceRecord;
   projectPath: string;
   slot?: string;
@@ -447,6 +449,7 @@ async function bootAvdOnFreshPort({
   deviceName,
   out,
   signal,
+  teardownAvd = teardownOwnedAvd,
   logFile = null,
   alive = pidExists,
 }: FreshPortBoot): Promise<OwnedDeviceRecord> {
@@ -455,10 +458,11 @@ async function bootAvdOnFreshPort({
     claimAndroidConsolePort({ projectPath, slot, avdName, deviceName, livePorts, metadata }),
   );
   const serial = `emulator-${claim.consolePort}`;
+  let pid: number | null = null;
   try {
     signal?.throwIfAborted();
     reportAndroidMemoryPressure(out);
-    const pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+    pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
     const result = await waitForAndroidBoot({
       serial,
@@ -481,8 +485,15 @@ async function bootAvdOnFreshPort({
     const { bootPending: _booted, ...booted } = claim;
     return { ...booted, serial, setup: true };
   } catch (error) {
-    if (!signal?.aborted)
+    if (signal?.aborted && pid !== null) {
+      const result = await teardownAvd(avdName, { owner: { projectPath, slot } });
+      if (result.status !== 'torn-down' && result.status !== 'missing') {
+        out(phaseLine('device', `Could not stop ${avdName}: ${result.reason}; waiting for its boot to settle.`));
+        await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
+      }
+    } else {
       await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
+    }
     throw error;
   }
 }
