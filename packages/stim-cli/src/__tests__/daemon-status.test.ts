@@ -9,6 +9,7 @@ import {
   type DaemonStatus,
 } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { legacyDaemonStop } from '../daemon/legacy-daemon.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
@@ -155,7 +156,12 @@ describe('an exclusive holder of the daemon claim', () => {
       true,
       'the next command that starts stimd stops it',
     ],
-    ['another record', () => ({ mode: 'on' }), false, `stimd does not stop it, so run kill ${process.pid}`],
+    [
+      'another record',
+      () => ({ mode: 'on' }),
+      false,
+      `stimd does not stop it, so run ${legacyDaemonStop(process.pid)}`,
+    ],
   ])(
     'with %s is reported as an older daemon, not as the running one, without its snapshot',
     (_name, makeDetails, verified, line) => {
@@ -193,7 +199,7 @@ describe('an exclusive holder of the daemon claim', () => {
       expect(findings.map((finding) => finding.title)).toEqual([
         'A stim-daemon from an older Stim holds the daemon claim',
       ]);
-      expect(findings[0]?.fix).toContain(`kill ${process.pid}`);
+      expect(findings[0]?.fix).toContain(legacyDaemonStop(process.pid));
     },
   );
 
