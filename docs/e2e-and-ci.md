@@ -343,7 +343,7 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   the tailnet as an ephemeral `tag:stim-windows-debug` node through OIDC.
 
   To set it up, create a [Tailscale OpenID Connect credential](https://tailscale.com/docs/features/workload-identity-federation#set-up-a-federated-identity)
-  for GitHub Actions with subject `repo:appandflow/stim:ref:refs/heads/main`,
+  for GitHub Actions with subject `repo:appandflow@15523393/stim@1222991801:ref:refs/heads/main`,
   custom claim `workflow_ref` equal to `appandflow/stim/.github/workflows/windows-debug.yml@refs/heads/main`,
   and only the Auth Keys Write scope for `tag:stim-windows-debug`. Allow the
   intended tailnet users to reach that tag on TCP 22. If the runner is used as
