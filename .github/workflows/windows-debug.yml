@@ -95,7 +95,9 @@ jobs:
           audience: ${{ vars.TAILSCALE_WINDOWS_DEBUG_AUDIENCE }}
           tags: tag:stim-windows-debug
           hostname: stim-windows-runner
-          args: --accept-routes=false
+
+      - name: Disable Tailscale subnet routes
+        run: tailscale set --accept-routes=false
 
       # SSH sessions do not see GITHUB_ENV or GITHUB_PATH, so the toolchain
       # locations are written to the machine environment instead.
