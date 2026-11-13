@@ -20,6 +20,7 @@ import { withAmbientContext, workspaceName } from '@stim-cli/core';
 import { NATIVE_RUN_LOCK } from '../engine/native-run.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { waitForPid } from './_pid-file.ts';
 
 test('evaluates with the selected operation environment and home when ambient context differs', SLOW, async () => {
   const selectedHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-selected-context-')));
@@ -348,7 +349,7 @@ test.skipIf(process.platform === 'win32')(
         await new Promise((resolve) => setTimeout(resolve, 25));
       const outer = children.outer;
       if (!outer || !existsSync(marker)) throw new Error('verification evaluator did not start');
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const identity = captureProcessIdentity(pid);
       if (!identity.ok) throw new Error('evaluator identity unavailable');
       evaluator = { pid, processToken: identity.token };
@@ -453,7 +454,7 @@ test.skipIf(process.platform === 'win32')(
       expect(existsSync(marker)).toBe(true);
       const outer = children.outer;
       if (!outer) throw new Error('report child did not start');
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const identity = captureProcessIdentity(pid);
       if (!identity.ok) throw new Error('evaluator identity unavailable');
       evaluator = { pid, processToken: identity.token };
@@ -585,8 +586,7 @@ test.skipIf(process.platform === 'win32').each(['direct', 'report-child'] as con
     try {
       const until = Date.now() + 5000;
       while (!existsSync(marker) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(existsSync(marker)).toBe(true);
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const captured = captureProcessIdentity(pid);
       expect(captured.ok).toBe(true);
       if (!captured.ok) throw new Error('could not capture fixture child identity');

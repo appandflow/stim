@@ -94,6 +94,11 @@
       "loc": 60,
       "end": "2.1.0",
       "mechanism": "stimd adopts or stops, by its verified process identity, a managed tunnel an earlier CLI recorded without a claim"
+    },
+    "C31": {
+      "loc": 3,
+      "end": "2.1.0",
+      "mechanism": "a prebuild record that is a bare hash string, as Stim 1.40 wrote it, counts as an earlier Stim's record"
     }
   },
   "words": {
