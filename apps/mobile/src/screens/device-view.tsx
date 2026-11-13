@@ -160,15 +160,15 @@ export function DeviceView({
   const status = useMachineStatus(macId);
   const archivesPending = useArchivesPending(macId ?? '');
   const env = item?.env;
-  const pathMissing = env?.pathMissing === true;
   const device = env
     ? devicesOf(env).find(
         (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
       )
     : undefined;
+  const hostedPathMissing = env?.pathMissing === true && Boolean(device?.host);
   const { mac, state: link, connection } = useMacConnection();
   const running = Boolean(
-    !pathMissing &&
+    !hostedPathMissing &&
     device &&
     (device.running || (device.host && device.state !== 'stopped')) &&
     streamsFrames(device, link.kind === 'open' ? link.hostCapabilities : null),
@@ -236,20 +236,20 @@ export function DeviceView({
   const control = useDeviceControl(workspace, platform, slot, physical);
   const endControl = control.end;
   useEffect(() => {
-    if (pathMissing) endControl();
-  }, [pathMissing, endControl]);
+    if (hostedPathMissing) endControl();
+  }, [hostedPathMissing, endControl]);
   const [heldFrame, setHeldFrame] = useState<FrameEvent | null>(null);
   if (heldFrame && control.state.kind !== 'on') setHeldFrame(null);
   const source = heldFrame ?? stream.video ?? stream.frame;
   const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
   const activeArtwork = showsFrame ? artwork : null;
-  const readOnly = !pathMissing && !viewOnly && control.allowed === false;
+  const readOnly = !hostedPathMissing && !viewOnly && control.allowed === false;
   const deviceId = link.kind === 'open' ? link.deviceId : null;
-  const controlling = !pathMissing && control.state.kind === 'on';
+  const controlling = !hostedPathMissing && control.state.kind === 'on';
   const [ownLease, setOwnLease] = useState<string | null>(null);
   const leaseSince = control.state.kind === 'on' ? control.state.leaseSince : null;
   if (leaseSince && leaseSince !== ownLease) setOwnLease(leaseSince);
-  const driver = pathMissing ? null : otherDriver(device?.activity, leaseSince ?? ownLease);
+  const driver = hostedPathMissing ? null : otherDriver(device?.activity, leaseSince ?? ownLease);
   const insets = useSafeAreaInsets();
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
@@ -820,7 +820,7 @@ export function DeviceView({
                   >
                     <Banner
                       control={control.state}
-                      canTakeOver={!pathMissing && control.allowed === true && !replaying}
+                      canTakeOver={!hostedPathMissing && control.allowed === true && !replaying}
                       readOnly={readOnly}
                       onTakeOver={takeOver}
                     />
@@ -857,7 +857,7 @@ export function DeviceView({
                           {deviceUnavailable({
                             hasStatus,
                             workspaceListed: item !== undefined,
-                            pathMissing,
+                            pathMissing: hostedPathMissing,
                             hasArchive: status?.archived?.some((archive) => archive.projectRoot === workspace) ?? false,
                             recordingDisabled: replayOff,
                             hasFootage,
@@ -1009,7 +1009,7 @@ export function DeviceView({
                         <HostLabel
                           host={device.host}
                           color={theme.media.textTertiary}
-                          mode={!pathMissing && device.running ? 'running' : 'placed'}
+                          mode={!hostedPathMissing && device.running ? 'running' : 'placed'}
                         />
                       ) : null}
                     </View>

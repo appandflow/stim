@@ -21,6 +21,7 @@ let mockPhysical = false;
 let mockHosted = false;
 let mockStopped = false;
 let mockPathMissing = false;
+let mockReplay: import('@/hooks/device-stream').Replay | null = null;
 const mockStream = jest.fn();
 let mockHostCapabilities = ['frames'];
 const mockSelectWindow = jest.fn();
@@ -137,7 +138,7 @@ jest.mock('@/hooks/device-stream', () => ({
     return {
       windows: mockWindows,
       frame: { width: 400, height: 800, ...(mockArtwork ? { artworkTurns: 0 } : { posture: 'folded' }) },
-      replay: null,
+      replay: mockReplay,
       video: null,
       artwork: mockArtwork
         ? {
@@ -235,6 +236,7 @@ beforeEach(() => {
   mockHosted = false;
   mockStopped = false;
   mockPathMissing = false;
+  mockReplay = null;
   mockStream.mockClear();
   mockArtwork = false;
   mockDeviceFrame = false;
@@ -613,4 +615,21 @@ it('drops the live stream and Control when an open hosted workspace is confirmed
   expect(screen.queryByLabelText('Control')).toBeNull();
   expect(screen.queryByLabelText('Running on mini')).toBeNull();
   expect(screen.getByText('This workspace is no longer on the machine.')).toBeTruthy();
+});
+
+it('keeps the current local subscription while its recording is playing and the workspace path goes missing', async () => {
+  mockReplay = { rate: 1, ended: false };
+  const viewer = () => (
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>
+  );
+  const screen = await render(viewer());
+  const options = mockStream.mock.calls.at(-1)?.[1];
+  expect(options).toMatchObject({ enabled: true, startAt: null });
+
+  mockPathMissing = true;
+  await screen.rerender(viewer());
+  expect(mockStream.mock.calls.at(-1)?.[1]).toEqual(options);
+  expect(mockEnd).not.toHaveBeenCalled();
 });
