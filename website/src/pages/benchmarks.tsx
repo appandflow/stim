@@ -14,6 +14,7 @@ import {
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
+import terra from '@site/src/data/benchmarks/terra-2.0-timings.json';
 import styles from './benchmarks.module.css';
 
 const readinessBenchmarks = benchmarks.filter((benchmark) => benchmark.suite !== 'launch-crash');
@@ -108,11 +109,85 @@ export default function Benchmarks(): ReactNode {
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
               Compare coding agents using Stim, local platform tools, and Expo's agent CLI where it supports the project
-              type. Every platform is measured separately, and the 2.0.0 campaign runs Sonnet only. React Native results
-              measure Settings-ready time and link to command-level audits. Standalone native pilots measure complete
-              task time and include verified screen proof.
+              type. React Native results measure Settings-ready time. Standalone native results report complete task
+              time or time to verified interaction, as labeled.
             </p>
           </header>
+
+          <section className={styles.overview} aria-labelledby="terra-title">
+            <div className={styles.sectionHeading}>
+              <div>
+                <Heading as="h2" id="terra-title">
+                  {terra.model} results
+                </Heading>
+                <p>
+                  Recorded {terra.recordedOn} on a Mac mini with high reasoning and local builds. Each value is one
+                  audited run. Times are in seconds and lower is better.
+                </p>
+              </div>
+            </div>
+            <div className={styles.coverageScroll}>
+              <table className={styles.coverage}>
+                <caption>Stim {terra.stimVersion}. React Native Stim runs adopted prepared devices.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">App</th>
+                    <th scope="col">Task</th>
+                    <th scope="col">Timed endpoint</th>
+                    <th scope="col">Stim</th>
+                    <th scope="col">Control</th>
+                    <th scope="col">Expo agent CLI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {terra.campaign.map((row) => (
+                    <tr key={`${row.platform}-${row.task}`}>
+                      <th scope="row">{row.platform}</th>
+                      <td>{row.task}</td>
+                      <td>{row.endpoint === 'settings' ? 'Settings verified' : 'Turn complete'}</td>
+                      <td>{row.stim.toFixed(1)}</td>
+                      <td>{row.control.toFixed(1)}</td>
+                      <td>{row.expoAgentCli === null ? '—' : row.expoAgentCli.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Heading as="h3" id="terra-native-followup">
+              Standalone native follow-up
+            </Heading>
+            <p>
+              Timed to verified Count: 1. Stim adopted a prepared, shut-down device on the parked runs. The control
+              values are from the earlier follow-up with fresh mobile devices. Cold Stim values are included where
+              measured in the handoff campaign. The mobile rows include device reuse and the updated agent handoff.
+            </p>
+            <div className={styles.coverageScroll}>
+              <table className={styles.coverage} aria-labelledby="terra-native-followup">
+                <thead>
+                  <tr>
+                    <th scope="col">App</th>
+                    <th scope="col">Task</th>
+                    <th scope="col">Stim device</th>
+                    <th scope="col">Stim</th>
+                    <th scope="col">Stim cold</th>
+                    <th scope="col">Earlier control</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {terra.followup.map((row) => (
+                    <tr key={`${row.platform}-${row.task}`}>
+                      <th scope="row">{row.platform}</th>
+                      <td>{row.task}</td>
+                      <td>{row.stimDevice}</td>
+                      <td>{row.stim.toFixed(1)}</td>
+                      <td>{row.stimCold === null ? '—' : row.stimCold.toFixed(1)}</td>
+                      <td>{row.control.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           {readinessPlatforms.map(({ platform, benchmarks: platformBenchmarks }) => (
             <section className={styles.overview} aria-labelledby={`${platform}-overview-title`} key={platform}>
