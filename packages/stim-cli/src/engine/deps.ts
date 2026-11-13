@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { clearTimeout as clearDrainTimeout, setTimeout as setDrainTimeout } from 'node:timers';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -21,6 +22,7 @@ const LAST_LINES = 20;
 const BUILD_MARKER = '.last_build_configuration';
 
 const TRANSCRIPT_LINES = 2000;
+const OUTPUT_DRAIN_MS = 250;
 
 const MAX_POD_DIAGNOSTIC_LINES = 15;
 
@@ -475,8 +477,10 @@ export async function runCaptured(
   const reader = { out: createLineReader(push), err: createLineReader(push) };
   child.stdout?.setEncoding?.('utf-8');
   child.stderr?.setEncoding?.('utf-8');
-  child.stdout?.on('data', (chunk) => reader.out.push(chunk));
-  child.stderr?.on('data', (chunk) => reader.err.push(chunk));
+  const readOut = (chunk: unknown) => reader.out.push(chunk);
+  const readErr = (chunk: unknown) => reader.err.push(chunk);
+  child.stdout?.on('data', readOut);
+  child.stderr?.on('data', readErr);
 
   const stopHeartbeat = ctx.label
     ? startBuildHeartbeat({
@@ -489,9 +493,28 @@ export async function runCaptured(
     : () => {};
 
   let result: Awaited<ReturnType<typeof waitForChild>>;
+  let drainTimeout: NodeJS.Timeout | undefined;
+  let closeOutput: (() => void) | undefined;
+  const outputClosed = new Promise<void>((done) => {
+    closeOutput = done;
+    child.once('close', done);
+  });
   try {
     result = await waitForChild(child);
+    if (!result.error && [child.stdout, child.stderr].some((stream) => stream?.readableEnded === false)) {
+      // Node reports exit before stdio closes, and a descendant can keep the inherited pipes open.
+      await Promise.race([
+        outputClosed,
+        new Promise<void>((done) => {
+          drainTimeout = setDrainTimeout(done, OUTPUT_DRAIN_MS);
+        }),
+      ]);
+    }
   } finally {
+    clearDrainTimeout(drainTimeout);
+    if (closeOutput) child.off('close', closeOutput);
+    child.stdout?.off('data', readOut);
+    child.stderr?.off('data', readErr);
     stopHeartbeat();
   }
   reader.out.flush();
