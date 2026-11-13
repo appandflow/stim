@@ -92,26 +92,19 @@ import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
+import { packageManagerInstall } from '../workspace/install-command.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
 }
 
-function packageManagerInstall(installRoot: string): string {
-  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) return 'pnpm install';
-  if (existsSync(resolve(installRoot, 'yarn.lock'))) return 'yarn install';
-  if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
-    return 'bun install';
-  return existsSync(resolve(installRoot, 'package-lock.json')) ? 'npm ci' : 'npm install';
-}
-
 export function dependencyInstallCommand(target: string, dir = '.'): string {
   const installRoot = resolve(target, dir);
-  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot)}`;
+  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot, { clean: true })}`;
 }
 
 function cloneReplacementNote(target: string, dirs: string[]): string {
-  return dirs.some((dir) => packageManagerInstall(resolve(target, dir)) === 'npm ci')
+  return dirs.some((dir) => packageManagerInstall(resolve(target, dir), { clean: true }) === 'npm ci')
     ? ' `npm ci` deletes node_modules first, so it replaces the clone, which shares its disk with the source checkout, with a private copy of every package.'
     : '';
 }

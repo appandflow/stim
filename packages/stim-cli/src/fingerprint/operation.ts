@@ -5,6 +5,7 @@ import { backgroundPassesAvailable } from '../daemon/client.ts';
 import { shortHash } from '../command-output.ts';
 import { processContext } from '../cli-operation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { packageManagerInstall } from '../workspace/install-command.ts';
 import { fingerprint, fingerprintRuntime, type Fingerprint, type FingerprintRuntime } from './evaluate.ts';
 import { fingerprintJobEnv } from './env.ts';
 import { installRoot, targetLayout, type StaticTarget } from './inputs.ts';
@@ -102,11 +103,14 @@ export function fingerprintOffloadInputs(
   };
 }
 
-export function fingerprintInstallProblem(root: string): string | null {
+export function fingerprintInstallWarning(root: string): string | null {
   const project = realpathSync.native(root);
-  const pending = newerThanInstall({ project, install: installRoot(project) });
-  if (isUncertain(pending)) return pending.uncertain;
-  return pending ? `${pending} changed after the last install` : null;
+  const install = installRoot(project);
+  const pending = newerThanInstall({ project, install });
+  if (!pending) return null;
+  const consequence = 'the build will be installed but not cached';
+  if (isUncertain(pending)) return `${pending.uncertain}; ${consequence}`;
+  return `${pending} changed after the last install; ${consequence}. Run \`${packageManagerInstall(install)}\` in ${JSON.stringify(install)} before the next build.`;
 }
 
 export async function settleFingerprintCheck(

@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { fingerprint } from '../fingerprint/evaluate.ts';
-import { fingerprintForBuild } from '../fingerprint/operation.ts';
+import { fingerprintForBuild, fingerprintInstallWarning } from '../fingerprint/operation.ts';
 import { testContext } from './_context.ts';
 import {
   checkRead,
@@ -43,6 +43,27 @@ import { fingerprintNotes } from '../fingerprint/doctor.ts';
 import { canonicalJson, isUncertain, sha256 } from '../fingerprint/key.ts';
 import { precomputePass } from '../fingerprint/precompute.ts';
 import { disagreementCount, takeDisagreements, verifyHit, verifyPending } from '../fingerprint/verify.ts';
+
+test.each([
+  ['package-lock.json', '.package-lock.json', 'npm install'],
+  ['yarn.lock', '.yarn-integrity', 'yarn install'],
+  ['pnpm-lock.yaml', '.modules.yaml', 'pnpm install'],
+])('names the dependency refresh at the install root for %s', (lockfile, stamp, command) => {
+  const root = join(base, 'checkout');
+  const project = join(root, 'apps', 'example');
+  const installed = join(root, 'node_modules', stamp);
+  write(join(project, 'package.json'), '{}');
+  write(join(root, lockfile), '{}');
+  write(installed, '{}');
+  const beforeCheckout = new Date(Date.now() - 60_000);
+  utimesSync(installed, beforeCheckout, beforeCheckout);
+  expect(fingerprintInstallWarning(project)).toBe(
+    `${join(root, lockfile)} changed after the last install; the build will be installed but not cached. Run \`${command}\` in ${JSON.stringify(root)} before the next build.`,
+  );
+  const afterCheckout = new Date(Date.now() + 60_000);
+  utimesSync(installed, afterCheckout, afterCheckout);
+  expect(fingerprintInstallWarning(project)).toBeNull();
+});
 
 test('install freshness follows declared custom patches and nested patch-package files', () => {
   const root = join(base, 'patch-project');
