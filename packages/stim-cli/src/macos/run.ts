@@ -9,7 +9,12 @@ import {
   setClaimChild,
   tryAcquireClaim,
 } from '../ownership-claim.ts';
-import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '../process-identity.ts';
+import {
+  childExitedWithin,
+  inspectProcessIdentity,
+  sameProcessRecord,
+  waitForProcessExit,
+} from '../process-identity.ts';
 import { macosLogFile, macosProcess, macosRuntimeClaim, updateMacosRecord } from './state.ts';
 
 export async function runMacosSupervisor(root: string, launchId: string): Promise<void> {
@@ -73,19 +78,35 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
         resolve();
       });
     });
+    const log = (level: string, msg: string, event?: string) =>
+      writer.write({ src: 'client', platform: 'macos', launchId, level, msg, event });
+    if (child.stdout) logLines(child.stdout, (line) => log('info', line));
+    if (child.stderr) logLines(child.stderr, (line) => log('warn', line));
+    const logExit = () => {
+      const failed = !stopping && child.exitCode !== 0;
+      log(
+        failed ? 'error' : 'info',
+        `Exited ${record.product} (${child.exitCode ?? child.signalCode ?? 'unknown'}).`,
+        failed ? 'macos_app_crash' : undefined,
+      );
+    };
     if (!child.pid) {
       await ended;
       throw new Error('The macOS app did not start.');
     }
-    app = macosProcess(child.pid);
+    try {
+      app = macosProcess(child.pid);
+    } catch (error) {
+      if (!(await childExitedWithin(child))) throw error;
+      await ended;
+      logExit();
+      return;
+    }
     setClaimChild(claim, app);
     if (!updateMacosRecord(root, owner, { app })) {
       if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGTERM');
       throw new Error('The macOS launch owner changed.');
     }
-    const log = (level: string, msg: string) => writer.write({ src: 'client', platform: 'macos', level, msg });
-    if (child.stdout) logLines(child.stdout, (line) => log('info', line));
-    if (child.stderr) logLines(child.stderr, (line) => log('warn', line));
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
     process.on('message', accept);
@@ -95,10 +116,7 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     await ended;
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
-    log(
-      stopping || child.exitCode === 0 ? 'info' : 'error',
-      `Exited ${record.product} (${child.exitCode ?? child.signalCode ?? 'unknown'}).`,
-    );
+    logExit();
     updateMacosRecord(root, owner, { app: undefined, supervisor: undefined });
   } finally {
     process.off('disconnect', disconnected);
