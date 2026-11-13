@@ -31,7 +31,12 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(node, 0o755);
     vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
     const cli = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
-    const host = new BuildHost({ worker: cli, workerArgs: ['__job', 'offload-worker'], env: process.env });
+    const host = new BuildHost({
+      worker: cli,
+      workerArgs: ['__job', 'offload-worker'],
+      env: process.env,
+      limits: { minFreeBytes: 0 },
+    });
     let finish!: (outcome: unknown) => void;
     const outcome = new Promise<unknown>((resolve) => {
       finish = resolve;

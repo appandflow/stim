@@ -25,7 +25,7 @@ let running: BuildHost | BuildWorkerRoot | null = null;
 let live: { client: string; repo: string }[] = [];
 
 const start = (limits: Partial<BuildLimits> = {}) => {
-  const host = new BuildHost({ worker: 'unused', env: process.env, limits });
+  const host = new BuildHost({ worker: 'unused', env: process.env, limits: { minFreeBytes: 0, ...limits } });
   running = host;
   return host;
 };
