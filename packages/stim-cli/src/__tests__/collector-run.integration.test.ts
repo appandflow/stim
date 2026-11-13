@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { runCollector } from '../stimd/logs/collector.ts';
-import { awaitIosDeviceLaunch, iosLaunchRemedy } from '../engine/ios-device.ts';
 
 import { makeChildProcess } from './_factories.ts';
 
@@ -56,39 +55,6 @@ async function until<T>(
 }
 
 describe('runCollector seams', () => {
-  test('a failed physical console drains its final diagnostic before launch readiness resolves', async () => {
-    const child = makeChildProcess({ pid: 4242 });
-    await runCollector({
-      platform: 'ios',
-      root,
-      udid: 'U1',
-      appName: 'MyApp',
-      bundleId: 'com.test.app',
-      physical: true,
-      startStream: () => child,
-      onExit: () => {},
-    });
-    assert(child.stderr);
-    child.stderr.emit('data', 'BSErrorCodeDescription = Locked');
-    child.emit('exit', 1, null);
-    expect(deviceLog().some((record) => record.event === 'collector_failed')).toBe(false);
-    const result = await awaitIosDeviceLaunch({
-      udid: 'U1',
-      bundleId: 'com.test.app',
-      appName: 'MyApp',
-      collectorStreamId: 'one',
-      readRecords: () => deviceLog().map((record) => Object.assign(record, { streamId: 'one' })),
-      probe: () => ({ state: 'stopped' }),
-      sleep: async () => {
-        child.emit('close', 1, null);
-      },
-    });
-    expect(result.remedy).toBe(iosLaunchRemedy('locked', { udid: 'U1', bundleId: 'com.test.app' }));
-    const records = deviceLog();
-    expect(records.findIndex((record) => record.msg === 'BSErrorCodeDescription = Locked')).toBeLessThan(
-      records.findIndex((record) => record.event === 'collector_failed'),
-    );
-  });
   test('stopping a worker-owned stream ends its child and records its end without a collector process record', async () => {
     const controller = new AbortController();
     const child = makeChildProcess({ pid: 4242 });

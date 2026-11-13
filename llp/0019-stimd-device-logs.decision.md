@@ -43,12 +43,12 @@ with no device lines and no record of why until `stim ios|android` ran again.
   the next `stim ios|android` in the workspace, or a stimd restart (the record
   stays handed over), starts it again. The bound is by count, not time, so a
   failure caused by data cannot loop.
-- **Physical device consoles are not resumed**, because restarting
-  `devicectl --console` launches the app. They get the interrupted record only,
-  and the record is marked (`interruptedAt`) so later boots do not repeat it.
-  After a crash their claim and orphaned child are left as they were. After a
-  worker failure the console's child is still signalled and its record removed,
-  as for any stream the worker's failure ends, and then the record is written.
+- **Physical device consoles are not restarted**, because restarting
+  `devicectl --console` launches the app. Their helper keeps them running
+  across a stimd restart and the next stimd takes them over (LLP 0018). A
+  console record whose claim names no helper, which an earlier stimd ran
+  itself, gets the interrupted record only, and the record is marked
+  (`interruptedAt`) so later boots do not repeat it.
 
 ## The interrupted record
 

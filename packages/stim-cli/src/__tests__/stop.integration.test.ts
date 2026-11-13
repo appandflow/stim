@@ -1249,12 +1249,26 @@ test('clearCollectorState drops only the collectors key', () => {
   expect(left).toEqual({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });
 });
 
-test('stop retains a stream record when its owner cannot stop it', async () => {
-  const stopStream = vi.fn<() => Promise<{ error: string }>>(async () => ({ error: 'ownership unresolved' }));
-  const { calls, opts } = seams({ collectors: { ios: { kind: 'stream', streamId: 'stream-1' } }, stopStream });
+test('stop retains a stream record when its owner cannot stop it, and prints the refusal remedy', async () => {
+  const remedy = 'Run rm -f /home/claim and retry.';
+  const stopStream = vi.fn<() => Promise<{ error: string; code: string; remedy: string }>>(async () => ({
+    error: 'ownership unresolved',
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    remedy,
+  }));
+  const lines: string[] = [];
+  const { calls, opts } = seams({
+    collectors: { ios: { kind: 'stream', streamId: 'stream-1' } },
+    stopStream,
+    report: (line: string) => lines.push(line),
+  });
   const result = await runStop(opts);
   expect(result.ok).toBe(false);
-  expect(result.outcomes.collectors.entries).toMatchObject([{ status: 'failed', reason: 'ownership unresolved' }]);
+  expect(result.outcomes.collectors.entries).toMatchObject([
+    { status: 'failed', reason: 'ownership unresolved', code: 'STIM_CLAIM_UNAVAILABLE', remedy },
+  ]);
+  expect(lines.join('\n')).toContain('STIM_CLAIM_UNAVAILABLE: ownership unresolved');
+  expect(lines.join('\n')).toContain(remedy);
   expect(calls.collectorSignals).toEqual([]);
   expect(calls.collectorsCleared).toBe(0);
 });

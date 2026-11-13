@@ -1,9 +1,98 @@
-import { processGroupAlive } from '@stim-cli/core/ownership-claim';
+import type { ChildProcess } from 'node:child_process';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  processGroupAlive,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+  type ClaimHandle,
+  type ClaimHolder,
+} from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 
 const POLL_MS = 50;
+const DRAIN_MS = 1000;
+const GROUPS = process.platform !== 'win32';
+
+const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+/**
+ * Waits until a helper's child's process group is gone (at once on Windows, which has none) and its stdout and stderr
+ * close. Once the group is gone it waits at most `DRAIN_MS` more for the pipes, then stops reading, so a descendant
+ * outside the group that still holds a pipe cannot keep the helper alive; that descendant gets EPIPE on its next write.
+ */
+export async function drainGroupOutput(
+  child: ChildProcess,
+  closed: Promise<void>,
+  stuck: () => boolean,
+): Promise<void> {
+  const pipes = { closed: false };
+  void closed.then(() => (pipes.closed = true));
+  const groupAlive = () => GROUPS && child.pid !== undefined && processGroupAlive(child.pid);
+  while (!stuck() && groupAlive()) await sleep(100);
+  if (!pipes.closed) await Promise.race([closed, sleep(DRAIN_MS)]);
+  if (pipes.closed) return;
+  for (const stream of ['stdout', 'stderr'] as const) child[stream]?.destroy();
+  await Promise.race([closed, sleep(DRAIN_MS)]);
+}
+
+/** Writes a helper's exit record to `file` atomically, so a reader never sees a partial record. */
+export function writeExitRecord(file: string, record: object): void {
+  const staging = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(staging, JSON.stringify(record), { mode: 0o600 });
+    renameSync(staging, file);
+  } catch (error) {
+    rmSync(staging, { force: true });
+    throw error;
+  }
+}
+
+/** Takes over a claim at `root` whose owner is gone while its child still runs, keeping its details and child. */
+export function retakeClaim(holder: ClaimHolder, root: string, label: string): ClaimHandle | null {
+  if (
+    !holder.child ||
+    inspectProcessIdentity(holder.owner) === 'same' ||
+    inspectProcessIdentity(holder.child) !== 'same'
+  )
+    return null;
+  try {
+    releaseClaim({ ...holder, root, label });
+    const { offsets: _consumed, ...details } = holder.details;
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (attempt.acquired) setClaimChild(attempt.acquired, holder.child);
+    return attempt.acquired ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Asks a helper to stop its child and waits `graceMs` for it to record the exit and end; a helper that does not end in
+ * time is killed once `stopGroup` stopped its child's group. Each signal follows an identity check that reads `same`.
+ */
+export async function stopHelperProcess(
+  helper: { pid: number; processToken: string },
+  { graceMs, label, stopGroup }: { graceMs: number; label: string; stopGroup: () => Promise<void> },
+): Promise<void> {
+  const signal = (sig: NodeJS.Signals): boolean => {
+    const status = inspectProcessIdentity(helper);
+    if (status === 'unknown') throw new Error(`Could not verify the ${label} pid ${helper.pid}.`);
+    if (status !== 'same') return false;
+    try {
+      process.kill(helper.pid, sig);
+    } catch {}
+    return true;
+  };
+  const alive = () => inspectProcessIdentity(helper) === 'same';
+  if (signal('SIGTERM') && (await waitUntil(() => !alive(), graceMs))) return;
+  await stopGroup();
+  if (signal('SIGKILL') && !(await waitUntil(() => !alive(), 1000)))
+    throw new Error(`Could not confirm shutdown of the ${label} pid ${helper.pid}.`);
+}
 
 async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
   for (const deadline = Date.now() + ms; !done() && Date.now() < deadline;)
@@ -61,6 +150,7 @@ export async function stopProcessGroup(
   {
     termMs,
     killMs = 1000,
+    label = 'dev-server',
     groupAlive = processGroupAlive,
     signalGroup = (pgid) => {
       signalProcessTree(pgid, 'SIGTERM', { group: true });
@@ -71,6 +161,8 @@ export async function stopProcessGroup(
   }: {
     termMs: number;
     killMs?: number;
+    /** What the group runs, for the refusal. */
+    label?: string;
     groupAlive?: (pgid: number) => boolean;
     signalGroup?: (pgid: number) => void;
     killMember?: (pid: number) => void;
@@ -78,7 +170,7 @@ export async function stopProcessGroup(
 ): Promise<void> {
   const pgid = leader.pid;
   if (!groupAlive(pgid)) return;
-  const refuse = (detail: string) => new Error(`Could not stop the dev-server process group ${pgid}: ${detail}.`);
+  const refuse = (detail: string) => new Error(`Could not stop the ${label} process group ${pgid}: ${detail}.`);
   const recorded = new Map<number, string | null>();
   const status = inspectProcessIdentity(leader);
   if (status === 'same') {

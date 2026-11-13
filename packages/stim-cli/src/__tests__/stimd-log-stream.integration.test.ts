@@ -334,64 +334,61 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
     }
   });
 
-  test.each([true, false])(
-    'a live write failure invalidates an already waiting readiness check (physical: %s)',
-    async (physical) => {
-      const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
-      const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
-      const bin = join(home, 'bin');
-      mkdirSync(bin);
-      vi.stubEnv('STIM_HOME', home);
-      const liveGo = join(home, 'live-go');
-      const fillGo = join(home, 'fill-go');
-      const xcrun = join(bin, 'xcrun');
-      const line = physical ? 'lost' : JSON.stringify({ eventType: 'logEvent', eventMessage: 'lost' });
-      const warm = physical ? 'x'.repeat(1) : JSON.stringify({ eventType: 'logEvent', eventMessage: 'warm' });
-      const fill = `${JSON.stringify(process.execPath)} -e 'const r = ${JSON.stringify(warm)}; process.stdout.write(${physical ? '"x".repeat(1024 * 1024)' : 'JSON.stringify({...JSON.parse(r),eventMessage:"x".repeat(1024 * 1024)})'} + "\\n")'`;
-      writeFileSync(
-        xcrun,
-        `#!/bin/sh\ncase "$*" in\n  *"log show"*) echo '${JSON.stringify({ eventType: 'logEvent', eventMessage: 'history' })}';;\n  *) ${fill}; while [ ! -f "$FILL_GO" ]; do sleep .05; done; ${fill}; while [ ! -f "$LIVE_GO" ]; do sleep .05; done; echo '${line}'; exec sleep 600;;\nesac\n`,
+  test('a live write failure invalidates an already waiting readiness check', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const liveGo = join(home, 'live-go');
+    const fillGo = join(home, 'fill-go');
+    const xcrun = join(bin, 'xcrun');
+    const line = JSON.stringify({ eventType: 'logEvent', eventMessage: 'lost' });
+    const warm = JSON.stringify({ eventType: 'logEvent', eventMessage: 'warm' });
+    const fill = `${JSON.stringify(process.execPath)} -e 'const r = ${JSON.stringify(warm)}; process.stdout.write(JSON.stringify({...JSON.parse(r),eventMessage:"x".repeat(1024 * 1024)}) + "\\n")'`;
+    writeFileSync(
+      xcrun,
+      `#!/bin/sh\ncase "$*" in\n  *"log show"*) echo '${JSON.stringify({ eventType: 'logEvent', eventMessage: 'history' })}';;\n  *) ${fill}; while [ ! -f "$FILL_GO" ]; do sleep .05; done; ${fill}; while [ ! -f "$LIVE_GO" ]; do sleep .05; done; echo '${line}'; exec sleep 600;;\nesac\n`,
+    );
+    chmodSync(xcrun, 0o755);
+    const env = {
+      ...process.env,
+      STIM_HOME: home,
+      LIVE_GO: liveGo,
+      FILL_GO: fillGo,
+      PATH: [bin, process.env.PATH].join(delimiter),
+    };
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
       );
-      chmodSync(xcrun, 0o755);
-      const env = {
-        ...process.env,
-        STIM_HOME: home,
-        LIVE_GO: liveGo,
-        FILL_GO: fillGo,
-        PATH: [bin, process.env.PATH].join(delimiter),
-      };
-      const streams = createStreams(() => {});
-      try {
-        const { streamId } = await streams.start(
-          { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test', physical },
-          env,
-        );
-        const since = Date.now() - 1000;
-        const signal = new AbortController().signal;
-        const path = join(workspaceLogsDir(root), 'device.ndjson');
-        await vi.waitFor(() => expect(statSync(path).size).toBeGreaterThan(1024 * 1024));
-        let initial = await streams.wait(root, 'ios', 'default', streamId, since, 0, 0, signal, env);
-        while (initial.coverage === 'pending')
-          initial = await streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 1000, signal, env);
-        expect(initial.coverage).toBe(physical ? 'failed' : 'covered');
-        const before = statSync(path).size;
-        writeFileSync(fillGo, '');
-        await vi.waitFor(() => expect(statSync(path).size).toBeGreaterThan(before + 1024 * 1024));
-        initial = await streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 0, signal, env);
-        rmSync(path, { force: true });
-        mkdirSync(path, { recursive: true });
-        const waiting = streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 2000, signal, env);
-        writeFileSync(liveGo, '');
-        expect((await waiting).coverage).toBe('failed');
-        rmSync(path, { recursive: true });
-      } finally {
-        await streams.close().catch(() => {});
-        vi.unstubAllEnvs();
-        rmSync(home, { recursive: true, force: true });
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-  );
+      const since = Date.now() - 1000;
+      const signal = new AbortController().signal;
+      const path = join(workspaceLogsDir(root), 'device.ndjson');
+      await vi.waitFor(() => expect(statSync(path).size).toBeGreaterThan(1024 * 1024));
+      let initial = await streams.wait(root, 'ios', 'default', streamId, since, 0, 0, signal, env);
+      while (initial.coverage === 'pending')
+        initial = await streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 1000, signal, env);
+      expect(initial.coverage).toBe('covered');
+      const before = statSync(path).size;
+      writeFileSync(fillGo, '');
+      await vi.waitFor(() => expect(statSync(path).size).toBeGreaterThan(before + 1024 * 1024));
+      initial = await streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 0, signal, env);
+      rmSync(path, { force: true });
+      mkdirSync(path, { recursive: true });
+      const waiting = streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 2000, signal, env);
+      writeFileSync(liveGo, '');
+      expect((await waiting).coverage).toBe('failed');
+      rmSync(path, { recursive: true });
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('Android replay coverage fails when the attached app PID changes', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));

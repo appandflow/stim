@@ -11,7 +11,6 @@ export interface LogSink {
   beginBackfill(since: number): Promise<void>;
   backfillLine(line: string, clockOffsetMs: number | null): void;
   endBackfill(): Promise<void>;
-  beforeFinish(signalled: boolean): void;
   addAlias(slotKey: string, attribution: Record<string, unknown>): Promise<void>;
   removeAlias(slotKey: string): Promise<void>;
   closed(): Promise<void>;
@@ -27,8 +26,6 @@ export interface LogWriters {
       streamId: string;
       root: string;
       platform: 'ios' | 'android';
-      physical: boolean;
-      bundleId?: string;
       runId?: string;
       slotKey: string;
       attribution: Record<string, unknown>;
@@ -184,13 +181,6 @@ export function createLogWriters(
         beginBackfill: (since) => request({ op: 'backfill.begin', streamId: input.streamId, since }),
         backfillLine: (line, clockOffsetMs) => sendLine('backfill.line', line, clockOffsetMs),
         endBackfill: () => request({ op: 'backfill.end', streamId: input.streamId }),
-        beforeFinish: (signalled) => {
-          try {
-            send({ op: 'before-finish', streamId: input.streamId, signalled });
-          } catch (error) {
-            fail(error instanceof Error ? error : new Error(String(error)));
-          }
-        },
         addAlias: (slotKey, attribution) =>
           request({ op: 'add-alias', streamId: input.streamId, slotKey, attribution }),
         removeAlias: (slotKey) => request({ op: 'remove-alias', streamId: input.streamId, slotKey }),

@@ -5,7 +5,6 @@ import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { createLineReader } from '../../process-output.ts';
-import { parseDeviceConsoleLine } from './ios-device.ts';
 import { parseLogStreamLine } from './ios.ts';
 import { watchSlimDenials } from './ios-slim.ts';
 import {
@@ -29,8 +28,6 @@ export interface RunCollectorOptions {
   bundleId?: string | null;
   serial?: string | null;
   packageName?: string | null;
-  physical?: boolean;
-  payloadUrl?: string | null;
   startStream: (opts: {
     platform: string;
     udid?: string | null;
@@ -38,8 +35,6 @@ export interface RunCollectorOptions {
     appExecutable?: string | null;
     bundleId?: string | null;
     serial?: string | null;
-    physical?: boolean;
-    payloadUrl?: string | null;
     pid?: number | null;
   }) => ChildProcess;
   resolvePid?:
@@ -72,7 +67,6 @@ export interface RunCollectorOptions {
   stopStream?: (child: ChildProcess | null) => Promise<void>;
   writer?: NdjsonWriter;
   recordLine?: (line: string, clockOffsetMs: number | null, child: ChildProcess) => void;
-  beforeFinish?: (signalled: boolean) => void;
   stderr?: (line: string) => void;
   onCleanupFailure?: (error: Error) => void;
   guardQuery?: QueryGuard;
@@ -89,18 +83,14 @@ export interface RunCollectorHandle {
 
 function startMessage({
   platform,
-  physical,
   appName,
-  bundleId,
   udid,
   packageName,
   serial,
   appPid,
 }: {
   platform: string;
-  physical?: boolean;
   appName?: string | null;
-  bundleId?: string | null;
   udid?: string | null;
   packageName?: string | null;
   serial?: string | null;
@@ -109,8 +99,7 @@ function startMessage({
   if (platform !== 'ios') {
     return `device log stream streaming ${packageName} (pid ${appPid}) on ${serial}`;
   }
-  if (!physical) return `device log stream streaming ${appName} on ${udid}`;
-  return `device log stream launching ${bundleId} on device ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
+  return `device log stream streaming ${appName} on ${udid}`;
 }
 
 export async function runCollector({
@@ -123,8 +112,6 @@ export async function runCollector({
   bundleId = null,
   serial = null,
   packageName = null,
-  physical = false,
-  payloadUrl = null,
   startStream,
   resolvePid = null,
   pidTimeoutMs = 30000,
@@ -139,7 +126,6 @@ export async function runCollector({
   stopStream,
   writer: suppliedWriter,
   recordLine,
-  beforeFinish,
   stderr = (line: string) => console.error(line),
   onCleanupFailure = () => {},
   guardQuery,
@@ -150,7 +136,6 @@ export async function runCollector({
   const startedAt = new Date(now()).toISOString();
   let finished = false;
   const shutdown = new AbortController();
-  let captured = 0;
   let watcher: PidWatcher | null = null;
   let cleanupFailure: Error | null = null;
   const failCleanup = (error: unknown) => {
@@ -158,22 +143,11 @@ export async function runCollector({
     cleanupFailure ??= error;
     onCleanupFailure(error);
   };
-  const finish = (code: number, level: string, msg: string, event: string, { signalled = false } = {}) => {
+  const finish = (code: number, level: string, msg: string, event: string) => {
     if (finished) return;
     finished = true;
     shutdown.abort();
     watcher?.stop();
-    if (beforeFinish) beforeFinish(signalled);
-    else if (physical && captured === 0 && !signalled) {
-      writer.write({
-        ...attribution,
-        src: 'device',
-        platform,
-        level: 'warn',
-        event: 'collector_empty',
-        msg: `the device console produced no output for ${bundleId}; devicectl only connects the app's streams when it starts the app, and os_log below the info level never reaches them`,
-      });
-    }
     writer.write({ ...attribution, src: 'device', platform, level, event, msg });
     operationSignal?.removeEventListener('abort', stop);
     const closed = writer.close();
@@ -186,7 +160,7 @@ export async function runCollector({
   let child: ChildProcess | null = null;
   const stop = () => {
     killChild(child);
-    finish(0, 'info', 'device log stream stopped', 'collector_stopped', { signalled: true });
+    finish(0, 'info', 'device log stream stopped', 'collector_stopped');
   };
   if (operationSignal?.aborted) stop();
   else operationSignal?.addEventListener('abort', stop, { once: true });
@@ -219,9 +193,7 @@ export async function runCollector({
     event: 'collector_started',
     msg: startMessage({
       platform,
-      physical,
       appName,
-      bundleId,
       udid,
       packageName,
       serial,
@@ -229,7 +201,7 @@ export async function runCollector({
     }),
   });
 
-  if (platform === 'ios' && !physical && udid && bundleId) {
+  if (platform === 'ios' && udid && bundleId) {
     watchSlimDenials({
       udid,
       bundleId,
@@ -240,7 +212,7 @@ export async function runCollector({
     });
   }
 
-  const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
+  const parse = platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
   const readClockOffset = async (): Promise<number | null> =>
     platform === 'android'
       ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env, cwd: root, guardQuery })
@@ -264,7 +236,6 @@ export async function runCollector({
       if (recordLine) return recordLine(line, clockOffsetMs, spawned);
       const record = parse(line, { now, clockOffsetMs });
       if (!record) return;
-      captured++;
       writer.write({ ...attribution, ...record, platform });
     };
     const spawned = startStream({
@@ -274,31 +245,23 @@ export async function runCollector({
       appExecutable,
       bundleId,
       serial,
-      physical,
-      payloadUrl,
       pid: streamPid,
     });
     const outReader = createLineReader(onLine);
-    // devicectl --console connects the app's stderr to its own, and the os_log
-    // mirror and every crash report arrive there rather than on stdout.
-    const errReader = createLineReader(
-      physical
-        ? onLine
-        : (line: string) => {
-            const text = String(line).trimEnd();
-            if (text.trim()) {
-              writer.write({
-                ...attribution,
-                src: 'device',
-                platform,
-                level: 'debug',
-                raw: true,
-                event: 'collector_stderr',
-                msg: text,
-              });
-            }
-          },
-    );
+    const errReader = createLineReader((line: string) => {
+      const text = String(line).trimEnd();
+      if (text.trim()) {
+        writer.write({
+          ...attribution,
+          src: 'device',
+          platform,
+          level: 'debug',
+          raw: true,
+          event: 'collector_stderr',
+          msg: text,
+        });
+      }
+    });
     spawned.once('close', () => {
       outReader.flush();
       errReader.flush();
@@ -317,10 +280,6 @@ export async function runCollector({
           return;
         }
         const how = signal ? `signal ${signal}` : `exit code ${code}`;
-        if (physical && code) {
-          finish(1, 'error', `the devicectl console ended with ${how}; treat the run as failed`, 'collector_failed');
-          return;
-        }
         finish(0, 'info', `device log stream ended (${how}); the app or device is gone`, 'collector_stopped');
       };
       if (platform === 'android' && watcher) void watcher.probe().then(settle);

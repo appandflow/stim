@@ -19,7 +19,7 @@ test('the logs worker decodes, attributes and flushes lines before closing a str
         slotKey: 'ios:tablet',
         root,
         platform: 'ios',
-        physical: false,
+
         attribution: { slot: 'tablet', deviceId: 'U1' },
       },
       flow,
@@ -68,7 +68,7 @@ test('each stream keeps its initiating run ID through aliases and backfill', asy
         slotKey: 'ios:one',
         root,
         platform: 'ios',
-        physical: false,
+
         runId: 'run-one',
         attribution: {},
       },
@@ -80,14 +80,14 @@ test('each stream keeps its initiating run ID through aliases and backfill', asy
         slotKey: 'ios:two',
         root,
         platform: 'ios',
-        physical: false,
+
         runId: 'run-two',
         attribution: {},
       },
       () => {},
     );
     const fallback = await writers.open(
-      { streamId: 'fallback', slotKey: 'ios:three', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'fallback', slotKey: 'ios:three', root, platform: 'ios', attribution: {} },
       () => {},
     );
     await first.addAlias('ios:alias', {});
@@ -125,7 +125,7 @@ test('backfill deduplicates only live overlap and keeps repeated live records', 
     JSON.stringify({ eventType: 'logEvent', timestamp: '2026-11-07T00:00:00.000Z', eventMessage: message });
   try {
     const sink = await writers.open(
-      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     sink.line(line('live-first'), null);
@@ -182,7 +182,7 @@ test.each(['ios', 'android'] as const)(
           ];
     try {
       const sink = await writers.open(
-        { streamId: 'one', slotKey: platform, root, platform, physical: false, attribution: {} },
+        { streamId: 'one', slotKey: platform, root, platform, attribution: {} },
         () => {},
       );
       const first = lines[0];
@@ -212,7 +212,7 @@ test('backfill preserves Android evidence moved into the window by a changed clo
   const writers = createLogWriters(() => {});
   try {
     const sink = await writers.open(
-      { streamId: 'one', slotKey: 'android', root, platform: 'android', physical: false, attribution: {} },
+      { streamId: 'one', slotKey: 'android', root, platform: 'android', attribution: {} },
       () => {},
     );
     const line = '1794009600.123001 100 100 E app: failed';
@@ -254,7 +254,7 @@ test('a failed live write does not suppress a successful historical copy', async
   try {
     const path = join(workspaceLogsDir(root), 'device.ndjson');
     const sink = await writers.open(
-      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     const line = JSON.stringify({
@@ -293,7 +293,7 @@ test('a failed historical write rejects coverage', async () => {
     const path = join(workspaceLogsDir(root), 'device.ndjson');
     mkdirSync(path, { recursive: true });
     const sink = await writers.open(
-      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     await sink.beginBackfill(0);
@@ -316,7 +316,7 @@ test('two historical queries before live attachment retain their overlap counts'
   const writers = createLogWriters(() => {});
   try {
     const sink = await writers.open(
-      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     const line = JSON.stringify({ eventType: 'logEvent', timestamp: '2026-11-07T00:00:00.000Z', eventMessage: 'cold' });
@@ -347,7 +347,7 @@ test('closing the worker rejects pending requests and can be repeated', async ()
   const writers = createLogWriters(() => {});
   try {
     const sink = await writers.open(
-      { streamId: 'pending', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      { streamId: 'pending', slotKey: 'ios', root, platform: 'ios', attribution: {} },
       () => {},
     );
     const pending = sink.sync();

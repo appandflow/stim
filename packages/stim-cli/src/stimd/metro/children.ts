@@ -75,7 +75,7 @@ import {
   type OutputTail,
   type ServerLaunch,
 } from './child-server.ts';
-import { stopProcessGroup } from './group-stop.ts';
+import { retakeClaim, stopHelperProcess, stopProcessGroup } from './group-stop.ts';
 import { workspaceIdleProbe } from './idle-stop.ts';
 import { watchHostedMetro } from './hosted-metro.ts';
 import { devServerStopLevel, devServerStopRecord, describeDevServerStop } from './stop-cause.ts';
@@ -544,27 +544,6 @@ async function stopGroup(child: MetroChild): Promise<void> {
   await stopProcessGroup(child, { termMs: STOP_MS });
 }
 
-/**
- * Asks the helper to stop its dev server and waits for it to record the exit and end; a helper that does not end in
- * time is killed once its dev server's group is stopped.
- */
-async function stopHelper(child: MetroChild, helper: { pid: number; processToken: string }): Promise<void> {
-  const signal = (sig: NodeJS.Signals): boolean => {
-    const status = inspectProcessIdentity(helper);
-    if (status === 'unknown') throw new Error(`Could not verify the dev-server helper pid ${helper.pid}.`);
-    if (status !== 'same') return false;
-    try {
-      process.kill(helper.pid, sig);
-    } catch {}
-    return true;
-  };
-  const alive = () => inspectProcessIdentity(helper) === 'same';
-  if (signal('SIGTERM') && (await gone(alive, 2 * STOP_MS + 3000))) return;
-  await stopGroup(child);
-  if (signal('SIGKILL') && !(await gone(alive, 1000)))
-    throw new Error(`Could not confirm shutdown of the dev-server helper pid ${helper.pid}.`);
-}
-
 async function stopChild(child: MetroChild, why: string): Promise<void> {
   if (child.stopping && cleanupFailure) throw cleanupFailure;
   if (!child.stopping && helperEnded(child)) return settleHelperEnded(child);
@@ -585,7 +564,11 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
         selfExited = leader === 'gone' || leader === 'different';
         const helper = child.helper;
         if (selfExited) await gone(() => inspectProcessIdentity(helper) === 'same', STOP_MS);
-        await stopHelper(child, helper);
+        await stopHelperProcess(helper, {
+          graceMs: 2 * STOP_MS + 3000,
+          label: 'dev-server helper',
+          stopGroup: () => stopGroup(child),
+        });
       }
       await stopGroup(child);
     }
@@ -1208,25 +1191,6 @@ export function metroChildrenRun(): boolean {
   return children.size > 0 || tunnels.size > 0 || busy.size > 0;
 }
 
-function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle | null {
-  if (
-    !holder.child ||
-    inspectProcessIdentity(holder.owner) === 'same' ||
-    inspectProcessIdentity(holder.child) !== 'same'
-  )
-    return null;
-  try {
-    releaseClaim({ ...holder, root, label });
-    const { offsets: _consumed, ...details } = holder.details;
-    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (attempt.acquired) setClaimChild(attempt.acquired, holder.child);
-    return attempt.acquired ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function offsetsOf(value: unknown): Record<'stdout' | 'stderr', number> | undefined {
   return isJsonObject(value) && typeof value.stdout === 'number' && typeof value.stderr === 'number'
     ? { stdout: value.stdout, stderr: value.stderr }
@@ -1314,7 +1278,7 @@ function settleUnclaimedExit(root: string, log: Log): void {
 function adoptAt(path: string, log: Log): void {
   if (!GROUPS) return;
   for (const holder of children.has(path) ? [] : readClaimSet(claimRoot(path, 'metro')).live) {
-    const claim = retake(holder, claimRoot(path, 'metro'), 'Metro');
+    const claim = retakeClaim(holder, claimRoot(path, 'metro'), 'Metro');
     if (!claim || !holder.child) continue;
     const digest = typeof holder.details.digest === 'string' ? holder.details.digest : null;
     const mode = String(holder.details.mode);
@@ -1368,7 +1332,7 @@ function adoptAt(path: string, log: Log): void {
     );
   }
   for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
-    const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
+    const claim = retakeClaim(holder, claimRoot(path, 'tunnel'), 'tunnel');
     if (!claim || !holder.child) continue;
     const tunnel: TunnelChild = {
       claim,

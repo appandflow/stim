@@ -1087,13 +1087,12 @@ async function runStimdInner(
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
-  const enginePinned = (): boolean => pinned() || logs.holdsRelaunch();
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     if (attached === undefined) recordBoot(why, error);
     keepClaim();
     keepDaemon = true;
-    (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
+    (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs(), ...logs.engineDirs()]);
     if (attached) requestEnd(why, 'error');
     else shutdown(why, 'error');
   };
@@ -1103,13 +1102,11 @@ async function runStimdInner(
       updatedInPlace?.build === message.build
         ? {
             handover: true,
-            ...(logs.holdsRelaunch()
-              ? { heldBy: 'logs', workspaces: logs.heldRoots() }
-              : net.running()?.shareOnly
-                ? { heldBy: 'shares' }
-                : metroRootsEndingWithStimd().length > 0
-                  ? { heldBy: 'dev-servers', workspaces: metroRootsEndingWithStimd() }
-                  : {}),
+            ...(net.running()?.shareOnly
+              ? { heldBy: 'shares' }
+              : metroRootsEndingWithStimd().length > 0
+                ? { heldBy: 'dev-servers', workspaces: metroRootsEndingWithStimd() }
+                : {}),
           }
         : {};
     socket.end(
@@ -1124,7 +1121,7 @@ async function runStimdInner(
       !ending &&
       !switchedTo &&
       !hasActiveCommands() &&
-      !enginePinned() &&
+      !pinned() &&
       !net.running()?.shareOnly
     ) {
       log('info', 'service_restart', restartWhy);
@@ -1138,7 +1135,7 @@ async function runStimdInner(
       !switchedTo &&
       !closing &&
       !hasActiveCommands() &&
-      !enginePinned() &&
+      !pinned() &&
       !net.running()?.shareOnly
     ) {
       relaunchDone = relaunch(updatedInPlace, spawnEntry('cli')).catch(relaunchFailed);
@@ -1146,14 +1143,14 @@ async function runStimdInner(
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.holdsRelaunch());
-      next = await follower.check(enginePinned);
+      follower.record(pinned(), [...engineDirs, ...metroEngineDirs(), ...logs.engineDirs()]);
+      next = await follower.check(pinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!enginePinned()) {
+    if (!pinned()) {
       relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs')).catch(relaunchFailed);
     } else if (!heldSwitch) {
       heldSwitch = true;

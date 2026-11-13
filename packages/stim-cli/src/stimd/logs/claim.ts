@@ -21,8 +21,11 @@ export const pendingChildRemoveCommand = (holder: string): string =>
 const pendingRemedy = (holder: string): string =>
   `Verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(holder)} and retry`;
 
-const claimPath = (root: string, streamId: string) =>
+export const claimPath = (root: string, streamId: string): string =>
   join(workspaceDir(root), 'log-streams', `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`);
+/** Where a physical iPhone console's helper records how the console ended, just before it exits. */
+export const consoleExitFile = (root: string, streamId: string): string =>
+  join(workspaceDir(root), 'log-streams', `console-${createHash('sha256').update(streamId).digest('hex')}.exit.json`);
 const historyPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-backfills', `${createHash('sha256').update(streamId).digest('hex')}.claim`);
 

@@ -6,6 +6,7 @@ import { STIM_VERSION } from './stim-version.ts';
 
 export type SpawnEntryName =
   | 'cli'
+  | 'console-run'
   | 'macos-run'
   | 'metro-run'
   | 'stimd-thread'
@@ -18,6 +19,7 @@ export type SpawnEntryName =
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
+  'console-run': './stimd/logs/console-run.ts',
   'macos-run': './macos/run.ts',
   'metro-run': './stimd/metro/run.ts',
   'stimd-thread': './stimd/threads.ts',

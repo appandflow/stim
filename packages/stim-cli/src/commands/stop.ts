@@ -257,6 +257,8 @@ interface CollectorEntry {
   pid: number | null;
   status: string;
   reason?: string;
+  code?: string;
+  remedy?: string;
 }
 
 interface CollectorsOutcome {
@@ -1008,8 +1010,18 @@ async function reapCollectors(
           pid: null,
           status: 'failed',
           reason: result.error,
+          ...(result.code ? { code: result.code } : {}),
+          ...(result.remedy ? { remedy: result.remedy } : {}),
         });
-        report(chalk.yellow(phaseLine('stop', `could not stop the ${target.platform} log stream: ${result.error}`)));
+        report(
+          chalk.yellow(
+            phaseLine(
+              'stop',
+              `could not stop the ${target.platform} log stream: ${result.code ? `${result.code}: ` : ''}${result.error}`,
+            ),
+          ),
+        );
+        if (result.remedy) report(chalk.dim(phaseLine('remedy', result.remedy)));
       } else {
         entries.push({
           platform: target.platform,

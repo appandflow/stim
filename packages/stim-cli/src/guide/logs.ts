@@ -256,8 +256,10 @@ THE RECORD
              the simulator's log store at info level and above, Android from
              logcat's buffer for the app's current pid. Debug lines, evicted
              lines and an earlier pid's lines are lost. A physical iPhone
-             console is never restarted (that would launch the app again), so
-             the record says its lines are lost. It is a warn, so
+             console is never restarted (that would launch the app again); its
+             helper keeps it running across a stimd restart, so only a console
+             an earlier Stim ran inside stimd gets this record, which says its
+             lines are lost. It is a warn, so
              \`--errors\` does not list it.
     collector_backfill_dedup_limited warns that a busy overlap exceeded the
              bounded deduplication window; duplicate records may remain.
@@ -704,6 +706,10 @@ WHAT WRITES WHAT
   log. One whose device or app is gone starts and then ends, as any collector
   does: device.ndjson records it as stopped or failed. A stimd attached to a
   command (CI, sandboxes) starts none and leaves them to the next detached
-  stimd. A physical iPhone's console is not restarted: it holds stimd's
-  restart until \`stop\`.`,
+  stimd. A physical iPhone's console is not restarted, because that would
+  launch the app again. It runs under its own helper process, which keeps
+  writing device.ndjson while stimd restarts. The new stimd takes it over once
+  the old one has exited: it waits up to 10 s for that, then tries again every
+  second and logs once why it cannot yet, naming the claim and its remedy. The
+  console does not hold stimd's restart.`,
 };

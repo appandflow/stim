@@ -60,7 +60,7 @@ test.skipIf(process.platform === 'win32')(
     const writers = createLogWriters(() => {});
     try {
       const sink = await writers.open(
-        { streamId: 'android', slotKey: 'android', root, platform: 'android', physical: false, attribution: {} },
+        { streamId: 'android', slotKey: 'android', root, platform: 'android', attribution: {} },
         () => {},
       );
       const input = {
@@ -104,7 +104,7 @@ test.skipIf(process.platform === 'win32')(
     const writers = createLogWriters(() => {});
     try {
       const sink = await writers.open(
-        { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+        { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', attribution: {} },
         () => {},
       );
       await expect(

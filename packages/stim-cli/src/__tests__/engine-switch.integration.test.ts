@@ -19,11 +19,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimdRecordFile, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 import { readClaimSet } from '../ownership-claim.ts';
-import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
+import { acquireBuildSlot } from '../engine/build-slots.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { machineCopy } from './fixtures/machine-copy.ts';
+import { parseNdjsonText } from '../ndjson.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
 let tmp: string;
@@ -192,6 +195,7 @@ test.skipIf(process.platform === 'win32')(
     watch.stderr?.on('data', (chunk) => (watchErr += String(chunk)));
     const watched = new Promise<number | null>((done) => watch.once('exit', (code) => done(code)));
 
+    upsertProject(work, {});
     const pinned = await ask(a, ['op.begin'], 2);
     const [hello, begun, started] = await logRequest(
       a,
@@ -227,19 +231,10 @@ test.skipIf(process.platform === 'win32')(
     const lock = await takeLock(root, '.lock.sock');
     assert(lock);
     pinned.socket.destroy();
-    await until('the retained stream claim', () => claimOf(a)[0]?.retained === true);
-    expect(claimOf(a)[0]?.drained).toBe(false);
-    const currentBuild = await acquireBuildSlot({ max: 8, engine: { root, build: a }, intervalMs: 20 });
-    expect(readJson(join(root, 'current.json')).dir).toBe(a);
-    expect(releaseBuildSlot(currentBuild)).toBe(true);
-    const stopped = await logRequest(
-      a,
-      [{ op: 'logs.stop', params: { root: work, platform: 'ios', slot: 'default', streamId } }],
-      2,
-    );
-    expect(stopped[1]).toMatchObject({ op: 'logs.stopped', stopped: true });
     (await ask(a, [], 1)).socket.destroy();
-    await until('A to record drained', () => claimOf(a)[0]?.drained === true);
+    await until('A to drain while the iPhone console runs', () => claimOf(a)[0]?.drained === true);
+    expect(claimOf(a)[0]?.engineDirs).toContain(a);
+    expect(claimOf(a)[0]?.retained).toBeUndefined();
 
     const lines: string[] = [];
     const held = acquireBuildSlot({
@@ -265,6 +260,14 @@ test.skipIf(process.platform === 'win32')(
     await until('the successor stimd of B to bind', () => stimdBuild() === b);
     const switchMs = performance.now() - released;
     await until('A to exit', () => !alive(first));
+    const stoppedOnB = await logRequest(
+      b,
+      [{ op: 'logs.stop', params: { root: work, platform: 'ios', slot: 'default', streamId } }],
+      2,
+    );
+    expect(stoppedOnB[1]).toMatchObject({ op: 'logs.stopped', stopped: true });
+    const device = parseNdjsonText(readFileSync(join(workspaceLogsDir(work), 'device.ndjson'), 'utf8'));
+    expect(device.at(-1)).toMatchObject({ streamId, event: 'collector_stopped', msg: 'device log stream stopped' });
 
     const current = readJson(join(root, 'current.json'));
     expect({ dir: current.dir, setBy: current.setBy }).toEqual({ dir: b, setBy: 'test' });
