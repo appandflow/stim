@@ -155,15 +155,22 @@ description, each with the same port check.
 - Readiness and heartbeat are unchanged: the heartbeat carries the dev server's
   pid, and stimd probes the port.
 - Group stop: one function, `stopProcessGroup` (`stimd/metro/group-stop.ts`), serves the helper's `close()` and stimd's
-  fallback, so they cannot diverge. While the leader reads `same` it records each group member's identity and sends
+  fallback, so they cannot diverge. While the leader reads `same` it records each running member's identity and sends
   SIGTERM to the group. The group then gets 5 s to drain, since members outlive the leader by a moment; a leader that
-  already exited is waited for the same way and nothing is signalled. A member still alive after that is killed by its
-  own pid after its own identity reads `same` in the same synchronous step, never by a group signal. A leader reading
-  `unknown` or `different`, a member whose identity cannot be read, a leader that exited before its members were
-  recorded while members remain, and a group that does not empty are refusals naming the failed check and the pids
-  left; the claim stays. A pgid is not reused while any member lives (Linux keeps the struct pid of a group in use;
-  XNU skips the pids of existing groups), so a live group of a gone leader is the dev server's own. Not guaranteed: a
-  member forked after the last listing that exits between its listing and its kill can have its pid reused.
+  already exited is waited for the same way and nothing is signalled. A member still running after that is killed by
+  its own pid, never by a group signal. A member recorded while the leader was `same` is killed only while its recorded
+  identity reads `same`. A member forked later, or one whose identity could not be read at the snapshot, is killed on
+  the strength of its group membership, read from one `ps` listing taken in the same synchronous step as the kills of
+  that round. A zombie (`ps` state Z) is not a running process: it is never signalled, and the group counts as empty
+  only once it is reaped. A member whose recorded identity reads `unknown` is not signalled and does not refuse by
+  itself; the stop is confirmed when the group is empty after the kill rounds, and only otherwise refuses, naming the
+  pids left, the zombies among them and the ones that were not signalled for an unreadable identity. A leader reading
+  `unknown` or `different`, and a leader that exited before its members were recorded while members remain, are
+  refusals too; the claim stays. A pgid is not reused while any member lives (Linux `kernel/pid.c`: `__change_pid`
+  keeps the struct pid while a task uses it as a PGID, and `idr_alloc_cyclic` allocates pids cyclically; XNU
+  `bsd/kern/kern_fork.c`: pid allocation skips the pids of existing process groups), so a live group of a gone leader
+  is the dev server's own. Not guaranteed: pid reuse between a round's listing and its kill, which cyclic allocation
+  makes impractical.
 - Stop: stimd checks the helper's identity and sends SIGTERM to that pid in one
   synchronous function. The helper stops its group (identity check, SIGTERM,
   up to 5 s, identity check, SIGKILL, up to 5 s), records the exit and ends. If

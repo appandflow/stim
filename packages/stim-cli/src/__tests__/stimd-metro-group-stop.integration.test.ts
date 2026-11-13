@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,9 +28,11 @@ afterEach(() => {
 async function startGroup(
   leaderOnTerm: string,
   member: string,
+  memberCommand?: [string, string[]],
 ): Promise<{ pid: number; processToken: string; member: number }> {
+  const [file, args] = memberCommand ?? [process.execPath, ['-e', member]];
   const script = `const { spawn } = require('node:child_process');
-const member = spawn(process.execPath, ['-e', ${JSON.stringify(member)}], { stdio: 'ignore' });
+const member = spawn(${JSON.stringify(file)}, ${JSON.stringify(args)}, { stdio: 'ignore' });
 console.log(member.pid);
 ${leaderOnTerm}
 setInterval(() => {}, 1000);`;
@@ -70,6 +72,19 @@ describe.skipIf(process.platform === 'win32')('stopping a dev server process gro
     const started = Date.now();
     await stopProcessGroup(group, { termMs: 800 });
     expect(Date.now() - started).toBeGreaterThanOrEqual(700);
+    expect(processGroupAlive(group.pid)).toBe(false);
+    expect(alive(group.member)).toBe(false);
+  }, 20_000);
+
+  test('a zombie in the group does not refuse a stop whose group empties once its parent is killed', async () => {
+    const group = await startGroup("process.on('SIGTERM', () => process.exit(0));", '', [
+      'sh',
+      ['-c', 'trap "" TERM; sh -c "exit 0" & exec sleep 600'],
+    ]);
+    await vi.waitFor(() => expect(execFileSync('ps', ['-axo', 'pid=,pgid=,stat=']).toString()).toMatch(/\sZ\S*\s*$/m), {
+      timeout: 5000,
+    });
+    await stopProcessGroup(group, { termMs: 500 });
     expect(processGroupAlive(group.pid)).toBe(false);
     expect(alive(group.member)).toBe(false);
   }, 20_000);

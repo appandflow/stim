@@ -8,6 +8,7 @@ const setupOp: Op = defineOp({
     expires: { flags: '--expires <iso>', description: 'approval expiry' },
     build: { flags: '--build', description: 'approve builds' },
     deviceHost: { flags: '--device-host', description: 'approve hosted devices' },
+    test: { flags: '--test', description: 'approve running any command it sends, no sandbox' },
     port: { flags: '--port <n>', description: 'server port' },
     label: { flags: '--label <name>', description: 'service label' },
     env: { flags: '--env <KEY=VALUE>', description: 'set a server environment variable' },

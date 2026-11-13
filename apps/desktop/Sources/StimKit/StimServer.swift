@@ -124,8 +124,8 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
-  /// `phone` for a pairing from `stim pair`, `desktop` for Stim Desktop on another machine, `build-client` or
-  /// `device-host-client`; absent from an older stim-server.
+  /// `phone` for a pairing from `stim pair`, `desktop` for Stim Desktop on another machine, `build-client`,
+  /// `device-host-client` or `test-client`; absent from an older stim-server.
   public var kind: String?
 
   /// Whether the device may run actions and drive devices, not only read.
@@ -137,8 +137,11 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   /// A machine that may run hosted devices here.
   public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
+  /// A machine that may run any command it sends here, approved by `stim setup --test`.
+  public var isTestClient: Bool { capabilities.contains("test") }
+
   /// A pairing from `stim pair` that reads and may control: a phone, or Stim Desktop on another machine.
-  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
+  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient && !isTestClient }
 }
 
 struct PairedDeviceList: Decodable {

@@ -35,7 +35,9 @@ import { arrayElementSpans, otherMembers } from './json-spans.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
-type ClientCapability = 'build' | 'device-host';
+const CLIENT_CAPABILITIES = ['build', 'device-host', 'test'] as const;
+
+type ClientCapability = (typeof CLIENT_CAPABILITIES)[number];
 
 /**
  * A client this server accepts: its long-term public key, which the Noise handshake authenticates, and the
@@ -110,7 +112,7 @@ export function validStuckMinutes(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 240;
 }
 
-export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch';
+export type GrantOutcome = 'granted' | 'unknown' | `${ClientCapability}-mismatch`;
 
 export function serverDir(): string {
   return join(configDir(), 'server');
@@ -136,7 +138,7 @@ function clientsFile(capability: ClientCapability): string {
  * the server directory to watch the same way.
  */
 export function watchClientRegistries(changed: () => void, also: string[] = []): () => void {
-  const files = [clientsFile('build'), clientsFile('device-host'), ...also];
+  const files = [...CLIENT_CAPABILITIES.map(clientsFile), ...also];
   const names = new Set(files.map((file) => basename(file)));
   const watchers = new Map<string, FSWatcher>();
   let stopped = false;
@@ -418,7 +420,7 @@ function writeRecords(file: string, devices: PairedDevice[]): void {
  * a newer Stim wrote. It is kept as it is and grants nothing.
  */
 export interface UnreadableRecord {
-  /** The registry file's name: `devices.json`, `build-clients.json` or `device-host-clients.json`. */
+  /** The registry file's name: `devices.json`, `build-clients.json`, `device-host-clients.json` or `test-clients.json`. */
   file: string;
   /** The entry's position in that file's `devices` list. Absent for a whole file. */
   index?: number;
@@ -428,9 +430,9 @@ export interface UnreadableRecord {
   version?: number;
 }
 
-const REGISTRIES = [devicesFile, () => clientsFile('build'), () => clientsFile('device-host')];
+const REGISTRIES = [devicesFile, ...CLIENT_CAPABILITIES.map((capability) => () => clientsFile(capability))];
 
-/** The entries of the three registries that this version cannot read, or none for a registry that cannot be read. */
+/** The entries of the registries that this version cannot read, or none for a registry that cannot be read. */
 export function readUnreadable(): UnreadableRecord[] {
   return REGISTRIES.flatMap((path): UnreadableRecord[] => {
     const file = path();
@@ -453,10 +455,11 @@ export interface Registries {
   devices: PairedDevice[];
   build: PairedDevice[];
   deviceHost: PairedDevice[];
+  test: PairedDevice[];
 }
 
 /**
- * Every record of the three registries. It throws {@link RegistryUnavailable} when any of them cannot be read, so a
+ * Every record of the registries. It throws {@link RegistryUnavailable} when any of them cannot be read, so a
  * Stim home that stopped answering is never mistaken for one with no clients.
  */
 export function readRegistries(): Registries {
@@ -464,6 +467,7 @@ export function readRegistries(): Registries {
     devices: readRecords(devicesFile()),
     build: readRecords(clientsFile('build')),
     deviceHost: readRecords(clientsFile('device-host')),
+    test: readRecords(clientsFile('test')),
   };
 }
 
@@ -486,6 +490,11 @@ export function buildClientsReadable(): boolean {
 /** Device-host approvals live apart from read/control pairings and build clients. */
 export function readDeviceHostClients(): PairedDevice[] {
   return recordsOrNone(clientsFile('device-host'));
+}
+
+/** Test approvals live apart from every other record, so no other approval ever runs a client's commands here. */
+export function readTestClients(): PairedDevice[] {
+  return recordsOrNone(clientsFile('test'));
 }
 
 /**
@@ -629,13 +638,20 @@ export interface KeyRecords {
   device?: PairedDevice;
   build?: PairedDevice;
   'device-host'?: PairedDevice;
+  test?: PairedDevice;
 }
 
 export function recordsForKey(publicKey: string, registries: Registries = readRegistries()): KeyRecords {
   const device = registries.devices.find((entry) => entry.publicKey === publicKey);
   const build = registries.build.find((entry) => entry.publicKey === publicKey);
   const host = registries.deviceHost.find((entry) => entry.publicKey === publicKey);
-  return { ...(device ? { device } : {}), ...(build ? { build } : {}), ...(host ? { 'device-host': host } : {}) };
+  const test = registries.test.find((entry) => entry.publicKey === publicKey);
+  return {
+    ...(device ? { device } : {}),
+    ...(build ? { build } : {}),
+    ...(host ? { 'device-host': host } : {}),
+    ...(test ? { test } : {}),
+  };
 }
 
 /**
@@ -678,7 +694,7 @@ export function spendSecret(
     const targets =
       secret.kind === 'pairing'
         ? [devicesFile()]
-        : (['build', 'device-host'] as const).filter((each) => secret.capabilities.includes(each)).map(clientsFile);
+        : CLIENT_CAPABILITIES.filter((each) => secret.capabilities.includes(each)).map(clientsFile);
     for (const target of targets) refuseNewer(target, readContents(target).newer);
     if (secret.kind === 'pairing') {
       const device = record(secret.capabilities, 'Phone');
@@ -690,7 +706,7 @@ export function spendSecret(
       return { device };
     }
     const made: KeyRecords = {};
-    for (const capability of ['build', 'device-host'] as const) {
+    for (const capability of CLIENT_CAPABILITIES) {
       if (!secret.capabilities.includes(capability)) continue;
       const created = record([capability], 'Machine');
       writeRecords(clientsFile(capability), [
@@ -721,7 +737,7 @@ export function touchDevice(id: string, client: HelloClient = {}, now: number = 
   const app = typeof client.name === 'string' ? cleanClientText(client.name) : '';
   const version = typeof client.version === 'string' ? cleanClientText(client.version) : '';
   transaction(() => {
-    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+    for (const file of REGISTRIES.map((path) => path())) {
       const records = readRecords(file);
       const found = records.find((entry) => entry.id === id);
       if (!found) continue;
@@ -738,19 +754,19 @@ export function touchDevice(id: string, client: HelloClient = {}, now: number = 
   });
 }
 
-/** Sets a pairing's read/control permissions. Build and device-host clients are approved only by `stim setup`. */
+/** Sets a pairing's read/control permissions. Build, device-host and test clients are approved only by `stim setup`. */
 export function grantDevice(id: string, capabilities: Capability[]): GrantOutcome {
   return transaction<GrantOutcome>(() => {
     const devices = readRecords(devicesFile());
     const device = devices.find((entry) => entry.id === id);
     if (device) {
-      if (capabilities.includes('build')) return 'build-mismatch';
-      if (capabilities.includes('device-host')) return 'device-host-mismatch';
+      const asked = CLIENT_CAPABILITIES.find((capability) => capabilities.includes(capability));
+      if (asked) return `${asked}-mismatch`;
       device.capabilities = capabilities;
       writeRecords(devicesFile(), devices);
       return 'granted';
     }
-    for (const capability of ['build', 'device-host'] as const) {
+    for (const capability of CLIENT_CAPABILITIES) {
       if (!readRecords(clientsFile(capability)).some((entry) => entry.id === id)) continue;
       return `${capability}-mismatch`;
     }
@@ -803,7 +819,7 @@ export function renameDevice(id: string, name: string): RenameOutcome {
   const clean = personName(name);
   if (clean === null) return 'invalid-name';
   return transaction<RenameOutcome>(() => {
-    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+    for (const file of REGISTRIES.map((path) => path())) {
       const records = readRecords(file);
       const found = records.find((entry) => entry.id === id);
       if (!found) continue;
@@ -823,7 +839,7 @@ export function revokeDevice(id: string): boolean {
       writeRecords(devicesFile(), remaining);
       return true;
     }
-    for (const capability of ['build', 'device-host'] as const) {
+    for (const capability of CLIENT_CAPABILITIES) {
       const clients = readRecords(clientsFile(capability));
       const kept = clients.filter((client) => client.id !== id);
       if (kept.length === clients.length) continue;

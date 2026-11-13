@@ -11,27 +11,46 @@ async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
   return done();
 }
 
-/** The pids of process group `pgid`, zombies included, or null when `ps` cannot list them. */
-function groupMembers(pgid: number): number[] | null {
-  const listing = getExecutor().runFileQuiet('ps', ['-axo', 'pid=,pgid='], { timeoutMs: 10_000 });
+interface GroupMember {
+  pid: number;
+  /** `ps` reports state Z: the process exited and waits for its parent to reap it. */
+  zombie: boolean;
+}
+
+/** The members of process group `pgid`, zombies marked, or null when `ps` cannot list them. */
+function groupMembers(pgid: number): GroupMember[] | null {
+  const listing = getExecutor().runFileQuiet('ps', ['-axo', 'pid=,pgid=,stat='], { timeoutMs: 10_000 });
   if (listing === null) return null;
   return listing.split('\n').flatMap((line) => {
-    const row = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-    return row && Number(row[2]) === pgid ? [Number(row[1])] : [];
+    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
+    return row && Number(row[2]) === pgid ? [{ pid: Number(row[1]), zombie: row[3]?.startsWith('Z') === true }] : [];
   });
 }
 
+const pidList = (members: GroupMember[] | null) =>
+  members === null
+    ? 'unknown'
+    : members
+        .map((member) => (member.zombie ? `${member.pid} (a zombie, waiting for its parent to reap it)` : member.pid))
+        .join(', ') || 'unknown';
+
 /**
  * Stops a dev server's process group, the leader and every member, and returns once the group is empty. While the leader
- * reads `same` it records each member's identity, then sends SIGTERM to the group; a leader that already exited needs no
- * signal. The group gets `termMs` to drain, since members often outlive the leader by a moment. Each member still there
- * is then killed by its own pid after its own identity reads `same` in the same synchronous step, never by a group signal
- * without a verified leader. A member whose identity cannot be read, a leader that reads `unknown` or `different`, or a
- * group that does not empty is a refusal that names the failed check and the pids left.
+ * reads `same` it records each running member's identity, then sends SIGTERM to the group; a leader that already exited
+ * needs no signal. The group gets `termMs` to drain, since members often outlive the leader by a moment. Each member
+ * still running is then killed by its own pid, never by a group signal without a verified leader: a recorded member only
+ * while its recorded identity reads `same`, and a member recorded as unreadable or forked later by its group membership,
+ * read from one listing taken in the same synchronous step as the kills of that round. A zombie is not a running process:
+ * it is never signalled, and the group counts as empty only once it is reaped, so a group left with zombies alone is a
+ * refusal that says so. A member whose recorded identity reads `unknown` is not signalled and does not refuse by itself;
+ * only a group that is still not empty after the kill rounds and the final wait does, naming the pids that remain, the
+ * zombies among them and the ones whose identity could not be read. A leader reading `unknown` or `different`, or a
+ * leader that exited before its members were recorded while members remain, is a refusal too.
  *
- * A pgid is not reused while any member lives (Linux keeps the struct pid of a group in use; XNU's `nextpid` skips pids
- * of existing process groups), so a live group of a gone leader is the dev server's own. Not guaranteed: a member that
- * forked after the last listing and exits in the instant between its listing and its kill can have its pid reused.
+ * A pgid is not reused while any member lives (Linux `kernel/pid.c`: `__change_pid` keeps the struct pid while a task
+ * uses it as a PGID, and `idr_alloc_cyclic` allocates pids cyclically; XNU `bsd/kern/kern_fork.c` pid allocation skips
+ * pids of existing process groups), so a live group of a gone leader is the dev server's own. Not guaranteed: a pid
+ * reused between the listing and the kill of the same round, which cyclic allocation makes impractical.
  */
 export async function stopProcessGroup(
   leader: { pid: number; processToken: string },
@@ -42,11 +61,15 @@ export async function stopProcessGroup(
     signalGroup = (pgid) => {
       signalProcessTree(pgid, 'SIGTERM', { group: true });
     },
+    killMember = (pid) => {
+      signalProcessTree(pid, 'SIGKILL');
+    },
   }: {
     termMs: number;
     killMs?: number;
     groupAlive?: (pgid: number) => boolean;
     signalGroup?: (pgid: number) => void;
+    killMember?: (pid: number) => void;
   },
 ): Promise<void> {
   const pgid = leader.pid;
@@ -55,7 +78,8 @@ export async function stopProcessGroup(
   const recorded = new Map<number, string | null>();
   const status = inspectProcessIdentity(leader);
   if (status === 'same') {
-    for (const pid of groupMembers(pgid) ?? []) recorded.set(pid, captureProcessToken(pid));
+    for (const member of groupMembers(pgid) ?? [])
+      if (!member.zombie) recorded.set(member.pid, captureProcessToken(member.pid));
     if (inspectProcessIdentity(leader) === 'same') {
       try {
         signalGroup(pgid);
@@ -67,29 +91,29 @@ export async function stopProcessGroup(
   if (await waitUntil(() => !groupAlive(pgid), termMs)) return;
   if (status !== 'same')
     throw refuse(
-      `the leader had already exited and its members were not recorded while it ran, so no signal was sent; member pids ${(groupMembers(pgid) ?? []).join(', ') || 'unknown'} still run`,
+      `the leader had already exited and its members were not recorded while it ran, so no signal was sent; member pids ${pidList(groupMembers(pgid))} still run`,
     );
+  const unreadable = new Set<number>();
   for (let round = 0; round < 3; round++) {
     const members = groupMembers(pgid);
     if (members === null) throw refuse('the group members could not be listed');
-    const unreadable: number[] = [];
-    for (const pid of members) {
-      if (pid === process.pid || pid <= 1) continue;
-      const processToken = recorded.get(pid) ?? captureProcessToken(pid);
-      if (processToken === null) {
-        unreadable.push(pid);
-        continue;
+    for (const { pid, zombie } of members) {
+      if (zombie || pid === process.pid || pid <= 1) continue;
+      const processToken = recorded.get(pid) ?? null;
+      if (processToken !== null) {
+        const identity = inspectProcessIdentity({ pid, processToken });
+        if (identity === 'unknown') unreadable.add(pid);
+        if (identity !== 'same') continue;
       }
-      const identity = inspectProcessIdentity({ pid, processToken });
-      if (identity === 'unknown') unreadable.push(pid);
-      else if (identity === 'same') {
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {}
-      }
+      try {
+        killMember(pid);
+      } catch {}
     }
-    if (unreadable.length > 0) throw refuse(`the identity of member pids ${unreadable.join(', ')} cannot be read`);
     if (await waitUntil(() => !groupAlive(pgid), killMs)) return;
   }
-  throw refuse(`member pids ${(groupMembers(pgid) ?? []).join(', ') || 'unknown'} still run after SIGKILL`);
+  const left = groupMembers(pgid);
+  const unread = [...unreadable].filter((pid) => left?.some((member) => member.pid === pid));
+  throw refuse(
+    `member pids ${pidList(left)} still ${left?.every((member) => member.zombie) ? 'exist' : 'run'} after SIGKILL${unread.length > 0 ? `; the identity of pids ${unread.join(', ')} could not be read, so they were not signalled` : ''}`,
+  );
 }

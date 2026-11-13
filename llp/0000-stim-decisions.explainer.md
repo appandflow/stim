@@ -109,5 +109,6 @@ govern the workflow.
 - [LLP 0017](./0017-macos-app-supervisor.decision.md) covers why the macOS app keeps its supervisor while the other long-lived children run in stimd.
 - [LLP 0018](./0018-children-that-outlive-stimd.decision.md) covers which children stimd may own, and the dev server's helper.
 - [LLP 0019](./0019-stimd-device-logs.decision.md) covers device log streams across a stimd crash, an update and a logs worker failure.
+- [LLP 0020](./0020-test-offload.decision.md) covers the test approval and the planned `stim test` command.
 - [LLP 0021](./0021-stimd-reliability.decision.md) covers stimd exit records, the crash hold and handovers with no successor.
 - [LLP 0024](./0024-fingerprint-package-copies.decision.md) covers how installed package copies become fingerprint inputs.

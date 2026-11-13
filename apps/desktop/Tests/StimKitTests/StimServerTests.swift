@@ -135,7 +135,7 @@ import Testing
     #expect(devices.map(\.canControl) == [false, true])
   }
 
-  @Test func separatesDeviceHostClientsFromBuildClientsAndPhones() throws {
+  @Test func separatesDeviceHostAndTestClientsFromBuildClientsAndPhones() throws {
     let devices = try StimServerCLI.decoder.decode(
       PairedDeviceList.self,
       from: Data(
@@ -143,12 +143,14 @@ import Testing
         {"devices":[
           {"id":"build","name":"Build Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["build"]},
           {"id":"host","name":"Device Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["device-host"]},
-          {"id":"phone","name":"Phone","from":"phone","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["read"]}
+          {"id":"phone","name":"Phone","from":"phone","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["read"]},
+          {"id":"tests","name":"Runner","from":"laptop","keyFingerprint":"k3","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["test"]}
         ]}
         """#.utf8)
     ).devices
     #expect(devices.filter(\.isBuildClient).map(\.id) == ["build"])
     #expect(devices.filter(\.isDeviceHostClient).map(\.id) == ["host"])
+    #expect(devices.filter(\.isTestClient).map(\.id) == ["tests"])
     #expect(devices.filter(\.isPhone).map(\.id) == ["phone"])
     #expect(!devices.contains { $0.canControl })
   }

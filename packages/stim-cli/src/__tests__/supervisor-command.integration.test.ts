@@ -12,6 +12,7 @@ import { outputRecord } from '../stimd/metro/output-records.ts';
 import { MODE_COMMAND } from '../stimd/metro/state.ts';
 import { makeChildProcess } from './_factories.ts';
 import * as identity from '../process-identity.ts';
+import * as metro from '../metro.ts';
 import type { ChildProcess } from 'node:child_process';
 
 let root: string;
@@ -60,6 +61,22 @@ test('metro.command runs its argv from the app directory with {port} replaced an
   });
 });
 
+/**
+ * Lists `members` as the only members of process group 4242 and records, instead of sending, every per-pid kill, so a
+ * test with the hard-coded pid 4242 can never signal a real process.
+ */
+function isolateGroup4242(members: number[]): number[] {
+  const kills: number[] = [];
+  vi.spyOn(getExecutor(), 'runFileQuiet').mockImplementation((file) =>
+    file === 'ps' ? members.map((pid) => `${pid} 4242 S`).join('\n') : null,
+  );
+  vi.spyOn(metro, 'signalProcessTree').mockImplementation((pid, _signal, options) => {
+    if (options?.group !== true) kills.push(pid);
+    return true;
+  });
+  return kills;
+}
+
 describe('a supervised dev server', () => {
   test('what it writes to its pipes becomes raw command records with inferred levels and bundle markers', async () => {
     const child = makeChildProcess({ pid: 4242 });
@@ -91,6 +108,7 @@ describe('a supervised dev server', () => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
+    const kills = isolateGroup4242([4243]);
     const signals: NodeJS.Signals[] = [];
     const server = supervise(makeChildProcess({ pid: 4242 }), {
       signal: (sig) => {
@@ -100,6 +118,7 @@ describe('a supervised dev server', () => {
     });
     await expect(server.close()).rejects.toThrow(/4242/);
     expect(signals).toEqual(['SIGTERM']);
+    expect(kills).toEqual([4243, 4243, 4243]);
   });
 
   describe.skipIf(process.platform === 'win32')('owned POSIX process', () => {
@@ -139,6 +158,7 @@ describe('a supervised dev server', () => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
+    const kills = isolateGroup4242([4243]);
     const child = makeChildProcess({ pid: 4242 });
     const signals: NodeJS.Signals[] = [];
     const server = supervise(child, {
@@ -151,6 +171,7 @@ describe('a supervised dev server', () => {
     child.emit('exit', 0, null);
     await expect(server.close()).rejects.toThrow(/the leader had already exited/);
     expect(signals).toEqual([]);
+    expect(kills).toEqual([]);
   });
 
   test('close sends no group signal when the leader identity changed after it was first read', async () => {
@@ -159,6 +180,7 @@ describe('a supervised dev server', () => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
+    const kills = isolateGroup4242([]);
     const signals: NodeJS.Signals[] = [];
     const server = supervise(makeChildProcess({ pid: 4242 }), {
       signal: (sig) => {
@@ -168,5 +190,6 @@ describe('a supervised dev server', () => {
     });
     await expect(server.close()).rejects.toThrow(/process group 4242/);
     expect(signals).toEqual([]);
+    expect(kills).toEqual([]);
   });
 });

@@ -24,6 +24,7 @@ async function run(): Promise<void> {
   const host = await hostStimd({ ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' }, { handover: false });
   if (typeof host !== 'object' || host === null || !('instance' in host)) throw new Error('no attached stimd');
   const pid = JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).pid;
+  process.stdout.write(`stimd ${pid}\n`);
   setTimeout(() => process.kill(pid, 'SIGSTOP'), 700);
   const answer = await ensureMetroThroughStimd({ root, port: Number(process.argv[2]) }, 2500);
   process.stdout.write(`settled ${JSON.stringify(answer)}\n`);

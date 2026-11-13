@@ -3107,8 +3107,10 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 ## stim setup
 
 A person on the worker machine runs `stim setup` to set it up and approve
-build and/or device-host access for the machine holding one setup ticket, until
-one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
+build, device-host or test access (`--build`, `--device-host`, `--test`) for
+the machine holding one setup ticket, until one expiry. Test access lets that
+machine run any command it sends, as this user, with no sandbox; see
+[test approval](./remote-machines.md#test-approval). The requesting machine makes the ticket: Stim Desktop's Add Machine
 flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
 prints it on a machine without Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve without a terminal. Agents never run setup
