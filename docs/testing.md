@@ -219,8 +219,12 @@ parent; checkout retains both parents. Agent-benchmark files are excluded from
 both unit selectors and run through the separate `test:bench` step. Other PR
 checks remain enabled.
 
-The merge queue always runs the full unit and integration suite on its combined
-candidate before merging, on Node 22. Main pushes run the unit suite on Node 22
+The merge queue runs the full unit and integration suite on its combined
+candidate before merging, on two Node 22 Vitest shards. Both shards must pass.
+The gate reports test and runner time, retains each shard's timings for seven
+days, and warns when the slower shard takes at least 20% and 60 seconds longer
+than the median of three to five recent successful two-shard merge runs. The
+warning is informational. Main pushes run the unit suite on Node 22
 and 24 and the integration suite on Node 24 only; scheduled validation and
 release validation retain their full suites. Focused PR selection never replaces the merge-candidate gate.
 

@@ -4,6 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: merge-gate-${{ github.ref }}
@@ -18,10 +19,12 @@ permissions:
 jobs:
   merge-gate:
     name: merge gate
+    if: always()
+    needs: merge-tests
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - if: github.event_name != 'merge_group'
+      - if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -90,38 +93,68 @@ jobs:
             if [ "$elapsed" -lt 600 ]; then sleep 30; else sleep 60; fi
           done
 
-      - if: github.event_name == 'merge_group'
+      - name: Require both test shards
+        if: always() && github.event_name != 'pull_request'
+        env:
+          SHARDS: ${{ needs.merge-tests.result }}
+        run: test "$SHARDS" = success
+      - if: github.event_name != 'pull_request'
         uses: actions/checkout@v4
-      - if: github.event_name == 'merge_group'
-        uses: ./.github/actions/setup-stim
+      - name: Report merge test timings
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/merge-test-timings.mjs
+
+  merge-tests:
+    name: merge tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
         with:
           node: 22
           build: 'false'
 
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: pnpm run format:check
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: pnpm run lint
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: node scripts/ratchet.mjs apps/demo-server
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         working-directory: apps/mobile
         run: node ../../scripts/ratchet.mjs apps/mobile
-      - if: github.event_name == 'merge_group'
-        run: pnpm run build
-      - if: github.event_name == 'merge_group'
+      - run: pnpm run build
+      - if: matrix.shard == 1
         run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,status-command,agent-device,net,agent-driver,api
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1 && github.event_name == 'merge_group'
         env:
           BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$BASE"
           node scripts/plugin-api-report.mjs --base "$BASE"
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: pnpm run typecheck
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: pnpm run knip
-      - if: github.event_name == 'merge_group'
+      - if: matrix.shard == 1
         run: pnpm run rpc:check
-      - if: github.event_name == 'merge_group'
-        run: pnpm test
+      - name: Run Vitest shard
+        run: pnpm test --shard=${{ matrix.shard }}/${{ strategy.job-total }} --reporter=default --reporter=json --outputFile.json=test-results/merge-${{ matrix.shard }}.json
+      - name: Retain merge test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-test-timings-${{ matrix.shard }}
+          path: test-results/merge-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
