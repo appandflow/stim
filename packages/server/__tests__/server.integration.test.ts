@@ -1795,6 +1795,7 @@ describe('status views', () => {
     const fresh = await reconnected.next();
     assert('event' in fresh && fresh.event === 'workspaces');
     expect(fresh.seq).toBe(0);
+    expect(fresh.snapshot?.workspaces).toHaveLength(fixture.environments.length);
     expect(fresh.snapshot?.workspaces.find((row) => row.path === changed.path)?.logs).toEqual({ errorsSinceMarker });
     const reconnect = readReconnect();
 
