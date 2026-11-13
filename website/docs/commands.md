@@ -2440,32 +2440,25 @@ only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
 
-A `node_modules` or `ios/Pods` tree with files modified after its install is
-never deleted silently. The reference is when an install, `pod install` or
+Automatic maintenance and `stim gc` never delete a `node_modules` or
+`ios/Pods` folder in which they detect hand edits, at any pressure level,
+critical included, so its disk is not freed; `gc --dry-run`, `stim status` and
+`stim doctor` name the edited files. Automatic removal of a finished or
+discovered worktree waits while one of its dependency folders has edits.
+`stim worktree remove` runs no check. Detection is best effort, from file
+times: a file modified after the install (when an install, `pod install` or
 `stim worktree warm` that Stim ran there finished, or else the package
-manager's stamp; a 10-minute window after the stamp counts as install output
-only when the root `package.json` declares `preinstall`, `install`,
-`postinstall` or `prepare`. An edit found once stays an edit while the file is
-unchanged, and a later install does not hide it unless it reinstalled that
-package. Dot-directories at the `node_modules` root other than `.pnpm`, `.bun`,
-`.deno` and `.bin` are treated as tool caches (`.cache`, `.vite`, a custom
-pnpm virtual-store directory) and not checked, and Gradle, CMake and Xcode
-output (`.gradle`,
-`.kotlin`, `.cxx` and Gradle's `build` in a package's `android` directory or
-beside a Gradle build script, a package's `ios/build`, Pods' `xcuserdata`)
-does not count. At normal and high such a tree is kept, and `gc --dry-run`,
-`stim status` and `stim doctor` name the files. At critical the files are
-copied to `$STIM_HOME/archive/worktrees/` first and the tree is deleted; the
-action prints the `cp -R` command that puts them back after a reinstall, and
-`stim status`, `stim doctor` and `stim worktree warm` name the copy until
-archive retention (`archive.maxAgeDays`, 30 days) or you remove it. A
-tree with more than 1000 changed files or 64 MB, or a directory that cannot be
-read, is kept even at critical. Not seen: an edit that keeps an older
+manager's stamp) is an edit, except in a 10-minute window after the stamp when
+the root `package.json` declares an install script. Not checked:
+dot-directories at the `node_modules` root other than `.pnpm`, `.bun`, `.deno`
+and `.bin` (tool caches such as `.cache` and `.vite`, a custom pnpm
+virtual-store directory included), Gradle, CMake and Xcode output, and the
+package manager's state files. Known misses: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
-hand, and, after an install Stim did not run, unrecorded edits of a package
-whose `package.json` an edit replaced (`sed -i`, save by rename), and an edit
-inside the first script window once a project install moves the stamp. An edit in `node_modules` is never durable: make it a patch with
-`pnpm patch`, `yarn patch` or `patch-package`.
+hand, an edit inside an install window, and an edit to a package whose
+`package.json` an editor replaced. An edit in `node_modules` is never durable:
+make it a patch with `pnpm patch`, `yarn patch` or `patch-package`, or
+reinstall to let maintenance free the folder.
 
 Everything `gc` deletes, by category (N normal, H high, C critical):
 

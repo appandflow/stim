@@ -358,10 +358,7 @@ export async function clearSourceDependencies(
   }
 }
 
-/**
- * A dry run's outcome for one dependency tree at `level`: kept when the edit check keeps it, else `would` with the edit
- * check's note after `detail`.
- */
+/** A dry run's outcome for one dependency tree at `level`: kept when the edit check keeps it, else `would`. */
 export async function wouldDelete(
   dependency: RankedDependency,
   level: PressureLevel,
@@ -376,7 +373,7 @@ export async function wouldDelete(
     signal: operation?.signal,
   });
   if ('keep' in edits) return { status: 'kept', bytes: 0, detail: edits.keep };
-  return { status: 'would', bytes, detail: [detail, edits.note].filter(Boolean).join('; ') };
+  return { status: 'would', bytes, detail };
 }
 
 let dormantCheckedAt = -Infinity;

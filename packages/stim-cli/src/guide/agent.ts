@@ -239,10 +239,10 @@ RULES DURING THE LOOP
   code with a patch (patch-package or pnpm patch), which is hashed, or run ios or
   android with --no-build-cache --remote-build local to compile it here. See
   guide lifecycle builds.
-- Maintenance deletes node_modules and ios/Pods of idle workspaces. An edit
-  you make in them keeps the folder only until critical disk pressure, which
-  saves it to the Stim archive and deletes the folder; make it a patch
-  (pnpm patch, yarn patch or patch-package) instead (guide cleanup).
+- Maintenance deletes node_modules and ios/Pods of idle workspaces. One with
+  an edit you made is kept, and its disk stays used, but a reinstall or stim
+  worktree remove still loses the edit: make it a patch (pnpm patch, yarn
+  patch or patch-package) instead (guide cleanup).
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope.

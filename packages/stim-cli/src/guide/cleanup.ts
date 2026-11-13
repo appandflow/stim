@@ -640,53 +640,36 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   directories are deleted: a real directory inside the checkout whose files git
   ignores, with no tracked or unignored file, not reached through a link.
 
-  Edited dependencies: before a node_modules or ios/Pods tree is deleted, Stim
-  lists the files in it modified after its install, from file times alone.
-  The reference is when an install, pod install or worktree warm that Stim ran
-  there finished; otherwise the package manager's stamp (node_modules/
-  .modules.yaml, .package-lock.json, .yarn-state.yml, .yarn-integrity, or
-  Pods/Manifest.lock); a tree no stamp covers (Bun) uses its own and its .bin
-  directory's modification times. A 10-minute window after the stamp counts as install
-  output only when the root package.json declares preinstall, install,
-  postinstall or prepare (Pods and unstamped trees: 60 seconds); files in the
-  window do not keep a tree but are saved at critical. An edit found once stays an edit
-  while the file is unchanged, and a later install does not hide it: before
-  Stim runs an install it records the edits, and after an install it did not
-  run, a file changed since the previous reference stays an edit unless its
-  package (its package.json, or the pod's directory) was reinstalled; with no
-  record yet the previous reference is the stamp file's creation time. In a
-  package added since, a file changed more than 5 seconds after the
-  package's package.json was created stays an edit. Not
-  counted: the package manager's state files, dot-directories at a
-  node_modules root other than .pnpm, .bun, .deno and .bin, which are
-  treated as tool caches and not checked (.cache, .vite, .vitest-cache, a
-  custom pnpm virtual-store directory), .gradle,
-  .kotlin and .cxx in a package's android directory or beside a Gradle build
-  script, a build directory there holding Gradle output (intermediates,
-  generated, outputs, tmp, .transforms, kotlin, classes) that the package's
-  package.json points nothing into, a package's ios/build, and Pods'
-  xcuserdata. Not seen: an edit that keeps an older modification time (cp -p,
-  rsync -t, tar), a file deleted by hand, edits inside those directories, and
-  after an install Stim did not run, unrecorded edits of a package whose
-  package.json was replaced by an edit (sed -i, save by rename), and an edit
-  inside the first script window once a project install moves the stamp.
-  Below critical a tree with edits is kept, and the kept action, \`stim
-  status\` (--json dependencyEdits) and \`stim doctor\` name them. At critical
-  the edits, and files inside the install window, are copied (checked by size
-  only) to $STIM_HOME/archive/worktrees/<checkout>/<tree>-edits-<time>/files
-  with a manifest.json, then the tree is deleted; the action prints the cp -R
-  command that puts them back after a reinstall, and \`stim status\` (--json
-  dependencyEditsSaved), \`stim doctor\` and \`stim worktree warm\` name the
-  copy until archive retention (archive.maxAgeDays, 30) or a person removes
-  it. A tree is kept even at critical when it has over
-  1000 changed files or 64 MB, when the copy cannot be written
-  (archive.enabled false, archive.maxTotalGb full, no disk), when a directory
-  in it cannot be read, or when it has no install stamp. stim worktree remove
-  saves the edits of every dependency tree it deletes, nested ones included;
-  without --force it refuses when a save cannot be done, and --force still
-  saves and only lets a failed save not stop the removal. stim doctor, stim gc
-  --dry-run and report-mode passes write nothing. Make the change a patch
-  (pnpm patch, yarn patch or patch-package) so a reinstall keeps it.
+  Edited dependencies: automatic maintenance and stim gc never delete a
+  node_modules or ios/Pods folder in which they detect hand edits, at any
+  pressure level, critical included, so its disk is not freed; stim gc
+  --dry-run shows it kept. Automatic removal of a finished or discovered
+  worktree also waits while one of its dependency folders has detected edits.
+  stim worktree remove runs no check. The kept action, \`stim status\` (--json
+  dependencyEdits) and \`stim doctor\` name the files; make the change a patch
+  (pnpm patch, yarn patch or patch-package) or reinstall to release the
+  folder. Detection is best effort, from file times alone: a file modified
+  after the install is an edit. The install's time is when an install, pod
+  install or worktree warm that Stim ran there finished; otherwise the package
+  manager's stamp (node_modules/.modules.yaml, .package-lock.json,
+  .yarn-state.yml, .yarn-integrity, Pods/Manifest.lock), or for a tree with
+  none (Bun) its own and its .bin directory's modification times plus a
+  minute. A 10-minute window after the stamp is install output when the root
+  package.json declares preinstall, install, postinstall or prepare (Pods: 60
+  seconds). An edit seen once stays an edit while the file is unchanged, and
+  after an install Stim did not run, a file changed since the previous
+  reference stays an edit unless its package was reinstalled. Not checked:
+  the package manager's state files, dot-directories at a node_modules root
+  other than .pnpm, .bun, .deno and .bin (treated as tool caches, a custom
+  pnpm virtual-store directory included), .gradle, .kotlin, .cxx and Gradle's
+  build in a package's android directory or beside a Gradle build script, a
+  package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
+  an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
+  edits in those directories, an edit inside an install window, and an edit
+  to a package whose package.json an editor replaced, once an install Stim
+  did not run follows. A tree with no install stamp, or a directory that
+  cannot be read, is kept. stim doctor, stim gc --dry-run and report-mode
+  passes write nothing.
 
   Concurrency: an acting stim gc takes the same exclusive maintenance claim as
   the stim-daemon's maintenance pass. While one holds it the other refuses at

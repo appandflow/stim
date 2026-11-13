@@ -26,9 +26,7 @@ export function updateDependencyInstall(
   const file = dependencyInstallFile(tree);
   ensurePrivateDir(dirname(file));
   withDirLock(`${file}.lock`, () => {
-    const next = update(
-      readDependencyInstall(tree) ?? { tree, installedAt: null, reference: null, edits: null, saved: [] },
-    );
+    const next = update(readDependencyInstall(tree) ?? { tree, installedAt: null, reference: null, edits: null });
     if (!next) {
       rmSync(file, { force: true });
       return;
@@ -39,10 +37,7 @@ export function updateDependencyInstall(
   });
 }
 
-/**
- * Drops saved copies retention removed from the dependency records, and the records of trees that are gone with no
- * saved copy left.
- */
+/** Drops the records of trees that are gone. */
 export function pruneDependencyInstallRecords(): void {
   let names: string[];
   try {
@@ -53,14 +48,10 @@ export function pruneDependencyInstallRecords(): void {
   const volumes = listMountedVolumes();
   for (const name of names) {
     const tree = readJsonObject(join(dependencyInstallDir(), name))?.tree;
-    if (typeof tree !== 'string') continue;
+    // @ref LLP 0002#fail-closed -- an absent tree on an unmounted volume is not proof it is gone
+    if (typeof tree !== 'string' || existsSync(tree) || !goneFromMountedVolume(tree, volumes)) continue;
     try {
-      updateDependencyInstall(tree, (record) => {
-        const saved = record.saved.filter((entry) => existsSync(join(entry.dir, 'manifest.json')));
-        // @ref LLP 0002#fail-closed -- an absent tree on an unmounted volume is not proof it is gone
-        if (!saved.length && !existsSync(tree) && goneFromMountedVolume(tree, volumes)) return null;
-        return { ...record, saved };
-      });
+      updateDependencyInstall(tree, () => null);
     } catch {}
   }
 }

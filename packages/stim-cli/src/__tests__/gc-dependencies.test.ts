@@ -296,9 +296,8 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc keeps the dependencies of an idle worktree whose files were edited after the install, and at critical saves the edits before deleting them',
+  'gc keeps the dependencies of an idle worktree whose files were edited after the install, at critical too',
   async () => {
-    vi.stubEnv('STIM_ARCHIVE_ENABLED', 'true');
     const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
     const modules = join(feature, 'node_modules');
     const config = loadConfig();
@@ -317,11 +316,7 @@ test.skipIf(process.platform === 'win32')(
 
     await quietly(() => runGc({ pressure: 'critical' }));
 
-    expect(existsSync(modules)).toBe(false);
-    const saved = execSync(`find "${join(home, 'archive')}" -path '*/files/pkg/index.js'`, {
-      encoding: 'utf-8',
-    }).trim();
-    expect(readFileSync(saved, 'utf-8')).toBe('patched by hand');
+    expect(readFileSync(join(modules, 'pkg', 'index.js'), 'utf-8')).toBe('patched by hand');
   },
   60_000,
 );

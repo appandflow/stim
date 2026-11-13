@@ -173,17 +173,10 @@ function sourceDependenciesLine(root: string, { at, dirs }: { at: string; dirs: 
 }
 
 /** One line per dependency tree that maintenance keeps because files in it changed after the install. */
-function dependencyEditsLines({ path, dependencyEdits = [], dependencyEditsSaved = [] }: EnvironmentState): string[] {
-  return [
-    ...dependencyEdits.map((edits) =>
-      chalk.yellow(`  dependency edits: ${relative(path, edits.tree) || edits.tree} has ${editsKeptReason(edits)}`),
-    ),
-    ...dependencyEditsSaved.map((saved) =>
-      chalk.yellow(
-        `  dependency edits: ${saved.count} changed file${saved.count === 1 ? '' : 's'} of ${relative(path, saved.tree) || saved.tree} saved to ${saved.dir} before it was deleted; after reinstalling, put them back with ${saved.restore}`,
-      ),
-    ),
-  ];
+function dependencyEditsLines({ path, dependencyEdits = [] }: EnvironmentState): string[] {
+  return dependencyEdits.map((edits) =>
+    chalk.yellow(`  dependency edits: ${relative(path, edits.tree) || edits.tree} has ${editsKeptReason(edits)}`),
+  );
 }
 
 /** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
