@@ -349,17 +349,16 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   intended tailnet users to reach that tag on TCP 22. If the runner is used as
   a build worker, allow the intended build clients to reach it on TCP 7443 too.
   Check that broad tailnet grants give the tag only the access it needs.
-  Save the client ID and
-  audience as the repository Actions variables `TAILSCALE_WINDOWS_DEBUG_CLIENT_ID`
-  and `TAILSCALE_WINDOWS_DEBUG_AUDIENCE`.
+  Save the client ID and audience as the repository Actions variables
+  `TAILSCALE_WINDOWS_DEBUG_CLIENT_ID` and `TAILSCALE_WINDOWS_DEBUG_AUDIENCE`.
 
   ```sh
   gh workflow run windows-debug.yml --ref main -F public_key=@~/.ssh/id_rsa.pub -f hours=2
   ```
 
   Use the IPv4 address and verify the host-key fingerprint printed by the
-  **Open SSH** step. Create a file named `stop` at the workspace root to end
-  the run.
+  **Open SSH** step. To debug a branch, fetch and check it out inside the VM.
+  Create a file named `stop` at the workspace root to end the run.
 
 - **`e2e-native.yml`** -- the native matrix, every native gate in one
   workflow. Nothing native runs on an unlabeled pull request; what runs is:

@@ -82,7 +82,11 @@ jobs:
           SDK_PACKAGES: ${{ inputs.sdk_packages }}
         run: |
           $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
-          & $sdkmanager --install @($env:SDK_PACKAGES -split '\s+' | Where-Object { $_ })
+          $packages = @($env:SDK_PACKAGES -split '\s+' | Where-Object { $_ })
+          if (-not $packages -or ($packages -notmatch '^[a-z0-9][a-z0-9._-]*(;[a-z0-9][a-z0-9._-]*)*$')) {
+            throw 'Supply space-separated Android SDK package identifiers.'
+          }
+          & $sdkmanager --install @packages
 
       - name: Tailscale
         uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4
