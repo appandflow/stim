@@ -59,8 +59,7 @@ export function handleLogRequest({
       ),
     ).then(
       (result) => respond({ op: 'logs.started', ...result }),
-      (error: unknown) =>
-        respond({ op: 'error', code: 'logs.start', message: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) => respond(errorAnswer('logs.start', error)),
     );
     return true;
   }
@@ -139,8 +138,19 @@ export function handleLogRequest({
   }
   void streams.stop(fields.root, fields.platform, fields.slot, fields.streamId).then(
     (wasStopped) => respond({ op: 'logs.stopped', stopped: wasStopped }),
-    (error: unknown) =>
-      respond({ op: 'error', code: 'logs.stop', message: error instanceof Error ? error.message : String(error) }),
+    (error: unknown) => respond(errorAnswer('logs.stop', error)),
   );
   return true;
+}
+
+/** An error answer that keeps a refusal's code and remedy, so the command can print them. */
+function errorAnswer(op: string, error: unknown): Record<string, unknown> {
+  const code = error instanceof Error ? Reflect.get(error, 'code') : undefined;
+  const remedy = error instanceof Error ? Reflect.get(error, 'remedy') : undefined;
+  return {
+    op: 'error',
+    code: typeof code === 'string' && code.startsWith('STIM_') ? code : op,
+    message: error instanceof Error ? error.message : String(error),
+    ...(typeof remedy === 'string' ? { remedy } : {}),
+  };
 }

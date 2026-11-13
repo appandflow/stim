@@ -73,8 +73,9 @@ export async function stopPreviousCollector({
     }
     const result = await stopStream(root, PLATFORM, slot, previous.streamId, operation);
     if ('error' in result) {
-      note(chalk.yellow(result.error));
-      return { killed: null, error: result.error };
+      const error = result.remedy ? `${result.error} ${result.remedy}` : result.error;
+      note(chalk.yellow(error));
+      return { killed: null, error };
     }
     return { killed: null };
   }

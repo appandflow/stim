@@ -1492,7 +1492,8 @@ export async function startDeviceLogStream(
   }));
   throwIfCancelled(operation?.signal, 'device log startup');
   if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
-  return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not start the device log stream' };
+  if (typeof reply?.message !== 'string') return { error: 'stimd did not start the device log stream' };
+  return { error: typeof reply.remedy === 'string' ? `${reply.message} ${reply.remedy}` : reply.message };
 }
 
 const LOGS_STOP_TIMEOUT_MS = 30_000;
@@ -1503,7 +1504,7 @@ export async function stopDeviceLogStream(
   slot: string,
   streamId: string,
   operation?: StimContext,
-): Promise<{ stopped: boolean } | { error: string }> {
+): Promise<{ stopped: boolean } | { error: string; code?: string; remedy?: string }> {
   throwIfCancelled(operation?.signal, 'device log cleanup');
   if (!stimdLive())
     await ensureStimd(operation?.env, process.platform, false, undefined, undefined, true, undefined, true);
@@ -1515,7 +1516,12 @@ export async function stopDeviceLogStream(
   );
   throwIfCancelled(operation?.signal, 'device log cleanup');
   if (reply?.op === 'logs.stopped' && typeof reply.stopped === 'boolean') return { stopped: reply.stopped };
-  return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not stop the device log stream' };
+  if (typeof reply?.message !== 'string') return { error: 'stimd did not stop the device log stream' };
+  return {
+    error: reply.message,
+    ...(typeof reply.code === 'string' && reply.code.startsWith('STIM_') ? { code: reply.code } : {}),
+    ...(typeof reply.remedy === 'string' ? { remedy: reply.remedy } : {}),
+  };
 }
 
 export function deviceLogReadinessWait(

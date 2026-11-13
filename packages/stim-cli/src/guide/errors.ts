@@ -532,6 +532,11 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   stimd still ends. A stimd that
   cannot start names every unresolved home, daemon and engine claim at once,
   with the Stim home that holds each.
+  A physical iPhone console's helper that stimd cannot take over or verify
+  stopped keeps the stream's claim the same way. stimd logs why once, with
+  the claim path, tries the takeover again every second and does not exit
+  while it waits; \`stim stop\` prints this code with the commands that list
+  and stop what can still be the console's, then the claim's remove command.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.

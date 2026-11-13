@@ -295,10 +295,16 @@ claim, the exit file and the helper's log. A helper gone without one: stimd
 stops what is left of devicectl's group, writes a `collector_failed` record
 naming the helper and the end of its log, then removes the same state. A
 helper whose identity reads `unknown`, or a group stop that refuses, is a
-`STIM_CLAIM_UNAVAILABLE` refusal naming the claim, the commands that list and
-stop the group and helper, and the claim's remove command; the claim stays and
-the watcher leaves the console alone until a stop or start tries again.
-`stim stop` waits up to 30 s for a console's stop.
+`STIM_CLAIM_UNAVAILABLE` refusal naming the claim and the claim's remove
+command; the claim stays and the watcher leaves the console alone until a stop
+or start tries again. The remedy names a kill only for what can still be the
+console's, each after a listing to check first: devicectl's group while its
+leader does not read `different` and the group lives, the helper while it
+reads `same` or `unknown`; otherwise it says devicectl's group has exited.
+stimd answers `logs.stop` and `logs.start` with the refusal's code and remedy,
+and `stim stop` prints the code, the message and the remedy. A stop while a
+takeover is still refused answers with that refusal's reason. `stim stop`
+waits up to 30 s for a console's stop.
 
 **Events.**
 

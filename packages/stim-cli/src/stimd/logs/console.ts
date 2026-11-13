@@ -8,6 +8,7 @@ import { createNdjsonWriter } from '../../ndjson.ts';
 import {
   claimRemoveCommand,
   markClaimChildPending,
+  processGroupAlive,
   readClaimSet,
   releaseClaim,
   setClaimChild,
@@ -54,11 +55,28 @@ const identityOf = (value: unknown): Identity | null =>
 
 const helperLog = (root: string, streamId: string) => consoleExitFile(root, streamId).replace(/\.exit\.json$/, '.log');
 
-/** The refusal when what is left of a console cannot be verified stopped: the claim stays, with how to clear it. */
+/**
+ * The refusal when what is left of a console cannot be verified stopped: the claim stays, with how to clear it. The
+ * remedy names a kill only for what can still be this console's: devicectl's group while its leader does not read
+ * `different` and the group lives, the helper while it reads `same` or `unknown`.
+ */
 function unverified(entry: ConsoleStream, detail: string): Error {
+  const { leader, helper } = entry;
+  const group = inspectProcessIdentity(leader) !== 'different' && processGroupAlive(leader.pid);
+  const helperRuns = ['same', 'unknown'].includes(inspectProcessIdentity(helper));
+  const steps = [
+    group
+      ? `check that \`pgrep -lg ${leader.pid}\` lists devicectl, then stop its group with \`kill -TERM -${leader.pid}\``
+      : "devicectl's process group has exited",
+    ...(helperRuns
+      ? [`check that \`ps -p ${helper.pid} -o command=\` shows console-run, then stop it with \`kill ${helper.pid}\``]
+      : []),
+  ];
   return Object.assign(new Error(`${detail} The device log claim stays at ${entry.claim.path}.`), {
     code: 'STIM_CLAIM_UNAVAILABLE',
-    remedy: `List devicectl's process group with \`pgrep -g ${entry.leader.pid}\` and the helper with \`ps -p ${entry.helper.pid}\`, stop what still runs (\`kill -TERM -${entry.leader.pid}\`, \`kill ${entry.helper.pid}\`), then run ${claimRemoveCommand(entry.claim.path)}.`,
+    remedy: `${steps.join('; ')}; then run ${claimRemoveCommand(entry.claim.path)}.`.replace(/^./, (first) =>
+      first.toUpperCase(),
+    ),
   });
 }
 

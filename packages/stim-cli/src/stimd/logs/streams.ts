@@ -1210,6 +1210,11 @@ export function createStreams(
       await settleConsoleAt(key, entry, true);
       return true;
     }
+    const refused = untaken.get(key);
+    if (refused?.id === id)
+      throw Object.assign(new Error(`The device console ${id} cannot be stopped yet: ${refused.reason}.`), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+      });
     const recorded = readCollectors(root)[slotKey];
     return !(isJsonObject(recorded) && recorded.streamId === id);
   };
