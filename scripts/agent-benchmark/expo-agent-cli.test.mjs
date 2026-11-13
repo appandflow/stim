@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assertExpoAgentCliInstall,
@@ -80,7 +81,12 @@ describe('Expo agent CLI pinning', () => {
   });
 
   it('disables telemetry and drops the Expo token', () => {
-    const environment = expoAgentCliEnvironment({ EXPO_TOKEN: 'x', PATH: '/bin' });
-    expect(environment).toEqual({ EXPO_NO_TELEMETRY: '1', PATH: '/bin' });
+    const environment = expoAgentCliEnvironment({ EXPO_TOKEN: 'x', PATH: '/bin', TMPDIR: '/run/tmp' });
+    expect(environment).toEqual({
+      EXPO_NO_TELEMETRY: '1',
+      PATH: '/bin',
+      TMPDIR: '/run/tmp',
+      __UNSAFE_EXPO_HOME_DIRECTORY: join('/run/tmp', 'expo-home'),
+    });
   });
 });

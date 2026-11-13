@@ -268,7 +268,7 @@ export function resolveAndroidBuildPlan(
   if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
   const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', inertSettingWarning(settings, key));
+    warn('setting', inertSettingWarning(key));
   }
   let optimizations: Optimizations;
   try {

@@ -20,7 +20,9 @@ a paired phone starts with it on. Turning the flag off does not stop a running
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
 workspaces, builds, devices and logs. Choose view-only or view-and-control access
 when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
-It can keep connections to several paired machines.
+It can keep connections to several paired machines. The Devices grid omits
+devices from a workspace when its paired machine confirms the workspace folder
+is missing.
 
 ## Install
 

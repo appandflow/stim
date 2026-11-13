@@ -43,11 +43,9 @@ Arms:
 - Expo agent CLI (Expo platforms only): the pinned `@expo/agent-cli` and the
   Expo skills it installs, local development build, no EAS. Its cloud features
   are audited out and telemetry is disabled with `EXPO_NO_TELEMETRY=1`. It
-  manages its own device, so its device state is disclosed rather than matched
-  to Stim's parked device. The task prompt, pins, isolation and proof match the
-  other arms. The install, audit and watcher rules are implemented but the arm
-  has never run: its first real run validates device allocation, command
-  resolution and the skills setup.
+  creates a fresh device with the assigned benchmark name and passes its ID to
+  the Expo CLI. The benchmark checks the device before collecting proof and
+  verifies its identity again before teardown.
 
 `website/src/data/benchmark-matrix.json`, read by `scripts/agent-benchmark/matrix.mjs`, is the machine-readable definition. A cell
 is `runnable`, `not-yet-runnable` (the missing harness piece or `pins.env` key is
@@ -84,9 +82,7 @@ Expo login exists. The recorded evidence holds command text and output only; it
 has no network record, so a cloud call can be detected afterwards only if the
 tool's own output names it. The arm also rejects `agents:setup`, `agents`, `docs:sync` and
 `docs sync` during a timed run (they write into the user home, run other tools
-or fetch from the network); skills are installed at preparation and pinned. The
-pinned install in `expo-agent-cli.mjs` is written from the npm metadata and has
-not been run.
+or fetch from the network); skills are installed at preparation and pinned.
 
 Export: `scripts/export-native-benchmarks.mjs` publishes the native, macOS and
 Exact pairs, error-fix pairs (`native/<platform>/comparison-launch-crash.json`,

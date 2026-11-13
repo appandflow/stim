@@ -3,7 +3,6 @@ import { isScopedHome } from '@stim-cli/core';
 import {
   coerceSettingText,
   settingValueAt,
-  replacementAdvice,
   SETTING_SCOPES,
   SETTINGS,
   settingDefinition,
@@ -269,9 +268,7 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
       ? []
       : unknownSettingKeys(settings).map((key) => {
           const value = settingValueAt(settings, key);
-          const command = replacementAdvice(key, value, scope)?.command;
-          const entry = { key, scope, file, value };
-          return command ? Object.assign(entry, { replacement: command }) : entry;
+          return { key, scope, file, value };
         }),
   );
 }
