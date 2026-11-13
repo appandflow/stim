@@ -75,6 +75,7 @@ import {
   type OutputTail,
   type ServerLaunch,
 } from './child-server.ts';
+import { stopProcessGroup } from './group-stop.ts';
 import { workspaceIdleProbe } from './idle-stop.ts';
 import { watchHostedMetro } from './hosted-metro.ts';
 import { devServerStopLevel, devServerStopRecord, describeDevServerStop } from './stop-cause.ts';
@@ -540,20 +541,7 @@ async function stopTree(child: MetroChild): Promise<void> {
 /** Stops what runs of the dev server's process group, checking the leader's identity before each signal. */
 async function stopGroup(child: MetroChild): Promise<void> {
   if (!GROUPS) return stopTree(child);
-  if (!processGroupAlive(child.pid)) return;
-  const signal = (sig: NodeJS.Signals) => {
-    if (inspectProcessIdentity(child) !== 'same')
-      throw new Error(`Could not verify the dev-server process group for pid ${child.pid}.`);
-    try {
-      signalProcessTree(child.pid, sig, { group: true });
-    } catch {}
-  };
-  signal('SIGTERM');
-  if (!(await gone(() => processGroupAlive(child.pid), STOP_MS))) {
-    signal('SIGKILL');
-    if (!(await gone(() => processGroupAlive(child.pid), 1000)))
-      throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
-  }
+  await stopProcessGroup(child, { termMs: STOP_MS });
 }
 
 /**

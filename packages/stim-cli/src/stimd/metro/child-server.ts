@@ -3,7 +3,8 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import type { NdjsonRecord, NdjsonWriter } from '../../ndjson.ts';
 import { createLineReader } from '../../process-output.ts';
 import { cancellableSleep } from '../../cancellation.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
+import { stopProcessGroup } from './group-stop.ts';
+import { captureProcessToken } from '../../process-identity.ts';
 
 interface ChildExitInfo {
   code: number | null;
@@ -187,24 +188,22 @@ export function superviseChildServer({
       listeners.push(cb);
     },
     async close() {
-      const running = () => (alive ? alive() : !exited && Boolean(child.pid));
+      if (alive) {
+        if (!alive()) return;
+        if (!child.pid || !processToken)
+          throw new Error(`Could not verify the dev-server process group for pid ${child.pid ?? 'unknown'}.`);
+        await stopProcessGroup({ pid: child.pid, processToken }, { termMs: killTimeoutMs });
+        return;
+      }
+      const running = () => !exited && Boolean(child.pid);
       const gone = async () => {
         const deadline = Date.now() + killTimeoutMs;
         while (running() && Date.now() < deadline) await cancellableSleep(25, { ref: false });
         return !running();
       };
       if (!running()) return;
-      const verify = () => {
-        if (
-          alive &&
-          (!child.pid || !processToken || inspectProcessIdentity({ pid: child.pid, processToken }) !== 'same')
-        )
-          throw new Error(`Could not verify the dev-server process group for pid ${child.pid ?? 'unknown'}.`);
-      };
-      verify();
       signal('SIGTERM');
       if (!(await gone())) {
-        verify();
         signal('SIGKILL');
         if (!(await gone())) throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid ?? 'unknown'}.`);
       }

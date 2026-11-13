@@ -197,6 +197,61 @@ describe.skipIf(process.platform === 'win32')('the dev-server helper', () => {
     }
   }, 30_000);
 
+  test('a stop ends a dev server whose leader exits on SIGTERM while a group member lingers', async () => {
+    writeFileSync(
+      join(root, 'linger.cjs'),
+      `const http = require('node:http');
+const { spawn } = require('node:child_process');
+http.createServer((req, res) => res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');
+process.on('SIGTERM', () => {
+  spawn(process.execPath, ['-e', 'setTimeout(() => {}, 700)'], { stdio: 'ignore' });
+  process.exit(0);
+});`,
+    );
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: ['node', 'linger.cjs', '{port}'] } }));
+    upsertProject(root, { metroPort: 8300 });
+    openMetroChildren();
+    try {
+      expect(await ensureMetro({ root, port: 8300 }, () => {})).toMatchObject({ op: 'metro', state: 'started' });
+      const supervisor = identityOf(readWorkspaceState(root)?.supervisor);
+      expect(await stopManagedMetro({ root, ...supervisor }, () => {})).toMatchObject({ state: 'stopped' });
+      expect(processGroupAlive(supervisor.pid)).toBe(false);
+      expect(claims().live).toEqual([]);
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 30_000);
+
+  test('a group member that ignores SIGTERM is killed by its pid after the grace period', async () => {
+    const pidFile = join(root, 'member.pid');
+    writeFileSync(
+      join(root, 'stubborn.cjs'),
+      `const http = require('node:http');
+const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+http.createServer((req, res) => res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');
+const member = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
+writeFileSync(${JSON.stringify(pidFile)}, String(member.pid));
+process.on('SIGTERM', () => process.exit(0));`,
+    );
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: ['node', 'stubborn.cjs', '{port}'] } }));
+    upsertProject(root, { metroPort: 8301 });
+    openMetroChildren();
+    try {
+      expect(await ensureMetro({ root, port: 8301 }, () => {})).toMatchObject({ op: 'metro', state: 'started' });
+      const supervisor = identityOf(readWorkspaceState(root)?.supervisor);
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 10_000 });
+      const member = Number(readFileSync(pidFile, 'utf8'));
+      expect(processGroupAlive(supervisor.pid)).toBe(true);
+      expect(await stopManagedMetro({ root, ...supervisor }, () => {})).toMatchObject({ state: 'stopped' });
+      expect(processGroupAlive(supervisor.pid)).toBe(false);
+      expect(() => process.kill(member, 0)).toThrow(/ESRCH/);
+      expect(claims().live).toEqual([]);
+    } finally {
+      await closeMetroChildren();
+    }
+  }, 40_000);
+
   test('a command that cannot start frees the claim', async () => {
     writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: ['stim-missing-5571', '{port}'] } }));
     upsertProject(root, { metroPort: 8297 });
