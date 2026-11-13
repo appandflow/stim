@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { carriedOutputs } from './native-fixtures.mjs';
 import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
 
 it('rejects an unchanged revision or unrelated source changes despite a matching screenshot marker', () => {
@@ -30,8 +31,8 @@ it('rejects missing or malformed process start identities before a native audit 
   expect(nativeProcessIdentityValid('android', { pid: 42, bootId: 'unknown', startTicks: '123' })).toBe(false);
 });
 
-it('describes the launch failure without naming its cause, the revision marker or the source', () => {
-  const prompt = nativeTaskPrompt({
+it('asks for an exact crash repair without naming the cause, revision marker or source', () => {
+  const input = {
     arm: 'control',
     platform: 'android',
     fixture: '/fixture',
@@ -43,7 +44,15 @@ it('describes the launch failure without naming its cause, the revision marker o
     session: 's',
     stateDirectory: '/s',
     variant: 'launch-crash',
-  });
+  };
+  const prompt = nativeTaskPrompt(input);
   expect(prompt).toContain('fails on launch');
+  expect(prompt).toContain('preserve the surrounding source byte for byte');
   expect(prompt).not.toMatch(/revision-secret|MainActivity|onCreate|STIM_BENCH/);
+
+  const exact = nativeTaskPrompt({ ...input, platform: 'ios', framework: 'exact' });
+  expect(exact).toContain('its own fresh target directory');
+  expect(exact).not.toContain('untimed native build outputs');
+  expect(carriedOutputs('exact')).toEqual([]);
+  expect(carriedOutputs('native-gradle')).toContain('mobile/build');
 });

@@ -6,6 +6,11 @@ import { nativeCrashPlan } from './native-crash-setup.mjs';
 const xcodeFixture = fileURLToPath(new URL('../../test/e2e/native/fixtures/xcode/', import.meta.url));
 export const nativeBaselineText = 'native-revision-one';
 
+/** Exact's generated build output contains paths tied to the checkout that built it. */
+export function carriedOutputs(framework) {
+  return framework === 'exact' ? [] : ['.build', '.build-control', 'build', 'mobile/build', '.gradle', 'target'];
+}
+
 export function createNativeFixture(platform, destination, { androidWrapper } = {}) {
   if (!['ios', 'android', 'macos'].includes(platform)) throw new Error(`Unsupported native platform: ${platform}`);
   if (existsSync(destination)) throw new Error(`Fixture already exists: ${destination}`);

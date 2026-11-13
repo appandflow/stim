@@ -19,7 +19,7 @@ import {
   writeClaudeGuidance,
 } from './runner.mjs';
 import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
-import { assertExactFixture } from './native-fixtures.mjs';
+import { assertExactFixture, carriedOutputs } from './native-fixtures.mjs';
 import { assertGoldenDaemonStopped, waitForGoldenDaemonToStop } from './golden-state.mjs';
 import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
@@ -228,9 +228,10 @@ async function prepare() {
   process.stdout.write(JSON.stringify(ready, null, 2) + '\n');
 }
 
-const prepared = ['.build', '.build-control', 'build', 'mobile/build', '.gradle', 'target'];
 const crashReadPaths = () =>
-  prepared.map((name) => join(fixture.fixtureDirectory, name)).filter((path) => existsSync(path));
+  carriedOutputs(fixture.framework)
+    .map((name) => join(fixture.fixtureDirectory, name))
+    .filter((path) => existsSync(path));
 
 function prepareCrashFixture(runId, environment) {
   const plan = nativeCrashPlan(fixture);
@@ -392,6 +393,7 @@ async function dispatch() {
   const prompt = nativeTaskPrompt({
     arm,
     platform,
+    framework: fixture.framework,
     fixture: taskFixture,
     worktree,
     branch: `bench/${runId}`,
