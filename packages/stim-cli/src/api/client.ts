@@ -59,7 +59,7 @@ import type { FailArgs } from '../commands/ios/types.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { refuseRelativeStimPaths } from '../workspace/config.ts';
-import { runOperation, type Admission, type ApiOperation } from '../run-operation.ts';
+import { runOperation, type Admission, type ApiOperation, type OperationRefusal } from '../run-operation.ts';
 import { STIM_VERSION as version } from '../stim-version.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from '../workspace/paths.ts';
 import { ensureHomeIdentity } from '../workspace/home-identity.ts';
@@ -629,8 +629,10 @@ export function createLocalStim(options: StimOptions): StimClient {
         build(operation, request),
       )) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
-      lifecycle(begin('run', signal, true, request.platform), (operation) =>
-        run(operation, request),
+      lifecycle(
+        begin('run', signal, true, request.platform),
+        (operation) => run(operation, request),
+        request,
       )) as StimClient['run'],
     stop: ({ signal, ...request } = {}) =>
       read(begin('stop', signal), async (operation) => {
@@ -758,7 +760,7 @@ interface Operation {
 
 async function read<T>(
   { name, platform, admission, context, callback }: Operation,
-  operation: (context: StimContext) => Promise<T>,
+  operation: (context: StimContext, projectRefusal?: OperationRefusal) => Promise<T>,
 ): Promise<T> {
   const { signal } = context;
   if (signal.aborted) throw cancelled();
@@ -775,19 +777,8 @@ async function read<T>(
         env: context.env,
       });
       if ('refusal' in entered) {
-        const refusal = entered.refusal;
-        if (refusal.code === 'STIM_NO_PROJECT') {
-          if (name === 'run') {
-            const output = note(context);
-            output(phaseLine('error', `${refusal.code}: ${refusal.message}`));
-            output(phaseLine('remedy', refusal.remedy));
-          }
-          throw new StimError({
-            ...refusal,
-            details: { logs: workspaceLogsDir(context.projectRoot), cause: name === 'run' ? refusal : undefined },
-          });
-        }
-        throw new StimError(refusal);
+        if (entered.refusal.code === 'STIM_NO_PROJECT') return operation(context, entered.refusal);
+        throw new StimError(entered.refusal);
       }
       const state = operationState(context);
       const previousOpToken = state.stimdOpToken;
@@ -837,11 +828,24 @@ function cancelled(): StimError {
   return new StimError({ code: 'STIM_CANCELLED', message: 'The Stim operation was cancelled.' });
 }
 
-async function lifecycle<T>(operation: Operation, work: (context: StimContext) => Promise<T>): Promise<T> {
+async function lifecycle<T>(
+  operation: Operation,
+  work: (context: StimContext) => Promise<T>,
+  runOptions?: StimRunOptions,
+): Promise<T> {
   try {
-    return await read(operation, async (context) => {
+    return await read(operation, async (context, projectRefusal) => {
       const logs = workspaceLogsDir(context.projectRoot);
       try {
+        if (projectRefusal) {
+          if (!runOptions) throw Object.assign(new Error(projectRefusal.message), projectRefusal);
+          validateRunOptions(runOptions);
+          if (runOptions.platform === 'ios' || runOptions.platform === 'android') validateDeviceSlot(runOptions.slot);
+          const output = note(context);
+          output(phaseLine('error', `${projectRefusal.code}: ${projectRefusal.message}`));
+          output(phaseLine('remedy', projectRefusal.remedy));
+          throw new StimError({ ...projectRefusal, details: projectRefusal });
+        }
         return await work(context);
       } catch (error) {
         const failure = error as Partial<StimFailure>;
@@ -967,7 +971,7 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
   }
 }
 
-async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+function validateRunOptions(options: StimRunOptions): void {
   const simulatorOnly = options.recordedBuild ? 'recordedBuild' : options.cleanAppState ? 'cleanAppState' : null;
   if (simulatorOnly && 'device' in options && options.device !== undefined)
     throw new StimError({
@@ -975,6 +979,10 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
       message: `${simulatorOnly} applies to a simulator or emulator, not a physical device.`,
       remedy: `Drop device, or run without ${simulatorOnly}.`,
     });
+}
+
+async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+  validateRunOptions(options);
   const root = context.projectRoot;
   switch (options.platform) {
     case 'ios': {

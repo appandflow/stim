@@ -171,6 +171,26 @@ test('a run refusal preserves its error and diagnostics and permits independent 
   expect((await stim.stop()).ok).toBe(true);
 });
 
+test.each(['ios', 'android'] as const)(
+  'invalid %s run arguments still refuse before the project error',
+  async (platform) => {
+    const { root, home, directory } = fixture('bad-run-args');
+    const stim = createStim({ projectRoot: root, home });
+    for (const request of [
+      { cleanAppState: true, device: true, message: /cleanAppState applies/ },
+      { slot: '_invalid', message: /A device slot must be/ },
+    ]) {
+      const { message, ...options } = request;
+      await expect(stim.run({ platform, ...options })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringMatching(message),
+        details: { logs: directory },
+        cause: expect.any(Error),
+      });
+    }
+  },
+);
+
 test('a build refusal preserves its error without starting or stopping a workspace runtime', async () => {
   const { root, home, directory } = fixture('build-refusal');
   const stim = createStim({ projectRoot: root, home });
