@@ -28,9 +28,9 @@ npx skills add appandflow/stim --yes
 
 The installed skill is named `stim`. It is a small discovery router that asks
 the agent to load `stim guide agent` before using Stim, or `npx stim guide
-agent` when `stim` is not on PATH. The normal workflow,
-ownership rules, destructive-command rules, and routing to detailed topics all
-come from the installed CLI and therefore match its version.
+agent` when `stim` is not on PATH. The CLI guide covers shared workspace
+rules and routes to the workflow for your app or task, including Expo, React
+Native, standalone iOS and Android, macOS, and Exact iOS.
 
 You normally ask for the outcome: "build and run the app on iOS", "show the
 recent app errors", or "run this on my connected phone". Those requests match

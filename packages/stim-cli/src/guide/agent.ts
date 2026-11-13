@@ -1,151 +1,79 @@
 import { slimmedFeatureNames } from '../engine/simslim.ts';
+
 export default {
-  summary: 'The normal coding-agent workflow, safety rules, and topic routing',
+  summary: 'Choose the coding-agent workflow for this app or task',
   body: () => `AGENT WORKFLOW
 
-Use Stim to run React Native and Expo apps without sharing a Metro port or
-device with another workspace. Prefer plain output: it streams each phase and
-ends with the facts the next step needs. Use --json only when a script must
-parse a stable payload.
+Choose the guide for the app or task. Read only the matching route.
 
-For a native Xcode or Gradle app without React Native or Expo, read guide
-lifecycle native-ios or guide lifecycle native-android before running it. For
-an Exact app (exact.mjs next to app.json), read guide lifecycle exact-ios.
+| App or task | Read |
+| --- | --- |
+| Expo or bare React Native | stim guide agent react-native |
+| Native iOS Xcode project or workspace | stim guide lifecycle native-ios |
+| Native Android Gradle app | stim guide lifecycle native-android |
+| Swift Package macOS app | stim guide macos |
+| Exact iOS app (exact.mjs next to app.json) | stim guide lifecycle exact-ios |
+| Web app in owned Chrome | stim guide web |
+| Drive a mobile app, choose a slot, or resume a session | stim guide agent device |
+| Hosted iOS simulator | stim guide lifecycle hosted-ios |
+| Hosted Android emulator | stim guide lifecycle hosted-android |
+| Physical device | stim guide lifecycle devices |
+| EAS development build | stim guide lifecycle eas |
+| Inspect runtime errors or device output | stim guide logs |
+| Verify a fix in the UI | stim guide lifecycle verification |
+| App readiness markers | stim guide lifecycle readiness |
+| A refusal with a code | stim guide errors <CODE> |
+| Shell sandbox | stim guide errors sandbox |
+| Build cache or unexpected rebuild | stim guide lifecycle builds |
+| Queued build or device | stim guide lifecycle concurrency |
+| Named ports | stim guide ports |
+| Share the running app | stim guide share |
+| Clean up, park, or reclaim resources | stim guide agent ownership |
+| Report a Stim problem | stim guide agent report |
+| Settings or remote approvals | stim guide settings |
 
-TWO WORKFLOWS
+WORKSPACE SETUP
 
-WORKTREE is the default. Take SINGLE CHECKOUT only when the user asks to work in
-place, or the task depends on the user's uncommitted changes in the current
-checkout; say why.
+WORKTREE: Use a linked worktree by default. The clean source checkout
+is infrastructure, not a workspace. Create the worktree with Git if the harness
+has not already created one, then run stim worktree warm in it.
+Wait for warm to exit successfully (exit code 0) before edits, dependency
+installation, or launch. Concurrent writes to the destination are unsafe.
+See stim guide lifecycle options for warm exclusions and recovery.
 
-SINGLE CHECKOUT: work in place, on whatever branch the task needs, in one
-directory. start, ios, android, logs, stop, and never a linked worktree. That
-directory is your workspace, and no rule below about keeping the source checkout
-fit as a seed applies to it.
+SINGLE CHECKOUT: Work in place when the user asks or the task needs their
+uncommitted changes. Run the applicable app command from that checkout.
 
-WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
-branch, and every task gets a linked worktree warmed from it. In this workflow
-the source checkout is infrastructure, not a workspace: you edit, build, and run
-in the worktree, and you keep the seed fit to copy. Every rule below about the
-source checkout's fitness as a seed belongs to this workflow.
+Run doctor before native work only when STATUS says it is due for the
+requested platform, or when diagnosing a toolchain problem. A worktree check
+belongs in the linked worktree. Warm, start, and native builds run project code.
+Fix the PATH if it points to a different installation than the one you intend to use.
 
-DISPOSABLE STATE
+OWNERSHIP
 
-In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
-directories (android/app/build, android/build, android/.gradle, .build,
-android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
-and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
-workspace's build outputs when it goes idle, and node_modules and Pods of
-linked worktrees idle for idle.dormantDays (1 day) or under disk pressure, and
-those of a source (main) checkout idle for idle.sourceDormantDays (7 days) or,
-last, at critical; the
-next start, ios or android
-restores them from the build cache or with worktree warm, except an Exact
-app's target/, which its next build recompiles in full. Never fix a
-dependency by editing files inside them: the change is lost. Put dependency changes in the project's own patch
-mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
-post_install hook, and commit them.
+Use only the device or app Stim reports for the workspace. Stop only devices
+in workspaces you own. Ask before closing other apps or other workspaces' devices.
+Run stim stop when done. Remove your clean linked worktree with stim worktree
+remove after its work is merged or abandoned. Ask before gc, worktree remove
+--force, or removing a worktree you did not create. See stim guide agent
+ownership for cleanup and consent.
+Agents never run stim setup and never approve access requests. Agents never set
+STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
 
-MULTIPLE DEVICES
+NEXT STEP
 
-Use ios/android --slot <name> to retain multiple devices in one workspace,
-including several of the same model. Reuse the same slot name on subsequent
-runs. Read guide lifecycle options for the complete slot workflow. Drive a
-slot's device with stim agent-device --slot <name>. All slots share Metro and reload can
-reach multiple devices. A launch counts a bundle delivery only when it can
-attribute it to its own device; read guide lifecycle options for the rule.
-Use stop --slot <name> for one slot, or plain stop for the whole workspace.
+On launch, use the printed UI command when interaction is needed. On failure,
+follow the reported diagnostic and remedy. Use stim logs --errors when the
+launch output lacks the cause or to verify recovery. STIM_NO_PROJECT from logs
+means there is no captured workspace timeline. Verify the expected UI before
+claiming the fix.
 
-HOSTED IOS AND ANDROID
-
-For ios --remote <machine|auto>, read guide lifecycle hosted-ios.
-For android --remote <machine|auto>, read guide lifecycle hosted-android. Native
-logcat records arrive through stim logs, including --errors and --json;
-Desktop and the phone view/control it through the local stim-server relay.
-Stop before switching
-between a local simulator and a hosting Mac. Hosted Debug requires the local
-Metro, run by stimd; restart a missing or older one with stim stop; stim start.
-A named Mac never falls back here; auto can use the local device queue when no
-host admits. Auto keeps a live local slot or recorded hosted session. Follow the
-placement reason and the reported device. Stop reconciles a recorded host
-before changing named placement.
-DRIVING THE DEVICE
-
-Drive this workspace's iOS or Android device through stim agent-device, never
-agent-device directly. Pass agent-device's own arguments and no device ids:
-
-  stim agent-device open <bundle id>
-  stim agent-device snapshot -i --json
-  stim agent-device press @e3
-  stim agent-device scroll down --slot tablet --platform android
-
-Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
-remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
-hosted-android), and the session (stim-<slot>-<platform> unless you pass
---session; a hosted session adds -<8 hex digits of the workspace id>, so two
-workspaces on one machine do not share a name).
---slot picks a slot; --platform is needed only when the slot has both. It
-revives an idle-stopped workspace before the command (progress on stderr).
-For a hosted session, a single-action command (snapshot, press, tap, scroll,
-type and the like) that fails with SESSION_NOT_FOUND because the host lost the
-agent-device session (it restarted, or no command reached it for an hour) is
-retried once after opening the app the workspace last launched on the same session; the command acts on that app's
-screen as it is after the reopen, so take a fresh snapshot when a coordinate
-gesture matters. Only the final run's output is printed, so --json output stays
-one document. Multi-step commands (batch, replay,
-test) are never retried.
-stim agent-device refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
-this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
-code are agent-device's, so --json output stays parseable. Take snapshots with
---json so viewers can outline the element each press acts on. It needs
-agent-device 0.21.30 or later; it does not drive macOS apps (guide macos).
-Without it, set AGENT_DEVICE_STATE_DIR from agentDevice.stateDir in
-stim ios|android|macos --json or status --json (guide logs). Do not set
-AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
-
-NORMAL WORKFLOW
-
-Create a linked worktree with Git and warm its ignored state. If a harness
-already created this linked worktree, run stim worktree warm here instead of
-creating another one. It copies missing ignored paths from the source checkout,
-including eligible .env and local configuration files. It preserves the branch, tracked files, and
-every existing destination entry; existing ignored directories are skipped
-whole, not filled in. Add --refresh to fast-forward the source checkout and
-install what moved there before the copy; it refuses a source checkout with local
-work and never switches branches. Read guide lifecycle options for exclusions
-and incomplete-copy remedies.
-
-Wait for warm to exit successfully (exit code 0) before running stim start,
-stim ios, stim android, or a dependency install in that worktree. If the shell
-tool returns a running session or job ID, poll or wait for that job to finish;
-the ID is not completion. Concurrent writes to the destination are unsafe:
-warm checks for existing entries before copying, not during the copy. Do not
-edit files, install dependencies, or run another warm in that worktree until
-it finishes; concurrent files can be overwritten or removed.
-If warm fails or reports incomplete, resolve the reported failure first.
-A warm that cannot record its ownership claim refuses before copying. Follow
-the printed remedy and keep concurrent runs on the same STIM_HOME.
-
-Before native work, run doctor for the platform in scope when the STATUS block
-at the top of this topic says it is due. No block means doctor is current and
-Stim is up to date. In the worktree workflow, run it from the linked worktree
-so it also checks the source checkout. Fingerprint checks evaluate project
-configuration, including fingerprint.config.js, in a child process. Doctor
-does not run eas from the project tree. warm,
-start, ios and android run project code. Follow each finding's printed remedy,
-and read the routed topic below before acting on one you do not understand. If
-the stim resolved from PATH is older than another installation, fix PATH or the
-installation before continuing so commands and guidance match. Under host
-memory pressure, stop only devices in workspaces you own; ask before closing
-other apps or other workspaces' devices.
-
-  stim doctor --platform ios          # or: --platform android
-
-  # Worktree workflow. Skip Git creation if the harness already created this
-  # linked worktree.
-  git worktree add -b <branch> <worktree-path> HEAD
-  cd <worktree-path>
-  stim worktree warm
+When a command first prints "Open in Stim: <link>", share that link with the user once.
+Run stim guide for the full topic index.`,
+  sections: {
+    'react-native': {
+      summary: 'Expo and bare React Native build, Metro, and verification workflow',
+      body: () => `NORMAL WORKFLOW
 
   stim start
   stim ios                             # or: stim android, or: stim web
@@ -153,19 +81,6 @@ other apps or other workspaces' devices.
 Some Linux command runners reap detached descendants when a call ends, killing
 Metro after stim start succeeds. If that happens, read guide metro, LINUX
 RUNNERS THAT REAP BACKGROUND PROCESSES, for the user-systemd service recipe.
-
-When Stim Desktop is installed, worktree warm, start, ios, android and web
-print "Open in Stim: <link>" on stderr (links.desktop in JSON). The
-first time one prints it in a workspace, tell the user once: "You can watch
-this workspace in Stim Desktop: <link>". Do not repeat it after later
-commands. When no command prints it, do not mention Stim Desktop.
-
-For the web target, stim web opens the page in a Stim-owned headless Chrome
-and captures its console and errors in stim logs. It never starts a web
-server: start the dev server first, then run stim web. For Expo web the dev
-server is stim start, and the app needs the react-dom, react-native-web and
-@expo/metro-runtime dependencies. Any other server runs on stim ports get web
-and needs web.url. Read stim guide web first.
 
 For a project using EAS development builds, read stim guide lifecycle eas to
 select a profile from eas.json for the requested target, then run
@@ -181,9 +96,6 @@ To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
 lifecycle builds.
 
-Agents never set STIM_ACCESS_TICKET, run stim setup, edit remote.*,
-server.* or hosting.* for the user, or approve requests. Read stim guide settings for
-Desktop access tickets and person-owned approval.
 Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
 When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Connections > This machine uses > Add (or stim remote add <machine> in their terminal) or Connections > Using this machine > Add > Pair a Phone; see stim guide settings.
@@ -295,7 +207,87 @@ RULES DURING THE LOOP
   looks incomplete. If status reports a changed Android serial, rerun stim
   android with the same build options to restore forwarding; stim agent-device
   then targets the new serial (guide lifecycle). Each status issue names a
-  remedy to run from its workspace (guide facts status).
+  remedy to run from its workspace (guide facts status).`,
+    },
+    device: {
+      summary: 'Mobile UI automation, slots, hosted sessions, and agent-device state',
+      body: () => `MULTIPLE DEVICES
+
+Use ios/android --slot <name> to retain multiple devices in one workspace,
+including several of the same model. Reuse the same slot name on subsequent
+runs. Read guide lifecycle options for the complete slot workflow. Drive a
+slot's device with stim agent-device --slot <name>. All slots share Metro and reload can
+reach multiple devices. A launch counts a bundle delivery only when it can
+attribute it to its own device; read guide lifecycle options for the rule.
+Use stop --slot <name> for one slot, or plain stop for the whole workspace.
+
+HOSTED IOS AND ANDROID
+
+For ios --remote <machine|auto>, read guide lifecycle hosted-ios.
+For android --remote <machine|auto>, read guide lifecycle hosted-android. Native
+logcat records arrive through stim logs, including --errors and --json;
+Desktop and the phone view/control it through the local stim-server relay.
+Stop before switching
+between a local simulator and a hosting Mac. Hosted Debug requires the local
+Metro, run by stimd; restart a missing or older one with stim stop; stim start.
+A named Mac never falls back here; auto can use the local device queue when no
+host admits. Auto keeps a live local slot or recorded hosted session. Follow the
+placement reason and the reported device. Stop reconciles a recorded host
+before changing named placement.
+DRIVING THE DEVICE
+
+Drive this workspace's iOS or Android device through stim agent-device, never
+agent-device directly. Use the exact command Stim prints after launch. For other
+commands, keep its device selector if the slot also has a leased phone.
+Otherwise Stim selects the workspace device from the platform and slot:
+
+  stim agent-device open <bundle id>
+  stim agent-device snapshot -i --json
+  stim agent-device press @e3
+  stim agent-device scroll down --slot tablet --platform android
+
+Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
+remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
+hosted-android), and the session (stim-<slot>-<platform> unless you pass
+--session; a hosted session adds -<8 hex digits of the workspace id>, so two
+workspaces on one machine do not share a name).
+--slot picks a slot; --platform is needed only when the slot has both. It
+revives an idle-stopped workspace before the command (progress on stderr).
+For a hosted session, a single-action command (snapshot, press, tap, scroll,
+type and the like) that fails with SESSION_NOT_FOUND because the host lost the
+agent-device session (it restarted, or no command reached it for an hour) is
+retried once after opening the app the workspace last launched on the same session; the command acts on that app's
+screen as it is after the reopen, so take a fresh snapshot when a coordinate
+gesture matters. Only the final run's output is printed, so --json output stays
+one document. Multi-step commands (batch, replay,
+test) are never retried.
+stim agent-device refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
+this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
+code are agent-device's, so --json output stays parseable. Take snapshots with
+--json so viewers can outline the element each press acts on. It needs
+agent-device 0.21.30 or later; it does not drive macOS apps (guide macos).
+Without it, set AGENT_DEVICE_STATE_DIR from agentDevice.stateDir in
+stim ios|android|macos --json or status --json (guide logs). Do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.`,
+    },
+    ownership: {
+      summary: 'Workspace ownership, cleanup, device leases, and actions requiring consent',
+      body: () => `DISPOSABLE STATE
+
+In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
+directories (android/app/build, android/build, android/.gradle, .build,
+android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
+and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
+workspace's build outputs when it goes idle, and node_modules and Pods of
+linked worktrees idle for idle.dormantDays (1 day) or under disk pressure, and
+those of a source (main) checkout idle for idle.sourceDormantDays (7 days) or,
+last, at critical; the
+next start, ios or android
+restores them from the build cache or with worktree warm, except an Exact
+app's target/, which its next build recompiles in full. Never fix a
+dependency by editing files inside them: the change is lost. Put dependency changes in the project's own patch
+mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
+post_install hook, and commit them.
 
 OWNERSHIP AND DELETION
 
@@ -423,20 +415,11 @@ adding another. Never quit Device Hub or Simulator.app: on Xcode 27
 (confirmed on 27A266a), quitting Device Hub by default shuts down every booted
 simulator on the machine, including ones it never opened a window for and
 ones other workspaces or agents are using. Use stim stop on workspaces you
-own instead.
-
-SANDBOXES
-
-An agent harness that sandboxes shell commands usually permits writes inside
-the project and little else. Stim also needs writes to STIM_HOME (~/.stim by
-default), simulator service access, and local access to the adb server. When
-those sit outside the harness allowlist, the failure looks like an unwritable
-directory or unavailable device service rather than a broken machine. Decide
-at the start of a session whether to run Stim outside the sandbox or ask the
-user to allow those operations. guide errors sandbox lists the exact
-requirements.
-
-REPORT STIM PROBLEMS
+own instead.`,
+    },
+    report: {
+      summary: 'Capture evidence and report a Stim problem',
+      body: () => `REPORT STIM PROBLEMS
 
 When Stim misbehaves, refuses for a reason its guide does not explain, documents
 something that proves wrong, or needs an awkward workaround, offer to report it
@@ -456,83 +439,7 @@ to appandflow/stim on GitHub. Finish the user's task first.
 4. Show the user the draft. File the issue or comment only after their OK, since
    it is public and publishes on their behalf: gh issue create --repo
    appandflow/stim --title "<title>" --body-file <file>. Without gh, give them
-   the draft and https://github.com/appandflow/stim/issues/new?template=report.md.
-
-LOAD ADVANCED GUIDANCE WHEN NEEDED
-
-Read the matching guide before acting in these situations:
-
-| Situation                                             | Read                             |
-| ----------------------------------------------------- | -------------------------------- |
-| Build waiting on another workspace or tool timeout    | stim guide lifecycle concurrency |
-| --variant, scheme, or several APKs from assembleDebug | stim guide lifecycle options     |
-| Refusal with a CODE                                   | stim guide errors <CODE>         |
-| Running under a sandbox                               | stim guide errors sandbox        |
-| Release configuration or ...Release variant           | stim guide lifecycle release     |
-| Web app in an owned Chrome (stim web)                 | stim guide web                   |
-| User asks to share the running app (stim share)       | stim guide share                 |
-| Web or API server ports                               | stim guide ports                 |
-| Remote device, custom Metro, or tunnel                | stim guide metro                 |
-| Metro stopped and no one ran stim stop                | stim guide metro                 |
-| App shows could not connect or blank after a pause    | stim guide metro                 |
-| Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
-| Capacity limits                                       | stim guide lifecycle concurrency |
-| Pressure level, STIM_LOW_DISK, or the dormant stage   | stim guide lifecycle budget      |
-| Cache statistics from stim stats                      | stim guide facts stats           |
-| Worktree carry-over                                   | stim guide lifecycle options     |
-| Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
-| Doctor finding: iOS Debug archs, .cxx, fingerprints   | stim guide lifecycle builds      |
-| Temporary storage placement                           | stim guide settings              |
-| Read or change a setting (stim settings)              | stim guide settings              |
-| Slim iOS simulators, stall, or memory pressure        | stim guide lifecycle simslim     |
-| Android boot timeout                                  | stim guide errors STIM_NO_DEVICE |
-| gc or orphaned resources                              | stim guide cleanup gc            |
-| watchman or Gradle daemon memory                      | stim guide cleanup memory        |
-| worktree remove refusal or --force                    | stim guide errors remove         |
-| Cleanup failure or unverified cleanup ownership       | stim guide errors teardown       |
-| Swift Package macOS development                        | stim guide macos                 |
-| macOS app on another Mac (stim macos --remote)        | stim guide macos                 |
-| Unfamiliar state or JSON field                        | stim guide facts payloads        |
-| User asks for the Stim tutorial                       | stim guide tutorial              |
-| Refusal without a code                                | stim guide errors                |
-
-Use the CODE exactly as printed; codes sharing a header resolve to the same
-section. For a refusal without a code, find its quoted message in the errors
-index. Ordinary stim stop and an authorized clean stim worktree remove do not
-need the cleanup guide. A sectioned topic called without a section prints its
-index; choose the narrowest section.
-
-FULL TOPIC LIST
-
-  stim guide                      # list topics
-  stim guide errors               # index of every refusal code and message
-  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO
-  stim guide errors sandbox       # running under a sandboxing harness
-  stim guide errors unverified    # launch unverified, and the Local Network reason
-  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
-  stim guide lifecycle            # the ordered flow, consent rules, and capacity
-  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle readiness  # add recommended app readiness logs; no package required
-  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
-  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
-  stim guide lifecycle budget     # pressure level, the ladder, the dormant stage
-  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
-  stim guide lifecycle devices    # ios --device and android --device on a physical phone
-  stim guide lifecycle tools      # device location|permission|push|network on the owned simulator or emulator
-  stim guide lifecycle release    # Release configurations and ...Release variants
-  stim guide api                  # typed run, stop, diagnostics and cancellation from the main package
-  stim guide facts                # the --json payloads
-  stim guide facts devmenu        # the Expo dev menu or Tools button over the app
-  stim guide macos                # Swift Package Debug apps, logs, local preview, --remote on another Mac
-  stim guide web                  # stim web: owned Chrome, page logs, launched, teardown
-  stim guide share                # stim share: public password-protected link, security model
-  stim guide ports                # named ports for web and API servers
-  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
-  stim guide logs                 # filters, record shape, and capture limits
-  stim guide cleanup              # what reclaims a device, and what deletes
-  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
-  stim guide cleanup memory       # watchman and Gradle daemon memory; gc --pressure high
-  stim guide tutorial             # tutorial sections
-  stim guide tutorial run         # create the app and build in a tour worktree
-  stim guide settings             # configuration files and supported keys`,
+   the draft and https://github.com/appandflow/stim/issues/new?template=report.md.`,
+    },
+  },
 };

@@ -62,6 +62,17 @@ export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }
 
+export function mobileAgentOpenCommand(
+  platform: 'ios' | 'android',
+  appId: string,
+  deviceId: string,
+  slot?: string,
+): string | null {
+  if (![appId, deviceId].every((value) => /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value))) return null;
+  const selector = platform === 'ios' ? '--udid' : '--serial';
+  return `stim agent-device open ${appId} --platform ${platform} ${selector} ${deviceId}${slot && slot !== 'default' ? ` --slot ${slot}` : ''}`;
+}
+
 export function refuseNoProject({ json }: { json: boolean }): void {
   const { code, message, remedy } = NO_PROJECT_REFUSAL;
   console.error(chalk.red(phaseLine('error', `${code}: ${message}`)));

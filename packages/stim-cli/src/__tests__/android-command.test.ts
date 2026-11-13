@@ -4841,12 +4841,19 @@ describe('release skips Metro entirely', () => {
     expect(result.facts.debugHttpHost).toBe(null);
     expect(result.facts.devClientUrl).toBe(null);
     expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productionrelease-sim`);
+    expect(h.stdout).toHaveLength(1);
+    expect(labelled(h.stderr, 'agent-device')[0]).toContain(
+      'stim agent-device open com.example.app --platform android',
+    );
   });
 
   test('the outcome line names the variant instead of a port nothing used', async () => {
-    const h = harness({ variant: 'productionRelease' });
+    const h = harness({ variant: 'productionRelease', slot: 'qa' });
     await h.run();
     expect(h.stdout[0]).toMatch(/productionRelease \(embedded JS, no Metro\)/);
+    expect(h.stdout[0]).toContain(
+      'stim agent-device open com.example.app --platform android --serial emulator-5584 --slot qa',
+    );
   });
 
   test('a dead app process fails the readiness check with the device-log pointer', async () => {
@@ -6085,6 +6092,7 @@ describe('--device (a physical Android device)', () => {
     expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.verify[0]?.timeoutMs).toBe(20000);
+    expect(h.stdout.join('\n')).not.toContain('stim agent-device open');
   });
 
   test('a physical Debug run builds for the device primary ABI', async () => {

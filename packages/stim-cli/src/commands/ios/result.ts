@@ -17,7 +17,7 @@ import type { StimOutput } from '@stim-cli/core';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
 import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
-import { formatDuration, phaseLine } from '../../command-output.ts';
+import { formatDuration, phaseLine, mobileAgentOpenCommand } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 
@@ -237,6 +237,7 @@ export interface ReportIosResultArgs {
   host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   root: string;
+  agentDevicePlacement?: { physical: boolean; adapter: unknown; device: { owned?: boolean } | null | undefined };
   json: boolean;
   release: boolean;
   runtimeKind?: IosRuntimeKind;
@@ -280,6 +281,7 @@ export function reportIosResult({
   host,
   slot,
   root,
+  agentDevicePlacement,
   json,
   release,
   runtimeKind = release ? 'embedded-js' : 'metro',
@@ -382,8 +384,14 @@ export function reportIosResult({
     facts.host = host;
     delete facts.agentDevice;
   }
+  const { physical, adapter, device: localDevice } = agentDevicePlacement ?? {};
+  const openCommand =
+    launchState === true && !host && !physical && !adapter && localDevice?.owned && udid
+      ? mobileAgentOpenCommand('ios', bundleId, udid, slot)
+      : null;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
+    if (openCommand) note(phaseLine('agent-device', openCommand));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
@@ -434,7 +442,7 @@ export function reportIosResult({
           ? 'command' in host.agent
             ? [phaseLine('agent-device', host.agent.command)]
             : []
-          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
+          : [phaseLine('agent-device', openCommand ?? `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
       ].join('\n'),
     );
     if (facts.webPreviewUrl) note(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));

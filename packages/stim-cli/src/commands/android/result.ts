@@ -12,7 +12,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import { CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
 import { PLATFORM } from './support.ts';
-import { formatDuration, phaseLine } from '../../command-output.ts';
+import { formatDuration, phaseLine, mobileAgentOpenCommand } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
@@ -232,6 +232,7 @@ export async function finishAndroidUpload(
 export interface ReportAndroidResultArgs {
   host?: import('@stim-cli/core/state').HostedAndroidStatus;
   root: string;
+  agentDevicePlacement?: { physical: boolean; adapter: unknown; device: { owned?: boolean } | null | undefined };
   slot?: string;
   lease?: { kind: string; expiresAt: string } | null;
   json: boolean;
@@ -266,6 +267,7 @@ export interface ReportAndroidResultArgs {
 export function reportAndroidResult({
   host,
   root,
+  agentDevicePlacement,
   slot,
   json,
   useBuildCache,
@@ -334,8 +336,14 @@ export function reportAndroidResult({
   writer.close();
 
   if (record.devicePlacement) facts.devicePlacement = record.devicePlacement;
+  const { physical, adapter, device: localDevice } = agentDevicePlacement ?? {};
+  const openCommand =
+    launchState === true && !host && !physical && !adapter && localDevice?.owned && serial
+      ? mobileAgentOpenCommand('android', androidPackage, serial, slot)
+      : null;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
+    if (openCommand) out(phaseLine('agent-device', openCommand));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${host ? `${host.device?.name ?? 'Android emulator'} on ${host.machine}` : serial}, ` +
@@ -375,7 +383,7 @@ export function reportAndroidResult({
           ? 'command' in host.agent
             ? [phaseLine('agent-device', host.agent.command)]
             : []
-          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
+          : [phaseLine('agent-device', openCommand ?? `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
       ].join('\n'),
     );
     if (links) out(chalk.dim(workspaceLinkLine(links)));

@@ -1149,6 +1149,7 @@ export async function finishAndroidRun({
 
   const facts = reportAndroidResult({
     root,
+    agentDevicePlacement: { physical, adapter: remoteDevice, device },
     slot,
     json,
     useBuildCache,

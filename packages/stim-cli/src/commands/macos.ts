@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, quotedPath } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
 import {
@@ -189,6 +189,13 @@ export async function runMacos(
               const refusal = operationState(context).refusal;
               if (refusal !== null) throw new Error(refusal);
               launched();
+              if (launch === 'listed')
+                note(
+                  phaseLine(
+                    'agent-device',
+                    `AGENT_DEVICE_STATE_DIR=${quotedPath(workspaceAgentDeviceDir(root))} agent-device open ${quotedPath(here.bundleId)} --platform macos --surface app --foreground`,
+                  ),
+                );
               return here;
             } catch (error) {
               await cleanupFailedMacosLaunch(context, root, record, here.supervisor, here.app, error);

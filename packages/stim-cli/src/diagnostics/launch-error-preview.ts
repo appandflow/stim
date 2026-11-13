@@ -151,6 +151,27 @@ function structuredFrames(value: unknown): string[] {
   });
 }
 
+function androidCrashSummary(record: RecordLike, root?: string): string | null {
+  if (record.event !== 'native_crash' || record.platform !== 'android' || typeof record.appId !== 'string') return null;
+  const appPrefix = `at ${record.appId}.`;
+  const lines = typeof record.msg === 'string' ? record.msg.split(/\r?\n/).map((line) => line.trim()) : [];
+  let cause: string | undefined;
+  let summary: string | null = null;
+  for (const line of lines) {
+    if (line.startsWith('Caused by:')) cause = line.length <= 1000 ? line : undefined;
+    else if (
+      cause &&
+      line.length <= MAX_FRAME_LINE_LENGTH &&
+      line.startsWith(appPrefix) &&
+      framePriority(line, root) === 0
+    ) {
+      summary = `${cause} (${shortFrame(line, root)})`;
+      cause = undefined;
+    }
+  }
+  return summary;
+}
+
 /** Formats captured stacks for humans; full mode removes preview limits and preserves frame text. */
 export function launchErrorPreview(
   records: readonly RecordLike[],
@@ -212,6 +233,11 @@ export function launchErrorPreview(
     if (source !== nextSource) flush();
     source = nextSource;
     if (record.msg != null) {
+      const diagnosis = full ? null : androidCrashSummary(record, root);
+      if (diagnosis) {
+        flush();
+        lines.push(diagnosis);
+      }
       const msg = String(record.msg);
       const compacted = full ? null : compactMetroErrorBody(msg, root, lines);
       const chunks = compacted
