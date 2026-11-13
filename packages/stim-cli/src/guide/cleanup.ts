@@ -1604,7 +1604,16 @@ THE ONE CASE GC WILL NOT REAP
   .watchmanconfig, never from a global config, and only when it adds the
   root, so an existing root needs \`watchman watch-del <root>\` before the
   ignore applies. Doctor never runs watch-del or shutdown-server; a watch-del
-  plus a watchman restart frees the memory now.`,
+  plus a watchman restart frees the memory now.
+
+  On macOS each stimd that launchd starts leaves a job named
+  dev.stim.stimd.<hash>.<id> in the login domain. \`stim doctor\` notes
+  stopped ones whose STIM_HOME folder is gone, and \`stim doctor --fix\`
+  removes them, as does the next launchd-started stimd. A running job and a
+  job whose home exists are kept, and so is one whose home is under /Volumes,
+  unreadable or behind a broken symlink. A home on a share mounted elsewhere
+  (SMB or NFS at ~/mnt/x) reads as gone while unmounted and its stopped job is
+  removed; each stimd start registers a new job, so nothing is lost.`,
     },
     disk: {
       summary:
