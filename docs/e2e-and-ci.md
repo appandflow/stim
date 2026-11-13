@@ -338,8 +338,27 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   about 15 to 20 more minutes. The Release compile is also built by every
   `Desktop next` run on `main`.
 
-- **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
-  like the Android lane and holds it open behind Tailscale SSH or tmate.
+- **`windows-debug.yml`** -- dispatch on `main` to prepare a `windows-latest`
+  runner like the Android lane and open SSH over Tailscale. The runner joins
+  the tailnet as an ephemeral `tag:stim-windows-debug` node through OIDC.
+
+  To set it up, create a [Tailscale OpenID Connect credential](https://tailscale.com/docs/features/workload-identity-federation#set-up-a-federated-identity)
+  for GitHub Actions with subject `repo:appandflow/stim:ref:refs/heads/main`,
+  custom claim `workflow_ref` equal to `appandflow/stim/.github/workflows/windows-debug.yml@refs/heads/main`,
+  and only the Auth Keys Write scope for `tag:stim-windows-debug`. Allow the
+  intended tailnet users to reach that tag on TCP 22. If the runner is used as
+  a build worker, allow the intended build clients to reach it on TCP 7443 too.
+  Check that broad tailnet grants give the tag only the access it needs.
+  Save the client ID and audience as the repository Actions variables
+  `TAILSCALE_WINDOWS_DEBUG_CLIENT_ID` and `TAILSCALE_WINDOWS_DEBUG_AUDIENCE`.
+
+  ```sh
+  gh workflow run windows-debug.yml --ref main -F public_key=@~/.ssh/id_rsa.pub -f hours=2
+  ```
+
+  Use the IPv4 address and verify the host-key fingerprint printed by the
+  **Open SSH** step. To debug a branch, fetch and check it out inside the VM.
+  Create a file named `stop` at the workspace root to end the run.
 
 - **`e2e-native.yml`** -- the native matrix, every native gate in one
   workflow. Nothing native runs on an unlabeled pull request; what runs is:
