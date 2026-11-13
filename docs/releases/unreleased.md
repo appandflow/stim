@@ -26,6 +26,7 @@
 - A stimd that starts after an engine switch no longer stops dev servers or device log collectors that a Stim 1.43 build started before it. They keep their port until `stim stop`; `stim start` either reuses such a dev server or reports `Port <n> is held by something else` and asks you to stop the process on that port.
 - The stim-ci action no longer explains versions below the one-package release. Set `version:` to 2.0.0 or later, or pin the action to an older ref; a package without `bin/stim.mjs` fails with `stim@<version> has no bin/stim.mjs, which this action runs with ci`, and a `cli-path` that names a `stim-ci.mjs` executable is no longer refused with an explanation.
 - The release floors are gone: `packages/core/state/release-floors.json` and the release prep that pinned them. A patch release no longer refuses while a floor is null.
+- Removed settings, environment variables and flags are no longer explained by the CLI: a removed name is an unknown one, with no replacement named, and the twelve pressure-ladder settings and their variables are ignored. Where ignoring a removed name would silently change behaviour (`STIM_MAINTENANCE`, the old disk-threshold variables, and old config values that turned a mechanism off), the command still refuses and says what to set. The old names and their replacements are listed in the migration guide ([#5591](https://github.com/appandflow/stim/issues/5591)).
 
 ## Changed
 

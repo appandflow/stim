@@ -19,8 +19,6 @@ import {
   setSettingValueAt,
   isJsonObject,
   isSensitiveReference,
-  REMOVED_SETTINGS,
-  replacementAdvice,
   SETTING_SCOPES,
   settingDefinition,
   settingValueError,
@@ -31,22 +29,9 @@ import {
 import { stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 import { deleteTurnedOffRecordings, recordingLayers } from './recordings.ts';
 
-export function requireSetting(key: string, raw?: string, scope?: string): SettingDefinition {
+export function requireSetting(key: string): SettingDefinition {
   const setting = settingDefinition(key);
   if (setting) return setting;
-  const replaced = REMOVED_SETTINGS.get(key);
-  if (replaced) {
-    const layer = (SETTING_SCOPES as readonly string[]).includes(scope ?? '') ? (scope as SettingScope) : undefined;
-    const command = replacementAdvice(key, raw, layer)?.command;
-    const unset = `run \`stim settings unset ${key}\` to remove the leftover key`;
-    throw new SettingsRefusal(
-      'STIM_BAD_ARG',
-      `${JSON.stringify(key)} ${replaced.key ? `was replaced by ${replaced.replacement}` : `is no longer read by Stim: ${replaced.replacement}`}.`,
-      replaced.key
-        ? `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then ${unset}.`
-        : `${unset.charAt(0).toUpperCase()}${unset.slice(1)}.`,
-    );
-  }
   throw new SettingsRefusal(
     'STIM_BAD_ARG',
     `${JSON.stringify(key)} is not a Stim setting.`,
@@ -191,7 +176,7 @@ export async function mutateSetting(
 ): Promise<SettingWriteResult> {
   signal?.throwIfAborted();
   const { key } = request;
-  const setting = requireSetting(key, request.action === 'set' ? request.value : undefined, request.scope);
+  const setting = requireSetting(key);
   const scope = readScope(request.scope, setting);
   const value = request.action === 'set' ? parseSettingValue(setting, request.value) : undefined;
   if (setting.sensitive && scope === 'committed' && value !== undefined && !isSensitiveReference(value)) {
@@ -242,8 +227,6 @@ function configTarget(context: SettingsContext, scope: SettingScope): ConfigSett
 
 export interface ReplacedSettingRemoval {
   key: string;
-  /** The setting that replaced it; null when nothing did. */
-  replacedBy: string | null;
   removed: Array<{ scope: SettingScope; file: string }>;
 }
 
@@ -271,5 +254,5 @@ export async function unsetReplacedSetting(
         : target && (await writeConfigSettingAsync(target, key, undefined, signal));
     if (changed) removed.push({ scope: entry.scope, file: entry.file });
   }
-  return { key, replacedBy: REMOVED_SETTINGS.get(key)?.key ?? null, removed };
+  return { key, removed };
 }

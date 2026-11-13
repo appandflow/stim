@@ -359,8 +359,7 @@ then wakes the waiter. The same activity as
 stim-server and use of the device in the frontmost Simulator, Device Hub or
 emulator window do, app and device logs do not. Reclaim never deletes and excludes the waiting
 workspace, physical, hosted, remote, parked and other homes' devices. With no
-daemon running, waiters wait without reclaim. `devices.reclaimIdleMinutes` is
-no longer read.
+daemon running, waiters wait without reclaim.
 
 `iosSimulatorApp` chooses the macOS app that displays an owned iOS simulator after
 Stim boots it. It defaults to `"stim-desktop"` while Stim Desktop is installed
@@ -525,12 +524,6 @@ entry:
 - `remote-only` is `remote` without the local build: it refuses with `STIM_OFFLOAD_REFUSED` when no remote machine accepts the build, or the build cannot leave this machine.
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores this machine's load and slots.
-
-`remote.buildMode` and `STIM_REMOTE_BUILD_MODE` were removed and are no longer read.
-`stim doctor` and `stim settings` report any left in a config file or the environment.
-Use `remote.build` instead: `auto` stays `auto`, `force` becomes `remote` and `off`
-becomes `local`. `stim settings unset remote.buildMode` removes the leftover key from
-every layer that has it, and `--scope` removes it from one.
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
@@ -1157,11 +1150,9 @@ reconciliation.
 When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
 exit.
 
-Stim does not read the settings below. `stim doctor` and `stim settings` report
-any left in a config file or the environment, with the setting that replaces
-it. `stim settings set` and `get` refuse each with `STIM_BAD_ARG` naming its
-replacement, and `stim settings unset <key>` removes a leftover key from every
-layer that has it (`--scope` limits it to one). `stim start`, `ios`,
+Stim does not read the settings below. `stim settings set` and `get` refuse each
+as an unknown setting, and `stim settings unset <key>` removes a leftover key from
+every layer that has it (`--scope` limits it to one). `stim start`, `ios`,
 `android`, `web`, `macos`, `revive` and `gc` refuse with `STIM_BAD_ARG` while
 the environment sets one of the variables named here; unset it, or set its
 replacement. They also refuse while a config file they read still holds a
@@ -1178,9 +1169,6 @@ dormant.
 
 - `metro.idleStopMinutes` and `devices.idleShutdownMinutes`: use
   `idle.minutes`, which stops the dev server and the owned devices together.
-- `devices.reclaimIdleMinutes`: nothing replaces it. While a run waits to
-  boot, the `stim-daemon` shuts down the longest-idle device of another
-  workspace idle 2 minutes or more.
 - `maintenance.deviceIdleDays` (`STIM_MAINTENANCE_DEVICE_IDLE_DAYS`): use
   `idle.dormantDays`.
 - `budget.minFreeDiskGb` (`STIM_BUDGET_MIN_FREE_DISK_GB`): use
@@ -1189,17 +1177,7 @@ dormant.
   `disk.hardFloorGb` (`STIM_DISK_HARD_FLOOR_GB`).
 - `maintenance.criticalFreeDiskGb` (`STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB`):
   use `disk.criticalFreeGb` (`STIM_DISK_CRITICAL_FREE_GB`).
-- `maintenance.mode` (`STIM_MAINTENANCE`) and `daemon.enabled`: use
-  `daemon.mode` (`STIM_DAEMON`).
-- `budget.maxCommittedMemoryGb`, `budget.maxLiveWorkspaces`,
-  `maintenance.pressureCheckMinutes`, `maintenance.sizeCheckMinutes`,
-  `maintenance.maxLoadPerCore`, `maintenance.memoryPressureLevel`,
-  `maintenance.memoryWarningMinutes`, `maintenance.minAvailableMemoryGb`,
-  `maintenance.capTargetPercent`, `maintenance.idleCheckMinutes`,
-  `maintenance.urgentFreeDiskGb` and `maintenance.pressureProtectMinutes`:
-  nothing replaces them, because the pressure ladder has fixed rules. Each one's
-  variable is its key in upper snake case with a `STIM_` prefix, such as
-  `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`.
+- `maintenance.mode` (`STIM_MAINTENANCE`): use `daemon.mode` (`STIM_DAEMON`).
 
 ## Timing traces
 
