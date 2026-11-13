@@ -356,9 +356,18 @@ export async function hostStimd(
       const waitMs = Number(line.waitMs) || 0;
       child.unref();
       for (const stream of [child.stdout, child.stdin]) if (stream instanceof Socket) stream.unref();
+      let ending = false;
+      void exited.then(({ code, signal: exitSignal }) => {
+        if (!ending)
+          process.stderr.write(
+            `stim: the attached stimd (pid ${child.pid}) exited ${exitSignal ? `on ${exitSignal}` : `with code ${String(code)}`} before its command ended\n`,
+          );
+        return null;
+      });
       resolve({
         instance: line.instance,
         async end() {
+          ending = true;
           child.ref();
           child.stdin?.end();
           const killTimer = setTimeout(kill, waitMs + KILL_GRACE_MS);
