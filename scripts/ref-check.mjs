@@ -25,8 +25,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { parseArgs, TextDecoder } from 'node:util';
 
 const FIELDS = ['Type', 'Status', 'Systems', 'Author', 'Date'];
@@ -137,7 +136,7 @@ function checkRef(raw, docs, root) {
   const hash = token.indexOf('#');
   const path = hash < 0 ? token : token.slice(0, hash);
   const anchor = hash < 0 ? '' : token.slice(hash + 1);
-  const file = resolve(root, path);
+  const file = isAbsolute(path) ? path : `${root}${sep}${path}`;
   if (!existsSync(file)) return { error: `broken ref: path not found: ${path}` };
   if (!anchor) return {};
   if (!path.endsWith('.md')) return { info: `anchor #${anchor} unchecked (non-markdown target)` };
@@ -210,4 +209,4 @@ function main() {
   process.exitCode = Number(Boolean(result.errors.length));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+main();

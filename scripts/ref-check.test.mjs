@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,8 +32,8 @@ function git(...args) {
   execFileSync('git', args, { cwd: root, stdio: 'pipe' });
 }
 
-function check(options = [], cwd = root) {
-  const result = spawnSync(process.execPath, [script, ...options], { cwd, encoding: 'utf8' });
+function check(options = [], cwd = root, executable = script) {
+  const result = spawnSync(process.execPath, [executable, ...options], { cwd, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout };
 }
 
@@ -97,6 +97,29 @@ test('reports unresolved paths and anchors, malformed targets, and optional unch
   ])
     expect(result.stdout).toContain(diagnostic);
   expect(check().stdout).not.toContain('unchecked shorthand');
+});
+
+test.skipIf(process.platform === 'win32')('runs when invoked through a symlink', () => {
+  const alias = join(root, 'checker.mjs');
+  symlinkSync(script, alias);
+  expect(check([], root, alias)).toMatchObject({ status: 0, stdout: expect.stringContaining('1 LLP docs') });
+});
+
+test('checks the literal filesystem path without normalizing away traversal', () => {
+  write('existing.md', '# Heading');
+  write('source.ts', [`// ${ref('absent/../existing.md')}`, `// ${ref('existing.md/')}`].join('\n'));
+  const result = check();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toContain('broken ref: path not found: absent/../existing.md');
+  expect(result.stdout).toContain('broken ref: path not found: existing.md/');
+});
+
+test.skipIf(process.platform === 'win32')('resolves parent traversal from the symlink target directory', () => {
+  write('actual/parent.md', '# Heading');
+  mkdirSync(join(root, 'actual', 'nested'));
+  symlinkSync(join(root, 'actual', 'nested'), join(root, 'alias'));
+  write('source.ts', `// ${ref('alias/../parent.md#heading')}`);
+  expect(check()).toMatchObject({ status: 0, stdout: expect.stringContaining('1 LLP docs, 1 refs') });
 });
 
 test('reports duplicate document numbers and invalid metadata', () => {
