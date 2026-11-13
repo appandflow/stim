@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   lstatSync,
@@ -22,6 +23,7 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import * as claims from '@stim-cli/core/ownership-claim';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { writeEndedOwnerRecord } from './_parity-fixture.ts';
 
 const deletionIo = vi.hoisted((): { beforeRemove?: (path: unknown) => Promise<void> } => ({}));
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -55,10 +57,12 @@ beforeEach(() => {
   for (const key of TMP_KEYS) process.env[key] = fakeTmp;
   saveConfig({ version: 2, projects: {}, repos: {} });
   processes = '/sbin/launchd\n/usr/bin/node\n';
+  const executor = getExecutor();
   setExecutor({
-    ...getExecutor(),
-    runFileAsync: async (file: string) => {
+    ...executor,
+    runFileAsync: async (file: string, args: string[], options: Parameters<typeof executor.runFileAsync>[2]) => {
       if (file === 'ps') return processes;
+      if (file === 'git') return executor.runFileAsync(file, args, options);
       throw new Error(`unexpected ${file}`);
     },
   });
@@ -122,6 +126,37 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   expect(await deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 0 });
   expect([existsSync(idle), existsSync(trace)]).toEqual([false, false]);
   expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
+});
+
+test('a dead-owner parity directory is removed with its worktree registration', async () => {
+  const repo = join(home, 'parity-repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'test');
+  writeFileSync(join(repo, 'a.txt'), 'a');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  const base = join(fakeTmp, 'stim-parity-Dead01');
+  mkdirSync(base);
+  git('worktree', 'add', '-q', '--detach', join(base, 'head'), 'HEAD');
+  await writeEndedOwnerRecord(base, repo);
+  age(base, 2 * DAY_MS);
+
+  expect(await kept(base)).toBeNull();
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+
+  expect(existsSync(base)).toBe(false);
+  expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
+});
+
+test("a parity directory without Stim's record is kept however old it is", async () => {
+  const unmarked = oldDir('stim-parity-OldRun1', { head: 'x' });
+
+  expect(await kept(unmarked)).toMatch(/no Stim record/);
+  expect(await deleteTempLeftovers()).toEqual({ count: 0, bytes: 0, failures: 0 });
+  expect(existsSync(unmarked)).toBe(true);
 });
 
 test('SwiftPM TemporaryDirectory.* directories are listed and deleted once idle and no swift process runs', async () => {

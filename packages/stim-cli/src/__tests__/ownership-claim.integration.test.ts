@@ -35,6 +35,7 @@ import {
   tryAcquireClaim,
 } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
+import { waitForPid } from './_pid-file.ts';
 
 let root: string;
 
@@ -412,15 +413,7 @@ describe('a claim whose work runs in a spawned process group', () => {
       setClaimChild(held.acquired, childRecord);
       await once(group, 'exit');
 
-      let grandchild = 0;
-      for (let i = 0; i < 200 && !grandchild; i++) {
-        try {
-          grandchild = Number(readFileSync(pidFile, 'utf-8'));
-        } catch {
-          await new Promise((r) => setTimeout(r, 20));
-        }
-      }
-      assert(grandchild > 0);
+      const grandchild = await waitForPid(pidFile, 4000);
 
       try {
         const dead = goneClaimOwner();

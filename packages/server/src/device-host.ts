@@ -23,7 +23,12 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
+import {
+  captureProcessIdentity,
+  inspectProcessIdentity,
+  unlessChildExits,
+  type ProcessRecord,
+} from '@stim-cli/core/process-identity';
 import {
   assertHostedDeviceLedger,
   createDebugLog,
@@ -2790,11 +2795,14 @@ export class DeviceHost {
       finishGroup();
     });
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-    if (!captured?.ok || child.pid === undefined) {
+    const unavailable = () => {
       notice = 'The worker process identity could not be captured; no native request was sent.';
       signalChild(child, 'SIGKILL');
       cancel('identity-unavailable');
-    } else {
+    };
+    if (captured?.ok === false && captured.code === 'NOT_FOUND') unlessChildExits(child, unavailable);
+    else if (!captured?.ok || child.pid === undefined) unavailable();
+    else {
       identity = { pid: child.pid, processToken: captured.token };
       try {
         if (options.claim) setClaimChild(options.claim, identity);

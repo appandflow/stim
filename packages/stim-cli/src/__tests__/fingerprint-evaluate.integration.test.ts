@@ -20,6 +20,7 @@ import { withAmbientContext, workspaceName } from '@stim-cli/core';
 import { NATIVE_RUN_LOCK } from '../engine/native-run.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { waitForPid } from './_pid-file.ts';
 
 test('evaluates with the selected operation environment and home when ambient context differs', SLOW, async () => {
   const selectedHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-selected-context-')));
@@ -348,7 +349,7 @@ test.skipIf(process.platform === 'win32')(
         await new Promise((resolve) => setTimeout(resolve, 25));
       const outer = children.outer;
       if (!outer || !existsSync(marker)) throw new Error('verification evaluator did not start');
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const identity = captureProcessIdentity(pid);
       if (!identity.ok) throw new Error('evaluator identity unavailable');
       evaluator = { pid, processToken: identity.token };
@@ -453,7 +454,7 @@ test.skipIf(process.platform === 'win32')(
       expect(existsSync(marker)).toBe(true);
       const outer = children.outer;
       if (!outer) throw new Error('report child did not start');
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const identity = captureProcessIdentity(pid);
       if (!identity.ok) throw new Error('evaluator identity unavailable');
       evaluator = { pid, processToken: identity.token };
@@ -585,8 +586,7 @@ test.skipIf(process.platform === 'win32').each(['direct', 'report-child'] as con
     try {
       const until = Date.now() + 5000;
       while (!existsSync(marker) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(existsSync(marker)).toBe(true);
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const captured = captureProcessIdentity(pid);
       expect(captured.ok).toBe(true);
       if (!captured.ok) throw new Error('could not capture fixture child identity');
@@ -684,6 +684,59 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     expect(after.hash).not.toBe(before.hash);
     expect(indexedAfter).toMatchObject({ hash: after.hash, portable: false });
   });
+  function colorApp(copies: Record<string, string>, direct: boolean): string {
+    const root = bareApp({ ios: {} }, { ios: { sourceDir: 'ios' } });
+    write(join(root, 'node_modules', '.package-lock.json'), '{}');
+    write(join(root, 'node_modules/owner/package.json'), JSON.stringify({ name: 'owner', version: '1.0.0' }));
+    write(join(root, 'node_modules/owner/index.js'), "module.exports = require('color');\n");
+    for (const [dir, version] of Object.entries(copies)) {
+      write(join(root, dir, 'package.json'), JSON.stringify({ name: 'color', version }));
+      write(join(root, dir, 'index.js'), `module.exports = ${JSON.stringify(version)};\n`);
+    }
+    write(
+      join(root, 'node_modules/@react-native-community/cli/node_modules/@react-native-community/cli-config/index.js'),
+      `require('owner');${direct ? " require('color');" : ''} exports.loadConfig = ({ projectRoot }) => ({ root: projectRoot, platforms: { ios: {} }, project: { ios: { sourceDir: 'ios' } }, dependencies: {} });\n`,
+    );
+    return root;
+  }
+
+  test('two loaded versions of one content package are two inputs, each in the key', SLOW, async () => {
+    const root = colorApp({ 'node_modules/color': '1.0.0', 'node_modules/owner/node_modules/color': '2.0.0' }, true);
+    const compute = async (index: 'use' | 'skip' = 'skip') => {
+      const result = await fingerprint(root, { platform: 'ios' }, { env: baseEnv(), embedMode: 'development', index });
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      return result;
+    };
+    const colors = (result: { inputs: { name: string }[] }) =>
+      result.inputs.filter((input) => input.name.startsWith('npm:color')).map((input) => input.name);
+    await settleBareIndex();
+    const first = await compute();
+    expect(colors(first)).toEqual(['npm:color@1.0.0/index.js', 'npm:color@2.0.0/index.js']);
+    expect((await compute('use')).hash).toBe(first.hash);
+    const warm = await compute('use');
+    expect(warm).toMatchObject({ hash: first.hash, from: 'index' });
+    expect(colors(warm)).toEqual(colors(first));
+    write(join(root, 'node_modules/owner/node_modules/color/index.js'), 'module.exports = "nested edit";\n');
+    const nested = await compute();
+    expect(nested.hash).not.toBe(first.hash);
+    write(join(root, 'node_modules/color/index.js'), 'module.exports = "top edit";\n');
+    expect((await compute()).hash).not.toBe(nested.hash);
+  });
+
+  test('one loaded copy of a content package keys the same hoisted or nested', SLOW, async () => {
+    const keyOf = async (dir: string) => {
+      const result = await fingerprint(
+        colorApp({ [dir]: '1.0.0' }, false),
+        { platform: 'ios' },
+        { env: baseEnv(), embedMode: 'development', index: 'skip' },
+      );
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      expect(result.inputs.map((input) => input.name)).toContain('npm:color/index.js');
+      return result.hash;
+    };
+    expect(await keyOf('node_modules/owner/node_modules/color')).toBe(await keyOf('node_modules/color'));
+  });
+
   test(
     'a content dependency changes the full and indexed keys when its loaded plugin callback changes',
     SLOW,

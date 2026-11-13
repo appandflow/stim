@@ -65,6 +65,7 @@ import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
+import { waitForPid } from './_pid-file.ts';
 
 let dir: string;
 let root: string;
@@ -347,8 +348,7 @@ test.skipIf(process.platform === 'win32')('a refused runtime claim retains an un
       ],
       { cwd: root, env: process.env, detached: true, stdio: 'ignore' },
     );
-    await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
-    const pid = Number(readFileSync(helperFile, 'utf8'));
+    const pid = await waitForPid(helperFile);
     const token = captureProcessToken(pid);
     assert(token);
     helper = { pid, processToken: token };
@@ -460,8 +460,7 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
       claim: { root: join(dir, 'runtime'), label: 'app' },
       declare: [declaration],
     });
-    await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
-    const pid = Number(readFileSync(helperFile, 'utf8'));
+    const pid = await waitForPid(helperFile);
     const token = captureProcessToken(pid);
     assert(token);
     helper = { pid, processToken: token };

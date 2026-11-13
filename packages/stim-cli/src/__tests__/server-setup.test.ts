@@ -206,6 +206,27 @@ describe('serverSetupFindings', () => {
       ).toEqual([]);
     });
 
+    it('names the systemd drop-in that stops a service from moving onto the engine shim', () => {
+      const [finding] = serverSetupFindings(
+        setup({
+          services: [service({ override: '/home/me/.config/systemd/user/x.service.d/o.conf sets ExecStart=' })],
+        }),
+      );
+      expect(finding).toMatchObject({ code: 'server-service-override', level: 'note' });
+      expect(finding?.detail).toContain('o.conf');
+    });
+
+    it('keeps the crash finding next to the drop-in note, and says nothing for a unit already on the shim', () => {
+      const override = 'x.service.d/o.conf sets ExecStart=';
+      const crashed = down(null);
+      expect(crashed.map((finding) => finding.code)).toEqual(['server-service-crash']);
+      const both = serverSetupFindings(setup({ services: [service({ job: null, override })], servers: [] }));
+      expect(both.map((finding) => finding.code)).toEqual(['server-service-override', 'server-service-crash']);
+      const shim = service({ override });
+      shim.installed = { ...shim.installed, script: '/home/me/.stim/engine/bin/stimd' };
+      expect(serverSetupFindings(setup({ services: [shim] }))).toEqual([]);
+    });
+
     it('reports an installed service with no job', () => {
       const [finding] = down(null);
       expect(finding?.title).toContain('installed but not running');

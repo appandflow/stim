@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { hostStimd } from '../stimd/attached.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const own = vi.hoisted(() => vi.fn<() => { root: string; build: string } | null>());
 vi.mock('../daemon/engine-switch.ts', async (load) => ({
@@ -40,9 +41,7 @@ function fixture() {
 }
 
 async function waitMarker(marker: string): Promise<number> {
-  for (let i = 0; i < 200 && !existsSync(marker); i++) await new Promise((done) => setTimeout(done, 25));
-  if (!existsSync(marker)) throw new Error('selector did not start');
-  return Number(readFileSync(marker, 'utf8'));
+  return waitForPid(marker, 5000);
 }
 
 async function expectLocksFree(root: string) {

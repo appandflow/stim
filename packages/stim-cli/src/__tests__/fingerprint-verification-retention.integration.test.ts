@@ -13,6 +13,7 @@ import { runFingerprintVerification } from '../fingerprint-precompute.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { testContext } from './_context.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const selected = vi.hoisted(() => ({ root: '' }));
 vi.mock('../daemon/engine-switch.ts', async (original) => ({
@@ -109,7 +110,7 @@ test.skipIf(process.platform === 'win32')(
         await new Promise((resolve) => setTimeout(resolve, 25));
       const outer = children.outer;
       if (!outer || !existsSync(marker)) throw new Error('verification evaluator did not start');
-      const pid = Number(readFileSync(marker, 'utf8'));
+      const pid = await waitForPid(marker);
       const identity = captureProcessIdentity(pid);
       if (!identity.ok) throw new Error('evaluator identity unavailable');
       evaluator = { pid, processToken: identity.token };

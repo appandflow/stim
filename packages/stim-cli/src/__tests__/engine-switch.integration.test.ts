@@ -162,8 +162,8 @@ afterAll(async () => {
 test.skipIf(process.platform === 'win32')(
   'a staged build waits for pinned work, the drained stimd flips it and is replaced, and old CLIs follow',
   async () => {
-    const run = (dir: string, args: string[]) =>
-      spawnSync(process.execPath, [join(dir, 'dist', 'cli.mjs'), ...args], { cwd: work, env, encoding: 'utf8' });
+    const run = (dir: string, args: string[], cwd = work) =>
+      spawnSync(process.execPath, [join(dir, 'dist', 'cli.mjs'), ...args], { cwd, env, encoding: 'utf8' });
     const install = spawnSync(
       process.execPath,
       [join(tmp, 'a', 'lib', 'node_modules', 'stim', 'bin', 'stim.mjs'), 'engine', 'install'],
@@ -275,7 +275,10 @@ test.skipIf(process.platform === 'win32')(
     expect(await watched).toBe(75);
     expect(watchErr).toContain(`Stim updated to ${current.version}; rerun`);
 
-    const old = run(join(root, a), ['start']);
+    const swiftPackage = join(tmp, 'swift-package');
+    mkdirSync(swiftPackage);
+    writeFileSync(join(swiftPackage, 'Package.swift'), '// swift-tools-version:5.9\n');
+    const old = run(join(root, a), ['start'], swiftPackage);
     expect(old.stderr.split(`Stim updated to ${current.version}; running this command on it`).length - 1).toBe(1);
     expect(old.stderr).toContain('STIM_NO_PROJECT');
 

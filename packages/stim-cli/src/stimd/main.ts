@@ -37,6 +37,8 @@ import {
   stimBuildId,
   macosAppState,
   readMacosRecord,
+  readLiveShareLinks,
+  shareRouteClaimRoot,
   readDaemonSnapshot,
   readStimdBoots,
   readMaintenanceState,
@@ -87,6 +89,7 @@ import {
   type NetAnswer,
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
+import { resolveTailscaleBinary } from '../engine/metro-reach.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
@@ -904,6 +907,10 @@ async function runStimdInner(
       handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
     (why) => maybeUpdate(why, ASKED_MS),
+    (why) => {
+      restartWhy ??= why;
+      void checkEngine();
+    },
   );
   let restartingNet = false;
   let updating: Promise<void> | null = null;
@@ -1041,6 +1048,7 @@ async function runStimdInner(
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
+  let restartWhy: string | null = null;
   let switchedTo: { build: string; version: string } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
   const checkedClients = new Map<string, string>();
@@ -1099,6 +1107,20 @@ async function runStimdInner(
     void checkEngine();
   };
   const checkEngine = async (): Promise<void> => {
+    if (
+      restartWhy &&
+      !closing &&
+      !ending &&
+      !switchedTo &&
+      !hasActiveCommands() &&
+      !enginePinned() &&
+      !net.running()?.shareOnly
+    ) {
+      log('info', 'service_restart', restartWhy);
+      if (attached) requestEnd(restartWhy);
+      else shutdown(restartWhy);
+      return;
+    }
     if (
       !follower &&
       updatedInPlace &&
@@ -1677,6 +1699,12 @@ async function runStimdInner(
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  else if (attached === undefined && shareWorkPending()) {
+    // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
+    const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
+    netServes = options;
+    void net.ensure(options);
+  }
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
@@ -1941,9 +1969,30 @@ function hostedNativeWork(session: HostedDeviceSession): boolean {
 }
 
 /**
+ * Whether this home has a saved share to restore or a share route claim whose holder is gone, which a share-only net
+ * thread restores or removes. A share started with no service and no Desktop lives only in such a thread, so a
+ * successor stimd (a handover or a start after a crash) finds its work here, not in its arguments. A thread that
+ * refuses a saved share marks it stopped, so it counts once; an entry of a workspace that is not registered or no longer exists is not counted, and is left as it is. A config that cannot be read counts as no work, so the tick fails and ends the daemon as before. A dead claim counts only while a tailscale command exists
+ * to remove its route; without one, a thread would fail the same way on every boot.
+ */
+function shareWorkPending(): boolean {
+  let projects: string[];
+  try {
+    projects = Object.keys(loadConfig()?.projects ?? {});
+  } catch {
+    return false;
+  }
+  if (readLiveShareLinks().some(({ workspace }) => projects.includes(workspace) && existsSync(workspace))) return true;
+  const claims = readClaimSet(shareRouteClaimRoot());
+  const dead = claims.dead.length > 0 || claims.orphans.length > 0;
+  return dead && resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) !== null;
+}
+
+/**
  * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
- * that only serves `stim share` is not carried over, and one no service unit or `stim serve` started is marked
- * `--carried`, so its successor does not count as a service.
+ * that only serves `stim share` is not carried over by arguments (its successor restores the saved shares at boot, see
+ * `shareWorkPending`), and one no service unit or `stim serve` started is marked `--carried`, so its successor does not
+ * count as a service.
  */
 function serveArgs(serve: ServeOptions | null, service: boolean): string[] {
   if (!serve || serve.shareOnly) return [];
