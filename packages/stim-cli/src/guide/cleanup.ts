@@ -640,6 +640,37 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   directories are deleted: a real directory inside the checkout whose files git
   ignores, with no tracked or unignored file, not reached through a link.
 
+  Edited dependencies: automatic maintenance and stim gc never delete a
+  node_modules or ios/Pods folder in which they detect hand edits, at any
+  pressure level, critical included, so its disk is not freed; stim gc
+  --dry-run shows it kept. Automatic removal of a finished or discovered
+  worktree also waits while one of its dependency folders has detected edits.
+  stim worktree remove runs no check. The kept action, \`stim status\` (--json
+  dependencyEdits) and \`stim doctor\` name the files; make the change a patch
+  (pnpm patch, yarn patch or patch-package) or reinstall to release the
+  folder. Detection is best effort, from file times alone: a file modified
+  after the install is an edit. The install's time is when an install, pod
+  install or worktree warm that Stim ran there finished; otherwise the package
+  manager's stamp (node_modules/.modules.yaml, .package-lock.json,
+  .yarn-state.yml, .yarn-integrity, Pods/Manifest.lock), or for a tree with
+  none (Bun) its own and its .bin directory's modification times plus a
+  minute. A 10-minute window after the stamp is install output when the root
+  package.json declares preinstall, install, postinstall or prepare (Pods: 60
+  seconds). An edit seen once stays an edit while the file is unchanged, and
+  after an install Stim did not run, a file changed since the previous
+  reference stays an edit unless its package was reinstalled. Not checked:
+  the package manager's state files, dot-directories at a node_modules root
+  other than .pnpm, .bun, .deno and .bin (treated as tool caches, a custom
+  pnpm virtual-store directory included), .gradle, .kotlin, .cxx and Gradle's
+  build in a package's android directory or beside a Gradle build script, a
+  package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
+  an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
+  edits in those directories, an edit inside an install window, and an edit
+  to a package whose package.json an editor replaced, once an install Stim
+  did not run follows. A tree with no install stamp, or a directory that
+  cannot be read, is kept. stim doctor, stim gc --dry-run and report-mode
+  passes write nothing.
+
   Concurrency: an acting stim gc takes the same exclusive maintenance claim as
   the stim-daemon's maintenance pass. While one holds it the other refuses at
   once with STIM_CLAIM_REFUSED naming the holder (pid, start, trigger); retry
