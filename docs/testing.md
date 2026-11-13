@@ -130,6 +130,11 @@ The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
 ## Local validation
 
+Run `pnpm check:changed` for the local checks selected from the working tree
+and branch changes. Use `pnpm check:changed --dry-run` to see the selection or
+`pnpm check:changed --base <ref>` to compare with another branch. Run the
+regressions you know depend on the change and the platform checks in AGENTS.md.
+
 Run the tests that protect the changed behavior while iterating and before a
 commit. Use the relevant formatting, lint, build and type checks locally, then
 let CI validate the full merge candidate. Source changes run the unit stage on
