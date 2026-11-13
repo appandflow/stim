@@ -11,20 +11,24 @@ async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
   return done();
 }
 
-interface GroupMember {
+export interface GroupMember {
   pid: number;
   /** `ps` reports state Z: the process exited and waits for its parent to reap it. */
   zombie: boolean;
 }
 
-/** The members of process group `pgid`, zombies marked, or null when `ps` cannot list them. */
-function groupMembers(pgid: number): GroupMember[] | null {
-  const listing = getExecutor().runFileQuiet('ps', ['-axo', 'pid=,pgid=,stat='], { timeoutMs: 10_000 });
-  if (listing === null) return null;
+/** The members of process group `pgid` in a `ps -axo pid=,pgid=,stat=` listing, from procps and BSD `ps` alike. */
+export function parseGroupListing(listing: string, pgid: number): GroupMember[] {
   return listing.split('\n').flatMap((line) => {
     const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
     return row && Number(row[2]) === pgid ? [{ pid: Number(row[1]), zombie: row[3]?.startsWith('Z') === true }] : [];
   });
+}
+
+/** The members of process group `pgid`, zombies marked, or null when `ps` cannot list them. */
+function groupMembers(pgid: number): GroupMember[] | null {
+  const listing = getExecutor().runFileQuiet('ps', ['-axo', 'pid=,pgid=,stat='], { timeoutMs: 10_000 });
+  return listing === null ? null : parseGroupListing(listing, pgid);
 }
 
 const pidList = (members: GroupMember[] | null) =>

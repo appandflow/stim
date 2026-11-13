@@ -228,10 +228,8 @@ process.on('SIGTERM', () => {
       join(root, 'stubborn.cjs'),
       `const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { writeFileSync } = require('node:fs');
 http.createServer((req, res) => res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');
-const member = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
-writeFileSync(${JSON.stringify(pidFile)}, String(member.pid));
+spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(" + JSON.stringify(${JSON.stringify(pidFile)}) + ", String(process.pid)); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
 process.on('SIGTERM', () => process.exit(0));`,
     );
     writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: ['node', 'stubborn.cjs', '{port}'] } }));
