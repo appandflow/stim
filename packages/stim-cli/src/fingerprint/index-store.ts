@@ -7,8 +7,8 @@ import {
   fingerprintIndexDir,
   fingerprintIndexLock,
   LOCKFILES,
-  readWarmedNpmInstall,
-  warmedNpmInstallFile,
+  readWarmedInstall,
+  warmedInstallFile,
 } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 import { gitLocation } from './git-index.ts';
@@ -28,7 +28,7 @@ import { field, within, type Roots } from './walk.ts';
 const RECORDS_PER_DIR = 8;
 const DIRS_PER_PLATFORM = 256;
 /** Bumped when the record shape or what a part record derives from its trace changes. */
-const INDEX_FORMAT = 3;
+const INDEX_FORMAT = 4;
 const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity', '.yarn-state.yml'];
 /** Where `patch-package` and the yarn and pnpm patch commands keep patches, which change installed files. */
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];
@@ -491,14 +491,11 @@ export const checkoutTag = (project: string): string => sha256(project).slice(0,
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
-function installInputs(
-  roots: Roots,
-): { paths: string[]; patchDirectories: string[]; missingPatchParents: string[] } | Uncertain {
+function installInputs(roots: Roots): { paths: string[]; patchDirectories: string[] } | Uncertain {
   const discovered = patches(roots);
   if (isUncertain(discovered)) return discovered;
   const seen = new Set<string>();
   const patchDirectories = new Set<string>();
-  const missingPatchParents = new Set<string>();
   const files = (dir: string): string[] => {
     const info = statSync(dir, { throwIfNoEntry: false });
     if (!info) return [];
@@ -516,27 +513,31 @@ function installInputs(
     ...discovered.files,
     ...patchRoots.flatMap(files),
   ];
-  // When a patch directory disappears, its surviving parent is the only timestamp that can record the removal.
-  for (const dir of patchRoots) {
-    patchDirectories.add(dir);
-    let parent = dir;
-    while (mtime(parent) === undefined && dirname(parent) !== parent) parent = dirname(parent);
-    if (parent !== dir) missingPatchParents.add(parent);
-  }
-  return { paths, patchDirectories: [...patchDirectories], missingPatchParents: [...missingPatchParents] };
+  for (const dir of patchRoots) patchDirectories.add(dir);
+  return { paths, patchDirectories: [...patchDirectories] };
 }
 
-const npmStamp = (roots: Roots) => join(roots.install, 'node_modules', '.package-lock.json');
+/** The newest package manager install stamp of the app or its install root. */
+function installStamp(roots: Roots): { path: string; at: number } | null {
+  let newest: { path: string; at: number } | null = null;
+  for (const dir of moduleDirectories(roots))
+    for (const name of INSTALL_STAMPS) {
+      const path = join(dir, name);
+      const at = mtime(path);
+      if (at !== undefined && (!newest || at > newest.at)) newest = { path, at };
+    }
+  return newest;
+}
 
-function npmModuleDirectories(roots: Roots): string[] {
+function moduleDirectories(roots: Roots): string[] {
   return [...new Set([roots.install, roots.project])].map((dir) => join(dir, 'node_modules'));
 }
 
-function npmInstallInputs(roots: Roots, inputs: string[]): string[] {
-  const npmInputs = [roots.project, roots.install].flatMap((dir) =>
-    ['package.json', '.npmrc'].map((name) => join(dir, name)),
-  );
-  return [...new Set([...inputs, ...npmInputs])];
+const INSTALL_CONFIG = ['package.json', '.npmrc', '.yarnrc', '.yarnrc.yml', 'pnpm-workspace.yaml', '.pnpmfile.cjs'];
+
+function installConfigInputs(roots: Roots, inputs: string[]): string[] {
+  const config = [roots.project, roots.install].flatMap((dir) => INSTALL_CONFIG.map((name) => join(dir, name)));
+  return [...new Set([...inputs, ...config])];
 }
 
 function installInputDigest(roots: Roots, inputs: string[]): string {
@@ -550,63 +551,53 @@ function installInputDigest(roots: Roots, inputs: string[]): string {
 
 function installInputStats(roots: Roots, inputs: string[]): string {
   const rows = inputs.map((path) => [relocate(path, roots), statKey(path)?.key ?? null]);
-  const modules = npmModuleDirectories(roots).map((path) => {
+  const modules = moduleDirectories(roots).map((path) => {
     const stat = statSync(path, { bigint: true, throwIfNoEntry: false });
     return [relocate(path, roots), stat ? `${stat.dev}:${stat.ino}` : null];
   });
   return sha256(canonicalJson({ inputs: Object.fromEntries(rows), modules }));
 }
 
-/** Records matching inputs and the exact install stamp only when warm copied the source's node_modules. */
-export function prepareNpmInstallCarry(sourceProject: string, project: string): ((copied: string[]) => void) | null {
+/**
+ * Records matching inputs and the exact install stamp only when warm copied the source's node_modules and the source's
+ * lockfiles and patches predate its install, the same condition the cache gate applies to the source checkout itself.
+ * Like that gate, it cannot see a patch directory deleted after the install, which leaves no file to compare.
+ */
+export function prepareInstallCarry(sourceProject: string, project: string): ((copied: string[]) => void) | null {
   const source = { project: sourceProject, install: installRoot(sourceProject) };
   const target = { project, install: installRoot(project) };
   try {
-    const sourceStampPath = npmStamp(source);
-    if (!statSync(sourceStampPath, { throwIfNoEntry: false })?.isFile()) return null;
-    const sourceStamp = statKey(sourceStampPath);
-    const installedAt = mtime(sourceStampPath);
-    if (!sourceStamp || installedAt === undefined || mtime(join(source.install, 'package-lock.json')) === undefined)
-      return null;
-    const sourceStampHash = readHash(sourceStampPath);
+    const sourceStamp = installStamp(source);
+    if (!sourceStamp || !LOCKFILES.some((name) => mtime(join(source.install, name)) !== undefined)) return null;
+    const sourceStampKey = statKey(sourceStamp.path);
+    const sourceStampHash = readHash(sourceStamp.path);
     const inputs = installInputs(source);
-    if (!sourceStampHash || isUncertain(inputs)) return null;
-    const sourceFiles = npmInstallInputs(source, inputs.paths);
-    if (
-      [...sourceFiles, ...inputs.patchDirectories, ...inputs.missingPatchParents].some(
-        (path) => (mtime(path) ?? 0) > installedAt,
-      )
-    )
-      return null;
-    const digest = installInputDigest(source, sourceFiles);
+    if (!sourceStampKey || !sourceStampHash || isUncertain(inputs)) return null;
+    const pending = (paths: string[]) => paths.some((path) => (mtime(path) ?? 0) > sourceStamp.at);
+    if (pending([...inputs.paths, ...inputs.patchDirectories])) return null;
+    const digest = installInputDigest(source, installConfigInputs(source, inputs.paths));
+    const targetStampPath = join(target.install, relative(source.install, sourceStamp.path));
     return (copied) => {
-      if (!copied.includes(dirname(npmStamp(target)))) return;
+      if (!copied.some((path) => within(targetStampPath, path))) return;
       try {
-        const modules = npmModuleDirectories(target);
-        if (modules.some((path) => statKey(path) && !copied.includes(path))) return;
+        if (moduleDirectories(target).some((path) => statKey(path) && !copied.includes(path))) return;
         const sourceInputs = installInputs(source);
         const targetInputs = installInputs(target);
         if (isUncertain(sourceInputs) || isUncertain(targetInputs)) return;
-        const currentSourceFiles = npmInstallInputs(source, sourceInputs.paths);
-        const targetFiles = npmInstallInputs(target, targetInputs.paths);
+        const targetFiles = installConfigInputs(target, targetInputs.paths);
         const inputStats = installInputStats(target, [...targetFiles, ...targetInputs.patchDirectories]);
+        if (pending([...sourceInputs.paths, ...sourceInputs.patchDirectories])) return;
         if (
-          [...currentSourceFiles, ...sourceInputs.patchDirectories, ...sourceInputs.missingPatchParents].some(
-            (path) => (mtime(path) ?? 0) > installedAt,
-          )
-        )
-          return;
-        if (
-          installInputDigest(source, currentSourceFiles) !== digest ||
+          installInputDigest(source, installConfigInputs(source, sourceInputs.paths)) !== digest ||
           installInputDigest(target, targetFiles) !== digest
         )
           return;
-        const targetStampPath = npmStamp(target);
-        if (!statSync(targetStampPath, { throwIfNoEntry: false })?.isFile()) return;
+        if (installStamp(target)?.path !== targetStampPath) return;
         const stamp = statKey(targetStampPath);
         if (!stamp || readHash(targetStampPath) !== sourceStampHash) return;
-        if (statKey(sourceStampPath)?.key !== sourceStamp.key || statKey(targetStampPath)?.key !== stamp.key) return;
-        const record = warmedNpmInstallFile(target.project);
+        if (statKey(sourceStamp.path)?.key !== sourceStampKey.key || statKey(targetStampPath)?.key !== stamp.key)
+          return;
+        const record = warmedInstallFile(target.project);
         ensurePrivateDir(dirname(record));
         writePrivate(record, JSON.stringify({ stamp: stamp.key, inputStats }));
       } catch {}
@@ -622,27 +613,21 @@ export function prepareNpmInstallCarry(sourceProject: string, project: string): 
  */
 export function newerThanInstall(roots: Roots): string | Uncertain | null {
   try {
-    const dirs = [...new Set([roots.project, roots.install])];
-    const stamps = dirs.flatMap((dir) =>
-      INSTALL_STAMPS.flatMap((name) => mtime(join(dir, 'node_modules', name)) ?? []),
-    );
-    if (stamps.length === 0) return null;
-    const installed = Math.max(...stamps);
+    const installed = installStamp(roots);
+    if (!installed) return null;
     const inputs = installInputs(roots);
     if (isUncertain(inputs)) return inputs;
-    const pending = inputs.paths.find((path) => (mtime(path) ?? 0) > installed);
+    const pending = inputs.paths.find((path) => (mtime(path) ?? 0) > installed.at);
     if (!pending) return null;
-    const record = readWarmedNpmInstall(roots.project);
+    const record = readWarmedInstall(roots.project);
     if (!record) return pending;
-    const stampPath = npmStamp(roots);
-    const stamp = statKey(stampPath);
+    const stamp = statKey(installed.path);
     if (
       stamp &&
-      mtime(stampPath) === installed &&
       record.stamp === stamp.key &&
       record.inputStats ===
-        installInputStats(roots, [...npmInstallInputs(roots, inputs.paths), ...inputs.patchDirectories]) &&
-      statKey(stampPath)?.key === stamp.key
+        installInputStats(roots, [...installConfigInputs(roots, inputs.paths), ...inputs.patchDirectories]) &&
+      statKey(installed.path)?.key === stamp.key
     )
       return null;
     return pending;

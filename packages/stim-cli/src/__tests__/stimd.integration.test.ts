@@ -257,6 +257,52 @@ test('shutdown retains the daemon claim until the net thread and observers close
   }
 });
 
+test.skipIf(process.platform === 'win32')(
+  'a restart request from the net thread waits for an open command, then stimd exits cleanly and releases its claims',
+  async () => {
+    let restart: (why: string) => void = () => {};
+    const net = vi.spyOn(netThread, 'createNetThread').mockImplementation((_log, _exit, _update, onRestart) => {
+      restart = onRestart ?? restart;
+      return {
+        ensure: async () => ({ listening: false, message: 'unused' }),
+        running: () => null,
+        connect: () => false,
+        presence: () => false,
+        close: async () => {},
+      };
+    });
+    let exited = false;
+    const run = runStimd({ tickMs: 60_000, mode: 'on' }).then((result) => {
+      exited = true;
+      return result;
+    });
+    try {
+      await listening();
+      const op = connect(stimdSocket());
+      onTestFinished(() => {
+        op.destroy();
+      });
+      const received = lines(op);
+      op.write(`${frame()}${JSON.stringify({ op: 'op.begin' })}\n`);
+      await vi.waitFor(() => expect(received.join()).toContain('"op":"op.begun"'), { timeout: 10_000, interval: 20 });
+      restart('its service unit now starts the engine shim');
+      await new Promise((done) => setTimeout(done, 300));
+      expect(exited).toBe(false);
+      op.destroy();
+      await run;
+      expect(daemonLog()).toContain('"event":"service_restart"');
+      expect(daemonLog()).not.toContain('abnormal');
+      expect(process.exitCode ?? 0).toBe(0);
+      for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
+        expect(readClaimSet(claimRoot)).toMatchObject({ live: [], unresolved: [] });
+    } finally {
+      net.mockRestore();
+      await run.catch(() => {});
+    }
+  },
+  30_000,
+);
+
 async function stopStimd(): Promise<void> {
   saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
   await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
@@ -342,7 +388,17 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   test('a CI hold keeps a quiescent persistent daemon alive through off mode', async () => {
     const running = runStimd({ mode: 'on', tickMs: 500 });
     await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
-    const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
+    let ended = false;
+    void running.finally(() => {
+      ended = true;
+    });
+    const releaseHold = await vi
+      .waitFor(() => holdCIStimd({ ...process.env, STIM_HOME: home }, home, null), { timeout: 10_000, interval: 50 })
+      .catch((error: unknown) => {
+        throw new Error(
+          `${String(error)}\nstimd ended: ${ended}; record: ${existsSync(stimdRecordFile())}\ndaemon.ndjson:\n${daemonLog()}`,
+        );
+      });
     try {
       await new Promise((done) => setTimeout(done, 1200));
       expect(existsSync(stimdRecordFile())).toBe(true);

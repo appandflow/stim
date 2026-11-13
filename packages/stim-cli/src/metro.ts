@@ -223,8 +223,14 @@ export async function resolveProjectMetro(
         },
       };
     }
+    const recorded = readWorkspaceState(canonicalPath(projectPath))?.supervisor;
+    const why = !recorded
+      ? 'no dev server is recorded'
+      : owner
+        ? `the recorded dev server is pid ${String(owner.pid)}`
+        : `the recorded dev server pid ${String(recorded.pid)} on port ${String(recorded.port)} is ${inspectProcessIdentity(recorded)}`;
     return {
-      notOurs: `pid ${pid} on port ${port}: working directory could not be read`,
+      notOurs: `pid ${pid} on port ${port}: working directory could not be read, and ${why}`,
       kind: NOT_OURS_UNREADABLE_CWD,
       pid,
     };

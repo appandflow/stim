@@ -45,6 +45,7 @@ import { gitCommonDirOnDisk } from './workspace/worktree.ts';
 import { readCommittedSettings } from './workspace/settings.ts';
 import { workspaceDir } from './workspace/paths.ts';
 import { workspaceRecordingEnabled } from './workspace/recordings.ts';
+import { pruneDependencyInstallRecords } from './workspace/dependency-install-records.ts';
 
 const DAY = 86_400_000;
 const KINDS = ['logs', 'recordings', 'agentActions'] as const;
@@ -754,6 +755,7 @@ export async function enforceArchiveRetention(now: number = Date.now(), operatio
         if (JSON.stringify(record.expires) !== before) await writeRecord(archiveDir(record.id), record);
       }
       await pruneWorktreeArchives(now, limits, signal);
+      pruneDependencyInstallRecords();
     },
     { waitMs: 30_000, signal },
   );

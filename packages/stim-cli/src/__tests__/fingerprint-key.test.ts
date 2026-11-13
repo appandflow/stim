@@ -7,6 +7,7 @@ import {
   diffInputs,
   FINGERPRINT_SCHEMA,
   isUncertain,
+  mergeInputs,
   preimage,
   preimageHash,
   type Input,
@@ -206,6 +207,41 @@ describe('fingerprint key', () => {
     expect(preimageHash(preimage('ios', 'tracked', layout, [row]))).not.toBe(
       preimageHash(preimage('ios', 'generated', layout, [row])),
     );
+  });
+
+  test('installed copies of one package are named by version only when versions differ', () => {
+    const copy = (name: string, version: string, hash: string): Input => ({ name, kind: 'file', hash, version });
+    const names = (inputs: Input[]) => mergeInputs(inputs).map((input) => [input.name, input.hash]);
+    const v5 = copy('npm:@scope/color/index.js', '5.5.0', 'a'.repeat(64));
+    const v7 = copy('npm:@scope/color/index.js', '7.2.0', 'b'.repeat(64));
+    const only7 = copy('npm:@scope/color/lib/extra.js', '7.2.0', 'c'.repeat(64));
+    expect(names([v7, only7])).toEqual([
+      ['npm:@scope/color/index.js', 'b'.repeat(64)],
+      ['npm:@scope/color/lib/extra.js', 'c'.repeat(64)],
+    ]);
+    expect(names([only7, v7, v5])).toEqual([
+      ['npm:@scope/color@5.5.0/index.js', 'a'.repeat(64)],
+      ['npm:@scope/color@7.2.0/index.js', 'b'.repeat(64)],
+      ['npm:@scope/color@7.2.0/lib/extra.js', 'c'.repeat(64)],
+    ]);
+    const patched = { ...v7, hash: 'd'.repeat(64) };
+    const shared = names([v5, v7, patched]);
+    expect(names([patched, v5, v7])).toEqual(shared);
+    expect(shared.map(([name]) => name)).toEqual([
+      'npm:@scope/color@5.5.0/index.js',
+      'npm:@scope/color@7.2.0/index.js',
+    ]);
+    expect(shared[1]?.[1]).not.toBe(names([v5, v7, { ...v7, hash: 'e'.repeat(64) }])[1]?.[1]);
+    expect(shared[1]?.[1]).not.toBe(names([v5, v7, v7])[1]?.[1]);
+    const pkg: Input = { name: 'package:color', kind: 'package', hash: 'a'.repeat(64), version: '7.2.0' };
+    expect(() => mergeInputs([pkg, { ...pkg, hash: 'b'.repeat(64) }])).toThrow(/disagree/);
+    const unversioned = copy('npm:@scope/color/index.js', '', 'f'.repeat(64));
+    expect(names([unversioned, v7])).toEqual([
+      ['npm:@scope/color@/index.js', 'f'.repeat(64)],
+      ['npm:@scope/color@7.2.0/index.js', 'b'.repeat(64)],
+    ]);
+    const walked: Input = { name: 'npm:@scope/color/index.js', kind: 'file', hash: 'c'.repeat(64) };
+    expect(() => mergeInputs([walked, v7])).toThrow(/disagree/);
   });
 
   test('diffInputs reports added, removed and changed rows in name order whatever the input order', () => {

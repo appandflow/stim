@@ -640,6 +640,37 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   directories are deleted: a real directory inside the checkout whose files git
   ignores, with no tracked or unignored file, not reached through a link.
 
+  Edited dependencies: automatic maintenance and stim gc never delete a
+  node_modules or ios/Pods folder in which they detect hand edits, at any
+  pressure level, critical included, so its disk is not freed; stim gc
+  --dry-run shows it kept. Automatic removal of a finished or discovered
+  worktree also waits while one of its dependency folders has detected edits.
+  stim worktree remove runs no check. The kept action, \`stim status\` (--json
+  dependencyEdits) and \`stim doctor\` name the files; make the change a patch
+  (pnpm patch, yarn patch or patch-package) or reinstall to release the
+  folder. Detection is best effort, from file times alone: a file modified
+  after the install is an edit. The install's time is when an install, pod
+  install or worktree warm that Stim ran there finished; otherwise the package
+  manager's stamp (node_modules/.modules.yaml, .package-lock.json,
+  .yarn-state.yml, .yarn-integrity, Pods/Manifest.lock), or for a tree with
+  none (Bun) its own and its .bin directory's modification times plus a
+  minute. A 10-minute window after the stamp is install output when the root
+  package.json declares preinstall, install, postinstall or prepare (Pods: 60
+  seconds). An edit seen once stays an edit while the file is unchanged, and
+  after an install Stim did not run, a file changed since the previous
+  reference stays an edit unless its package was reinstalled. Not checked:
+  the package manager's state files, dot-directories at a node_modules root
+  other than .pnpm, .bun, .deno and .bin (treated as tool caches, a custom
+  pnpm virtual-store directory included), .gradle, .kotlin, .cxx and Gradle's
+  build in a package's android directory or beside a Gradle build script, a
+  package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
+  an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
+  edits in those directories, an edit inside an install window, and an edit
+  to a package whose package.json an editor replaced, once an install Stim
+  did not run follows. A tree with no install stamp, or a directory that
+  cannot be read, is kept. stim doctor, stim gc --dry-run and report-mode
+  passes write nothing.
+
   Concurrency: an acting stim gc takes the same exclusive maintenance claim as
   the stim-daemon's maintenance pass. While one holds it the other refuses at
   once with STIM_CLAIM_REFUSED naming the holder (pid, start, trigger); retry
@@ -1216,7 +1247,7 @@ TMPDIR LEFTOVERS
   \`gc --dry-run\` reports recognized entries directly in the user's TMPDIR
   under "TMPDIR leftovers", with their count, size and a remedy: Stim temp
   directories (stim-claim-*, stim-host-*, stim-fakehome-*,
-  stim-hosted-macos-*, stim-server-*, stim-ws-*), xctrace recordings
+  stim-hosted-macos-*, stim-server-*, stim-ws-*, stim-parity-*), xctrace recordings
   (instruments*.ktrace), SwiftPM temp directories (TemporaryDirectory.* with a
   six-character suffix, left by swift and xcodebuild) and Jest's
   jest_<uid in base 36> cache. \`gc\` at high or critical checks them again and deletes a
@@ -1224,6 +1255,9 @@ TMPDIR LEFTOVERS
   it changed for 24 hours. It keeps a Stim temp directory that contains or
   sits inside a registered project, holds a live or unverifiable ownership
   claim or a .lock directory that is not a claim set, or cannot be listed. It
+  removes a stim-parity-* directory, with its git worktree registration, only
+  when its Stim record names a process that has ended; one without that record
+  stays. It
   keeps a recording or SwiftPM temp directory that cannot be read, every
   recording while an xctrace or Instruments process runs, and every SwiftPM
   temp directory while a swift or xcodebuild process runs, or when the process
@@ -1601,7 +1635,16 @@ THE ONE CASE GC WILL NOT REAP
   .watchmanconfig, never from a global config, and only when it adds the
   root, so an existing root needs \`watchman watch-del <root>\` before the
   ignore applies. Doctor never runs watch-del or shutdown-server; a watch-del
-  plus a watchman restart frees the memory now.`,
+  plus a watchman restart frees the memory now.
+
+  On macOS each stimd that launchd starts leaves a job named
+  dev.stim.stimd.<hash>.<id> in the login domain. \`stim doctor\` notes
+  stopped ones whose STIM_HOME folder is gone, and \`stim doctor --fix\`
+  removes them, as does the next launchd-started stimd. A running job and a
+  job whose home exists are kept, and so is one whose home is under /Volumes,
+  unreadable or behind a broken symlink. A home on a share mounted elsewhere
+  (SMB or NFS at ~/mnt/x) reads as gone while unmounted and its stopped job is
+  removed; each stimd start registers a new job, so nothing is lost.`,
     },
     disk: {
       summary:

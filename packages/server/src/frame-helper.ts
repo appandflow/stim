@@ -10,7 +10,7 @@ import {
   setClaimChild,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, unlessChildExits } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
 import {
@@ -311,8 +311,12 @@ export class HelperSource {
     if (claim) {
       try {
         const identity = this.child.pid ? captureProcessIdentity(this.child.pid) : null;
-        if (!identity?.ok) throw new Error('Hosted capture child identity could not be established.');
-        setClaimChild(claim, { pid: this.child.pid!, processToken: identity.token });
+        if (identity?.ok) setClaimChild(claim, { pid: this.child.pid!, processToken: identity.token });
+        else {
+          const unavailable = new Error('Hosted capture child identity could not be established.');
+          if (identity?.code !== 'NOT_FOUND') throw unavailable;
+          unlessChildExits(this.child, () => this.fail(unavailable.message));
+        }
       } catch (error) {
         queueMicrotask(() => this.fail((error as Error).message));
       }

@@ -14,6 +14,7 @@ export interface Input {
   kind: InputKind;
   /** sha256, 64 lowercase hex. */
   hash: string;
+  /** A `package` row's installed versions, or the version of the installed copy an `npm:` file row was read from. */
   version?: string;
   mode?: 'identity' | 'content';
   git?: GitLabel;
@@ -86,17 +87,53 @@ export function canonicalJson(value: unknown): string {
   throw new TypeError(`canonical JSON has no form for a ${typeof value}`);
 }
 
+function npmPackage(name: string): { name: string; subpath: string } | null {
+  if (!name.startsWith('npm:')) return null;
+  const parts = name.slice('npm:'.length).split('/');
+  const size = parts[0]?.startsWith('@') ? 2 : 1;
+  const packageName = parts.slice(0, size).join('/');
+  if (parts.length <= size || packageName.slice(1).includes('@')) return null;
+  return { name: packageName, subpath: parts.slice(size).join('/') };
+}
+
+// @ref LLP 0024#each-installed-version-of-a-package-is-its-own-input -- version-qualify only when versions differ
+function qualifyCopies(inputs: readonly Input[]): readonly Input[] {
+  const versions = new Map<string, Set<string>>();
+  for (const input of inputs) {
+    const parsed = npmPackage(input.name);
+    if (parsed && input.version !== undefined)
+      versions.set(parsed.name, (versions.get(parsed.name) ?? new Set()).add(input.version));
+  }
+  if (![...versions.values()].some((set) => set.size > 1)) return inputs;
+  return inputs.map((input) => {
+    const parsed = npmPackage(input.name);
+    if (!parsed || input.version === undefined || (versions.get(parsed.name)?.size ?? 0) < 2) return input;
+    return { ...input, name: `npm:${parsed.name}@${input.version}/${parsed.subpath}` };
+  });
+}
+
+const npmCopy = (a: Input, b: Input) => a.name.startsWith('npm:') && a.version !== undefined && a.version === b.version;
+
+// @ref LLP 0024#copies-at-one-version-share-a-row -- an install path would make the name depend on the layout
 /**
- * The rows sorted by name, with rows two stages both produced merged. Two rows of one name that disagree are a bug in
- * a stage, never a row to drop.
+ * The rows sorted by name, with rows two stages both produced merged. Installed copies of one package at one version
+ * whose file differs share a row hashing their sorted distinct hashes. Any other two rows of one name that disagree are
+ * a bug in a stage, never a row to drop.
  */
 export function mergeInputs(inputs: readonly Input[]): Input[] {
   const byName = new Map<string, Input>();
-  for (const input of inputs) {
+  const copies = new Map<string, Set<string>>();
+  for (const input of qualifyCopies(inputs)) {
     const known = byName.get(input.name);
     if (!known) byName.set(input.name, input);
-    else if (known.kind !== input.kind || known.hash !== input.hash)
-      throw new Error(`two fingerprint inputs named ${input.name} disagree`);
+    else if (known.kind === input.kind && known.hash === input.hash) continue;
+    else if (known.kind === 'file' && input.kind === 'file' && npmCopy(known, input))
+      copies.set(input.name, (copies.get(input.name) ?? new Set([known.hash])).add(input.hash));
+    else throw new Error(`two fingerprint inputs named ${input.name} disagree`);
+  }
+  for (const [name, hashes] of copies) {
+    const known = byName.get(name);
+    if (known) byName.set(name, { ...known, hash: sha256(canonicalJson([...hashes].toSorted(byCodeUnit))) });
   }
   return [...byName.values()].toSorted((a, b) => byCodeUnit(a.name, b.name));
 }
