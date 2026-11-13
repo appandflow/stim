@@ -75,6 +75,14 @@ it('measures the first successful interaction that displays Count: 1', () => {
     ...interactionCommand('2026-11-13T15:00:11.000Z', 'Count: 1'),
     command: 'agent-device screenshot /tmp/s.png',
   };
-  expect(nativeInteractionSeconds([failed, stale, screenshot], dispatch)).toBeNull();
-  expect(nativeInteractionSeconds([failed, stale, screenshot, click], dispatch)).toBe(12.3);
+  const batched = { ...click, command: `/bin/zsh -lc '${click.command} && agent-device screenshot /tmp/s.png'` };
+  const wrapped = { ...click, command: `/bin/zsh -lc '${click.command}'` };
+  expect(nativeInteractionSeconds([failed, stale, screenshot, batched], dispatch)).toBeNull();
+  expect(nativeInteractionSeconds([failed, stale, screenshot, wrapped], dispatch)).toBe(12.3);
+  const snapshot = {
+    ...interactionCommand('2026-11-13T15:00:13.000Z', '@e2 [text] "Count: 1"'),
+    command: 'env AGENT_DEVICE_SESSION=test agent-device snapshot --force-full',
+  };
+  expect(nativeInteractionSeconds([snapshot], dispatch)).toBeNull();
+  expect(nativeInteractionSeconds([{ ...click, output: 'Increment' }, snapshot], dispatch)).toBe(13);
 });

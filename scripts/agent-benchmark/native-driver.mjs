@@ -70,6 +70,7 @@ const coordinatorHashes = () =>
     [
       'native-driver.mjs',
       'native-task.mjs',
+      'run-guards.mjs',
       'runner.mjs',
       'stamp.mjs',
       'shell-environment.mjs',

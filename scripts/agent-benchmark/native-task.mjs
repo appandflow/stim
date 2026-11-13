@@ -1,3 +1,5 @@
+import { literalShellArguments, topLevelShellCommand } from './run-guards.mjs';
+
 export function nativeTaskPrompt({
   arm,
   platform,
@@ -48,25 +50,33 @@ export function nativeTaskPrompt({
       : platform === 'android'
         ? 'For agent-device open use --platform android --serial <emulator serial>.'
         : 'For agent-device open use --platform macos --surface app and the exact bundle identifier of this run.',
+    'Press Increment with a standalone foreground agent-device press or click command using --settle. If the output omits Count: 1, immediately run a standalone agent-device snapshot --force-full. Run screenshots and other evidence commands separately.',
     `Before the final verification sequence and before pressing Increment, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : 'Read the actual app PID from the selected simulator or macOS launch, capture its native process start time in seconds and microseconds and save process: {pid, startSeconds, startMicros}.'} Preserve the exact command and output in the transcript. Earlier failed attempts may be retried, including relaunches, within this same timed run. If the process is replaced during verification, restart the complete verification sequence and retain the earlier attempt. The identity used for the final Count: 1 screenshot must remain unchanged through independent verification.`,
     `Open only the app and device created for this run. After verifying both texts, ${saveScreenshot} and save an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,
-    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only; copy the full bundle path verbatim from the launch JSON when using Stim), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before that final verification sequence.`,
+    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only; when using Stim, print the successful launch JSON in the transcript and use its .bundle field directly), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before that final verification sequence.`,
     'Leave the app, device, worktree and agent-device session running for independent coordinator verification. Do not stop or remove them.',
   ].join('\n\n');
 }
 
 export function nativeInteractionSeconds(commands, dispatchAt) {
-  const started = Date.parse(dispatchAt);
-  const interaction = commands
-    .filter(
-      (entry) =>
-        entry.exitCode === 0 &&
-        /\bagent-device\b[^\n]*\b(?:press|click|tap)\b/.test(entry.command ?? '') &&
-        /\bCount: 1\b/.test(entry.output ?? ''),
-    )
-    .map((entry) => Date.parse(entry.endedAt))
-    .filter((ended) => ended >= started);
-  return interaction.length === 0 ? null : (Math.min(...interaction) - started) / 1000;
+  const dispatch = Date.parse(dispatchAt);
+  let first = Infinity;
+  const incremented = new Set();
+  for (const entry of commands) {
+    if (entry.exitCode !== 0) continue;
+    const words = literalShellArguments(topLevelShellCommand(entry.command));
+    if (!words) continue;
+    const command = words[0] === 'env' ? words.findIndex((word, index) => index > 0 && !word.includes('=')) : 0;
+    if (words[command] !== 'agent-device') continue;
+    const action = words[command + 1];
+    const session = words.find((word) => word.startsWith('AGENT_DEVICE_SESSION='));
+    const ended = Date.parse(entry.endedAt);
+    if (!(ended >= dispatch)) continue;
+    if (['press', 'click', 'tap'].includes(action)) incremented.add(session);
+    if (!incremented.has(session) || !['press', 'click', 'tap', 'snapshot'].includes(action)) continue;
+    if (/\bCount: 1\b/.test(entry.output ?? '')) first = Math.min(first, ended);
+  }
+  return first === Infinity ? null : (first - dispatch) / 1000;
 }
 
 export function nativeSourceProof({ before, after, marker, changedPaths, source }) {
