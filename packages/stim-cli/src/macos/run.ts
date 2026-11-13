@@ -83,7 +83,8 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
       if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGTERM');
       throw new Error('The macOS launch owner changed.');
     }
-    const log = (level: string, msg: string) => writer.write({ src: 'client', platform: 'macos', level, msg });
+    const log = (level: string, msg: string, event?: string) =>
+      writer.write({ src: 'client', platform: 'macos', launchId, level, msg, event });
     if (child.stdout) logLines(child.stdout, (line) => log('info', line));
     if (child.stderr) logLines(child.stderr, (line) => log('warn', line));
     process.on('SIGTERM', stop);
@@ -98,6 +99,7 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     log(
       stopping || child.exitCode === 0 ? 'info' : 'error',
       `Exited ${record.product} (${child.exitCode ?? child.signalCode ?? 'unknown'}).`,
+      'macos_app_exit',
     );
     updateMacosRecord(root, owner, { app: undefined, supervisor: undefined });
   } finally {

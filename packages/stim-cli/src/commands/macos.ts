@@ -27,7 +27,7 @@ import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { clearClaimChild } from '../ownership-claim.ts';
-import { sameProcessRecord } from '../process-identity.ts';
+import { inspectProcessIdentity, sameProcessRecord } from '../process-identity.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
@@ -48,7 +48,7 @@ import {
   SUPERVISOR_EXIT_MS,
 } from '../macos/stop.ts';
 import { startedBy } from '../macos/instances.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter, readNdjsonGenerations } from '../ndjson.ts';
 import { resolveBuildPlacement, resolveBuildMachine } from '../build-placement.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
@@ -179,7 +179,9 @@ export async function runMacos(
             try {
               const runSignal = runCancellationSignal(context);
               const signal = runSignal ? AbortSignal.any([context.signal, runSignal]) : context.signal;
-              if ((await waitForLaunchServices(here, deadline, signal)) === 'timeout')
+              const launch = await waitForLaunchServices(here, deadline, signal);
+              if (launch === 'exited') throw new MacosStartupError(here.product);
+              if (launch === 'timeout')
                 note(
                   'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
                 );
@@ -190,6 +192,8 @@ export async function runMacos(
               return here;
             } catch (error) {
               await cleanupFailedMacosLaunch(context, root, record, here.supervisor, here.app, error);
+              if (error instanceof MacosStartupError)
+                throw new MacosStartupError(here.product, macosStartupDiagnostics(root, here));
               throw error;
             }
           }
@@ -379,7 +383,7 @@ export async function waitForLaunchServices(
   record: MacosAppRecord,
   deadline: number,
   signal?: AbortSignal,
-): Promise<'listed' | 'timeout' | 'skipped'> {
+): Promise<'listed' | 'timeout' | 'skipped' | 'exited'> {
   if (record.host || !record.app) return 'skipped';
   const args = ['find', `bundleid=${record.bundleId}`, `pid=${record.app.pid}`];
   while (Date.now() < deadline) {
@@ -392,10 +396,28 @@ export async function waitForLaunchServices(
         return '';
       });
     signal?.throwIfAborted();
+    const identity = inspectProcessIdentity(record.app);
+    if (identity === 'gone' || identity === 'different') return 'exited';
     if (out.includes('ASN:')) return 'listed';
     await cancellableSleep(100, { signal, what: 'LaunchServices' });
   }
   return 'timeout';
+}
+
+class MacosStartupError extends Error {
+  readonly code = 'STIM_LAUNCH_FAILED';
+  readonly remedy = 'Run `stim logs --source client` for the app output.';
+
+  constructor(product: string, diagnostics: string[] = []) {
+    super([`${product} exited before macOS listed it as running.`, ...diagnostics].join('\n'));
+  }
+}
+
+function macosStartupDiagnostics(root: string, record: MacosAppRecord): string[] {
+  return readNdjsonGenerations(macosLogFile(root))
+    .filter((entry) => entry.launchId === record.launchId && ['warn', 'error'].includes(entry.level ?? ''))
+    .slice(0, 12)
+    .flatMap((entry) => (entry.msg ? [entry.msg.slice(0, 1000)] : []));
 }
 
 async function launchHere(
@@ -443,6 +465,9 @@ async function launchHere(
       throw failure;
     }
     await cleanupFailedMacosLaunch(context, root, record, supervisor, undefined, error);
+    const logs = readNdjsonGenerations(macosLogFile(root)).filter((entry) => entry.launchId === record.launchId);
+    if (logs.some((entry) => entry.event === 'macos_app_exit'))
+      throw new MacosStartupError(record.product, macosStartupDiagnostics(root, record));
     throw error;
   }
 }

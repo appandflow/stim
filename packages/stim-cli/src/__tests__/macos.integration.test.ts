@@ -1989,6 +1989,21 @@ describe('waitForLaunchServices', () => {
     ]);
   });
 
+  test.skipIf(process.platform !== 'darwin')('reports an owned app that exits before registration', async () => {
+    const app = await ownedProcess();
+    const child = children.at(-1);
+    assert(child);
+    const runFileAsync = vi.fn<() => Promise<string>>(async () => {
+      const closed = once(child, 'close');
+      child.kill('SIGTERM');
+      await closed;
+      return '';
+    });
+    setExecutor({ runFileAsync });
+    await expect(waitForLaunchServices(record({ app }), Date.now() + 20_000)).resolves.toBe('exited');
+    expect(runFileAsync).toHaveBeenCalledTimes(1);
+  });
+
   test('skips a hosted launch, which has no local pid', async () => {
     const runFileAsync = vi.fn<() => Promise<string>>();
     setExecutor({ runFileAsync });
