@@ -14,9 +14,13 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 :::
 
 `stim start` reserves a port for the workspace and has the Stim home's stimd
-start its React Native or Expo dev server as its own child. The command exits
-only after the server answers and Stim verifies its project identity. It
-starts stimd when none runs, whatever `daemon.mode` says.
+start its React Native or Expo dev server. The command exits only after the
+server answers and Stim verifies its project identity. It starts stimd when
+none runs, whatever `daemon.mode` says. The dev server runs under a small
+helper process, its parent, which records what the dev server writes and its
+exit code even while stimd restarts or updates. On macOS, output still buffered
+inside the dev server when it calls `process.exit()` after a burst larger than
+the pipe buffer (64 KB) is lost; everything it wrote before exiting is recorded.
 
 A Debug `stim ios` or `stim android` run starts the dev server the same way
 when it is not running, so `stim start` is optional. Running it first lets
@@ -219,7 +223,7 @@ carries it:
 | `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                            |
 | `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                           |
 | `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                |
-| `vanished`      | The dev server is gone and recorded no cause, usually because it died while no stimd ran, or after a machine restart. `stim stop` logs `supervisor_vanished`.                                           |
+| `vanished`      | The dev server is gone and recorded no cause, usually after a machine restart or when its helper was killed too. `stim stop` logs `supervisor_vanished`.                                                |
 
 ## Watchman roots
 

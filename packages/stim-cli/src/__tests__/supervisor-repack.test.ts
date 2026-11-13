@@ -1,4 +1,3 @@
-import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -7,9 +6,8 @@ import { ensureDevServer } from '../commands/native-runtime.ts';
 import type { startDevServer } from '../commands/start.ts';
 import { projectSettingsContext } from '../workspace/settings.ts';
 import { closeMetroChildren, ensureMetro, openMetroChildren } from '../stimd/metro/children.ts';
-import { repackRecords, repackServerProblem, startRepackServer } from '../stimd/metro/server-repack.ts';
+import { repackRecords, repackServerProblem, repackServerLaunch } from '../stimd/metro/server-repack.ts';
 import { detectDevServer } from '../stimd/metro/state.ts';
-import { makeChildProcess } from './_factories.ts';
 
 let root: string;
 beforeEach(() => {
@@ -182,25 +180,22 @@ describe('detectDevServer', () => {
   });
 });
 
-describe('startRepackServer', () => {
+describe('repackServerLaunch', () => {
   test("runs Rock's bin with the fixed Re.Pack flags and no adb for Re.Pack's own reverse, and Stim's own node on Windows", async () => {
     file('rock.config.mjs', ROCK_REPACK);
     installed('rock', 'dist/src/bin.js');
     installed('@callstack/repack');
-    const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
-    const spawnFn = (cmd: string, args: string[], opts: SpawnOptions) => {
-      calls.push({ cmd, args, opts });
-      return makeChildProcess({ pid: 4242 });
-    };
     const logsDir = join(root, 'logs');
-    await startRepackServer({ root, port: 8095, logsDir, spawnFn, platform: 'darwin', resetCache: true });
-    await startRepackServer({ root, port: 8095, logsDir, spawnFn, platform: 'win32' });
+    const calls = [
+      repackServerLaunch({ root, port: 8095, logsDir, platform: 'darwin', resetCache: true }),
+      repackServerLaunch({ root, port: 8095, logsDir, platform: 'win32' }),
+    ];
 
     const flags = ['start', '--port', '8095', '--no-interactive', '--no-reverse-port', '--json', '--log-requests'];
-    expect(calls[0]).toMatchObject({ args: [...flags, '--reset-cache'], opts: { cwd: root } });
-    expect(calls[0]?.opts.env?.ANDROID_HOME).toBe(devNull);
-    expect(calls[0]?.cmd.endsWith(join('rock', 'dist', 'src', 'bin.js'))).toBe(true);
-    expect(calls[1]?.cmd).toBe(process.execPath);
+    expect(calls[0]).toMatchObject({ args: [...flags, '--reset-cache'] });
+    expect(calls[0]?.env.ANDROID_HOME).toBe(devNull);
+    expect(calls[0]?.command.endsWith(join('rock', 'dist', 'src', 'bin.js'))).toBe(true);
+    expect(calls[1]?.command).toBe(process.execPath);
     expect(calls[1]?.args.slice(1)).toEqual(flags);
     expect(calls[1]?.args[0]?.endsWith(join('rock', 'dist', 'src', 'bin.js'))).toBe(true);
   });
@@ -208,12 +203,9 @@ describe('startRepackServer', () => {
   test('refuses with STIM_REPACK_BIN instead of falling back when the config names Re.Pack but it is not installed', async () => {
     expoModulesApp();
     file('rock.config.mjs', ROCK_REPACK);
-    const spawnFn = vi.fn<(cmd: string, args: string[], opts: SpawnOptions) => never>();
-    await expect(startRepackServer({ root, port: 8095, logsDir: join(root, 'logs'), spawnFn })).rejects.toMatchObject({
-      code: 'STIM_REPACK_BIN',
-      message: expect.stringContaining('rock.config.mjs'),
-    });
-    expect(spawnFn).not.toHaveBeenCalled();
+    expect(() => repackServerLaunch({ root, port: 8095, logsDir: join(root, 'logs') })).toThrow(
+      expect.objectContaining({ code: 'STIM_REPACK_BIN', message: expect.stringContaining('rock.config.mjs') }),
+    );
     expect(repackServerProblem(root, null)).not.toBeNull();
     expect(repackServerProblem(root, ['node', 'start.js', '{port}'])).toBeNull();
   });

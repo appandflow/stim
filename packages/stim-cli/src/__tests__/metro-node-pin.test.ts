@@ -1,11 +1,10 @@
-import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { startCommandServer } from '../stimd/metro/server-command.ts';
-import { startExpoServer } from '../stimd/metro/server-expo.ts';
-import { makeChildProcess, makeExecutor } from './_factories.ts';
+import { commandServerLaunch } from '../stimd/metro/server-command.ts';
+import { expoServerLaunch } from '../stimd/metro/server-expo.ts';
+import { makeExecutor } from './_factories.ts';
 
 afterEach(() => {
   resetExecutor();
@@ -34,28 +33,22 @@ test.each(['expo', 'command'] as const)(
       vi.stubEnv('NVM_DIR', nvm);
       vi.stubEnv('STIM_HOME', join(dir, 'stim-home'));
       setExecutor(makeExecutor({ runFileQuiet: () => '99.0.0' }));
-      let childPath: string | undefined;
-      const spawnFn = (_command: string, _args: string[], options: SpawnOptions) => {
-        childPath = options.env?.PATH;
-        return makeChildProcess();
-      };
-      const start = () => {
-        const options = { root, port: 8095, logsDir: join(dir, 'logs'), spawnFn, platform: 'darwin' as const };
-        return mode === 'expo'
-          ? startExpoServer(options)
-          : startCommandServer({ ...options, command: ['node', 'metro.js', '--port', '{port}'] });
+      const childPath = async () => {
+        const options = { root, port: 8095, logsDir: join(dir, 'logs'), platform: 'darwin' as const };
+        const launch =
+          mode === 'expo'
+            ? await expoServerLaunch(options)
+            : commandServerLaunch({ ...options, command: ['node', 'metro.js', '--port', '{port}'] });
+        return launch.env.PATH;
       };
 
-      await start();
-      expect(childPath?.split(delimiter)[0]).toBe(bins[0]);
+      expect((await childPath())?.split(delimiter)[0]).toBe(bins[0]);
       writeFileSync(join(root, '.node-version'), '2.0.0\n');
-      await start();
-      expect(childPath?.split(delimiter)[0]).toBe(bins[1]);
+      expect((await childPath())?.split(delimiter)[0]).toBe(bins[1]);
       rmSync(join(root, '.node-version'));
       rmSync(join(repo, '.nvmrc'));
       writeFileSync(join(dir, '.nvmrc'), '1.2.0\n');
-      await start();
-      expect(childPath).toBe(process.env.PATH);
+      expect(await childPath()).toBe(process.env.PATH);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

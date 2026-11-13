@@ -58,6 +58,11 @@ export function workspaceNativeRunClaim(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'native-run.lock');
 }
 
+/** Where a dev server's helper records how the dev server ended, before the helper itself exits. */
+export function metroExitFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'metro-run.exit.json');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }

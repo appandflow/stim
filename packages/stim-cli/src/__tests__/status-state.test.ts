@@ -1,5 +1,8 @@
 import assert from 'node:assert';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { metroExitFile } from '@stim-cli/core/state';
 import {
   activityLabel,
   addReverseMissingIssue,
@@ -23,7 +26,7 @@ import {
   physicalDeviceStates,
 } from '../physical-devices.ts';
 import { makeEnvironmentState } from './_factories.ts';
-import { metroLastStop } from '../stimd/metro/stop-cause.ts';
+import { describeDevServerStop, devServerStopRecord, metroLastStop } from '../stimd/metro/stop-cause.ts';
 
 const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'stim-app', state: 'Shutdown' };
@@ -270,6 +273,49 @@ test('a stopped dev server reports its recorded cause, or a vanished supervisor 
     running: true,
     pid: 42,
   });
+});
+
+test('a stale supervisor takes the exit its helper recorded only when the pid and the process token both match', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-last-stop-'));
+  vi.stubEnv('STIM_HOME', home);
+  try {
+    const root = join(home, 'project');
+    const file = metroExitFile(root);
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        pid: 99,
+        processToken: 'earlier',
+        code: 3,
+        signal: null,
+        exitedAt: '2026-09-26T20:00:00.000Z',
+        helperPid: 5,
+      }),
+    );
+    const stale = { status: 'stale', pid: 99, startedAt: '2026-09-26T19:00:00.000Z' };
+    const state = (processToken: string) => ({ supervisor: { pid: 99, processToken, mode: 'bare' } });
+    expect(metroLastStop(state('earlier'), stale, root)).toMatchObject({ reason: 'server-exited', code: 3 });
+    expect(metroLastStop(state('current'), stale, root)).toEqual({
+      reason: 'vanished',
+      pid: 99,
+      startedAt: '2026-09-26T19:00:00.000Z',
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a stop request keeps the exit code of a dev server that had already exited', () => {
+  const request = { processToken: 't', by: 'stim stop', pid: 7, at: '2026-09-26T20:00:00.000Z' };
+  const at = '2026-09-26T20:00:01.000Z';
+  const exited = devServerStopRecord({ kind: 'server-exit', mode: 'bare', code: 5, signal: null }, request, at);
+  expect(exited).toMatchObject({ reason: 'requested', by: 'stim stop', code: 5 });
+  expect(describeDevServerStop(exited)).toContain('exit code 5');
+  const plain = devServerStopRecord({ kind: 'signal', signal: 'SIGTERM' }, request, at);
+  expect(plain).not.toHaveProperty('code');
+  expect(describeDevServerStop(plain)).not.toContain('exited by itself');
 });
 
 test('statusActivity rounds lastActivityAt down to the minute, so records within one minute give the same payload', () => {

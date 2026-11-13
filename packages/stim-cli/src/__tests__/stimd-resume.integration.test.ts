@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
-import { stimdBootsFile, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
+import { isJsonObject, stimdBootsFile, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
@@ -393,6 +393,9 @@ async function stopMetro(root: string): Promise<void> {
     if (!child || !processGroupAlive(child.pid) || inspectProcessIdentity(child) !== 'same') continue;
     process.kill(-child.pid, 'SIGKILL');
     await waitForProcessExit(child, 5000);
+    const helper = holder.details.helper;
+    if (isJsonObject(helper) && typeof helper.pid === 'number' && typeof helper.processToken === 'string')
+      await waitForProcessExit({ pid: helper.pid, processToken: helper.processToken }, 15_000);
   }
 }
 

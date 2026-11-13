@@ -55,7 +55,10 @@ exports.loadConfig = async ({ port }) => ({ server: { port }, resolver: { platfo
 exports.runServer = ${
       listens
         ? `(config) => new Promise((resolve) => {
-  const httpServer = http.createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''));
+  const httpServer = http.createServer((req, res) => {
+    if (req.url === '/print') console.error('error: written while no stimd ran');
+    res.end(req.url === '/status' ? 'packager-status:running' : '');
+  });
   httpServer.listen(config.server.port, () => resolve({ httpServer }));${
     exitsAfterMs
       ? `
@@ -465,11 +468,16 @@ exports.runServer = (config) => new Promise((resolve) => {
     });
     const state = JSON.parse(readFileSync(join(workspaceDir(root), 'state.json'), 'utf8'));
     expect(state.supervisor).toMatchObject({ pid: started.pid, port });
-    const ps = spawn('ps', ['-o', 'ppid=', '-p', String(started.pid)]);
-    let ppid = '';
-    ps.stdout.on('data', (chunk) => (ppid += chunk));
-    await once(ps, 'exit');
-    expect(Number(ppid)).toBe(stimdPid);
+    const parent = async (pid: number) => {
+      const ps = spawn('ps', ['-o', 'ppid=', '-p', String(pid)]);
+      let ppid = '';
+      ps.stdout.on('data', (chunk) => (ppid += chunk));
+      await once(ps, 'exit');
+      return Number(ppid);
+    };
+    const helper = await parent(Number(started.pid));
+    expect(JSON.parse(readFileSync(claimFile(root, 'metro'), 'utf8')).details.helper).toMatchObject({ pid: helper });
+    expect(await parent(helper)).toBe(stimdPid);
     expect(await (await fetch(`http://localhost:${port}/status`)).text()).toBe('packager-status:running');
     await expect(ask('metro.ensure', { root, port })).resolves.toEqual({ ...started, state: 'running' });
   });
@@ -778,10 +786,13 @@ socket.on('data', chunk => {
       );
       operation.destroy();
       await vi.waitFor(() => expect(processGroupAlive(supervisor.pid)).toBe(false), { timeout: 15_000, interval: 100 });
-      await vi.waitFor(() => {
-        const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
-        expect([...claims.live, ...claims.unresolved]).toEqual([]);
-      });
+      await vi.waitFor(
+        () => {
+          const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+          expect([...claims.live, ...claims.unresolved]).toEqual([]);
+        },
+        { timeout: 15_000, interval: 100 },
+      );
     } finally {
       operation.destroy();
     }
@@ -1171,7 +1182,7 @@ require('node:http')
       metroClaim,
       JSON.stringify({ ...priorClaim, details: { ...priorClaim.details, engineDir: 'bbbbbbbbbbbb' } }),
     );
-    appendFileSync(join(workspaceLogsDir(root), 'metro.stderr.log'), 'error: written while no stimd ran\n');
+    await fetch(`http://localhost:${port}/print`);
     await startStimd();
     await vi.waitFor(() =>
       expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor.engineDir).toBe('bbbbbbbbbbbb'),

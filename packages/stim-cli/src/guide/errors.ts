@@ -378,6 +378,10 @@ Branch on the code, never on the message.`,
   message names the claim and the exact, shell-quoted removal that clears it --
   just that claim's file, not the lock directory around it; run that, then
   run the command again. Nothing was built, installed or removed.
+  The stimd answer to a stop carries it when this workspace's Metro claim is
+  unresolved, because Stim cannot tell whether that dev server still runs.
+  \`stim stop\` prints that answer's message and remedy (the port check to
+  run, then the removal of that claim) as a failed Metro stop, without the code.
   An acting \`stim gc\` takes the same exclusive maintenance claim as the
   stim-daemon's maintenance pass. While one holds it the other refuses at once
   with this code, naming the holder (pid, start, trigger); retry after it

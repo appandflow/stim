@@ -1,29 +1,21 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { devNull } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { processGroupAlive } from '@stim-cli/core/ownership-claim';
-import { getExecutor } from '../../exec.ts';
-import { signalProcessTree } from '../../metro.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { type RepackConfig, detectRepackConfig, resolvePackageJson } from '../../workspace/project-files.ts';
-import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
+import type { ServerLaunch } from './child-server.ts';
 import { supervisorError } from './errors.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
 import { expoBinFromPackage, recordFromLine, repositoryRoot } from './server-expo.ts';
-import { MODE_REPACK } from './state.ts';
 
-export async function startRepackServer({
+/** Rock's or the React Native CLI's `start` with Stim's fixed Re.Pack flags, run with the project's Node. */
+export function repackServerLaunch({
   root,
   port,
   logsDir,
   writer = null,
-  spawnFn = null,
-  killTimeoutMs = 5000,
   resetCache = false,
   platform = process.platform,
-  output = null,
   extraEnv = {},
   baseEnv = process.env,
 }: {
@@ -31,23 +23,18 @@ export async function startRepackServer({
   port: number;
   logsDir: string;
   writer?: NdjsonWriter | null;
-  spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
-  killTimeoutMs?: number;
   resetCache?: boolean;
   platform?: NodeJS.Platform;
-  /** File stdio and its own process group, for a child that outlives its parent, instead of pipes. */
-  output?: { files: ChildOutput; fds: [number, number] } | null;
   extraEnv?: Record<string, string>;
   baseEnv?: NodeJS.ProcessEnv;
-}): Promise<ChildServerHandle> {
+}): ServerLaunch {
   const config = detectRepackConfig(root);
   const bin = config ? repackBin(root, config.cli) : null;
   if (!bin) {
     const refusal = repackBinRefusal(root, config);
     throw supervisorError('STIM_REPACK_BIN', refusal.message, refusal.remedy);
   }
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
-  const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const args = [
     'start',
     '--port',
@@ -58,7 +45,7 @@ export async function startRepackServer({
     '--log-requests',
     ...(resetCache ? ['--reset-cache'] : []),
   ];
-  // Windows shims run the package bin through another node, so Stim runs it with its own (see startExpoServer).
+  // Windows shims run the package bin through another node, so Stim runs it with its own (see expoServerLaunch).
   const [command, commandArgs] = platform === 'win32' ? [process.execPath, [bin, ...args]] : [bin, args];
   const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
@@ -69,32 +56,14 @@ export async function startRepackServer({
       msg: `Re.Pack runs on ${projectNodeLine(node.pinned)}`,
     });
   }
-  const group = output !== null && platform !== 'win32';
-  const child = spawn(command, commandArgs, {
-    cwd: root,
-    stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
-    detached: group,
+  return {
+    command,
+    args: commandArgs,
     // Re.Pack 5 runs `$ANDROID_HOME/platform-tools/adb reverse` on every connected device before each Android
     // compile, even with --no-reverse-port, and ignores its failures; Stim reverses only the devices it drives.
     env: { ...node.env, FORCE_COLOR: '0', ANDROID_HOME: devNull, ...extraEnv },
-  });
-  return superviseChildServer({
-    mode: MODE_REPACK,
-    child,
-    log,
-    toRecord: repackRecords(),
-    signal: (sig) => {
-      if (!group || !child.pid) return child.kill(sig);
-      try {
-        return signalProcessTree(child.pid, sig, { group, platform });
-      } catch {
-        return false;
-      }
-    },
-    alive: group ? () => child.pid !== undefined && processGroupAlive(child.pid) : null,
-    killTimeoutMs,
-    output: output?.files,
-  });
+    observesRequests: false,
+  };
 }
 
 /** Why the Re.Pack dev server a project's config names cannot start, or null when it can, none is named or metro.command replaces it. */

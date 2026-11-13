@@ -2,7 +2,7 @@ import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
+import { type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
@@ -226,7 +226,7 @@ export function writeWorkspaceEvent(
   fields = {},
 ): void {
   if (!getProject(root) && !existsSync(workspaceMetadataFile(root))) return;
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'));
   writer.write({ src: 'metro', level, event, msg, ...fields });
   writer.close();
 }

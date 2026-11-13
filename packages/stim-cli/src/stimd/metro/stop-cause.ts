@@ -6,9 +6,9 @@ import {
   type MetroLastStop,
   type WorkspaceState,
   readDevServerStop,
+  readMetroExit,
 } from '@stim-cli/core/state';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
@@ -63,6 +63,8 @@ export function devServerStopRecord(
       by: request.by,
       byPid: request.pid,
       ...(request.workspace ? { byWorkspace: request.workspace } : {}),
+      ...(trigger.kind === 'server-exit' && trigger.code !== null ? { code: trigger.code } : {}),
+      ...(trigger.kind === 'server-exit' && trigger.signal ? { signal: trigger.signal } : {}),
     };
   }
   return trigger.kind === 'signal'
@@ -75,7 +77,12 @@ export function describeDevServerStop(record: DevServerStopRecord): string {
     return `idle for ${record.idleMinutes} minutes (idle.minutes); run stim revive to resume it`;
   }
   if (record.reason === 'requested') {
-    return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;
+    const exited = record.signal
+      ? `signal ${record.signal}`
+      : record.code !== undefined
+        ? `exit code ${record.code}`
+        : null;
+    return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})${exited ? `, after the dev server had exited by itself (${exited})` : ''}`;
   }
   if (record.reason === 'signal') {
     return `received ${record.signal} with no Stim stop request recorded, so it likely came from outside Stim`;
@@ -93,11 +100,21 @@ export function devServerStopLevel(record: DevServerStopRecord): 'info' | 'warn'
   return record.reason === 'signal' ? 'warn' : 'info';
 }
 
-/** The log line for a recorded supervisor whose process is proven gone, or null while it may still run. */
+/** The exit the helper recorded for this recorded supervisor, matched by pid and process token. */
+function recordedExit(root: string, record: { pid?: unknown; processToken?: unknown }) {
+  const exit = readMetroExit(root);
+  return exit && exit.pid === record.pid && exit.processToken === record.processToken ? exit : null;
+}
+
+/**
+ * The log line for a recorded supervisor whose process is proven gone, or null while it may still run or when its
+ * helper recorded how it ended, which the next stimd logs.
+ */
 function vanishedSupervisorMessage(
+  root: string,
   record: { pid?: unknown; processToken?: unknown; startedAt?: unknown } | null | undefined,
 ): string | null {
-  if (!record || typeof record.pid !== 'number') return null;
+  if (!record || typeof record.pid !== 'number' || recordedExit(root, record)) return null;
   const identity = inspectProcessIdentity(record);
   if (identity !== 'gone' && identity !== 'different') return null;
   const started = typeof record.startedAt === 'string' ? ` (started ${record.startedAt})` : '';
@@ -110,21 +127,34 @@ export function logVanishedSupervisor(
   root: string,
   record: { pid?: unknown; processToken?: unknown; startedAt?: unknown } | null | undefined,
 ): void {
-  const msg = vanishedSupervisorMessage(record);
+  const msg = vanishedSupervisorMessage(root, record);
   if (!msg) return;
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'));
   writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg });
   writer.close();
 }
 
-/** The recorded stop, else a vanished supervisor when status proved the recorded one gone. */
+/**
+ * The recorded stop, else the exit the dev server's helper recorded before a stimd settled it, else a vanished
+ * supervisor when status proved the recorded one gone.
+ */
 export function metroLastStop(
   state: WorkspaceState | null | undefined,
   supervisor: { status: string; pid?: number | null; startedAt?: unknown } | null,
+  root?: string,
 ): MetroLastStop | null {
   const recorded = readDevServerStop(state);
   if (recorded) return recorded;
   if (supervisor?.status !== 'stale' || typeof supervisor.pid !== 'number') return null;
+  const exit = root ? recordedExit(root, { pid: supervisor.pid, processToken: state?.supervisor?.processToken }) : null;
+  if (exit) {
+    const request = readDevServerStopRequest(state);
+    return devServerStopRecord(
+      { kind: 'server-exit', mode: String(state?.supervisor?.mode), code: exit.code, signal: exit.signal },
+      request?.processToken === exit.processToken ? request : null,
+      exit.exitedAt,
+    );
+  }
   const startedAt = typeof supervisor.startedAt === 'string' ? supervisor.startedAt : null;
   return { reason: 'vanished', pid: supervisor.pid, startedAt };
 }

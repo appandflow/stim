@@ -1,15 +1,10 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../../workspace/settings.ts';
-import { getExecutor } from '../../exec.ts';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { stripAnsi } from '../../process-output.ts';
-import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
-import { signalProcessTree } from '../../metro.ts';
-import { processGroupAlive } from '@stim-cli/core/ownership-claim';
+import type { ServerLaunch } from './child-server.ts';
 import { resolvePackageJson } from '../../workspace/project.ts';
 import {
   expoMetroConfigPath,
@@ -204,7 +199,7 @@ const WAITING_ON_RE = /^Waiting on (\S+)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME_RE = /^https?:\/\//i;
 
-function parseExpoWaitingOnUrl(line: unknown): string | null {
+export function parseExpoWaitingOnUrl(line: unknown): string | null {
   const match = WAITING_ON_RE.exec(String(line ?? ''));
   if (!match) return null;
   const url = match[1] as string;
@@ -269,19 +264,16 @@ function resolveMetroStoreInjection(
   return additions;
 }
 
-export async function startExpoServer({
+/** `expo start` on the workspace's port, with Stim's environment for the Metro store, proxy and Expo's own tunnel. */
+export async function expoServerLaunch({
   root,
   port,
   logsDir,
   writer = null,
-  spawnFn = null,
-  killTimeoutMs = 5000,
   tunnel = false,
   resetCache = false,
-  onTunnelUrl = null,
   platform = process.platform,
   settings,
-  output = null,
   extraEnv = {},
   baseEnv = process.env,
 }: {
@@ -289,18 +281,13 @@ export async function startExpoServer({
   port: number;
   logsDir: string;
   writer?: NdjsonWriter | null;
-  spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
-  killTimeoutMs?: number;
   tunnel?: boolean;
   resetCache?: boolean;
-  onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
   settings?: SettingsObject;
-  /** File stdio and its own process group, for a child that outlives its parent, instead of pipes. */
-  output?: { files: ChildOutput; fds: [number, number] } | null;
   extraEnv?: Record<string, string>;
   baseEnv?: NodeJS.ProcessEnv;
-}): Promise<ChildServerHandle> {
+}): Promise<ServerLaunch> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
     const refusal = expoBinRefusal(root);
@@ -308,8 +295,7 @@ export async function startExpoServer({
   }
   const bin = resolved.path;
 
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
-  const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
   const storeEnv = resolveMetroStoreInjection(root, {
@@ -334,11 +320,9 @@ export async function startExpoServer({
       msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
-  const group = output !== null && platform !== 'win32';
-  const child = spawn(command, commandArgs, {
-    cwd: root,
-    stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
-    detached: group,
+  return {
+    command,
+    args: commandArgs,
     env: {
       ...node.env,
       FORCE_COLOR: '0',
@@ -349,34 +333,6 @@ export async function startExpoServer({
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
       ...extraEnv,
     },
-  });
-
-  let tunnelUrlSeen = false;
-  const handle = superviseChildServer({
-    mode: 'expo-child',
-    child,
-    log,
-    toRecord: (chunk, stream) => recordFromLine(chunk, { stream }),
-    signal: (sig) => {
-      if (!group || !child.pid) return child.kill(sig);
-      try {
-        return signalProcessTree(child.pid, sig, { group, platform });
-      } catch {
-        return false;
-      }
-    },
-    alive: group ? () => child.pid !== undefined && processGroupAlive(child.pid) : null,
-    killTimeoutMs,
-    output: output?.files,
-    onRecord: (record) => {
-      if (!tunnel || tunnelUrlSeen || !onTunnelUrl || typeof record.msg !== 'string') return;
-      const url = parseExpoWaitingOnUrl(record.msg);
-      if (url) {
-        tunnelUrlSeen = true;
-        onTunnelUrl(url);
-      }
-    },
-  });
-  handle.observesRequests = storeEnv !== null;
-  return handle;
+    observesRequests: storeEnv !== null,
+  };
 }
