@@ -682,7 +682,7 @@ ENGINE UPDATES ARE MACHINE-LEVEL
 engine.autoUpdate  default auto. Whether stimd moves the machine engine (stim
 engine install) to the newest version on its channel by itself: once a day,
 when Stim Desktop connects, when a phone needs a newer engine, and at most
-once an hour while a crash-looping build is held. auto turns it on for an
+once an hour while a crash-looping build is held. Exits that a fault of the Stim home caused, such as a config.json that does not parse or a full disk, do not mark the build bad or roll the engine back; stimd stops with the file or disk to fix. A stimd killed with no record has an unknown cause: it never rolls the engine back and holds only after five in 10 minutes. Without a previous engine (an npm or global install) the hold only stops automatic detached restarts; a command falls back to a stimd of its own, an attached stimd is never refused, and stim doctor --fix clears the hold. auto turns it on for an
 engine Stim Desktop installed or a service runs and off for any other, such as
 a global npm install; on and off decide for every engine. A person's
 stim engine use or rollback pins the engine and stops it until stim engine

@@ -152,3 +152,10 @@ export async function waitForProcessExit(
   signal?.throwIfAborted();
   return false;
 }
+
+/** The boot id inside a process token, null when the token has none or cannot be decoded. */
+export function processTokenBootId(token: unknown): string | null {
+  if (typeof token !== 'string') return null;
+  const decoded = decode(token);
+  return decoded.ok ? decoded.value.bootId : null;
+}

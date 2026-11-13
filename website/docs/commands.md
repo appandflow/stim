@@ -135,7 +135,9 @@ line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
 log with the last pass. It reports a daemon that stopped ticking, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
-the child, and that stopping that stimd is safe and ends the wait, a daemon claim it cannot
+the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
+three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
+day, a daemon claim it cannot
 resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
 
@@ -1798,12 +1800,13 @@ Plain `status` prints a `Daemon` line for the
 last ticked, and the pressure level with its reasons. A `Last daemon action`
 line follows once a daemon of this home has acted, then a line for each run
 waiting for a build slot or a device boot, and one for each child whose cleanup
-the running daemon could not verify, with its remedy. Each workspace prints a
+the running daemon could not verify, with its remedy, and a line for the crash
+hold and for each of the last abnormal stimd exits. Each workspace prints a
 `stage:` line with where the daemon's idle model has it: `running` with its last
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting`, `unverified` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 
