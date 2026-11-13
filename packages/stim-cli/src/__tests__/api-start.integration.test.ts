@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
 import { workspaceName } from '@stim-cli/core';
+import { isJsonObject } from '@stim-cli/core/state';
 import { createStim } from '../api.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -198,7 +199,7 @@ test('concurrent start clients reuse their own Metro without changing caller con
 });
 
 test.skipIf(process.platform === 'win32')(
-  "start from a child folder runs Metro as stimd's child, reuses it, and the same client stops it",
+  'start from a child folder runs Metro under a helper that stimd started, reuses it, and the same client stops both',
   async () => {
     const root = join(scratch, 'owned-metro');
     const home = join(scratch, 'owned-metro-home');
@@ -237,13 +238,19 @@ test.skipIf(process.platform === 'win32')(
       identity = { pid: state.supervisor.pid, processToken: state.supervisor.processToken };
       expect(first.supervisorPid).toBe(identity.pid);
       expect(inspectProcessIdentity(identity)).toBe('same');
-      expect(
+      const parentOf = (pid: number) =>
         Number(
           getExecutor()
-            .runFile('ps', ['-o', 'ppid=', '-p', String(identity.pid)], { timeoutMs: 5000 })
+            .runFile('ps', ['-o', 'ppid=', '-p', String(pid)], { timeoutMs: 5000 })
             .trim(),
-        ),
-      ).toBe(daemon.pid);
+        );
+      const claimDir = join(home, 'workspaces', workspaceName(root), 'metro.claim');
+      const helper = readClaimSet(claimDir).live[0]?.details.helper;
+      assert(isJsonObject(helper) && typeof helper.pid === 'number' && typeof helper.processToken === 'string');
+      const helperIdentity = { pid: helper.pid, processToken: helper.processToken };
+      expect(inspectProcessIdentity(helperIdentity)).toBe('same');
+      expect(parentOf(identity.pid)).toBe(helperIdentity.pid);
+      expect(parentOf(helperIdentity.pid)).toBe(daemon.pid);
       expect(await client.start({ waitSeconds: 10 })).toMatchObject({
         alreadyRunning: true,
         supervisorPid: first.supervisorPid,
@@ -251,7 +258,8 @@ test.skipIf(process.platform === 'win32')(
       });
       expect(await client.stop()).toMatchObject({ ok: true });
       expect(inspectProcessIdentity(identity)).toBe('gone');
-      expect(readClaimSet(join(home, 'workspaces', workspaceName(root), 'metro.claim')).live).toEqual([]);
+      expect(inspectProcessIdentity(helperIdentity)).toBe('gone');
+      expect(readClaimSet(claimDir).live).toEqual([]);
     } finally {
       await createStim({ projectRoot: root, home, env })
         .stop()
