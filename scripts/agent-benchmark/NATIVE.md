@@ -79,6 +79,9 @@ against the before-run inventory. Close the run's agent-device session. Record
 cleanup before publishing results.
 
 Report task elapsed time and token use separately for each native backend.
+The run record also reports `interactionSeconds` when a successful
+agent-device interaction prints `Count: 1`. It measures from dispatch through
+that command, before screenshot and evidence collection.
 These times include the complete turn and evidence collection; they are not
 the Trailhead screenshot-ready metric. A tiny sample supports a pilot
 comparison, not a broad performance claim. Native Xcode projects can benefit

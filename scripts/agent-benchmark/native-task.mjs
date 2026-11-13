@@ -10,6 +10,7 @@ export function nativeTaskPrompt({
   proofDirectory,
   session,
   stateDirectory,
+  screenshotDirectory = proofDirectory,
   variant = 'standalone',
 }) {
   if (!['stim', 'control'].includes(arm) || !['ios', 'android', 'macos'].includes(platform)) {
@@ -20,6 +21,12 @@ export function nativeTaskPrompt({
     arm === 'stim'
       ? 'Use Stim for workspace preparation, building and launching. Follow its installed skill.'
       : 'Use the native platform tools directly. Do not use Stim or read its implementation, state, documentation or skill.';
+  const screenshot = JSON.stringify(proofDirectory + '/screen.png');
+  const screenshotStaging = JSON.stringify(screenshotDirectory + '/screen.png');
+  const saveScreenshot =
+    screenshotDirectory === proofDirectory
+      ? `save a screenshot to ${screenshot}`
+      : `save a screenshot to ${screenshotStaging}, copy it to ${screenshot}, and remove the staged screenshot`;
   return [
     `Create a new git worktree at ${JSON.stringify(worktree)} on branch ${JSON.stringify(branch)} from ${JSON.stringify(fixture)}.`,
     variant === 'launch-crash'
@@ -36,11 +43,30 @@ export function nativeTaskPrompt({
         ]
       : []),
     `Use this exact agent-device environment prefix for every app interaction: ${prefix}`,
+    platform === 'ios'
+      ? 'For agent-device open use --platform ios --udid <simulator UDID>.'
+      : platform === 'android'
+        ? 'For agent-device open use --platform android --serial <emulator serial>.'
+        : 'For agent-device open use --platform macos --surface app and the exact bundle identifier of this run.',
     `Before the final verification sequence and before pressing Increment, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : 'Read the actual app PID from the selected simulator or macOS launch, capture its native process start time in seconds and microseconds and save process: {pid, startSeconds, startMicros}.'} Preserve the exact command and output in the transcript. Earlier failed attempts may be retried, including relaunches, within this same timed run. If the process is replaced during verification, restart the complete verification sequence and retain the earlier attempt. The identity used for the final Count: 1 screenshot must remain unchanged through independent verification.`,
-    `Open only the app and device created for this run. After verifying both texts, save a screenshot to ${JSON.stringify(proofDirectory + '/screen.png')} and an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,
-    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before that final verification sequence.`,
+    `Open only the app and device created for this run. After verifying both texts, ${saveScreenshot} and save an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,
+    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only; copy the full bundle path verbatim from the launch JSON when using Stim), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before that final verification sequence.`,
     'Leave the app, device, worktree and agent-device session running for independent coordinator verification. Do not stop or remove them.',
   ].join('\n\n');
+}
+
+export function nativeInteractionSeconds(commands, dispatchAt) {
+  const started = Date.parse(dispatchAt);
+  const interaction = commands
+    .filter(
+      (entry) =>
+        entry.exitCode === 0 &&
+        /\bagent-device\b[^\n]*\b(?:press|click|tap)\b/.test(entry.command ?? '') &&
+        /\bCount: 1\b/.test(entry.output ?? ''),
+    )
+    .map((entry) => Date.parse(entry.endedAt))
+    .filter((ended) => ended >= started);
+  return interaction.length === 0 ? null : (Math.min(...interaction) - started) / 1000;
 }
 
 export function nativeSourceProof({ before, after, marker, changedPaths, source }) {

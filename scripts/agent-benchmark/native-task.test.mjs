@@ -1,6 +1,11 @@
 import { expect, it } from 'vitest';
 import { carriedOutputs } from './native-fixtures.mjs';
-import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
+import {
+  nativeInteractionSeconds,
+  nativeProcessIdentityValid,
+  nativeSourceProof,
+  nativeTaskPrompt,
+} from './native-task.mjs';
 
 it('rejects an unchanged revision or unrelated source changes despite a matching screenshot marker', () => {
   const before = 'Text("native-revision-one")\n';
@@ -55,4 +60,21 @@ it('asks for an exact crash repair without naming the cause, revision marker or 
   expect(exact).not.toContain('untimed native build outputs');
   expect(carriedOutputs('exact')).toEqual([]);
   expect(carriedOutputs('native-gradle')).toContain('mobile/build');
+});
+
+function interactionCommand(endedAt, output, exitCode = 0) {
+  return { command: 'env AGENT_DEVICE_SESSION=test agent-device press @e4 --settle', endedAt, output, exitCode };
+}
+
+it('measures the first successful interaction that displays Count: 1', () => {
+  const dispatch = '2026-11-13T15:00:00.000Z';
+  const failed = interactionCommand('2026-11-13T15:00:10.000Z', 'Count: 1', 1);
+  const click = interactionCommand('2026-11-13T15:00:12.300Z', '+ @e2 [text] "Count: 1"');
+  const stale = interactionCommand('2026-11-13T14:59:59.000Z', 'Count: 1');
+  const screenshot = {
+    ...interactionCommand('2026-11-13T15:00:11.000Z', 'Count: 1'),
+    command: 'agent-device screenshot /tmp/s.png',
+  };
+  expect(nativeInteractionSeconds([failed, stale, screenshot], dispatch)).toBeNull();
+  expect(nativeInteractionSeconds([failed, stale, screenshot, click], dispatch)).toBe(12.3);
 });
