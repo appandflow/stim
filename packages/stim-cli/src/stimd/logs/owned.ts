@@ -32,13 +32,6 @@ export interface OwnedStreams {
   close(): Promise<string | null>;
 }
 
-// compat C27 until #5558
-/** Whether a live supervisor an older Stim started still owns the process `pid`, and observes it itself. */
-function legacy(owner: { pid: number; processToken: string } | undefined, pid: number): boolean {
-  return owner !== undefined && owner.pid !== pid && inspectProcessIdentity(owner) === 'same';
-}
-// compat end
-
 async function closeStream(stream: Stream): Promise<string | null> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -78,9 +71,6 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
   const workspace = async (root: string, asked: boolean): Promise<void> => {
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return;
-    // compat C27 until #5558
-    if (legacy(web, web.chromeProcess.pid)) return;
-    // compat end
     const key = `web:${root}`;
     if (closed || draining.has(key)) return;
     const epoch = drainEpoch.get(key) ?? 0;
@@ -157,9 +147,6 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         if (record?.chromeProcess?.pid !== pid || record.chromeProcess.processToken !== token)
           return 'the browser record changed';
         if (inspectProcessIdentity(record.chromeProcess) !== 'same') return 'the browser identity is unavailable';
-        // compat C27 until #5558
-        if (legacy(record, pid)) return null;
-        // compat end
         const attached = workspace(root, true);
         await attached;
         const latest = readWebRecord(root)?.chromeProcess;
@@ -182,7 +169,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         const webProcess = webRecord?.chromeProcess;
         const webToken = webProcess?.processToken;
         const webStream = streams.get(webKey);
-        if (webProcess && !webStream && ended.get(webKey) !== webToken && !legacy(webRecord, webProcess.pid))
+        if (webProcess && !webStream && ended.get(webKey) !== webToken)
           return 'the browser output observer is unavailable';
         clearTimeout(retries.get(webKey));
         retries.delete(webKey);
