@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,7 +9,6 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -600,19 +598,26 @@ test('Android worker clears only its selected Node home before dependency work',
     const area = join(root, 'area');
     const gradle = join(root, 'gradle');
     const observed = join(root, 'installer.json');
-    const bin = join(root, 'bin');
-    for (const path of [join(area, 'src'), gradle, bin, join(root, 'home')]) mkdirSync(path, { recursive: true });
+    for (const path of [join(area, 'src'), gradle, join(root, 'home')]) mkdirSync(path, { recursive: true });
     const kept = 'other=true\n';
     const old = `org.gradle.daemon.idletimeout=60000\n${kept}`;
     writeFileSync(join(gradle, 'gradle.properties'), old);
-    const installer = join(bin, process.platform === 'win32' ? 'pnpm.exe' : 'pnpm');
-    if (process.platform === 'win32') copyFileSync(process.execPath, installer);
-    else symlinkSync(process.execPath, installer);
+    const name = 'owned-worker-idle';
+    const version = '1.0.0';
     const files = [
-      ['package.json', JSON.stringify({ name: 'owned-worker-idle', private: true })],
-      ['pnpm-lock.yaml', 'lockfileVersion: "9.0"\n'],
+      ['package.json', JSON.stringify({ name, version, private: true, scripts: { preinstall: 'node install.cjs' } })],
       [
-        'install',
+        'package-lock.json',
+        JSON.stringify({
+          name,
+          version,
+          lockfileVersion: 3,
+          requires: true,
+          packages: { '': { name, version, hasInstallScript: true } },
+        }),
+      ],
+      [
+        'install.cjs',
         `require('node:fs').writeFileSync(${JSON.stringify(observed)}, JSON.stringify({home:process.env.GRADLE_USER_HOME}));process.exit(1);`,
       ],
     ];
@@ -653,8 +658,10 @@ test('Android worker clears only its selected Node home before dependency work',
             HOME: root,
             USERPROFILE: root,
             GRADLE_USER_HOME: gradle,
-            PATH: `${bin}${delimiter}${process.env.PATH}`,
-            COREPACK_ENABLE_NETWORK: '0',
+            npm_config_offline: 'true',
+            npm_config_audit: 'false',
+            npm_config_fund: 'false',
+            npm_config_update_notifier: 'false',
           },
           encoding: 'utf8',
           timeout: 15000,
