@@ -406,6 +406,13 @@ function subscribeDesktopSetup(ctx: ConnectionContext, id: RequestId, params: un
     new Set(params.capabilities).size !== params.capabilities.length
   )
     return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+  // @ref LLP 0020#test-approval -- only a terminal shows the test approval wording
+  if (params.capabilities.includes('test'))
+    return ctx.error(
+      id,
+      'bad-request',
+      'Stim Desktop does not approve test access. Run the setup command with --test in a terminal on this machine.',
+    );
   const capabilities = params.capabilities.filter(
     (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
   );

@@ -18,13 +18,15 @@ struct ConnectionsTests {
        "lastSeenAt":"2026-11-03T12:00:00Z","capabilities":["device-host"],"kind":"device-host-client"},
       {"id":"desk","name":"laptop","keyFingerprint":"k-desk","pairedAt":"2026-10-01T10:00:00Z",
        "capabilities":["read"],"kind":"desktop"},
-      {"id":"old","name":"Old pairing","keyFingerprint":"k-old","pairedAt":"2026-09-01T10:00:00Z","capabilities":["read"]}
+      {"id":"old","name":"Old pairing","keyFingerprint":"k-old","pairedAt":"2026-09-01T10:00:00Z","capabilities":["read"]},
+      {"id":"tests","name":"runner","keyFingerprint":"k-runner","pairedAt":"2026-11-04T10:00:00Z",
+       "capabilities":["test"],"kind":"test-client"}
     ],"hostedSessions":[]}
     """
 
   @Test func groupsIncomingRecordsByClientKeyWithEveryAccessTheyHold() throws {
     let rows = Connections.incoming(try devices(listed))
-    #expect(rows.map(\.id) == ["k-phone", "k-studio", "k-desk", "k-old"])
+    #expect(rows.map(\.id) == ["k-phone", "k-studio", "k-desk", "k-old", "k-runner"])
     let studio = rows[1]
     #expect(studio.records.map(\.id) == ["build", "host"])
     #expect(studio.kind == .machine && studio.pairing == nil)
@@ -33,6 +35,8 @@ struct ConnectionsTests {
     #expect(rows[0].kind == .device && rows[0].access == [.view, .control] && rows[0].pairing?.id == "phone")
     #expect(rows[2].kind == .machine && rows[3].kind == .device)
     #expect(rows[3].lastConnected == "Never connected")
+    #expect(rows[4].kind == .machine && rows[4].pairing == nil && rows[4].access == [.test])
+    #expect(rows[4].access.allSatisfy { $0.tone == .warning })
   }
 
   private func pairing(_ byte: UInt8, name: String, capabilities: [String], deviceID: String?) -> PairedServers.Entry {

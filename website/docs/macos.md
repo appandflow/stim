@@ -187,7 +187,7 @@ stim stop`}
 
 Use `macos.remote` for a default. A named Mac is strict and never launches locally. Use `remote-only` to allow any eligible worker and prevent a local launch. Stop the session before switching hosts. If stop cannot reach the host, retry when it is available.
 
-The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. The installed guide covers driver setup, build inputs and placement.
+The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. Keep the command's `--session` so `stim stop` can close that connection. If you chose another name, pass it in `AGENT_DEVICE_SESSION` when stopping, or run `agent-device disconnect --session <your-name>` yourself. Use the same agent-device state directory you connected with. The installed guide covers driver setup, build inputs and placement.
 
 For screenshots and scrolling while sharing a hosted app's window on macOS 27, use agent-device 0.21.37 or later on the hosting Mac. [Agent-device 0.21.37](https://github.com/callstack/agent-device/releases/tag/v0.21.37) fixes selection of the macOS window-sharing indicator instead of the app window.
 

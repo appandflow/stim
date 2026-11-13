@@ -322,6 +322,8 @@ describe('temporary-directory platform prefixes', () => {
 
   it.each([
     'env STIM_TMPDIR=/tmp/run stim android',
+    'STIM_TMPDIR="$TMPDIR" stim android --device-profile pixel_6 --remote-build local',
+    `/bin/zsh -lc 'STIM_TMPDIR="$TMPDIR" stim android '"'system-images;android-36;arm64-v8a'"`,
     'env TMPDIR="/tmp/run space" STIM_TMPDIR=/tmp/build stim android',
     `/bin/zsh -lc "env STIM_TMPDIR=/tmp/run stim android --system-image 'system-images;android-36;arm64-v8a'"`,
   ])('retains timing, cache evidence and warm ordering for %s', (command) => {
@@ -369,6 +371,12 @@ describe('temporary-directory platform prefixes', () => {
     'env STIM_TMPDIR=/tmp/run STIM_HOME=/other stim android',
     'env -i STIM_TMPDIR=/tmp/run stim android',
     'env STIM_TMPDIR="$TMPDIR" stim android',
+    'STIM_TMPDIR="$TMPDIR" PATH=/other stim android',
+    'STIM_TMPDIR="$OTHER" stim android',
+    'STIM_TMPDIR="$TMPDIR" stim android "$FLAGS"',
+    'false && STIM_TMPDIR="$TMPDIR" stim android',
+    'PATH=/other; STIM_TMPDIR="$TMPDIR" stim android',
+    String.raw`/bin/zsh -lc "STIM_TMPDIR=\"\$TMPDIR\" stim android '$FLAGS'"`,
     'env STIM_TMPDIR=$(pwd) stim android',
     'env STIM_TMPDIR=/tmp/run echo stim android',
     'env STIM_TMPDIR=/tmp/run stim android$(echo suffix)',

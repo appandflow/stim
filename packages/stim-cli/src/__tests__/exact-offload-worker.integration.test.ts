@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -16,9 +15,10 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { EXACT_SIM_TARGET } from '../integrations/exact-offload.ts';
+import { EXACT_SIM_TARGET, exactOffloadParam, exactOffloadPlan } from '../integrations/exact-offload.ts';
 import { runOffloadWorker } from '../job/offload/worker.ts';
 import { manifestDigest } from '../offload/manifest.ts';
+import { sourceManifest } from '../offload/native-source.ts';
 
 let root: string;
 let home: string;
@@ -53,9 +53,10 @@ beforeEach(() => {
   mkdirSync(join(home, '.cargo', 'hermes-lean-sys'));
   const pins = join(home, '.exact', 'exact2', 'pending');
   write(join(pins, 'scripts', 'app-cli.mjs'), '');
+  write(join(pins, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.97.0"\n');
   mkdirSync(join(pins, 'node_modules'));
   git(pins, 'init', '-q');
-  git(pins, 'add', 'scripts');
+  git(pins, 'add', '.');
   git(pins, 'commit', '-q', '-m', 'pin');
   sha = git(pins, 'rev-parse', 'HEAD');
   execFileSync('mv', [pins, join(home, '.exact', 'exact2', sha)]);
@@ -85,12 +86,19 @@ async function build(
 ): Promise<{ result: Record<string, unknown>; area: string }> {
   const client = join(root, 'client');
   const blobs = join(root, 'blobs');
-  const manifest = Object.entries(files).map(([path, text]) => {
-    const sha256 = createHash('sha256').update(text).digest('hex');
+  for (const [path, text] of Object.entries(files))
+    write(join(client, path), text, path.endsWith('exact.mjs') ? 0o755 : 0o644);
+  git(client, 'init', '-q');
+  git(client, 'add', '.');
+  const manifest = await sourceManifest(client);
+  for (const { path, sha256 } of manifest) {
+    const text = readFileSync(join(client, path), 'utf8');
     write(join(blobs, sha256.slice(0, 2), sha256), text);
-    write(join(client, path), text);
-    return { path, kind: path.endsWith('exact.mjs') ? 'exec' : 'file', size: Buffer.byteLength(text), sha256 };
-  });
+  }
+  const exact = project
+    ? exactOffloadParam(exactOffloadPlan(join(client, project), { EXACT2: join(home, '.exact', 'exact2', sha) }))
+    : { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', env };
+  expect(exact).not.toBeNull();
   const area = join(root, 'area');
   mkdirSync(area, { recursive: true });
   const job = {
@@ -108,7 +116,7 @@ async function build(
     runtime: null,
     android: null,
     expectedFingerprint: manifestDigest(manifest),
-    exact: { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', env },
+    exact,
     optimizations: null,
     compat: 5,
   };
@@ -127,7 +135,7 @@ async function build(
   return { result, area };
 }
 
-const LAUNCHER = '#!/bin/sh\nenv > env-seen.txt\nexit 3\n';
+const LAUNCHER = '#!/bin/sh\n# ensureBun("1.4.2")\nenv > env-seen.txt\nexit 3\n';
 
 test('the worker runs Exact without the simulator, the worker caches or Exact settings of its own environment', async () => {
   const { result, area } = await build(
@@ -165,12 +173,13 @@ test('the worker refuses a setting app.json does not declare', async () => {
 });
 
 test('an Exact app in a subdirectory builds in the plain checkout, which already carries its folder name', async () => {
+  const project = 'apps/\u5e97';
   const { result, area } = await build(
-    { 'apps/shop-app/exact.mjs': LAUNCHER, 'apps/shop-app/app.json': '{}' },
-    { project: 'apps/shop-app' },
+    { [`${project}/exact.mjs`]: LAUNCHER, [`${project}/app.json`]: '{}' },
+    { project },
   );
   expect(result).toMatchObject({ ok: false, code: 'exact-build-failed' });
   expect(lstatSync(join(area, 'src')).isDirectory()).toBe(true);
   expect(readdirSync(area)).not.toContain('checkout');
-  expect(existsSync(join(area, 'src', 'apps', 'shop-app', 'env-seen.txt'))).toBe(true);
+  expect(existsSync(join(area, 'src', project, 'env-seen.txt'))).toBe(true);
 });

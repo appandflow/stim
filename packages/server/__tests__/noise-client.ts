@@ -158,7 +158,7 @@ export async function stimdConnect(path: string): Promise<Client> {
  * whose subject is what the records allow rather than how they were made.
  */
 export function setupClient(
-  capabilities: ('build' | 'device-host')[],
+  capabilities: ('build' | 'device-host' | 'test')[],
   name = 'Client',
   from = 'test',
 ): { keyPair: NoiseKeyPair; records: KeyRecords } {

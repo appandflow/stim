@@ -6,6 +6,7 @@ public enum ConnectionAccess: String, CaseIterable, Sendable {
   case control
   case build
   case runDevices = "run-devices"
+  case test
   case shareLink = "share-link"
 
   public var title: String {
@@ -14,25 +15,27 @@ public enum ConnectionAccess: String, CaseIterable, Sendable {
     case .control: return "Control"
     case .build: return "Build"
     case .runDevices: return "Run devices"
+    case .test: return "Test"
     case .shareLink: return "Share link"
     }
   }
 
-  /// Build and Run devices run another machine's code, so they always show the warning tone.
+  /// Build, Run devices and Test run another machine's code, so they always show the warning tone.
   public var tone: Tone {
     switch self {
-    case .build, .runDevices: return .warning
+    case .build, .runDevices, .test: return .warning
     case .view, .control, .shareLink: return .neutral
     }
   }
 
-  /// The level a stim-server capability grants: `read`, `control`, `build` or `device-host`.
+  /// The level a stim-server capability grants: `read`, `control`, `build`, `device-host` or `test`.
   public init?(capability: String) {
     switch capability {
     case "read": self = .view
     case "control": self = .control
     case "build": self = .build
     case "device-host": self = .runDevices
+    case "test": self = .test
     default: return nil
     }
   }
