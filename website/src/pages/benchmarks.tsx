@@ -122,7 +122,7 @@ export default function Benchmarks(): ReactNode {
                 </Heading>
                 <p>
                   Recorded {terra.recordedOn} on a Mac mini with high reasoning and local builds. Each value is one
-                  audited run. Times are in seconds and lower is better.
+                  audited run. These tables time from dispatch in seconds. Lower is better.
                 </p>
               </div>
             </div>
@@ -318,8 +318,8 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Consistent timing</dt>
                 <dd>
-                  Each clock runs from the agent's first recorded action until it has checked the result and saved a
-                  screenshot. The same start and finish rules apply with and without Stim.
+                  The interactive charts time from the agent's first recorded action until it has checked the result and
+                  saved a screenshot. The same start and finish rules apply with and without Stim.
                 </dd>
               </div>
               <div>
