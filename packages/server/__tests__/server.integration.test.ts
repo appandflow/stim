@@ -38,6 +38,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -1746,6 +1747,64 @@ describe('status views', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+  });
+
+  it('measures the phone workspace snapshot, delta and reconnect', async () => {
+    const statusFile = join(root, 'phone-transfer.json');
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/captured-status.json', import.meta.url), 'utf8'));
+    const changed = fixture.environments[0];
+    assert(changed);
+    writeFileSync(statusFile, JSON.stringify(fixture));
+    const port = await start({ env: { FAKE_STIM_STATUS_FILE: statusFile } });
+    const { keyPair } = await pair(port);
+    const capture = (client: Awaited<ReturnType<typeof returning>>) => {
+      const messages: { bytes: number; event: string | undefined }[] = [];
+      client.socket.on('message', (data, binary) => {
+        if (binary) return;
+        const message = JSON.parse(data.toString());
+        messages.push({ bytes: data.byteLength, event: 'event' in message ? message.event : undefined });
+      });
+      return () => messages.splice(0);
+    };
+    const client = await returning(port, keyPair);
+    const read = capture(client);
+    await client.request('workspaces.subscribe');
+    const first = await client.next();
+    assert('event' in first && first.event === 'workspaces');
+    expect(first.snapshot?.workspaces).toHaveLength(fixture.environments.length);
+    const initial = read();
+
+    const errorsSinceMarker = (changed.logs?.errorsSinceMarker ?? 0) + 1;
+    changed.logs = { ...changed.logs, errorsSinceMarker };
+    const nextStatus = `${statusFile}.next`;
+    writeFileSync(nextStatus, JSON.stringify(fixture));
+    renameSync(nextStatus, statusFile);
+    const update = await client.next();
+    assert('event' in update && update.event === 'workspaces');
+    expect(update).toMatchObject({
+      seq: 1,
+      workspaces: { upsert: [{ path: changed.path, logs: { errorsSinceMarker } }], remove: [] },
+    });
+    expect(update.snapshot).toBeUndefined();
+    const delta = read();
+
+    client.socket.close();
+    await client.closed;
+    const reconnected = await returning(port, keyPair);
+    const readReconnect = capture(reconnected);
+    await reconnected.request('workspaces.subscribe');
+    const fresh = await reconnected.next();
+    assert('event' in fresh && fresh.event === 'workspaces');
+    expect(fresh.seq).toBe(0);
+    expect(fresh.snapshot?.workspaces.find((row) => row.path === changed.path)?.logs).toEqual({ errorsSinceMarker });
+    const reconnect = readReconnect();
+
+    for (const [phase, messages] of Object.entries({ initial, delta, reconnect })) {
+      expect(messages.filter((message) => message.event === 'workspaces')).toHaveLength(1);
+      console.log(
+        `Phone workspace transfer (${phase}): ${messages.length} messages, ${messages.reduce((total, message) => total + message.bytes, 0)} JSON bytes`,
+      );
+    }
   });
 
   it('sends one workspace whole, again only when it changes, and null once it is gone', async () => {

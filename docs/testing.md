@@ -177,6 +177,18 @@ pnpm run test packages/stim-cli/src/__tests__/engine-gradle.test.ts --fsModuleCa
 See [the measured test-cost review](./test-performance.md) for slow cases,
 trimming dispositions and CI/tooling tradeoffs.
 
+To measure the bytes a paired phone receives when it opens the workspace list,
+gets one changed row, and reconnects, run the workspace transfer case:
+
+```sh
+pnpm run test:integration packages/server/__tests__/server.integration.test.ts -t 'measures the phone workspace'
+```
+
+The captured fixture has 25 workspaces. The baseline is about 36 KB and two
+messages on each subscribe, and 346 bytes and one message for the update.
+The measurement counts decoded WebSocket payloads, including the subscribe
+reply, after authentication.
+
 ## CI scheduling
 
 A pull request, the merge queue and a push to `main` run only fast Linux jobs:
