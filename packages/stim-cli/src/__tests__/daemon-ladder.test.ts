@@ -673,12 +673,19 @@ describe('the ladder stim gc forces', () => {
       });
     recordCreatedDevice('ios', 'OWNED');
     const simctl: string[][] = [];
-    const real = getExecutor();
+    const unexpected = (file: string, args: readonly string[] = []) => {
+      throw new Error(`unexpected ${file} ${args.join(' ')}`);
+    };
     setExecutor({
-      ...real,
-      runFileQuiet: (file) => (file === 'ps' ? '' : null),
+      run: (cmd) => unexpected(cmd),
+      runFile: unexpected,
+      runQuiet: (cmd) => unexpected(cmd),
+      runFileQuiet: (file, args) => (file === 'ps' ? '' : unexpected(file, args)),
+      runFileQuietAsync: async (file, args) => unexpected(file, args),
+      spawn: (cmd, args) => unexpected(cmd, args),
+      findExecutable: () => null,
       runFileAsync: async (file, args) => {
-        if (file !== 'xcrun' || args[0] !== 'simctl') throw new Error(`unexpected ${file} ${args.join(' ')}`);
+        if (file !== 'xcrun' || args[0] !== 'simctl') return unexpected(file, args);
         simctl.push(args);
         if (args[1] === 'list')
           return JSON.stringify({
@@ -687,31 +694,40 @@ describe('the ladder stim gc forces', () => {
             },
           });
         if (args[1] === 'delete') return '';
-        throw new Error(`unexpected xcrun ${args.join(' ')}`);
+        return unexpected(file, args);
       },
     });
+    const ladder = async (act: boolean) =>
+      (
+        await runLadder(
+          {
+            config,
+            act,
+            log,
+            devices: [],
+            sims,
+            simsFailed: false,
+            remeasure: async () => pressure('high'),
+            force: { level: 'high', why: 'stim gc' },
+            fromRung: 2,
+            lastRung: 2,
+          },
+          pressure('normal'),
+        )
+      ).actions.map(({ target, outcome }) => [target, outcome]);
 
-    const { actions } = await runLadder(
-      {
-        config,
-        act: true,
-        log,
-        devices: [],
-        sims,
-        simsFailed: false,
-        remeasure: async () => pressure('high'),
-        force: { level: 'high', why: 'stim gc' },
-        fromRung: 2,
-        lastRung: 2,
-      },
-      pressure('normal'),
-    );
+    expect(await ladder(false)).toEqual([
+      ['OWNED', 'would'],
+      ['FOREIGN', 'kept'],
+    ]);
+    expect(simctl).toEqual([]);
 
+    expect(await ladder(true)).toEqual([
+      ['OWNED', 'done'],
+      ['FOREIGN', 'kept'],
+    ]);
     expect(simctl.filter((args) => args[1] === 'delete')).toEqual([['simctl', 'delete', 'OWNED']]);
     expect(readParked('ios').map((record) => record.udid)).toEqual(['FOREIGN']);
-    expect(actions).toContainEqual(
-      expect.objectContaining({ rung: 2, kind: 'delete-parked-device', target: 'FOREIGN', outcome: 'kept' }),
-    );
   });
 
   const forced = (
