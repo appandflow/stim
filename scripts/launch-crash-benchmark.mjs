@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { stripVTControlCharacters } from 'node:util';
 import {
   commandWithReportedStatus,
   literalShellArguments,
@@ -93,12 +94,12 @@ function runtimeErrorSnapshot(command, previous, expected, token) {
   );
 }
 
-function successfulLaunch(command, arm, platform, device) {
+function successfulLaunch(command, arm, platform, setup) {
   if (!successful(command)) return false;
   const value = shellCommand(command.command);
   if (
     arm === 'expo-agent-cli' &&
-    expoAgentCliLaunch(completedStepCommand(command, arm), command.output, platform, device)
+    expoAgentCliLaunch(completedStepCommand(command, arm), command.output, platform, setup)
   ) {
     return true;
   }
@@ -145,27 +146,70 @@ function shellCommand(command) {
   );
 }
 
-function expoAgentCliArguments(command) {
-  const [bin, subcommand, ...args] = literalShellArguments(shellCommand(command)) ?? [];
+function expoAgentCliArguments(command, worktree) {
+  const segments = shellCommandSegments(command);
+  let invocation = shellCommand(command);
+  if (segments.length === 2 && worktree && sameLiteralShellCommand(segments[0], `cd ${worktree}`)) {
+    const tail = invocation.slice(segments[0].length).trimStart();
+    if (tail.startsWith('&&') && tail.slice(2).trim() === segments[1]) {
+      invocation = segments[1];
+    }
+  }
+  const serial = /^ANDROID_SERIAL=(emulator-\d+)\s+/.exec(invocation);
+  if (serial) invocation = invocation.slice(serial[0].length);
+  const [bin, subcommand, ...words] = literalShellArguments(invocation) ?? [];
   if (bin !== 'expo-agent-cli' && !/^\/[\w/.-]+\/expo-agent-cli\/bin\/expo-agent-cli$/.test(bin ?? '')) return null;
+  const endOfOptions = words.indexOf('--');
+  const args = endOfOptions === -1 ? words : words.slice(0, endOfOptions);
   if (args.some((arg) => /^(?:-h|-v|--help|--version)$/.test(arg))) return null;
-  return { subcommand, args };
+  return { subcommand, args, serial: serial?.[1] };
 }
 
-function expoAgentCliLaunch(command, output, platform, device) {
-  const invocation = expoAgentCliArguments(command);
+function expoAgentCliLaunch(command, output, platform, { device, deviceName, worktree }) {
+  const invocation = expoAgentCliArguments(command, worktree);
   if (!invocation || !device) return false;
-  const { subcommand, args } = invocation;
-  if (!['dev', 'dev:run'].includes(subcommand)) return false;
+  const { subcommand, args, serial } = invocation;
+  if (serial && (platform !== 'android' || serial !== device)) return false;
   if (args.some((arg) => /^(?:--(?:plan|no-open|eas|go|web))(?:=|$)/.test(arg))) return false;
-  const deviceFlags = args.filter((arg) => /^--device(?:=|$)/.test(arg));
-  if (deviceFlags.length !== 1 || args[args.indexOf(deviceFlags[0]) + 1] !== device) return false;
-  const opened = platform === 'ios' ? 'iOS simulator' : 'Android device';
-  if (!String(output ?? '').includes(`Opened the app on the ${opened}`)) return false;
+  const devices = args.flatMap((arg, index) => {
+    if (arg === '--device') return [args[index + 1]];
+    return arg.startsWith('--device=') ? [arg.slice('--device='.length)] : [];
+  });
+  if (devices.length !== 1 || devices[0] !== device) return false;
+  const lines = stripVTControlCharacters(String(output ?? ''))
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  if (subcommand === `run:${platform}`) {
+    return Boolean(
+      deviceName && lines.some((line) => line.startsWith('› Opening ') && line.endsWith(` on ${deviceName}`)),
+    );
+  }
+  if (!['dev', 'dev:run'].includes(subcommand)) return false;
+  if (
+    !args.includes('--local') ||
+    !args.includes(`--${platform}`) ||
+    args.includes(platform === 'ios' ? '--android' : '--ios')
+  )
+    return false;
+  const target = platform === 'ios' ? 'iOS simulator' : 'Android device';
+  if (!args.includes('--detach')) return lines.some((line) => line.includes(`Opened the app on the ${target}`));
+  if (args.includes('--json')) {
+    try {
+      const report = JSON.parse(output);
+      return (
+        report.ready === true &&
+        report.phase === 'serving' &&
+        report.alreadyRunning === false &&
+        report.device?.id === device
+      );
+    } catch {
+      return false;
+    }
+  }
   return (
-    args.includes('--local') &&
-    args.includes(`--${platform}`) &&
-    !args.includes(platform === 'ios' ? '--android' : '--ios')
+    lines.some((line) => /^Dev server\s+.+ · detached$/.test(line)) &&
+    lines.some((line) => /^Bundler\s+ready$/.test(line)) &&
+    lines.some((line) => /^Device\s/.test(line) && line.includes(`(${device})`))
   );
 }
 
@@ -189,7 +233,7 @@ function launchCommand(command, arm, platform) {
   );
 }
 
-function errorCaptureCommand(command, arm, platform) {
+function errorCaptureCommand(command, arm, platform, setup = {}) {
   command = shellCommand(command);
   if (arm === 'stim')
     return (
@@ -197,8 +241,12 @@ function errorCaptureCommand(command, arm, platform) {
       shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment))
     );
   if (arm === 'expo-agent-cli') {
-    const invocation = expoAgentCliArguments(command);
-    if (['dev:logs', 'runtime:errors'].includes(invocation?.subcommand)) return true;
+    const invocation = expoAgentCliArguments(command, setup.worktree);
+    if (
+      ['dev:logs', 'runtime:errors'].includes(invocation?.subcommand) &&
+      (!invocation.serial || (platform === 'android' && invocation.serial === setup.device))
+    )
+      return true;
   }
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
@@ -487,7 +535,7 @@ export function launchCrashDiagnosis(
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
   const initialLaunchIndex = ordered.findIndex(
     (command, index) =>
-      successfulLaunch(command, arm, platform, setup.device) ||
+      successfulLaunch(command, arm, platform, setup) ||
       successfulAgentDeviceLaunch(command, agentDeviceLaunch) ||
       (arm === 'control' && platform === 'android' && confirmedAndroidLaunchLog(command, ordered.slice(0, index))),
   );
@@ -504,12 +552,12 @@ export function launchCrashDiagnosis(
       index > initialLaunchIndex &&
       successful(command) &&
       (runtimeErrorSnapshot(command, ordered.slice(0, index), agentDeviceLaunch, token) ||
-        errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
+        errorCaptureCommand(completedStepCommand(command, arm), arm, platform, setup) ||
         ordered.slice(initialLaunchIndex + 1, index).some((capture) => {
           if (
             !successful(capture) ||
             timestamp(capture, 'endedAt') > timestamp(command, 'startedAt') ||
-            !errorCaptureCommand(completedStepCommand(capture, arm), arm, platform)
+            !errorCaptureCommand(completedStepCommand(capture, arm), arm, platform, setup)
           )
             return false;
           const path = String(capture.output ?? '').match(
@@ -531,7 +579,8 @@ export function launchCrashDiagnosis(
           );
         })) &&
       typeof command.output === 'string' &&
-      command.output.includes(token),
+      command.output.includes(token) &&
+      (arm !== 'expo-agent-cli' || sourceMarkers.some((marker) => command.output.includes(marker))),
   );
   if (
     initialLaunchCapture &&
@@ -551,6 +600,7 @@ export function launchCrashDiagnosis(
   const unrecognizedBeforeCapture = preCaptureActivity.filter(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
+      !(arm === 'expo-agent-cli' && command === initialLaunch) &&
       !successfulAgentDeviceLaunch(command, agentDeviceLaunch) &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );

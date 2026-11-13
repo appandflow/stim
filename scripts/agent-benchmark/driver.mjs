@@ -2100,6 +2100,7 @@ function collect(runDir) {
           setup: {
             worktree,
             device: appAlive.simulator?.udid,
+            deviceName: appAlive.simulator?.name,
             avdConfig: appAlive.simulator?.configPath ?? meta.expectedControlAvdConfig,
           },
         })
