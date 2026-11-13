@@ -100,6 +100,7 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
+import { dependencyEditsFindings } from './doctor-dependency-edits.ts';
 
 export { brokenPodLinks } from './doctor-pods-flavor.ts';
 
@@ -1328,6 +1329,7 @@ export async function reactNativeDoctorFindings({
     await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
     appProjectFinding ? null : checkReadinessMarkers(projectRoot),
+    ...dependencyEditsFindings([...new Set([projectRoot, repositoryRoot ?? projectRoot])]),
   ].filter((value): value is Finding => Boolean(value));
 }
 

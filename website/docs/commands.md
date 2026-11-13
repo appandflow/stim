@@ -222,6 +222,16 @@ no global equivalent. It reads the file only when it adds a root, so for a root
 it already watches run `watchman watch-del <checkout>`, then restart Watchman to
 free its memory now. Doctor never runs either command.
 
+On macOS, each stimd started by launchd registers a job named
+`dev.stim.stimd.<hash>.<id>` in your login domain. Doctor reports stopped jobs
+whose `STIM_HOME` folder no longer exists, which a deleted scratch or test home
+leaves behind. `--fix` removes them, and so does the next stimd that launchd
+starts. It never removes a running job or a job whose home exists, and it keeps
+a job whose home is under `/Volumes`, unreadable, or behind a broken symlink.
+A home on a share mounted elsewhere, such as SMB or NFS at `~/mnt/x`, reads as
+gone while it is unmounted, so its stopped job is removed; that loses nothing,
+because each stimd start registers a new job.
+
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and forgets
@@ -2439,6 +2449,26 @@ dependencies to copy, and since when, until you install them there. `gc` deletes
 only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
+
+Automatic maintenance and `stim gc` never delete a `node_modules` or
+`ios/Pods` folder in which they detect hand edits, at any pressure level,
+critical included, so its disk is not freed; `gc --dry-run`, `stim status` and
+`stim doctor` name the edited files. Automatic removal of a finished or
+discovered worktree waits while one of its dependency folders has edits.
+`stim worktree remove` runs no check. Detection is best effort, from file
+times: a file modified after the install (when an install, `pod install` or
+`stim worktree warm` that Stim ran there finished, or else the package
+manager's stamp) is an edit, except in a 10-minute window after the stamp when
+the root `package.json` declares an install script. Not checked:
+dot-directories at the `node_modules` root other than `.pnpm`, `.bun`, `.deno`
+and `.bin` (tool caches such as `.cache` and `.vite`, a custom pnpm
+virtual-store directory included), Gradle, CMake and Xcode output, and the
+package manager's state files. Known misses: an edit that keeps an older
+modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
+hand, an edit inside an install window, and an edit to a package whose
+`package.json` an editor replaced. An edit in `node_modules` is never durable:
+make it a patch with `pnpm patch`, `yarn patch` or `patch-package`, or
+reinstall to let maintenance free the folder.
 
 Everything `gc` deletes, by category (N normal, H high, C critical):
 
