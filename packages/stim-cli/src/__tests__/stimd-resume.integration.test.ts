@@ -493,9 +493,11 @@ describe.skipIf(process.platform === 'win32')('a CI hold', () => {
     ["another build's stimd", otherBuildHold],
   ] as const)('refuses the first pin against %s without retrying', async (_name, reply) => {
     await withCIHoldServer([reply], async (connections) => {
-      await expect(holdCIStimd({ ...process.env }, dir, null)).rejects.toThrow(
-        'Could not pin the Stim daemon for this CI job.',
-      );
+      const hold = holdCIStimd({ ...process.env }, dir, null).then((release) => {
+        release();
+        return undefined;
+      });
+      await expect(hold).rejects.toThrow('Could not pin the Stim daemon for this CI job.');
       expect(connections).toHaveLength(1);
     });
   });
