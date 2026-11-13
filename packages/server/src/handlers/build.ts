@@ -3,7 +3,7 @@ import { type RequestId, BUILD_METHODS, ENGINE_UPDATE_METHODS } from '../protoco
 import { isJsonObject } from '@stim-cli/core/state';
 import { SLOT_NAME } from '../control.ts';
 import { type StimPlanOptions, StimError } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 import type { DesktopPlanRefusal } from '@stim-cli/core/protocol';
 import type { PairedDevice } from '../registry.ts';
 import { updateMethod } from './engine.ts';
@@ -44,7 +44,7 @@ export function queuePlan(
     `stim ${plan.platform}`,
     async (signal) => {
       try {
-        return await createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).plan({
+        return await createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).plan({
           ...plan,
           signal,
         });

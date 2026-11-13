@@ -114,7 +114,7 @@ async function testPlugin(given: string, cwd: string, context: StimContext): Pro
         ? skipped.map(({ kind, reason }) => `${kind}: ${reason}.`).join(' ')
         : 'Declare stimPlugin.kinds in its package.json, such as {"transport": 1} or {"agent-driver": 1}.',
     );
-  const { runContract } = await import('../transport-kit.ts');
+  const { runContract } = await import('../plugin-kit.ts');
   const checks: PluginCheck[] = [];
   const scratch = mkdtempSync(join(tmpdir(), 'stim-plugin-test-'));
   const remove = () => rmSync(scratch, { recursive: true, force: true });

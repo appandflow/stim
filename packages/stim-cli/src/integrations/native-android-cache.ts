@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { storeArtifactAsync, type StimContext } from '@stim-cli/core';
-import type { BuildCacheCapability } from '@stim-cli/cache';
+import type { LocalBuildCache } from '@stim-cli/cache';
 import { artifactIn, cacheRoot, entryDir, resolveBuild } from '../cache/build-cache.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { findBuildTool } from '../devices/android.ts';
@@ -99,7 +99,7 @@ export function nativeAndroidCache(
   abi: string | null,
   androidPackage: () => string | null,
   operation?: StimContext,
-): BuildCacheCapability {
+): LocalBuildCache {
   return {
     resolve: ({ key }) => resolveBuild('android', key),
     async store({ key, sourcePath, overwrite, signal }) {

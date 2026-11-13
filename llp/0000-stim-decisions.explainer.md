@@ -110,4 +110,5 @@ govern the workflow.
 - [LLP 0019](./0019-stimd-device-logs.decision.md) covers device log streams across a stimd crash, an update and a logs worker failure.
 - [LLP 0020](./0020-test-offload.decision.md) covers the test approval and the planned `stim test` command.
 - [LLP 0021](./0021-stimd-reliability.decision.md) covers stimd exit records, the crash hold and handovers with no successor.
+- [LLP 0023](./0023-public-api.decision.md) covers what the `stim` package exports as public API, the frozen plugin kinds, the JSON rule and the API report gate.
 - [LLP 0024](./0024-fingerprint-package-copies.decision.md) covers how installed package copies become fingerprint inputs.

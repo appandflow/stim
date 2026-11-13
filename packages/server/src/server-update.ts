@@ -28,7 +28,7 @@ import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
 import { runsAsService } from './service.ts';
 import { engineSelectArgs, engineSelectOutcome } from './engine-select.ts';
 import type { UpdateSource } from './release-install.ts';
-import { engineRoot, newestBad, readRecords } from 'stim/engine-state';
+import { engineRoot, newestBad, readRecords } from 'stim/internal/engine-state';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 16;

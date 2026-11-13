@@ -66,7 +66,7 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
   const stim = createStim({
     projectRoot,
     home: options.home ? resolve(options.home) : undefined,
-    buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+    buildCacheDir: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
     onProgress,
   });
   let attempted = false;

@@ -5,6 +5,7 @@ import {
   type BuildCacheCapability,
   type BuildCacheTarget,
   type LoadCacheProviderResult,
+  type LocalBuildCache,
   type ProviderCallResult,
   type WarnOnce,
 } from './provider-core.ts';
@@ -33,7 +34,7 @@ export interface TieredBuildResolution {
 export type LoadBuildProvider = () => Promise<LoadCacheProviderResult> | LoadCacheProviderResult;
 
 export interface ResolveTieredBuildOptions {
-  local: BuildCacheCapability;
+  local: LocalBuildCache;
   loadProvider?: LoadBuildProvider | null;
   target: BuildCacheTarget;
   destinationDir: string;
@@ -46,7 +47,7 @@ export interface ResolveTieredBuildOptions {
 }
 
 export interface StoreTieredBuildOptions {
-  local: BuildCacheCapability;
+  local: LocalBuildCache;
   loadProvider?: LoadBuildProvider | null;
   target: BuildCacheTarget;
   sourcePath: string;

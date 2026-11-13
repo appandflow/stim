@@ -23,12 +23,12 @@ vi.mock('stim', () => ({
     return lifecycle;
   },
 }));
-vi.mock('stim/attached-stimd', () => ({
+vi.mock('stim/internal/attached-stimd', () => ({
   bindCIEngine: async () => ({
     host: lifecycle.host,
     release: lifecycle.release,
     hold: lifecycle.hold,
-    runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
+    client: () => lifecycle,
   }),
 }));
 
@@ -240,7 +240,7 @@ it('uses the same job-local home and cache for native work and commands across h
   const second = await runCI({ ...options, artifactsDir: join(root, 'second-results') });
   expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
   expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected);
-  expect(lifecycle.create.mock.calls.map(([value]) => ({ home: value.home, cache: value.buildCache }))).toEqual([
+  expect(lifecycle.create.mock.calls.map(([value]) => ({ home: value.home, cache: value.buildCacheDir }))).toEqual([
     expected,
     expected,
     expected,

@@ -15,6 +15,8 @@ import {
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { facadeClient } from '../api/facade.ts';
+import type { EngineOptions, StimClient } from '../api/types.ts';
 import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
 
 /** The `__stimd` argument of a stimd bound to the process that started it, which ends it by closing its stdin. */
@@ -59,6 +61,7 @@ export async function bindCIEngine(
   host: typeof hostStimd;
   hold: typeof holdCIStimd;
   runOp: import('../api/engine-route.ts').RunOp;
+  client: (ctx: EngineOptions) => StimClient;
   release: () => void;
 }> {
   const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
@@ -157,20 +160,22 @@ export async function bindCIEngine(
           remedy: 'Run stim engine update to select an engine that supports attached hosting.',
         });
       signal?.throwIfAborted();
-      return { host: engine.hostStimd, hold: engine.holdCIStimd, runOp, release };
+      return { host: engine.hostStimd, hold: engine.holdCIStimd, runOp, client: engineClient(runOp), release };
     }
     const local = (await import('../api.ts')).runOp;
     signal?.throwIfAborted();
-    return {
-      host: hostStimd,
-      hold: holdCIStimd,
-      runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]),
-      release,
-    };
+    const runLocal: import('../api/engine-route.ts').RunOp = (name, args, ctx) =>
+      Reflect.apply(local, undefined, [name, args, ctx]);
+    return { host: hostStimd, hold: holdCIStimd, runOp: runLocal, client: engineClient(runLocal), release };
   } catch (error) {
     release();
     throw error;
   }
+}
+
+/** A client whose every operation runs through `runOp`, an engine's per-op entry, with `ctx`. */
+function engineClient(runOp: import('../api/engine-route.ts').RunOp): (ctx: EngineOptions) => StimClient {
+  return (ctx) => facadeClient(ctx.projectRoot, (name, args) => runOp(name, args, ctx));
 }
 
 /** Holds the existing daemon for one CI job without changing its lifetime. */
@@ -180,7 +185,7 @@ export async function holdCIStimd(
   ownedInstance: string | null,
   signal?: AbortSignal,
 ): Promise<() => void> {
-  return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
+  return (await import('../api/client.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
 }
 
 const unavailable = () => ({

@@ -21,6 +21,9 @@ import { loadConfig } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import type { StimLogsOptions } from '../api/types.ts';
 
+/** The log filters as `stim logs` parses them, validated before use. */
+type LogReadOptions = Omit<StimLogsOptions, 'sources' | 'minLevel'> & { sources?: string[]; minLevel?: string };
+
 export interface WorkspaceLogs {
   view: LogDir;
   readAgent: ReturnType<typeof createAsyncAgentActionReader> | null;
@@ -29,7 +32,7 @@ export interface WorkspaceLogs {
 
 export async function openWorkspaceLogs(
   context: StimContext,
-  options: StimLogsOptions = {},
+  options: LogReadOptions = {},
   follow = false,
 ): Promise<WorkspaceLogs> {
   context.signal.throwIfAborted();
@@ -69,7 +72,7 @@ export async function openWorkspaceLogs(
   return { view, readAgent, hostedReachable };
 }
 
-export async function readWorkspaceLogs(context: StimContext, options: StimLogsOptions = {}): Promise<NdjsonRecord[]> {
+export async function readWorkspaceLogs(context: StimContext, options: LogReadOptions = {}): Promise<NdjsonRecord[]> {
   validateLogOptions(options);
   const { view, readAgent } = await openWorkspaceLogs(context, options);
   try {
@@ -84,7 +87,7 @@ export async function readWorkspaceLogs(context: StimContext, options: StimLogsO
 
 const WORKSPACE_SOURCES = SOURCES.filter((source) => source !== 'gc' && source !== 'builds');
 
-function validateLogOptions(options: StimLogsOptions): void {
+function validateLogOptions(options: LogReadOptions): void {
   const bad =
     options.tail !== undefined && (!Number.isSafeInteger(options.tail) || options.tail < 0)
       ? 'tail must be a non-negative integer.'
@@ -102,7 +105,7 @@ function validateLogOptions(options: StimLogsOptions): void {
 
 export async function followWorkspaceLogs(
   context: StimContext,
-  options: StimLogsOptions,
+  options: LogReadOptions,
   onRecord: (record: NdjsonRecord) => void,
   onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>,
 ): Promise<() => void> {

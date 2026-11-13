@@ -255,7 +255,7 @@ test('concurrent GC clients isolate homes, output and results without changing p
             expect(stream).toBe('stderr');
             output.push(message);
           },
-        }).gc({ pressure: 'normal' }),
+        }).previewGarbage({ pressure: 'normal' }),
       ),
     );
     for (const [index, report] of reports.entries()) {
@@ -686,7 +686,11 @@ test.each([undefined, 'importer-home'])(
     mkdirSync(join(gradle, 'caches', '9.3.1'), { recursive: true });
     vi.stubEnv('STIM_HOME', importer ? join(scratch, importer) : undefined);
     const report = await trackRead((signal) =>
-      createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, GRADLE_USER_HOME: gradle } }).gc({
+      createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: { ...item.env, GRADLE_USER_HOME: gradle },
+      }).previewGarbage({
         pressure: 'normal',
         signal,
       }),
@@ -719,7 +723,7 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
     error.mockRestore();
   }
   const request = { pressure: 'normal' as const, dryRun: false, delete: true };
-  const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc(request);
+  const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).previewGarbage(request);
   expect(result).toEqual(JSON.parse(json));
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
 });
@@ -736,7 +740,7 @@ test.each(['gc', 'collectGarbage', 'deleteGarbageItem'] as const)(
     try {
       await expect(
         method === 'gc'
-          ? client.gc({ pressure })
+          ? client.previewGarbage({ pressure })
           : method === 'collectGarbage'
             ? client.collectGarbage({ pressure })
             : client.deleteGarbageItem({ item: { kind: 'archive', id: 'missing-id' } }),
@@ -764,7 +768,7 @@ test('GC resolves cache environment paths relative to each client project', asyn
         projectRoot: item.root,
         home: item.home,
         env: { ...item.env, GRADLE_USER_HOME: 'gradle-home' },
-      }).gc({ pressure: 'normal' });
+      }).previewGarbage({ pressure: 'normal' });
       return { report, directory };
     }),
   );
@@ -969,7 +973,7 @@ test('throwing from report progress cancels the read and preserves the original 
       onProgress: () => {
         throw failure;
       },
-    }).gc({ pressure: 'normal' }),
+    }).previewGarbage({ pressure: 'normal' }),
   ).rejects.toBe(failure);
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('callback');
 });
