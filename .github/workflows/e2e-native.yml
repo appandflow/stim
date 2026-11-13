@@ -621,7 +621,11 @@ jobs:
           name: windows-android-${{ matrix.suite }}-logs
           path: |
             D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\workspaces\*\state.json
+            D:\e\stim-home\workspaces\*\metro.heartbeat
             D:\e\stim-home\logs\debug\*
+            D:\e\stim-home\daemon\*.ndjson
+            D:\e\stim-home\run\stimd.log
             D:\e\stim-home\archive\**\logs\*
             D:\e\adb.log
           include-hidden-files: true

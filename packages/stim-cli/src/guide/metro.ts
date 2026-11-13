@@ -253,7 +253,10 @@ WHO RUNS IT
   not; the metro log then records a project_node event naming it. When no
   install has the version the pin names, the newest install of the pinned
   major that is not older than the pin stands in, and a node on PATH of
-  that major and not older than the pin is kept.
+  that major and not older than the pin is kept. On Windows the bare,
+  Expo and Re.Pack dev servers run on the Node that runs Stim, not the pinned
+  one: a node shim on PATH would start Metro in a child process, outside the
+  pid Stim records; the pinned Node still comes first on their PATH.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
