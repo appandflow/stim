@@ -30,6 +30,7 @@ import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
+import { defaultAndroidSdkRoot } from '@stim-cli/core/toolchain';
 import { ANDROID_LOCATION_VARIABLES } from './android-locations.ts';
 
 export interface SystemImage {
@@ -84,14 +85,7 @@ export interface ResolvedAvdSerial {
 }
 
 export function androidHome(env: NodeJS.ProcessEnv = ambientEnv()): string {
-  const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
-  if (configured) return configured;
-  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
-  if (process.platform === 'win32') {
-    return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
-  }
-  if (process.platform === 'linux') return join(home, 'Android', 'Sdk');
-  return join(home, 'Library', 'Android', 'sdk');
+  return env.ANDROID_HOME || env.ANDROID_SDK_ROOT || defaultAndroidSdkRoot(env);
 }
 
 const SDK_TOOL_LOCATIONS = {
