@@ -74,7 +74,7 @@ function unverified(entry: ConsoleStream, detail: string): Error {
   ];
   return Object.assign(new Error(`${detail} The device log claim stays at ${entry.claim.path}.`), {
     code: 'STIM_CLAIM_UNAVAILABLE',
-    remedy: `${steps.join('; ')}; then run ${claimRemoveCommand(entry.claim.path)}.`.replace(/^./, (first) =>
+    remedy: `${steps.join('; ')}; then run ${claimRemoveCommand(entry.claim.path)}`.replace(/^./, (first) =>
       first.toUpperCase(),
     ),
   });

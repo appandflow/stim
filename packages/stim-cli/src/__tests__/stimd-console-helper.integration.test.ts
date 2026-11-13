@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isJsonObject } from '@stim-cli/core/state';
@@ -19,6 +20,7 @@ import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { parseNdjsonText } from '../ndjson.ts';
 import { claimPath, consoleExitFile } from '../stimd/logs/claim.ts';
+import { handleLogRequest } from '../stimd/logs/protocol.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -239,6 +241,28 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
         claimPath(root, streamId),
       );
       expect(streams.running()).toBe(true);
+      const socket = new Socket();
+      const replied = new Promise<unknown>((resolve) =>
+        vi.spyOn(socket, 'end').mockImplementation((data: unknown) => {
+          resolve(JSON.parse(String(data)));
+          return socket;
+        }),
+      );
+      handleLogRequest({
+        message: { op: 'logs.stop', params: { root, platform: 'ios', slot: 'default', streamId } },
+        socket,
+        streams,
+        operations: new Map(),
+        controllers: new Map(),
+        tokens: new Map(),
+        attached: false,
+      });
+      expect(await replied).toMatchObject({
+        op: 'error',
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: expect.stringContaining(claimPath(root, streamId)),
+        remedy: expect.stringContaining(`pid ${stimd.pid}`),
+      });
       stimd.kill('SIGKILL');
       await once(stimd, 'exit');
       await vi.waitFor(() => expect(logged.some((entry) => entry.startsWith('device_console_adopted'))).toBe(true), {

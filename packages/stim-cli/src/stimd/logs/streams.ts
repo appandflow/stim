@@ -1212,10 +1212,12 @@ export function createStreams(
     }
     const refused = untaken.get(key);
     if (refused?.id === id)
-      throw Object.assign(new Error(`The device console ${id} cannot be stopped yet: ${refused.reason}.`), {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        remedy: 'stimd retries the takeover every second; once the reason above is resolved, run the command again.',
-      });
+      throw Object.assign(
+        new Error(
+          `The device console ${id} cannot be stopped yet: stimd has not taken over its claim at ${claimPath(root, id)} and retries every second`,
+        ),
+        { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Resolve this, then run the command again: ${refused.reason}` },
+      );
     const recorded = readCollectors(root)[slotKey];
     return !(isJsonObject(recorded) && recorded.streamId === id);
   };
