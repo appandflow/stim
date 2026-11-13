@@ -1933,7 +1933,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       'different',
       (token: string) => {
         const decoded = JSON.parse(Buffer.from(token.slice('upid1.'.length), 'base64url').toString('utf8'));
-        decoded.startTime = '1:1';
+        const [first, rest] = String(decoded.startTime).split(/:(.*)/s);
+        decoded.startTime = `${BigInt(first ?? '0') + 1n}${rest === undefined ? '' : `:${rest}`}`;
         return `upid1.${Buffer.from(JSON.stringify(decoded)).toString('base64url')}`;
       },
     ],
