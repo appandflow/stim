@@ -947,6 +947,7 @@ done`;
       'nohup emulator -avd Trailhead_run > /tmp/emulator.log 2>&1 &',
       'adb -s emulator-5554 wait-for-device',
       'adb -s emulator-5554 reverse tcp:8081 tcp:8081',
+      "adb -s emulator-5554 install -r 'app/build/outputs/apk/debug/app-debug.apk'",
       'nohup npx expo start --port 8081 > /tmp/metro.log 2>&1 & echo $! > /tmp/metro.pid',
       'printf \'%s\\n\' "$!" > /tmp/build.pid',
       'WT=/tmp/run; cd /tmp/run; nohup npx expo run:android --device emulator-5554 > /tmp/build.log 2>&1 & echo $! > /tmp/build.pid',
@@ -976,13 +977,15 @@ done`;
     const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control', platform: 'android' };
     expect(launchCrashDiagnosis([...setup, ...evidence], options)).toMatchObject({
       valid: true,
-      initialLaunchCommandId: 'setup-7',
+      initialLaunchCommandId: 'setup-8',
       errorCaptureCommandId: 'logs',
       dispatchToDiagnosisSeconds: 12,
     });
     for (const command of [
       'avdmanager list avd; rg "throw new Error" .',
       'adb -s emulator-5554 get-state && cat app/_layout.tsx',
+      'adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk && cat app/_layout.tsx',
+      'adb -s emulator-5554 install -r app/build/outputs/apk/debug/$(cat app/_layout.tsx).apk',
       'adb -s emulator-5554 logcat -d | rg "throw" .',
       'adb -s emulator-5554 logcat -d | rg "throw"; rg "throw" .',
       "printf 'disk.dataPartition.size=8589934592\\n' >> /tmp/avds/Trailhead_run.avd/config.ini; git diff",

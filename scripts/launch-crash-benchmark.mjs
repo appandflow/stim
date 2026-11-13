@@ -293,7 +293,21 @@ function orderedCommands(commands) {
 }
 
 function sourceInspectionBeforeCapture(command, arm, platform) {
-  const value = shellCommand(command).replace(/\\([A-Za-z_.])/g, '$1');
+  const body = shellCommand(command);
+  if (arm === 'control' && platform === 'android') {
+    const args = literalShellArguments(body);
+    if (
+      args?.length === 6 &&
+      args[0] === 'adb' &&
+      args[1] === '-s' &&
+      /^emulator-\d+$/.test(args[2]) &&
+      args[3] === 'install' &&
+      args[4] === '-r' &&
+      /^app\/build\/outputs\/apk\/(?:[\w-]+\/)*[\w.-]+\.apk$/.test(args[5])
+    )
+      return false;
+  }
+  const value = body.replace(/\\([A-Za-z_.])/g, '$1');
   if (/(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value)) return false;
   if (
     shellCommandSegments(value).some(
