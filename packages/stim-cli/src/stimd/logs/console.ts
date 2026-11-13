@@ -6,6 +6,7 @@ import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import { getExecutor } from '../../exec.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import {
+  claimRemoveCommand,
   markClaimChildPending,
   readClaimSet,
   releaseClaim,
@@ -42,6 +43,8 @@ export interface ConsoleStream {
   attribution: Record<string, unknown>;
   revision: number;
   settling: Promise<void> | null;
+  /** Why the last settle refused; the watcher leaves the entry alone until a stop or start tries again. */
+  refused: Error | null;
 }
 
 const identityOf = (value: unknown): Identity | null =>
@@ -50,6 +53,16 @@ const identityOf = (value: unknown): Identity | null =>
     : null;
 
 const helperLog = (root: string, streamId: string) => consoleExitFile(root, streamId).replace(/\.exit\.json$/, '.log');
+
+/** The refusal when what is left of a console cannot be verified stopped: the claim stays, with how to clear it. */
+function unverified(entry: ConsoleStream, detail: string): Error {
+  return Object.assign(new Error(`${detail} The device log claim stays at ${entry.claim.path}.`), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    remedy: `List devicectl's process group with \`pgrep -g ${entry.leader.pid}\` and the helper with \`ps -p ${entry.helper.pid}\`, stop what still runs (\`kill -TERM -${entry.leader.pid}\`, \`kill ${entry.helper.pid}\`), then run ${claimRemoveCommand(entry.claim.path)}.`,
+  });
+}
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
   for (const deadline = Date.now() + ms; !done() && Date.now() < deadline;)
@@ -161,7 +174,6 @@ export async function startConsole({
   if (typeof outcome === 'object' && outcome.type === 'registered' && helperPid !== undefined && helperToken) {
     const leader = { pid: outcome.pid, processToken: outcome.processToken };
     const helper = { pid: helperPid, processToken: helperToken };
-    setClaimChild(claim, leader);
     const engineDir = ownStoreEngine()?.build ?? null;
     const held =
       updateClaimDetails(claim, {
@@ -171,6 +183,7 @@ export async function startConsole({
         runId,
         attribution,
       }) ?? claim;
+    setClaimChild(held, leader);
     helperProcess.send(CONSOLE_RUN_ACCEPT, () => {});
     helperProcess.unref();
     return {
@@ -183,6 +196,7 @@ export async function startConsole({
       attribution,
       revision: 0,
       settling: null,
+      refused: null,
     };
   }
   if (outcome === 'timeout' || (typeof outcome === 'object' && outcome.type === 'registered')) {
@@ -216,12 +230,20 @@ export async function startConsole({
  * that ended without one gets its devicectl group stopped and an error record. Then the stream's record and claim go.
  */
 export async function settleConsole(entry: ConsoleStream): Promise<void> {
-  await waitUntil(
-    () => exitOf(entry) !== null || inspectProcessIdentity(entry.helper) !== 'same',
-    CONSOLE_STOP_MS + 3000,
-  );
+  const helperGone = () => ['gone', 'different'].includes(inspectProcessIdentity(entry.helper));
+  await waitUntil(() => exitOf(entry) !== null || helperGone(), CONSOLE_STOP_MS + 3000);
   if (!exitOf(entry)) {
-    await stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP });
+    const helper = inspectProcessIdentity(entry.helper);
+    if (helper !== 'gone' && helper !== 'different')
+      throw unverified(
+        entry,
+        `The device console helper pid ${entry.helper.pid} recorded no exit and its identity reads ${helper}, so Stim cannot tell whether it still writes the device log.`,
+      );
+    try {
+      await stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP });
+    } catch (error) {
+      throw unverified(entry, errorText(error));
+    }
     let output = '';
     try {
       output = readFileSync(helperLog(entry.root, entry.id), 'utf8').slice(-4096).trim();
@@ -252,11 +274,15 @@ export async function settleConsole(entry: ConsoleStream): Promise<void> {
 /** Asks the console's helper to stop devicectl and record it, then settles the entry. */
 export async function stopConsole(entry: ConsoleStream): Promise<void> {
   if (!consoleEnded(entry))
-    await stopHelperProcess(entry.helper, {
-      graceMs: CONSOLE_STOP_MS + 3000,
-      label: 'device console helper',
-      stopGroup: () => stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP }),
-    });
+    try {
+      await stopHelperProcess(entry.helper, {
+        graceMs: CONSOLE_STOP_MS + 3000,
+        label: 'device console helper',
+        stopGroup: () => stopProcessGroup(entry.leader, { termMs: CONSOLE_STOP_MS, label: GROUP }),
+      });
+    } catch (error) {
+      throw unverified(entry, errorText(error));
+    }
   await settleConsole(entry);
 }
 
@@ -273,13 +299,21 @@ export function consoleHolder(root: string, streamId: string): ClaimHolder | nul
 /**
  * Takes over the console an earlier stimd started, from its claim: the holder's owner is gone, its child is devicectl
  * and its details name the helper. A console whose devicectl already ended is returned too, for the caller to settle.
+ * Otherwise it returns why the claim could not be taken, with the claim and how to clear it.
  */
-export function adoptConsole(root: string, streamId: string, holder: ClaimHolder): ConsoleStream | null {
+export function adoptConsole(root: string, streamId: string, holder: ClaimHolder): ConsoleStream | string {
   const helper = identityOf(holder.details.helper);
-  if (!helper || !holder.child) return null;
+  const refusal = (why: string) =>
+    `${why}. Verify that the helper${helper ? ` pid ${helper.pid}` : ''} and devicectl${holder.child ? ` (process group ${holder.child.pid})` : ''} have stopped, then run ${pendingChildRemoveCommand(holder.path)} and ${claimRemoveCommand(holder.path)}`;
+  if (!helper) return refusal(`its claim at ${holder.path} names no helper`);
+  if (!holder.child) return refusal(`its claim at ${holder.path} records no devicectl process`);
   const path = claimPath(root, streamId);
   const retaken = retakeClaim(holder, path, LABEL);
-  if (!retaken && ['same', 'unknown'].includes(inspectProcessIdentity(holder.child))) return null;
+  const child = retaken ? 'same' : inspectProcessIdentity(holder.child);
+  if (!retaken && (child === 'same' || child === 'unknown'))
+    return refusal(
+      `its claim at ${holder.path} could not be taken while devicectl pid ${holder.child.pid} reads ${child}`,
+    );
   const claim = retaken ?? { ...holder, root: path, label: LABEL };
   return {
     id: streamId,
@@ -291,5 +325,6 @@ export function adoptConsole(root: string, streamId: string, holder: ClaimHolder
     attribution: isJsonObject(holder.details.attribution) ? holder.details.attribution : {},
     revision: 0,
     settling: null,
+    refused: null,
   };
 }

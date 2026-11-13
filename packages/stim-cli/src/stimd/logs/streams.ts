@@ -23,6 +23,7 @@ import { captureProcessToken, inspectProcessIdentity } from '../../process-ident
 import { adbCommand, isLogCleanupError, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import {
+  claimPath,
   clearHistoryClaim,
   clearStreamClaim,
   pendingChildRemoveCommand,
@@ -448,6 +449,10 @@ const stopStimdRemedy = () =>
     ? `Stopping this stimd (taskkill /PID ${process.pid} /F) is safe, and the next command starts a new one.`
     : `Stopping this stimd (kill ${process.pid}) is safe, and the next command starts a new one.`;
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const errorRemedy = (error: unknown): string => {
+  const remedy = error instanceof Error ? Reflect.get(error, 'remedy') : undefined;
+  return `${errorText(error)}${typeof remedy === 'string' ? ` ${remedy}` : ''}`;
+};
 export function createStreams(
   log: (message: string) => void,
   ownedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
@@ -465,19 +470,24 @@ export function createStreams(
   let closePromise: Promise<void> | null = null;
   let ownedRunning = true;
   const consoles = new Map<string, ConsoleStream>();
+  const untaken = new Map<string, { root: string; slotKey: string; id: string; reason: string; retrying: boolean }>();
   let consoleWatch: NodeJS.Timeout | null = null;
+  const unwatchConsoles = () => {
+    if (consoles.size || untaken.size || !consoleWatch) return;
+    clearInterval(consoleWatch);
+    consoleWatch = null;
+  };
   const settleConsoleAt = (key: string, entry: ConsoleStream, requested: boolean): Promise<void> => {
+    if (requested && !entry.settling) entry.refused = null;
     entry.settling ??= (requested ? stopConsole(entry) : settleConsole(entry)).then(
       () => {
         if (consoles.get(key) === entry) consoles.delete(key);
-        if (!consoles.size && consoleWatch) {
-          clearInterval(consoleWatch);
-          consoleWatch = null;
-        }
+        unwatchConsoles();
         return undefined;
       },
       (error: unknown) => {
         entry.settling = null;
+        entry.refused = error instanceof Error ? error : new Error(String(error));
         throw error;
       },
     );
@@ -486,10 +496,19 @@ export function createStreams(
   const watchConsoles = () => {
     consoleWatch ??= setInterval(() => {
       for (const [key, entry] of consoles)
-        if (!entry.settling && consoleEnded(entry))
+        if (!entry.settling && !entry.refused && consoleEnded(entry))
           void serialize(entry.root, async () => {
             if (consoles.get(key) === entry) await settleConsoleAt(key, entry, false);
-          }).catch((error: unknown) => log(`device console ${entry.id} could not be settled: ${errorText(error)}`));
+          }).catch((error: unknown) =>
+            ownedLog('error', 'device_console_unsettled', `device console ${entry.id}: ${errorRemedy(error)}`),
+          );
+      for (const [key, pending] of untaken) {
+        if (pending.retrying) continue;
+        pending.retrying = true;
+        void serialize(pending.root, () => retakeConsole(key, pending))
+          .catch((error: unknown) => log(`device console ${pending.id} was not taken over: ${errorText(error)}`))
+          .finally(() => (pending.retrying = false));
+      }
     }, 1000);
     consoleWatch.unref();
   };
@@ -1129,28 +1148,42 @@ export function createStreams(
   };
   /**
    * Takes over a physical iPhone console whose helper an earlier stimd started, once that stimd is gone; a predecessor
-   * still exiting gets `PREDECESSOR_WAIT_MS`. A console that ended meanwhile is settled from what its helper recorded.
+   * still exiting gets `waitMs`. A console that ended meanwhile is settled from what its helper recorded. A console that
+   * cannot be taken over is logged with its claim and remedy once, and retried every second while its record stays.
    * @ref LLP 0018#the-physical-iphone-consoles-helper -- a later stimd takes the console over, never relaunching it
    */
-  const takeOverConsole = async (root: string, slotKey: string, id: string, holder: ClaimHolder): Promise<void> => {
+  const takeOverConsole = async (
+    root: string,
+    slotKey: string,
+    id: string,
+    holder: ClaimHolder,
+    waitMs: number,
+  ): Promise<void> => {
     for (
-      const deadline = Date.now() + PREDECESSOR_WAIT_MS;
+      const deadline = Date.now() + waitMs;
       inspectProcessIdentity(holder.owner) === 'same' && Date.now() < deadline;
     )
       await new Promise((resolve) => setTimeout(resolve, 100));
+    const key = `${root}\0${slotKey}`;
     const owner = streamOwnerGone(root, id);
     const current = consoleHolder(root, id);
-    if (!owner.gone || !current) {
-      ownedLog(
-        'warn',
-        'device_log_stream_unverified',
-        `device console ${id} in ${root} was not taken over: ${owner.gone ? 'its claim changed' : owner.reason}`,
-      );
+    const entry = !owner.gone
+      ? owner.reason
+      : current
+        ? adoptConsole(root, id, current)
+        : `its claim at ${holder.path} changed`;
+    if (typeof entry === 'string') {
+      if (untaken.get(key)?.reason !== entry)
+        ownedLog(
+          'warn',
+          'device_log_stream_unverified',
+          `device console ${id} in ${root} was not taken over (claim ${claimPath(root, id)}): ${entry}`,
+        );
+      untaken.set(key, { root, slotKey, id, reason: entry, retrying: untaken.get(key)?.retrying ?? false });
+      watchConsoles();
       return;
     }
-    const entry = adoptConsole(root, id, current);
-    if (!entry) return;
-    const key = `${root}\0${slotKey}`;
+    untaken.delete(key);
     consoles.set(key, entry);
     watchConsoles();
     ownedLog(
@@ -1160,7 +1193,7 @@ export function createStreams(
     );
     if (consoleEnded(entry))
       await settleConsoleAt(key, entry, false).catch((error: unknown) =>
-        ownedLog('warn', 'device_console_unsettled', `device console ${id} in ${root}: ${errorText(error)}`),
+        ownedLog('error', 'device_console_unsettled', `device console ${id} in ${root}: ${errorRemedy(error)}`),
       );
   };
   /**
@@ -1170,7 +1203,7 @@ export function createStreams(
   const stopUntabledConsole = async (root: string, slotKey: string, id: string): Promise<boolean> => {
     const holder = consoleHolder(root, id);
     if (!holder) return false;
-    await takeOverConsole(root, slotKey, id, holder);
+    await takeOverConsole(root, slotKey, id, holder, 0);
     const key = `${root}\0${slotKey}`;
     const entry = consoles.get(key);
     if (entry?.id === id) {
@@ -1179,6 +1212,19 @@ export function createStreams(
     }
     const recorded = readCollectors(root)[slotKey];
     return !(isJsonObject(recorded) && recorded.streamId === id);
+  };
+  /** Tries again to take over a console an earlier attempt could not, while its record still names it. */
+  const retakeConsole = async (key: string, pending: { root: string; slotKey: string; id: string }): Promise<void> => {
+    if (untaken.get(key)?.id !== pending.id || consoles.has(key)) return;
+    const recorded = readCollectors(pending.root)[pending.slotKey];
+    const holder = consoleHolder(pending.root, pending.id);
+    if (!holder || !(isJsonObject(recorded) && recorded.streamId === pending.id)) {
+      untaken.delete(key);
+      unwatchConsoles();
+      return;
+    }
+    await takeOverConsole(pending.root, pending.slotKey, pending.id, holder, 0);
+    unwatchConsoles();
   };
   // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
   const resumeIn = async (
@@ -1208,7 +1254,7 @@ export function createStreams(
       if (!handedOver && typeof record.interruptedAt === 'string') continue;
       const holder = consoleHolder(root, id);
       if (holder) {
-        await takeOverConsole(root, slotKey, id, holder);
+        await takeOverConsole(root, slotKey, id, holder, PREDECESSOR_WAIT_MS);
         continue;
       }
       const crashed = !handedOver;
@@ -1575,7 +1621,7 @@ export function createStreams(
         if (signal?.aborted) abort();
       });
     },
-    running: () => streams.size > 0 || consoles.size > 0,
+    running: () => streams.size > 0 || consoles.size > 0 || untaken.size > 0,
     engineDirs: () =>
       [...consoles.values()].flatMap((entry) =>
         typeof entry.claim.details.engineDir === 'string' ? [entry.claim.details.engineDir] : [],

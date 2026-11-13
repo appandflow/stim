@@ -210,4 +210,46 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
       await streams.close();
     }
   }, 30_000);
+
+  test('a console whose predecessor still runs past the wait is refused by name, then taken over once it exits', async () => {
+    const stimd = spawn(process.execPath, ['--input-type=module', '-e', STIMD(root)], {
+      env,
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    spawned.push(stimd);
+    assert(stimd.stdout);
+    const [line]: unknown[] = await once(stimd.stdout, 'data');
+    const started: unknown = JSON.parse(String(line));
+    assert(isJsonObject(started) && typeof started.streamId === 'string');
+    const { streamId } = started;
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
+    const { helper } = claimed(streamId);
+    const logged: string[] = [];
+    const streams = createStreams(
+      () => {},
+      (_level, event, msg) => logged.push(`${event}: ${msg}`),
+    );
+    try {
+      streams.resume([root], env);
+      await vi.waitFor(
+        () => expect(logged.find((entry) => entry.startsWith('device_log_stream_unverified'))).toBeDefined(),
+        { timeout: 20_000 },
+      );
+      expect(logged.find((entry) => entry.startsWith('device_log_stream_unverified'))).toContain(
+        claimPath(root, streamId),
+      );
+      expect(streams.running()).toBe(true);
+      stimd.kill('SIGKILL');
+      await once(stimd, 'exit');
+      await vi.waitFor(() => expect(logged.some((entry) => entry.startsWith('device_console_adopted'))).toBe(true), {
+        timeout: 10_000,
+      });
+      expect(claimed(streamId).helper).toEqual(helper);
+      expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
+      expect(records().at(-1)).toMatchObject({ event: 'collector_stopped', msg: 'device log stream stopped' });
+      expect(readFileSync(launches, 'utf8')).toBe('x');
+    } finally {
+      await streams.close();
+    }
+  }, 60_000);
 });

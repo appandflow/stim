@@ -67,14 +67,15 @@ async function runConsoleHelper(argv: readonly string[]): Promise<void> {
     const exited = new Promise<{ code: number | null; signal: string | null }>((done) =>
       child.once('exit', (code, signal) => done({ code, signal })),
     );
-    child.once('error', () => {});
+    const spawn: { error: Error | null } = { error: null };
+    child.once('error', (error) => (spawn.error = error));
     const processToken = child.pid === undefined ? null : captureProcessToken(child.pid);
     if (child.pid === undefined || !processToken) {
       if (child.pid !== undefined) child.kill('SIGKILL');
       await drainGroupOutput(child, closed, () => false);
       await send({
         type: 'failed',
-        message: 'the device console started but its process identity could not be read',
+        message: spawn.error?.message ?? 'the device console started but its process identity could not be read',
       });
       return;
     }

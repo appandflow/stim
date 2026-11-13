@@ -614,8 +614,9 @@ stopped or failed. A `stimd` attached to a command (CI, sandboxes) starts none
 and leaves them to the next detached `stimd`. A physical
 iPhone's console is not restarted, because that would launch the app again. It
 runs under its own helper process, which keeps writing `device.ndjson` while
-`stimd` restarts, and the new `stimd` takes it over. It does not hold the
-restart.
+`stimd` restarts. The new `stimd` takes it over once the old one has exited:
+it waits up to 10 s, then retries every second and logs once why it cannot yet.
+It does not hold the restart.
 
 ## Named server ports
 

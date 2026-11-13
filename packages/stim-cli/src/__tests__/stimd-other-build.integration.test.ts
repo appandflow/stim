@@ -63,12 +63,6 @@ test.each([
     remedy: 'kill 4242',
   },
   {
-    stimd: 'that hands over once its device log streams end',
-    reply: { version: '1.0.0-other', handover: true, heldBy: 'logs', workspaces: ['/work/app'] },
-    message: 'streams device logs for /work/app',
-    remedy: 'npx stim@1.0.0-other stop',
-  },
-  {
     stimd: 'that hands over once the dev servers it stops on exit end',
     reply: { version: '1.0.0-other', handover: true, heldBy: 'dev-servers', workspaces: ['/work/app'] },
     message: 'dev servers of /work/app',

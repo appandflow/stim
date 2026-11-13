@@ -257,13 +257,15 @@ disk.
 **Claim.** The stream keeps its claim under `log-streams/` (LLP 0007, LLP 0019).
 devicectl is the claim child; the details add `helper: {pid, processToken}`,
 the run id, the slot attribution and `engineDir`. The child is pending from the
-helper's spawn until it reports, as for the dev server. A helper that reports
+helper's spawn until it reports, as for the dev server. The helper goes into
+the details before devicectl becomes the child, so a claim that names
+devicectl always names its helper. A helper that reports
 `failed` frees the claim and the stream record; a helper silent after 20 s, or
 ended without a report, leaves the claim pending and the start refuses with
 `STIM_CLAIM_UNAVAILABLE`, naming the helper pid and the claim's remove command.
 The workspace's collector record keeps `engineDir`, so the engine store keeps
 the build the helper runs from; the console no longer pins stimd's engine
-claim, and stimd no longer answers `heldBy: "logs"`.
+claim.
 
 **Output.** The helper writes `device.ndjson` itself, with the stream's
 `streamId`, run id and slot attribution: `collector_started`, every console
@@ -291,7 +293,12 @@ gone: it checks every second, and at takeover. With the exit file, the helper
 already wrote the closing records; stimd removes the collector record, the
 claim, the exit file and the helper's log. A helper gone without one: stimd
 stops what is left of devicectl's group, writes a `collector_failed` record
-naming the helper and the end of its log, then removes the same state.
+naming the helper and the end of its log, then removes the same state. A
+helper whose identity reads `unknown`, or a group stop that refuses, is a
+`STIM_CLAIM_UNAVAILABLE` refusal naming the claim, the commands that list and
+stop the group and helper, and the claim's remove command; the claim stays and
+the watcher leaves the console alone until a stop or start tries again.
+`stim stop` waits up to 30 s for a console's stop.
 
 **Events.**
 
@@ -301,7 +308,13 @@ naming the helper and the end of its log, then removes the same state.
   10 s for a predecessor still exiting, and takes the claim over once
   `streamOwnerGone` proves its owner gone (LLP 0019). It neither relaunches the
   app nor writes an interrupted record. A console that ended while no stimd ran
-  is settled from its exit file.
+  is settled from its exit file. A console it cannot take over (the owner still
+  runs or cannot be identified, or the claim cannot be retaken while devicectl
+  reads `same` or `unknown`) is logged once per reason with the claim path and
+  its remove commands, retried every second while its record names it, and
+  holds idle exit meanwhile. A stop or start in that slot tries the takeover
+  again without the 10 s wait, then falls back to the claim recovery of any
+  other stream.
 - Idle exit: stimd does not idle-exit while it supervises a console, as before.
 - Logs worker failure: the console does not use the worker and is not
   affected.

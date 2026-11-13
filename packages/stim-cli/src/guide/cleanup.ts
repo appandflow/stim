@@ -1501,7 +1501,8 @@ THE ONE CASE GC WILL NOT REAP
   \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
   a crash of its helper process, the host sleeping, or the cable coming out.
   A stimd restart does not: the console runs under that helper, which writes
-  device.ndjson itself, and the next stimd takes it over. Measured: SIGTERM to the
+  device.ndjson itself, and the next stimd takes it over once the old one has
+  exited (it waits up to 10 s, then retries every second). Measured: SIGTERM to the
   collector alone terminates the app. The phone has no owned-device registry
   entry. \`stop\` closes the app and releases this workspace's leases.
   Nothing is uninstalled, and the next \`ios --device\` starts it again.

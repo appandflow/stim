@@ -194,7 +194,7 @@ let refusal: {
   version: string;
   pid: number | null;
   handover: boolean;
-  heldBy: 'shares' | 'logs' | 'dev-servers' | null;
+  heldBy: 'shares' | 'dev-servers' | null;
   workspaces: string[];
 } | null = null;
 let opSocket: Socket | null = null;
@@ -236,10 +236,7 @@ function noteRefusal(message: Record<string, unknown>): void {
     version: String(message.version ?? message.build),
     pid: typeof message.pid === 'number' ? message.pid : null,
     handover: message.handover === true || message.build === stimdBuildId(),
-    heldBy:
-      message.heldBy === 'shares' || message.heldBy === 'logs' || message.heldBy === 'dev-servers'
-        ? message.heldBy
-        : null,
+    heldBy: message.heldBy === 'shares' || message.heldBy === 'dev-servers' ? message.heldBy : null,
     workspaces: Array.isArray(message.workspaces)
       ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
       : [],
@@ -295,37 +292,30 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
         `${stimd} runs Stim ${version} as the child of another command.`,
         'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
       ]
-    : // compat C34 until 2.1.0
-      heldBy === 'logs'
+    : heldBy === 'dev-servers'
       ? [
-          `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
-          `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
+          `${stimd} runs Stim ${version} and the dev servers of ${workspaces.join(', ')}, which stop when it exits on Windows; it restarts on this build once they stop.`,
+          `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'}; then run the command again.`,
         ]
-      : // compat end
-        heldBy === 'dev-servers'
+      : heldBy === 'shares'
         ? [
-            `${stimd} runs Stim ${version} and the dev servers of ${workspaces.join(', ')}, which stop when it exits on Windows; it restarts on this build once they stop.`,
-            `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'}; then run the command again.`,
+            `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
+            `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
           ]
-        : heldBy === 'shares'
+        : waiting.length > 0
           ? [
-              `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
-              `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
+              `${stimd} runs Stim ${version} and waits for ${waiting.length === 1 ? 'child' : 'children'} ${waiting.join(', ')}, whose cleanup it could not verify; it restarts on this build once ${waiting.length === 1 ? 'that child has' : 'they have'} stopped.`,
+              `Check ${waiting.length === 1 ? 'that child' : 'those children'} (\`stim status\` shows the remedy) and end ${waiting.length === 1 ? 'it' : 'them'}, or ${kill}; the next stim command starts one of this build.`,
             ]
-          : waiting.length > 0
+          : handover
             ? [
-                `${stimd} runs Stim ${version} and waits for ${waiting.length === 1 ? 'child' : 'children'} ${waiting.join(', ')}, whose cleanup it could not verify; it restarts on this build once ${waiting.length === 1 ? 'that child has' : 'they have'} stopped.`,
-                `Check ${waiting.length === 1 ? 'that child' : 'those children'} (\`stim status\` shows the remedy) and end ${waiting.length === 1 ? 'it' : 'them'}, or ${kill}; the next stim command starts one of this build.`,
+                `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+                'Run the command again once those commands end.',
               ]
-            : handover
-              ? [
-                  `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
-                  'Run the command again once those commands end.',
-                ]
-              : [
-                  `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                  `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
-                ];
+            : [
+                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+              ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 
@@ -1505,6 +1495,8 @@ export async function startDeviceLogStream(
   return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not start the device log stream' };
 }
 
+const LOGS_STOP_TIMEOUT_MS = 30_000;
+
 export async function stopDeviceLogStream(
   root: string,
   platform: string,
@@ -1515,7 +1507,12 @@ export async function stopDeviceLogStream(
   throwIfCancelled(operation?.signal, 'device log cleanup');
   if (!stimdLive())
     await ensureStimd(operation?.env, process.platform, false, undefined, undefined, true, undefined, true);
-  const reply = await askStimd('logs.stop', 10_000, { params: { root, platform, slot, streamId } }, operation?.signal);
+  const reply = await askStimd(
+    'logs.stop',
+    LOGS_STOP_TIMEOUT_MS,
+    { params: { root, platform, slot, streamId } },
+    operation?.signal,
+  );
   throwIfCancelled(operation?.signal, 'device log cleanup');
   if (reply?.op === 'logs.stopped' && typeof reply.stopped === 'boolean') return { stopped: reply.stopped };
   return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not stop the device log stream' };
