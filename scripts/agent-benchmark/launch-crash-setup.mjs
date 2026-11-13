@@ -1,5 +1,5 @@
 export function launchCrashSetup({ platform, arm, systemImage }) {
-  if (!['ios', 'android'].includes(platform) || !['stim', 'control'].includes(arm)) {
+  if (!['ios', 'android'].includes(platform) || !['stim', 'control', 'expo-agent-cli'].includes(arm)) {
     throw new Error('launch-error setup requires a supported platform and arm');
   }
   if (platform === 'android' && !/^system-images;android-\d+;[a-zA-Z0-9_-]+;arm64-v8a$/.test(systemImage ?? '')) {
