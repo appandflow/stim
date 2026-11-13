@@ -218,9 +218,9 @@ export async function stopHostedMacos(
 ): Promise<void> {
   signal?.throwIfAborted();
   if (placement.agent.driver === 'agent-device') {
-    const session = ambientEnv().AGENT_DEVICE_SESSION?.trim();
+    const session = ambientEnv().AGENT_DEVICE_SESSION;
     const standard = hostedAgentSessionName(root, 'macos', 'default');
-    closeAgentConnection(placement.agent.remoteConfig, standard, ...(session ? [session] : []));
+    closeAgentConnection(placement.agent.remoteConfig, standard, session);
   }
   let host: HostConnection | undefined;
   const cancel = () => host?.connection.close();

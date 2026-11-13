@@ -17,7 +17,7 @@ function report(message: string): void {
 }
 
 /** Closes each named agent-device connection that uses `remoteConfig`. */
-export function closeAgentConnection(remoteConfig: string, ...sessions: string[]): void {
+export function closeAgentConnection(remoteConfig: string, standard: string, explicit?: string): void {
   const exec = getExecutor();
   if (!exec.findExecutable('agent-device')) return;
   const config = canonical(remoteConfig);
@@ -35,9 +35,11 @@ export function closeAgentConnection(remoteConfig: string, ...sessions: string[]
     if (result?.success !== true) throw new Error('agent-device did not confirm the command');
     return result.data;
   };
-  for (const session of new Set(sessions)) {
+  const sessions = explicit?.trim() && explicit !== standard ? [standard, explicit] : [standard];
+  for (const session of sessions) {
+    const name = session === standard ? ['--session', session] : [`--session=${session}`];
     try {
-      const status = run(['connection', 'status', '--session', session]);
+      const status = run(['connection', 'status', ...name]);
       if (status?.connected !== true || status.session !== session || typeof status.remoteConfig !== 'string') continue;
       if (canonical(status.remoteConfig) !== config) continue;
     } catch {
@@ -46,7 +48,7 @@ export function closeAgentConnection(remoteConfig: string, ...sessions: string[]
     }
     let failed = false;
     try {
-      run(['close', '--remote-config', remoteConfig, '--session', session]);
+      run(['close', '--remote-config', remoteConfig, ...name]);
     } catch (error) {
       const reply =
         isJsonObject(error) && typeof error.status === 'number' && error.status !== 0 && error.signal === null
@@ -55,13 +57,14 @@ export function closeAgentConnection(remoteConfig: string, ...sessions: string[]
       failed = !(reply?.success === false && isJsonObject(reply.error) && reply.error.code === 'SESSION_NOT_FOUND');
     }
     try {
-      run(['disconnect', '--session', session]);
+      run(['disconnect', ...name]);
     } catch {
       failed = true;
     }
     if (failed) {
+      const option = session === standard ? '--session ' : '--session=';
       report(
-        `could not clean up agent-device connection for ${quotedPath(session)}; run agent-device disconnect --session ${quotedPath(session)} using the same agent-device state directory`,
+        `could not clean up agent-device connection for ${quotedPath(session)}; run agent-device disconnect ${option}${quotedPath(session)} using the same agent-device state directory`,
       );
     } else {
       report(`closed agent-device connection for ${session}`);

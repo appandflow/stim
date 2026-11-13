@@ -490,7 +490,8 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       await runMacos(testContext(), root, () => {}, 'mini');
       const config = agentRemoteConfig(root);
       const standard = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
-      const session = scenario === 'same name' ? standard : "agent's desktop";
+      const session = scenario === 'same name' ? standard : "--agent's desktop ";
+      const flags = session === standard ? ['--session', standard] : [`--session=${session}`];
       const otherConfig = join(dir, 'other-config.json');
       writeFileSync(otherConfig, '{}');
       vi.stubEnv('AGENT_DEVICE_SESSION', session);
@@ -500,7 +501,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         findExecutable: () => '/fake/agent-device',
         runFile: (_file: string, args: string[]) => {
           calls.push(args);
-          const name = args[args.indexOf('--session') + 1];
+          const name = args.find((arg) => arg.startsWith('--session='))?.slice('--session='.length) ?? standard;
           if (args[0] === 'disconnect' && scenario === 'custom')
             throw new Error('should not leak secret-from-agent-device');
           return JSON.stringify({
@@ -518,18 +519,18 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       const owned = scenario === 'custom' || scenario === 'same name';
       expect(calls).toEqual([
         ['connection', 'status', '--session', standard, '--json'],
-        ...(session === standard ? [] : [['connection', 'status', '--session', session, '--json']]),
+        ...(session === standard ? [] : [['connection', 'status', ...flags, '--json']]),
         ...(owned
           ? [
-              ['close', '--remote-config', config, '--session', session, '--json'],
-              ['disconnect', '--session', session, '--json'],
+              ['close', '--remote-config', config, ...flags, '--json'],
+              ['disconnect', ...flags, '--json'],
             ]
           : []),
       ]);
       const output = stderr.mock.calls.map(([line]) => line).join('');
       expect(output).toMatch(
         scenario === 'custom'
-          ? "agent-device disconnect --session 'agent'\\''s desktop'"
+          ? "agent-device disconnect --session='--agent'\\''s desktop '"
           : owned
             ? `closed agent-device connection for ${standard}`
             : /^$/,
