@@ -497,8 +497,8 @@ bun --version, rustup and git; it never runs the app's code.
 
 Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
-runs the same ./exact.mjs ios --no-install [--release] in a checkout folder
-named like this app's, with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
+runs the same ./exact.mjs ios --no-install [--release] in the app's directory,
+with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
 and this Mac installs the .app on its owned or hosted simulator; nothing is cached. The
 worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
 Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
@@ -507,8 +507,8 @@ skipped and the placement line names the missing piece and the command that
 installs it; stim doctor lists the same for each machine in remote.machines. The values of the settings app.json env declares travel with the
 build: this shell's, else .env.local's, else .env's, as Exact reads them. These
 build here: apps whose app.json declares native modules (Exact may read them on
-a simulator), an exact2 checkout with local changes, and an app folder name
-that is not a plain ASCII file name.
+a simulator), an exact2 checkout with local changes, and a repository-root app
+whose folder name is not a plain ASCII file name.
 
 Only iOS simulators, here or hosted, are supported. macOS, web, Android and physical devices
 use Exact's own commands.`,
