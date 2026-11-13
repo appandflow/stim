@@ -20,6 +20,7 @@ import {
 } from './runner.mjs';
 import { launchCrashRepair, launchCrashToken } from '../launch-crash-benchmark.mjs';
 import { assertExactFixture } from './native-fixtures.mjs';
+import { assertGoldenDaemonStopped, waitForGoldenDaemonToStop } from './golden-state.mjs';
 import { injectNativeCrash, nativeCrashPlan, nativeCrashReproduced } from './native-crash-setup.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
@@ -71,6 +72,7 @@ const coordinatorHashes = () =>
       'command-evidence.mjs',
       'native-crash-setup.mjs',
       'matrix.mjs',
+      'golden-state.mjs',
     ].map((name) => [name, sha256(fileURLToPath(new URL(name, import.meta.url)))]),
   );
 const save = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
@@ -136,7 +138,7 @@ async function loadGate() {
   throw new Error('Native benchmark load gate failed');
 }
 
-function prepare() {
+async function prepare() {
   const before = provenance();
   const readyPath = join(directory, 'READY.json');
   if (existsSync(readyPath)) throw new Error('Native golden already prepared; retain its provenance');
@@ -179,6 +181,7 @@ function prepare() {
   save(join(directory, 'seed-launch.json'), launch);
   invoke(['stop']);
   invoke(['worktree', 'remove', '--force']);
+  await waitForGoldenDaemonToStop(home);
   const controlArgs =
     fixture.framework === 'exact'
       ? ['ios', '--no-install']
@@ -321,7 +324,12 @@ async function dispatch() {
         ? { avds: run('emulator', ['-list-avds']), transports: run('adb', ['devices', '-l']) }
         : run('ps', ['-axo', 'pid=,lstart=,command=']);
   save(join(runDir, 'devices-before.json'), devicesBefore);
-  if (arm === 'stim') run('cp', ['-cR', join(directory, 'golden-stim-home') + '/.', runnerEnv.STIM_HOME]);
+  if (arm === 'stim') {
+    const goldenHome = join(directory, 'golden-stim-home');
+    assertGoldenDaemonStopped(goldenHome);
+    run('cp', ['-cR', `${goldenHome}/.`, runnerEnv.STIM_HOME]);
+    assertGoldenDaemonStopped(runnerEnv.STIM_HOME);
+  }
   const crash = variant === 'launch-crash' ? prepareCrashFixture(runId, runnerEnv) : null;
   const taskFixture = crash?.fixtureCheckout ?? fixture.fixtureDirectory;
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
@@ -551,7 +559,7 @@ function collect(runDir) {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
-if (command === 'prepare') prepare();
+if (command === 'prepare') await prepare();
 else if (command === 'dispatch') await dispatch();
 else if (command === 'collect') collect(resolve(arm));
 else throw new Error('Expected prepare, dispatch or collect');

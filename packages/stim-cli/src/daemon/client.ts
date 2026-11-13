@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
+import { releaseRunLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
@@ -49,6 +50,17 @@ const ATTACH_AFTER_MS = 2000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
 const OP_BEGIN_TIMEOUT_MS = 30_000;
+const RESUME_WAIT_MS = 30_000;
+
+/** The bound of a resume: every wait in it ends at `deadline` or when `signal` aborts. */
+interface ResumeLimit {
+  signal?: AbortSignal;
+  deadline: number;
+}
+
+const within = (ms: number, limit?: ResumeLimit): number =>
+  limit ? Math.max(0, Math.min(ms, limit.deadline - Date.now())) : ms;
+const LOSS_GRACE_MS = 1000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
@@ -142,12 +154,18 @@ function requireResolvedStimdHome(): void {
 async function admitExisting(
   held: Socket[] | undefined,
   command: string | undefined,
-  knownAttached = false,
-  invocation?: Invocation & { workspace?: string | null },
+  knownAttached: boolean,
+  invocation: (Invocation & { workspace?: string | null }) | undefined,
+  replay: Pick<Admission, 'env' | 'required'>,
+  limit?: ResumeLimit,
 ): Promise<void> {
   const attached =
     knownAttached || readClaimSet(stimdClaimRoot()).live.some((claim) => claim.details.attached === true);
-  if (!(await admit(held, command, invocation)) && attached)
+  const admitted = await admit(held, command, invocation, limit);
+  const socket = held ? held.at(-1) : opSocket;
+  const token = admitted && socket ? opTokens.get(socket) : undefined;
+  if (socket && token) track(socket, token, { ...replay, command, invocation, held, resumed: false });
+  if (!admitted && attached)
     throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
       code: 'STIM_DAEMON_UNAVAILABLE',
       remedy: 'Wait for the command hosting stimd to finish and retry, or use a separate STIM_HOME.',
@@ -163,6 +181,8 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
+let refusalSeq = 0;
+let beginMismatched = false;
 let successorMissed = false;
 let holdAnnounced = false;
 let refusal: {
@@ -174,6 +194,7 @@ let refusal: {
 } | null = null;
 let opSocket: Socket | null = null;
 const opTokens = new WeakMap<Socket, string>();
+const attachedOps = new WeakSet<Socket>();
 let following: Promise<never> | null = null;
 let admitting = false;
 let socketError: string | null = null;
@@ -203,6 +224,7 @@ export function stimdRefused(): boolean {
 }
 
 function noteRefusal(message: Record<string, unknown>): void {
+  refusalSeq++;
   refusedByAttached = message.attached === true;
   refusedBuild ??= String(message.build);
   refusal = {
@@ -431,11 +453,15 @@ export async function ensureTunnelThroughStimd(
   try {
     const admitted = await admitOperation(params.root, operation, held);
     if ('answer' in admitted) return admitted.answer;
-    return await askStimd(
-      'tunnel.ensure',
-      timeoutMs,
-      { opToken: admitted.opToken, params: { ...params, requireReachable: false } },
-      signal,
+    const started = Date.now();
+    // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the tunnel claim names the tunnel a successor reuses
+    return await resumable(operation, signal, admitted.opToken, (opToken) =>
+      askStimd(
+        'tunnel.ensure',
+        Math.max(0, timeoutMs - (Date.now() - started)),
+        { opToken, params: { ...params, requireReachable: false } },
+        signal,
+      ),
     );
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
@@ -570,10 +596,18 @@ export async function ensureMetroThroughStimd(
   try {
     const admitted = await admitOperation(params.root, operation, held);
     if ('answer' in admitted) return admitted.answer;
-    const { opToken } = admitted;
-    const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
-    if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
-    const answer = await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);
+    const started = Date.now();
+    // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor adopts the Metro by its claim, so ensuring it again reuses it
+    const answer = await resumable(operation, signal, admitted.opToken, async (opToken) => {
+      const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
+      if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
+      return askStimd(
+        'metro.wait',
+        Math.max(0, timeoutMs - (Date.now() - started)),
+        { opToken, params: { ticket: prepared.ticket } },
+        signal,
+      );
+    });
     if (held.length > 0 && answer?.op === 'metro' && answer.state === 'starting' && signal && !signal.aborted) {
       const release = held.splice(0);
       for (const socket of release) socket.unref();
@@ -865,11 +899,12 @@ export function launchStimd(
 async function claimTaken(
   { settled, exited }: ReturnType<typeof launchStimd>,
   waitMs = CLAIM_WAIT_MS,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
     if (stimdLive()) return true;
-    if (exited() || Date.now() >= deadline) return stimdLive();
+    if (exited() || signal?.aborted || Date.now() >= deadline) return stimdLive();
     await Promise.race([new Promise((done) => setTimeout(done, CLAIM_POLL_MS)), settled]);
   }
 }
@@ -892,10 +927,11 @@ export async function ensureStimd(
   allowAttached = true,
   invocation?: Invocation & { workspace?: string | null },
   required = false,
+  limit?: ResumeLimit,
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
   if (!spawnsDaemon(env) && !required) {
-    if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
+    if (pin && stimdLive()) await admitExisting(held, command, false, invocation, { env, required }, limit);
     return false;
   }
   try {
@@ -909,7 +945,7 @@ export async function ensureStimd(
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else await admitExisting(held, command, false, invocation);
+      else await admitExisting(held, command, false, invocation, { env, required }, limit);
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
@@ -928,7 +964,7 @@ export async function ensureStimd(
         throw error;
       launched = { settled: Promise.resolve(), exited: () => true };
     }
-    let taken = await claimTaken(launched, ATTACH_AFTER_MS);
+    let taken = await claimTaken(launched, within(ATTACH_AFTER_MS, limit), limit?.signal);
     let attachedAttempt = false;
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       attachedAttempt = true;
@@ -955,13 +991,13 @@ export async function ensureStimd(
         throw sandboxBlocked(path);
       }
     }
-    taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
+    taken ||= await claimTaken(launched, within(CLAIM_WAIT_MS - ATTACH_AFTER_MS, limit), limit?.signal);
     if (attachedAttempt && !taken)
       throw Object.assign(new Error('The attached Stim daemon could not take this home.'), {
         code: 'STIM_DAEMON_UNAVAILABLE',
         remedy: 'Retry the command; if the daemon still cannot start, run stim doctor.',
       });
-    if (taken && pin) await admitExisting(held, command, attachedAttempt, invocation);
+    if (taken && pin) await admitExisting(held, command, attachedAttempt, invocation, { env, required }, limit);
     return taken;
   } catch (error) {
     if (
@@ -1010,13 +1046,16 @@ async function admit(
   held: Socket[] | undefined,
   command: string | undefined,
   invocation?: Invocation & { workspace?: string | null },
+  limit?: ResumeLimit,
 ): Promise<boolean> {
-  for (const until = Date.now() + CLAIM_WAIT_MS; ;) {
+  const begin = () => beginOp(held, command, invocation, undefined, limit?.signal, within(OP_BEGIN_TIMEOUT_MS, limit));
+  for (const until = Date.now() + within(CLAIM_WAIT_MS, limit); ;) {
     socketError = null;
-    if (await beginOp(held, command, invocation)) return true;
+    if (await begin()) return true;
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
+    if (limit?.signal?.aborted) return false;
     if (stimdRefused()) {
-      if (successorExpected() && (await successorBound())) return beginOp(held, command, invocation);
+      if (successorExpected() && (await successorBound(limit))) return begin();
       return false;
     }
     if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return false;
@@ -1050,6 +1089,7 @@ function beginOp(
   invocation?: Invocation & { workspace?: string | null },
   expectedInstance?: string | null,
   signal?: AbortSignal,
+  timeoutMs = OP_BEGIN_TIMEOUT_MS,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
@@ -1065,7 +1105,7 @@ function beginOp(
       } else socket.destroy();
       resolve(begun);
     };
-    const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(false), timeoutMs);
     const socket = openStimd([{ op: 'op.begin', ...(command ? { command } : {}), params: invocation }], (reply) => {
       const begun =
         reply.op === 'op.begun' &&
@@ -1073,7 +1113,9 @@ function beginOp(
           (expectedInstance === null
             ? reply.attached !== true
             : reply.attached === true && reply.instance === expectedInstance));
+      if (!begun && reply.op === 'op.begun') beginMismatched = true;
       if (begun && typeof reply.opToken === 'string') opTokens.set(socket, reply.opToken);
+      if (begun && reply.attached === true) attachedOps.add(socket);
       finish(begun);
     });
     const abort = () => finish(false);
@@ -1100,6 +1142,198 @@ export function cancelCliOp(): void {
   opSocket?.destroy();
 }
 
+/** An admitted operation and how it was admitted, so it can be admitted again by the stimd that replaces this one. */
+interface Admission {
+  env: NodeJS.ProcessEnv;
+  required: boolean;
+  command: string | undefined;
+  invocation: (Invocation & { workspace?: string | null }) | undefined;
+  held: Socket[] | undefined;
+  /** Whether this admission is already the one a restart gave: an operation continues across one restart only. */
+  resumed: boolean;
+  attached: boolean;
+  /** Whether stimd closed the op connection; closing it here (the op's end or cancellation) never sets it. */
+  lost: boolean;
+  /** `refusalSeq` when the operation was admitted: a later value means a stimd refused this process since. */
+  refusalSeq: number;
+  closed: Promise<void>;
+  next?: Promise<{ token: string } | { error: Error } | null>;
+}
+
+const admissions = new Map<string, Admission>();
+
+function track(
+  socket: Socket,
+  token: string,
+  admission: Omit<Admission, 'lost' | 'closed' | 'attached' | 'next' | 'refusalSeq'>,
+): void {
+  const record: Admission = {
+    ...admission,
+    attached: attachedOps.has(socket),
+    refusalSeq,
+    lost: false,
+    closed: new Promise((done) => socket.once('close', () => done())),
+  };
+  const lose = () => {
+    record.lost = true;
+  };
+  socket.once('end', lose);
+  socket.once('error', lose);
+  socket.once('close', () => {
+    if (!record.lost) admissions.delete(token);
+  });
+  admissions.set(token, record);
+}
+
+/** Whether stimd closed the connection that admitted `token`, waiting up to `LOSS_GRACE_MS` for it with `wait`. */
+async function admissionLost(token: string, wait: boolean): Promise<boolean> {
+  const admission = admissions.get(token);
+  if (!admission) return false;
+  if (!admission.lost && wait)
+    await Promise.race([admission.closed, new Promise((done) => setTimeout(done, LOSS_GRACE_MS).unref())]);
+  return admission.lost;
+}
+
+const daemonRestarted = (why: string) =>
+  Object.assign(new Error(`This Stim home's stimd stopped while this command waited on it, and ${why}.`), {
+    code: 'STIM_DAEMON_UNAVAILABLE',
+    remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
+  });
+
+/**
+ * When the stimd that admitted `token` went away under the operation (a crash, a kill, an in-place update or an engine
+ * switch), admits the operation again with the stimd that replaces it, the way it was first admitted, and answers the
+ * new token, which the caller uses to repeat the idempotent step it was waiting on. Null when that stimd still holds
+ * the operation, so the failure is not a restart, or when `signal` aborted, so the operation is not admitted again. An
+ * operation continues across one restart, within `RESUME_WAIT_MS` in all; an operation of an attached stimd does not
+ * continue, since that stimd ended with the command that hosted it.
+ */
+async function resumeAdmission(
+  token: string | undefined,
+  operation: StimContext | undefined,
+  waitForLoss: boolean,
+  signal: AbortSignal | undefined = operation?.signal,
+): Promise<{ token: string } | { error: Error } | null> {
+  const admission = token ? admissions.get(token) : undefined;
+  if (!token || !admission || !(await admissionLost(token, waitForLoss)) || signal?.aborted) return null;
+  admission.next ??= readmit(admission, signal);
+  const next = (await admission.next) ?? null;
+  if (next && 'token' in next && operation) {
+    const state = operationState(operation);
+    if (state.stimdOpToken === token) state.stimdOpToken = next.token;
+  }
+  return next;
+}
+
+async function readmit(
+  admission: Admission,
+  signal: AbortSignal | undefined,
+): Promise<{ token: string } | { error: Error } | null> {
+  if (admission.resumed) return { error: daemonRestarted('it had already continued after one restart') };
+  if (admission.attached) return { error: daemonRestarted('it was an attached stimd, which ends with its command') };
+  const limit: ResumeLimit = { signal, deadline: Date.now() + RESUME_WAIT_MS };
+  if (refusalSeq === admission.refusalSeq) {
+    refusedBuild = null;
+    refusal = null;
+    refusedByAttached = false;
+  }
+  for (;;) {
+    if (signal?.aborted) return null;
+    const refused = otherBuildRefusal();
+    if (refused && refusedBuild !== stimdBuildId() && !stimdLive())
+      return { error: Object.assign(new Error(refused.message), refused) };
+    const hold =
+      !stimdLive() && ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
+    if (hold) {
+      const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+      return {
+        error: Object.assign(
+          new Error('stimd is held after repeated abnormal exits, so it cannot take this command.'),
+          {
+            code: 'STIM_DAEMON_UNAVAILABLE',
+            remedy: crashHoldRemedy(hold, false),
+          },
+        ),
+      };
+    }
+    const fresh: Socket[] = [];
+    let running: boolean;
+    try {
+      running = await ensureStimd(
+        admission.env,
+        process.platform,
+        true,
+        fresh,
+        admission.command,
+        false,
+        admission.invocation,
+        admission.required,
+        limit,
+      );
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error(String(error)) };
+    }
+    const socket = fresh[0];
+    const token = socket ? opTokens.get(socket) : undefined;
+    if (socket && token) {
+      if (signal?.aborted) {
+        socket.destroy();
+        return null;
+      }
+      if (admission.held) admission.held.push(socket);
+      else {
+        opSocket = socket;
+        socket.once('close', () => {
+          if (opSocket === socket) opSocket = null;
+        });
+      }
+      const record = admissions.get(token);
+      if (record) Object.assign(record, { held: admission.held, resumed: true });
+      console.error('Stim: stimd restarted; this command continues with the new stimd.');
+      return { token };
+    }
+    for (const unused of fresh) unused.destroy();
+    if (signal?.aborted) return null;
+    const lastRefusal = otherBuildRefusal();
+    if (lastRefusal) return { error: Object.assign(new Error(lastRefusal.message), lastRefusal) };
+    if (!running && !stimdLive()) return { error: daemonRestarted('no stimd took its place') };
+    if (Date.now() >= limit.deadline)
+      return { error: daemonRestarted(`no stimd admitted it again within ${RESUME_WAIT_MS / 1000} s`) };
+    try {
+      await cancellableSleep(within(CLAIM_POLL_MS * 2, limit), {
+        signal,
+        what: 'stimd',
+      });
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Runs `step` with the operation's token and, when it fails because the stimd that admitted the operation went away,
+ * once more with the token of the stimd that replaced it (`resumeAdmission`). `step` answers null or an `error` reply
+ * when it failed, and must be safe to repeat. A restart the operation cannot continue across throws its reason, and so
+ * does a second stimd that goes away under the repeated step: there is only one retry.
+ */
+async function resumable(
+  operation: StimContext | undefined,
+  signal: AbortSignal | undefined,
+  opToken: string,
+  step: (opToken: string) => Promise<Record<string, unknown> | null>,
+): Promise<Record<string, unknown> | null> {
+  const reply = await step(opToken);
+  if ((reply && reply.op !== 'error') || signal?.aborted) return reply;
+  const next = await resumeAdmission(opToken, operation, reply === null, signal);
+  if (!next || signal?.aborted) return reply;
+  if ('error' in next) throw next.error;
+  const again = await step(next.token);
+  if ((again && again.op !== 'error') || signal?.aborted) return again;
+  const second = await resumeAdmission(next.token, operation, again === null, signal);
+  if (second && 'error' in second) throw second.error;
+  return again;
+}
+
 export async function acquireDeviceTicket(
   params: {
     root: string;
@@ -1118,33 +1352,84 @@ export async function acquireDeviceTicket(
 ): Promise<import('../engine/device-lease-run.ts').AcquireRunLeaseResult & { ticket?: string }> {
   const opToken = operationToken(operation);
   if (!opToken) throw new Error('the operation has no stimd connection');
-  const prepared = await askStimd('lease.prepare', 10_000, { opToken, params }, operation.signal);
-  throwIfCancelled(operation.signal, 'device lease wait');
-  if (prepared?.op !== 'lease.prepared' || typeof prepared.ticket !== 'string')
-    throw new Error(
-      typeof prepared?.message === 'string' ? prepared.message : 'stimd did not prepare the device lease',
+  const started = Date.now();
+  let ticket: string | undefined;
+  let issuer = opToken;
+  // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor finds a lease the dead stimd granted by its holder record and token
+  const answer = await resumable(operation, operation.signal, opToken, async (token) => {
+    const waitSeconds = Math.max(0, params.waitSeconds - Math.floor((Date.now() - started) / 1000));
+    const prepared = await askStimd(
+      'lease.prepare',
+      10_000,
+      { opToken: token, params: { ...params, waitSeconds } },
+      operation.signal,
     );
-  const ticket = prepared.ticket;
-  const answer = await askStimd(
-    'lease.acquire',
-    params.waitSeconds * 1000 + 10_000,
-    { opToken, params: { ticket } },
-    operation.signal,
-    warn,
-  );
+    throwIfCancelled(operation.signal, 'device lease wait');
+    if (prepared?.op !== 'lease.prepared' || typeof prepared.ticket !== 'string')
+      return prepared && { op: 'error', message: prepared.message ?? 'stimd did not prepare the device lease' };
+    ticket = prepared.ticket;
+    issuer = token;
+    const reply = await askStimd(
+      'lease.acquire',
+      waitSeconds * 1000 + 10_000,
+      { opToken: token, params: { ticket } },
+      operation.signal,
+      warn,
+    );
+    throwIfCancelled(operation.signal, 'device lease wait');
+    return reply;
+  });
   throwIfCancelled(operation.signal, 'device lease wait');
-  if (answer?.op !== 'lease.acquired' || !isJsonObject(answer.result))
+  if (answer?.op !== 'lease.acquired' || !isJsonObject(answer.result) || !ticket)
     throw new Error(typeof answer?.message === 'string' ? answer.message : 'stimd did not acquire the device lease');
-  return { ...(answer.result as import('../engine/device-lease-run.ts').AcquireRunLeaseResult), ticket };
+  const result = answer.result as import('../engine/device-lease-run.ts').AcquireRunLeaseResult;
+  if (result.status === 'leased' && result.token)
+    issuedTickets.set(ticket, {
+      opToken: issuer,
+      lease: { root: params.root, platform: params.platform, slot: params.slot, token: result.token },
+    });
+  const issuedTicket = ticket;
+  if (result.status === 'leased' && result.token)
+    operationState(operation).exitCleanups.add(() => releaseOrphanedTicket(issuedTicket));
+  return { ...result, ticket };
 }
 
+const issuedTickets = new Map<
+  string,
+  { opToken: string; lease: { root: string; platform: 'ios' | 'android'; slot: string; token: string } }
+>();
+
+/**
+ * Releases the lease `ticket` holds through the stimd that issued it. When that stimd went away after issuing it, its
+ * successor does not know the ticket, so the lease is released here by its token, which releases nothing once another
+ * holder took the device.
+ */
 export async function releaseDeviceTicket(ticket: string, operation: StimContext): Promise<void> {
   const opToken = operationToken(operation);
   if (!opToken) throw new Error('device lease operation is no longer admitted');
-  const reply = await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
-  if (reply?.op !== 'lease.released') {
-    throw new Error(typeof reply?.message === 'string' ? reply.message : 'stimd did not release the device lease');
+  const issued = issuedTickets.get(ticket);
+  issuedTickets.delete(ticket);
+  const reply =
+    issued && issued.opToken !== opToken
+      ? null
+      : await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
+  if (reply?.op === 'lease.released') return;
+  if (issued && (issued.opToken !== opToken || (await admissionLost(opToken, true)))) {
+    releaseRunLease(issued.lease);
+    return;
   }
+  throw new Error(typeof reply?.message === 'string' ? reply.message : 'stimd did not release the device lease');
+}
+
+/**
+ * Releases by its token the lease `ticket` holds when the stimd that issued it went away: a cancelled operation relies
+ * on the issuing stimd to drop it, which a successor cannot.
+ */
+export function releaseOrphanedTicket(ticket: string): void {
+  const issued = issuedTickets.get(ticket);
+  if (!issued || !admissions.get(issued.opToken)?.lost) return;
+  issuedTickets.delete(ticket);
+  releaseRunLease(issued.lease);
 }
 
 export async function checkPhysicalIosLog(operation?: StimContext): Promise<{ error: string; remedy: string } | null> {
@@ -1167,7 +1452,13 @@ export async function startDeviceLogStream(
   throwIfCancelled(operation?.signal, 'device log startup');
   const opToken = operationToken(operation);
   if (!opToken) return { error: 'the operation has no stimd connection' };
-  const reply = await askStimd('logs.start', 10_000, { opToken, params: spec }, operation?.signal);
+  // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- a stream start answers the stream that already runs for the slot
+  const reply = await resumable(operation, operation?.signal, opToken, (token) =>
+    askStimd('logs.start', 10_000, { opToken: token, params: spec }, operation?.signal),
+  ).catch((error: unknown): Record<string, unknown> => ({
+    op: 'error',
+    message: error instanceof Error ? error.message : String(error),
+  }));
   throwIfCancelled(operation?.signal, 'device log startup');
   if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
   return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not start the device log stream' };
@@ -1209,29 +1500,45 @@ export function deviceLogReadinessWait(
     const requestSequence = ++sequence;
     const requestThrough = through;
     const opToken = operationToken(operation);
-    const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms)));
-    const reply = opToken
-      ? await askStimd(
-          'readiness.wait',
-          timeoutMs + 1000,
-          {
-            opToken,
-            params: {
-              root,
-              platform,
-              slot,
-              streamId,
-              since,
-              through: requestThrough,
-              checkCoverage: coverage === 'pending',
-              after: revision,
-              timeoutMs,
-            },
+    const ask = (token: string) => {
+      const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms - (Date.now() - started))));
+      return askStimd(
+        'readiness.wait',
+        timeoutMs + 1000,
+        {
+          opToken: token,
+          params: {
+            root,
+            platform,
+            slot,
+            streamId,
+            since,
+            through: requestThrough,
+            checkCoverage: coverage === 'pending',
+            after: revision,
+            timeoutMs,
           },
-          operation?.signal,
-        )
-      : null;
+        },
+        operation?.signal,
+      );
+    };
+    let reply = opToken ? await ask(opToken) : null;
     throwIfCancelled(operation?.signal, 'launch readiness check');
+    const next = opToken && (!reply || reply.op === 'error') ? await resumeAdmission(opToken, operation, !reply) : null;
+    if (next && 'token' in next) {
+      // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor proves coverage again and resumes the stream after it boots
+      revision = 0;
+      if (requestSequence === sequence) coverage = 'pending';
+      for (;;) {
+        reply = await ask(next.token);
+        throwIfCancelled(operation?.signal, 'launch readiness check');
+        if (reply?.op !== 'readiness.changed' || reply.gone !== true || Date.now() - started >= ms) break;
+        await cancellableSleep(Math.min(CLAIM_POLL_MS * 4, Math.max(0, ms - (Date.now() - started))), {
+          signal: operation?.signal,
+          what: 'launch readiness check',
+        });
+      }
+    }
     if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
       revision = Math.max(revision, reply.revision);
       if (
@@ -1259,16 +1566,73 @@ export function deviceLogReadinessWait(
   });
 }
 
-/** Pins an already-running stimd until the returned closure is called. */
-export async function holdExistingStimd(ownedInstance: string | null, signal?: AbortSignal): Promise<() => void> {
+/**
+ * Pins an already-running stimd until the returned closure is called. A persistent stimd (`ownedInstance` null) that
+ * is ending when the hold asks, or that stops while it holds, is replaced once: the hold waits for it to go, starts
+ * a stimd when none took its place, and pins that one. The stimd a CI job hosts itself is never replaced.
+ */
+export async function holdExistingStimd(
+  ownedInstance: string | null,
+  signal?: AbortSignal,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<() => void> {
   const held: Socket[] = [];
-  socketError = null;
-  if (!(await beginOp(held, 'stim ci', undefined, ownedInstance, signal))) {
+  let released = false;
+  let refused = false;
+  const pin = async (): Promise<boolean> => {
+    socketError = null;
+    beginMismatched = false;
+    const seen = refusalSeq;
+    if (await beginOp(held, 'stim ci', undefined, ownedInstance, signal)) return true;
     signal?.throwIfAborted();
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
+    refused = beginMismatched || refusalSeq !== seen;
+    return false;
+  };
+  // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- a CI hold pins the stimd that replaces an ending one
+  const replace = async (): Promise<boolean> => {
+    for (const deadline = Date.now() + RESUME_WAIT_MS; Date.now() < deadline;) {
+      if (released) return false;
+      if (!stimdLive()) await ensureStimd(env, process.platform, false, undefined, undefined, false, undefined, true);
+      if (await pin()) return true;
+      if (refused) return false;
+      await cancellableSleep(CLAIM_POLL_MS * 2, { signal, what: 'stimd' });
+    }
+    return false;
+  };
+  const watch = (socket: Socket | undefined) => {
+    const lost = () => {
+      if (released) return;
+      void replace().then(
+        (pinned) => {
+          if (released) for (const kept of held) kept.destroy();
+          else
+            console.error(
+              pinned
+                ? 'Stim: stimd restarted; the CI job holds the new stimd.'
+                : refused
+                  ? `Stim: stimd stopped during the CI job and its replacement cannot be held: ${otherBuildRefusal()?.message ?? 'it hosts another command'}`
+                  : 'Stim: stimd stopped during the CI job and no stimd took its place.',
+            );
+          return undefined;
+        },
+        (error: unknown) => {
+          console.error(
+            `Stim: stimd stopped during the CI job and could not be replaced: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        },
+      );
+    };
+    socket?.once('end', lost);
+    socket?.once('error', lost);
+  };
+  if (!(await pin()) && (ownedInstance !== null || refused || !(await replace())))
     throw new Error('Could not pin the Stim daemon for this CI job.');
-  }
-  return () => held.forEach((socket) => socket.destroy());
+  if (ownedInstance === null) watch(held.at(-1));
+  return () => {
+    released = true;
+    held.forEach((socket) => socket.destroy());
+  };
 }
 
 /**
@@ -1285,11 +1649,11 @@ function successorExpected(): boolean {
  * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once a wait
  * ran out, it answers false at once for the rest of this process.
  */
-async function successorBound(): Promise<boolean> {
+async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   if (successorMissed) return false;
-  const waitMs = refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS;
+  const waitMs = within(refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS, limit);
   let started = false;
-  for (const deadline = Date.now() + waitMs; Date.now() < deadline;) {
+  for (const deadline = Date.now() + waitMs; Date.now() < deadline && !limit?.signal?.aborted;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
