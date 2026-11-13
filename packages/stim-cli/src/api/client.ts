@@ -12,6 +12,7 @@ import {
   easMachineStateRoot,
   isJsonObject,
 } from '@stim-cli/core/state';
+import { phaseLine } from '../command-output.ts';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
 import { startDevServer } from '../commands/start.ts';
@@ -773,7 +774,21 @@ async function read<T>(
         cwd: context.projectRoot,
         env: context.env,
       });
-      if ('refusal' in entered) throw new StimError(entered.refusal);
+      if ('refusal' in entered) {
+        const refusal = entered.refusal;
+        if (refusal.code === 'STIM_NO_PROJECT') {
+          if (name === 'run') {
+            const output = note(context);
+            output(phaseLine('error', `${refusal.code}: ${refusal.message}`));
+            output(phaseLine('remedy', refusal.remedy));
+          }
+          throw new StimError({
+            ...refusal,
+            details: { logs: workspaceLogsDir(context.projectRoot), cause: name === 'run' ? refusal : undefined },
+          });
+        }
+        throw new StimError(refusal);
+      }
       const state = operationState(context);
       const previousOpToken = state.stimdOpToken;
       if (entered.opToken) state.stimdOpToken = entered.opToken;

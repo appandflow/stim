@@ -71,7 +71,8 @@ export async function runOperation(
   if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
   const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(operationCommand);
   if (entry.caller === 'api' && (operationCommand === 'ios' || operationCommand === 'android')) {
-    if (projectProblem(entry.cwd, operationCommand)) return { admitted: null };
+    const problem = projectProblem(entry.cwd, operationCommand);
+    if (problem) return { refusal: { code: 'STIM_NO_PROJECT', message: problem.message, remedy: problem.remedy } };
   } else if (creates && !findProjectRoot(entry.cwd)) {
     return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   }
