@@ -1354,7 +1354,10 @@ WHICH stim-* DEVICES gc DELETES
   With STIM_HOME set, gc skips the device sweep because simulators and AVDs
   are machine-global, but pruning a dead project still deletes the devices its
   record marks as owned. gc lists them as to be deleted under "Device sweep
-  notices"; every other stim-* device is reported as not touched.
+  notices"; every other stim-* device is reported as not touched. Parked
+  devices that home's created-devices ledger lists are still deleted at high
+  and critical and by the age sweep; a pool record it does not list is kept,
+  with that reason.
 
 ANDROID DATA WITHOUT A REGISTRATION
   \`gc\` also reports stim-*.avd directories whose .ini registration is

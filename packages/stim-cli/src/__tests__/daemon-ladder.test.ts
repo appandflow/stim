@@ -21,7 +21,7 @@ import { runLadderToFree } from '../daemon/passes.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { parkSim } from '../devices/sim-pool.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
 import * as android from '../devices/android.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
@@ -649,6 +649,69 @@ describe('the ladder stim gc forces', () => {
       ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
 
     expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
+  });
+
+  test('in a scoped home it deletes the parked simulators its ledger lists and keeps the others', async () => {
+    const parked = ['OWNED', 'FOREIGN'].map((udid) => ({
+      udid,
+      name: `stim-${udid} (iPhone 17 26.0)`,
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-0',
+      deviceTypeIdentifier: 'iPhone',
+      simslimManaged: false,
+      parkedAt: new Date(Date.now() - DAY_MS).toISOString(),
+    }));
+    const config = { version: 2 as const, projects: {}, repos: {}, parked: { ios: parked } };
+    saveConfig(config);
+    for (const { udid, name } of parked)
+      sims.push({
+        udid,
+        name,
+        state: 'Shutdown',
+        runtime: 'iOS 26.0',
+        deviceTypeIdentifier: 'iPhone',
+        available: true,
+      });
+    recordCreatedDevice('ios', 'OWNED');
+    const simctl: string[][] = [];
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileQuiet: (file) => (file === 'ps' ? '' : null),
+      runFileAsync: async (file, args) => {
+        if (file !== 'xcrun' || args[0] !== 'simctl') throw new Error(`unexpected ${file} ${args.join(' ')}`);
+        simctl.push(args);
+        if (args[1] === 'list')
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-0': sims.map((sim) => ({ ...sim, isAvailable: true })),
+            },
+          });
+        if (args[1] === 'delete') return '';
+        throw new Error(`unexpected xcrun ${args.join(' ')}`);
+      },
+    });
+
+    const { actions } = await runLadder(
+      {
+        config,
+        act: true,
+        log,
+        devices: [],
+        sims,
+        simsFailed: false,
+        remeasure: async () => pressure('high'),
+        force: { level: 'high', why: 'stim gc' },
+        fromRung: 2,
+        lastRung: 2,
+      },
+      pressure('normal'),
+    );
+
+    expect(simctl.filter((args) => args[1] === 'delete')).toEqual([['simctl', 'delete', 'OWNED']]);
+    expect(readParked('ios').map((record) => record.udid)).toEqual(['FOREIGN']);
+    expect(actions).toContainEqual(
+      expect.objectContaining({ rung: 2, kind: 'delete-parked-device', target: 'FOREIGN', outcome: 'kept' }),
+    );
   });
 
   const forced = (
