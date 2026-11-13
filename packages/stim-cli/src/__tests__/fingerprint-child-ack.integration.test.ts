@@ -26,6 +26,7 @@ import { markObserving, recordDetachedGroups } from '../fingerprint/detached-gro
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { testContext } from './_context.ts';
 import { claimOwnerStartedAfter } from './_factories.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const MOBILE_MODULES = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
 const BOOTSTRAP = fileURLToPath(new URL('../../dist/fingerprint-precompute.mjs', import.meta.url));
@@ -130,7 +131,7 @@ module.exports = { name: 'fp', slug: 'fp' };`,
       (error: unknown) => error,
     );
     expect(await until(() => existsSync(marker), 60_000)).toBe(true);
-    const evaluator = Number(readFileSync(marker, 'utf8'));
+    const evaluator = await waitForPid(marker);
     controller.abort(new Error('the report budget ended'));
     const outcome = await running;
     expect(outcome).toMatchObject({ message: 'the report budget ended' });

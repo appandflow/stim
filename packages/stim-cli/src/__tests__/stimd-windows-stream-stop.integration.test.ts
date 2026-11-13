@@ -1,13 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { delimiter, join } from 'node:path';
@@ -20,6 +11,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { getExecutor } from '../exec.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const identity = vi.hoisted<{ windows: boolean; live: boolean; unknown: boolean; workers: Worker[] }>(() => ({
   windows: false,
@@ -77,8 +69,7 @@ test.skipIf(process.platform === 'win32')(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pid = Number(readFileSync(pidFile, 'utf8').trim());
+      const pid = await waitForPid(pidFile);
       const executor = getExecutor();
       const run = vi.spyOn(executor, 'runFileAsync').mockImplementation(async (file, args, opts) => {
         expect(file).toBe(join('C:\\Windows-Test', 'System32', 'taskkill.exe'));
@@ -146,8 +137,7 @@ test.skipIf(process.platform === 'win32')(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      pid = Number(readFileSync(pidFile, 'utf8').trim());
+      pid = await waitForPid(pidFile);
       const run = vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
         await held;
         throw new Error('tree stop failed');
@@ -215,8 +205,7 @@ test.skipIf(process.platform === 'win32')('a pending claim write failure does no
       { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
       env,
     );
-    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-    pid = Number(readFileSync(pidFile, 'utf8').trim());
+    pid = await waitForPid(pidFile);
     vi.spyOn(ownership, 'markClaimChildPending').mockImplementation(() => {
       throw new Error('write failed');
     });
@@ -274,8 +263,7 @@ test.skipIf(process.platform === 'win32')('natural Windows stream exit keeps its
       { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
       env,
     );
-    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    const pid = await waitForPid(pidFile);
     writeFileSync(done, '');
     await vi.waitFor(() => expect(() => realProcess.kill(pid, 0)).toThrow(/ESRCH/));
     await vi.waitFor(() =>
@@ -325,8 +313,7 @@ test.skipIf(process.platform === 'win32')(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      pid = Number(readFileSync(pidFile, 'utf8').trim());
+      pid = await waitForPid(pidFile);
       vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
         identity.live = false;
         realProcess.kill(pid, 'SIGTERM');
@@ -383,8 +370,7 @@ test.skipIf(process.platform === 'win32')(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      pid = Number(readFileSync(pidFile, 'utf8').trim());
+      pid = await waitForPid(pidFile);
       vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
         if (++attempts === 1) throw new Error('taskkill failed');
         identity.live = false;
@@ -435,8 +421,7 @@ test.skipIf(process.platform === 'win32')('unknown Windows identity leaves the l
       { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
       env,
     );
-    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-    pid = Number(readFileSync(pidFile, 'utf8').trim());
+    pid = await waitForPid(pidFile);
     identity.windows = true;
     identity.unknown = true;
     vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));

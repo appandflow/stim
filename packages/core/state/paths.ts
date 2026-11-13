@@ -350,6 +350,11 @@ export function daemonSnapshotFile(): string {
   return join(daemonDir(), 'snapshot.json');
 }
 
+/** The ownership claim set of the Funnel route a web share's server holds. */
+export function shareRouteClaimRoot(): string {
+  return join(configDir(), 'server', 'share-route');
+}
+
 export function serverSetupDir(): string {
   return join(configDir(), 'server', 'setup');
 }

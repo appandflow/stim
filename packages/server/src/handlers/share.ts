@@ -173,5 +173,6 @@ export async function shareMethod(
   if (saved && !ctx.shares.list().some((row) => row.id === started.id)) {
     await markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request)));
   }
+  if (saved) await ctx.shares.endReplaced(request, started.id);
   return send(ctx.socket, { id, result: saved ? { ...started, saved: true } : started });
 }

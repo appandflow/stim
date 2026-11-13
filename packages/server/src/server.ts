@@ -32,6 +32,7 @@ import {
   type StatusViews,
   readShareLinks,
   shareLinkKey,
+  shareRouteClaimRoot,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
 import { loadAudit } from './actions.ts';
@@ -93,6 +94,7 @@ import { pauseShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs } from './share-save.ts';
+import { digest } from './share-identity.ts';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
@@ -133,7 +135,7 @@ import { ShareHub } from './share.ts';
 import { androidScreen, simulatorScreen } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { PresenceHub, presenceKey } from './presence.ts';
-import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { ExposedRoute, tailscaleHost, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
@@ -892,7 +894,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!options.loopbackOnly) void tailnet.load('funnel share');
     },
   };
-  const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
+  const shareRoute = new ShareRoute(shareRouteClaimRoot(), funnel);
   const exposedRoute = new ExposedRoute(
     shareRoute,
     () => {
@@ -900,6 +902,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return { exposure: share?.exposure, publicUrl: share?.publicUrl, port: share?.port };
     },
     async () => tailscaleLoggedIn(await tailnet.rawStatus()),
+    async () => tailscaleHost(await tailnet.rawStatus()),
   );
   const shares = new ShareHub({
     frames,
@@ -939,13 +942,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const restoreShares = () =>
     restoreSavedShares({
-      start: async (params) => {
+      start: async (params, origin) => {
         const parsed = parseShareStart(params);
         if (typeof parsed === 'string') return { code: 'bad-request', message: parsed };
         const resolved = registeredWorkspace(parsed.workspace);
         if ('code' in resolved) return { code: 'bad-request', message: resolved.message };
-        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true });
+        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true, origin });
         return 'code' in started ? started : { started: true, id: started.id };
+      },
+      refused: async ({ share }) => {
+        try {
+          return await exposedRoute.admits(share.origin, shares.port !== null);
+        } catch (cause) {
+          return { why: cause instanceof Error ? cause.message : String(cause), retry: false };
+        }
+      },
+      leave: async ({ workspace, key, share }) => {
+        if (!options.shareServer) return false;
+        const secret = share.token ?? share.slug ?? '';
+        const unsaved = await markSavedStopped(() =>
+          pauseShareLinkAsync(workspace, key, (saved) => savedLinkIs(saved, digest(secret).toString('hex'))),
+        );
+        if (unsaved !== null) {
+          console.error(`stim-server: could not mark the saved web share of ${workspace} stopped: ${unsaved}`);
+        }
+        return unsaved === null;
       },
       wanted: ({ workspace, key, share }) => {
         const saved = readShareLinks(workspace)[key];
@@ -1122,7 +1143,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void hostedDevices.reclaimEndedHomes();
     }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
-    if (!options.shareServer) restoredShares ??= restoreShares();
+    restoredShares ??= restoreShares();
     retireOnce ??= Promise.resolve()
       .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
       .then(() => hostedDevices.resumeSessions())
@@ -2232,9 +2253,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       pruneSetup();
       if (options.shareServer && !shareServerGrace) {
         const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
-        shareServerGrace = setTimeout(() => {
-          if (shares.isIdle()) idle();
-        }, graceMs);
+        const idleWhenRestored = () => {
+          void (restoredShares ?? Promise.resolve()).then(() => (shares.isIdle() ? idle() : undefined));
+        };
+        shareServerGrace = setTimeout(idleWhenRestored, graceMs);
         shareServerGrace.unref?.();
       }
       if (!options.shareServer && options.service?.label) {

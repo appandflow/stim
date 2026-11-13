@@ -99,6 +99,11 @@
       "loc": 20,
       "end": "2.1.0",
       "mechanism": "stimd tails the output files of a dev server an earlier stimd started without a helper, and restarts it at an idle point"
+    },
+    "C31": {
+      "loc": 3,
+      "end": "2.1.0",
+      "mechanism": "a prebuild record that is a bare hash string, as Stim 1.40 wrote it, counts as an earlier Stim's record"
     }
   },
   "words": {
