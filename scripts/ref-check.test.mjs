@@ -105,7 +105,7 @@ test.skipIf(process.platform === 'win32')('runs when invoked through a symlink',
   expect(check([], root, alias)).toMatchObject({ status: 0, stdout: expect.stringContaining('1 LLP docs') });
 });
 
-test('checks the literal filesystem path without normalizing away traversal', () => {
+test.skipIf(process.platform === 'win32')('checks literal POSIX filesystem traversal', () => {
   write('existing.md', '# Heading');
   write('source.ts', [`// ${ref('absent/../existing.md')}`, `// ${ref('existing.md/')}`].join('\n'));
   const result = check();
