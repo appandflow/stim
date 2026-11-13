@@ -258,7 +258,7 @@ test.skipIf(process.platform === 'win32')(
     const streamPids = join(tmp, 'stream-pids');
     writeFileSync(
       join(bin, 'xcrun'),
-      `#!/bin/sh\necho $$ >> '${streamPids}'\nprintf '{"eventType":"logEvent","eventMessage":"line from %s"}\\n' $$\nexec sleep 600\n`,
+      `#!/bin/sh\ncase "$*" in *'log show'*) exit 0;; esac\necho $$ >> '${streamPids}'\nprintf '{"eventType":"logEvent","eventMessage":"line from %s"}\\n' $$\nexec sleep 600\n`,
     );
     chmodSync(join(bin, 'xcrun'), 0o755);
     const childPids = () => {

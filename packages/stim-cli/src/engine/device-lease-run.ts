@@ -234,7 +234,8 @@ export function runLease({
     },
     release() {
       if (ticket && operation) {
-        if (operation.signal.aborted) return undefined;
+        if (operation.signal.aborted)
+          return import('../daemon/client.ts').then(({ releaseOrphanedTicket }) => releaseOrphanedTicket(ticket));
         return import('../daemon/client.ts').then(({ releaseDeviceTicket }) =>
           operation.signal.aborted ? undefined : releaseDeviceTicket(ticket, operation),
         );

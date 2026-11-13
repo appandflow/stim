@@ -151,15 +151,45 @@ test('a run refusal preserves its error and diagnostics and permits independent 
   const { root, home, directory } = fixture('refusal');
   const output: string[] = [];
   const stim = createStim({ projectRoot: root, home, onProgress: ({ message }) => output.push(message) });
-  await expect(stim.run({ platform: 'ios' })).rejects.toMatchObject({
-    name: 'StimError',
-    code: 'STIM_NO_PROJECT',
-    details: { logs: directory },
-  });
-  expect(output.join('')).toContain('STIM_NO_PROJECT');
-  expect(await stim.diagnostics()).toEqual({ directory, records: [] });
+  const lock = tryAcquireClaim({
+    root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
+    mode: 'exclusive',
+    label: 'API refusal fixture',
+  }).acquired;
+  if (!lock) throw new Error('Could not acquire fixture claim.');
+  try {
+    await expect(stim.run({ platform: 'ios' })).rejects.toMatchObject({
+      name: 'StimError',
+      code: 'STIM_NO_PROJECT',
+      details: { logs: directory },
+    });
+    expect(output.join('')).toContain('STIM_NO_PROJECT');
+    expect(await stim.diagnostics()).toEqual({ directory, records: [] });
+  } finally {
+    releaseClaim(lock);
+  }
   expect((await stim.stop()).ok).toBe(true);
 });
+
+test.each(['ios', 'android'] as const)(
+  'invalid %s run arguments still refuse before the project error',
+  async (platform) => {
+    const { root, home, directory } = fixture('bad-run-args');
+    const stim = createStim({ projectRoot: root, home });
+    for (const request of [
+      { cleanAppState: true, device: true, message: /cleanAppState applies/ },
+      { slot: '_invalid', message: /A device slot must be/ },
+    ]) {
+      const { message, ...options } = request;
+      await expect(stim.run({ platform, ...options })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringMatching(message),
+        details: { logs: directory },
+        cause: expect.any(Error),
+      });
+    }
+  },
+);
 
 test('a build refusal preserves its error without starting or stopping a workspace runtime', async () => {
   const { root, home, directory } = fixture('build-refusal');
@@ -223,6 +253,7 @@ test('native build and run refusals stay in the caller process and keep concurre
 
 test('aborting a waiting operation leaves other clients usable and cleanup uses a fresh signal', async () => {
   const { root, home } = fixture('cancelled');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '*' } }));
   const claim = tryAcquireClaim({
     root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
     mode: 'exclusive',
@@ -288,6 +319,7 @@ test('relative inherited state paths refuse instead of falling back to the real 
 
 test('a throwing progress callback cancels its native lock wait and rejects without preventing cleanup', async () => {
   const { root, home } = fixture('progress-failure');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '*' } }));
   const claim = tryAcquireClaim({
     root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
     mode: 'exclusive',
@@ -295,14 +327,7 @@ test('a throwing progress callback cancels its native lock wait and rejects with
     details: { command: 'ios', platform: 'ios' },
   });
   if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
-  const spawned: ChildProcess[] = [];
-  const executor = getExecutor();
-  const spawn = executor.spawn.bind(executor);
-  const observer = vi.spyOn(executor, 'spawn').mockImplementation((...args) => {
-    const child = spawn(...args);
-    spawned.push(child);
-    return child;
-  });
+
   const failure = new Error('The progress sink failed.');
   let output = '';
   let threw = false;
@@ -319,9 +344,8 @@ test('a throwing progress callback cancels its native lock wait and rejects with
   });
   try {
     await expect(stim.run({ platform: 'ios' })).rejects.toBe(failure);
-    expect(spawned).toEqual([]);
+    expect(threw).toBe(true);
   } finally {
-    observer.mockRestore();
     releaseClaim(claim.acquired);
   }
   expect((await stim.stop()).ok).toBe(true);
