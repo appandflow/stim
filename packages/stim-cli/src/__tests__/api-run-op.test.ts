@@ -54,6 +54,61 @@ describe('createStim', () => {
     ]);
   });
 
+  it('sends an engine of another build the operation and option names engines read', async () => {
+    const calls: unknown[][] = [];
+    engine.runOp = async (...call) => {
+      calls.push(call);
+      return null;
+    };
+    const buildCacheDir = join(scratch, 'cache');
+    const client = createStim({ projectRoot: scratch, home: join(scratch, 'home'), buildCacheDir });
+    await client.previewGarbage({ pressure: 'high' });
+    await client.run({ platform: 'ios', waitSeconds: 30 });
+    await client.run({ platform: 'android', waitSeconds: false });
+    await client.diagnostics({ errorsOnly: true });
+    expect(calls.map(([name, args]) => [name, args])).toEqual([
+      ['gc', [{ pressure: 'high' }]],
+      ['run', [{ platform: 'ios', wait: '30' }]],
+      ['run', [{ platform: 'android', wait: false }]],
+      ['diagnostics', [{ errors: true }]],
+    ]);
+    expect(calls[0]?.[2]).toMatchObject({ buildCache: buildCacheDir });
+    expect(calls[0]?.[2]).not.toHaveProperty('buildCacheDir');
+  });
+
+  it('refuses a renamed option or method, naming the new one, before it reaches an engine', async () => {
+    const calls: unknown[] = [];
+    engine.runOp = async (...call) => {
+      calls.push(call);
+      return null;
+    };
+    const client = createStim({ projectRoot: scratch, home: join(scratch, 'home') });
+    const refusal = (work: Promise<unknown>) => work.catch((error: unknown) => error);
+    const untyped = (name: string, options: object): Promise<unknown> =>
+      Reflect.apply(Reflect.get(client, name), client, [options]);
+    expect(await refusal(untyped('gc', {}))).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('previewGarbage()'),
+    });
+    expect(await refusal(untyped('run', { platform: 'ios', wait: '30' }))).toMatchObject({
+      message: expect.stringContaining('waitSeconds'),
+    });
+    expect(await refusal(untyped('run', { platform: 'ios', wait: '30', waitSeconds: 30 }))).toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+    expect(await refusal(untyped('diagnostics', { errors: true }))).toMatchObject({
+      message: expect.stringContaining('errorsOnly'),
+    });
+    for (const waitSeconds of [0, 1.5])
+      expect(await refusal(client.run({ platform: 'ios', waitSeconds }))).toMatchObject({
+        message: expect.stringContaining('waitSeconds'),
+      });
+    expect(() => Reflect.apply(createStim, undefined, [{ projectRoot: scratch, buildCache: scratch }])).toThrow(
+      /buildCacheDir/,
+    );
+    expect(calls).toEqual([]);
+  });
+
   it('runs in this build when the caller already runs inside a Stim resident process', async () => {
     engine.runOp = async () => 'engine identity';
     const ctx = { projectRoot: scratch, home: join(scratch, 'home'), admission: 'none' } as const;

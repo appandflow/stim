@@ -141,7 +141,7 @@ test('diagnostics preserves local tail, error filtering and missing log director
   writeFileSync(join(directory, 'build.ndjson'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
   const stim = createStim({ projectRoot: root, home });
   expect(await stim.diagnostics({ tail: 1 })).toEqual({ directory, records: [records[2]] });
-  expect(await stim.diagnostics({ errors: true })).toEqual({ directory, records: [records[1]] });
+  expect(await stim.diagnostics({ errorsOnly: true })).toEqual({ directory, records: [records[1]] });
   expect(await stim.diagnostics({ tail: 0 })).toEqual({ directory, records: [] });
   rmSync(directory, { recursive: true });
   expect(await stim.diagnostics()).toEqual({ directory, records: [] });
@@ -759,6 +759,7 @@ test('logs clients read independent homes with bounded tails and reject invalid 
     expect(spawn).not.toHaveBeenCalled();
     expect(process.env).toEqual(environment);
     const stim = createStim({ projectRoot: first.root, home: first.home });
+    const untyped: { logs(options: object): Promise<unknown> } = stim;
     for (const options of [
       { tail: -1 },
       { tail: 0.5 },
@@ -766,7 +767,9 @@ test('logs clients read independent homes with bounded tails and reject invalid 
       { minLevel: 'loud' },
       { since: '5m', grep: '(' },
     ])
-      await expect(stim.logs(options)).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+      await expect(untyped.logs(options)).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+      });
     expect(await stim.logs({ tail: 0 })).toEqual([]);
     const abort = new AbortController();
     abort.abort();

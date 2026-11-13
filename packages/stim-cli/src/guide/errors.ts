@@ -1553,13 +1553,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_REPORT_TIMEOUT
 
 An API operation exceeded its execution budget: 90 minutes for warmWorktree(),
-60 seconds for doctor(), gc(), collectGarbage(), reload(), plan() and removeWorktree().
+60 seconds for doctor(), previewGarbage(), collectGarbage(), reload(), plan() and removeWorktree().
 Stim attempts only that operation's cleanup before rejecting, with a 35 second
 cleanup budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
 Other clients are unaffected. Retry after the machine is less busy, or narrow
-the report with doctor({ platform }) or gc({ pressure }). doctor() and gc() remain
+the report with doctor({ platform }) or previewGarbage({ pressure }). doctor() and previewGarbage() remain
 read-only. collectGarbage() can mutate resources; completed actions remain applied.
-Inspect what remains with gc() before retrying a mutation.
+Inspect what remains with previewGarbage() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {
@@ -2118,6 +2118,68 @@ not on any remote"  (worktree remove)
   message and workspace log path are preserved in StimError. Read diagnostics()
   and call stop() in cleanup, including after a partial run. If the error is
   unexpected, report its message and logs at github.com/appandflow/stim/issues.`,
+    },
+    ci: {
+      summary: 'the codes stim ci run and stim ci build report in failure, cleanup.error and diagnostics.error',
+      separator: '--- STIM CI RESULTS ---',
+      aliases: [
+        'STIM_CI_SETUP_FAILED',
+        'STIM_CI_TEST_FAILED',
+        'STIM_CI_BUILD_FAILED',
+        'STIM_CI_ARTIFACT_FAILED',
+        'STIM_CI_TIMEOUT',
+        'STIM_CI_CANCELLED',
+        'STIM_CI_CLEANUP_FAILED',
+        'STIM_CI_DIAGNOSTICS_FAILED',
+        'STIM_CI_REPORT_FAILED',
+      ],
+      body: () => `STIM_CI_SETUP_FAILED       run failed before its test command started, or
+                           failed with no test command given
+STIM_CI_TEST_FAILED        the test command exited nonzero or was killed, or
+                           the run failed after it with a test command given
+STIM_CI_BUILD_FAILED       ci build could not build the app
+STIM_CI_ARTIFACT_FAILED    ci build built the app but could not pack or copy it
+STIM_CI_TIMEOUT            the job exceeded its timeout; exit code 124
+STIM_CI_CANCELLED          the job was cancelled; exit code 130
+STIM_CI_CLEANUP_FAILED     the workspace, attached daemon or engine claim could
+                           not be released (cleanup.error)
+STIM_CI_DIAGNOSTICS_FAILED the logs could not be read or copied (diagnostics.error)
+STIM_CI_REPORT_FAILED      an onProgress callback or the result file write failed
+                           (reportingError); it never interrupts cleanup
+  An error that carries its own STIM_ code keeps it. A cleanup or reporting
+  error becomes the failure only when the job would otherwise succeed. Read
+  result.json and diagnostics.json from --artifacts; stim guide lifecycle
+  describes stim ci.`,
+    },
+    'server-actions': {
+      summary: 'the codes stim-server reports for start, stop, reload, gc, doctor and worktree actions',
+      aliases: [
+        'STIM_ACTION_BUSY',
+        'STIM_OUTPUT_LIMIT',
+        'STIM_METRO_START_FAILED',
+        'STIM_RELOAD_TIMEOUT',
+        'STIM_GC_TIMEOUT',
+        'STIM_GC_FAILED',
+        'STIM_DOCTOR_REPAIR_FAILED',
+        'STIM_WORKTREE_WARM_TIMEOUT',
+        'STIM_WORKTREE_WARM_FAILED',
+        'STIM_WORKTREE_REMOVE_TIMEOUT',
+        'STIM_WORKTREE_REMOVE_FAILED',
+      ],
+      body: () => `STIM_ACTION_BUSY              another action already runs in that workspace
+STIM_OUTPUT_LIMIT             the action printed more output than the server keeps
+STIM_METRO_START_FAILED       start failed without a more specific code
+STIM_RELOAD_TIMEOUT           reload did not finish within the action's limit
+STIM_GC_TIMEOUT               a gc action did not finish within its limit
+STIM_GC_FAILED                gc reported failures
+STIM_DOCTOR_REPAIR_FAILED     doctor repairs reported refusals
+STIM_WORKTREE_WARM_TIMEOUT, STIM_WORKTREE_REMOVE_TIMEOUT
+                              worktree warm or remove did not finish in time
+STIM_WORKTREE_WARM_FAILED, STIM_WORKTREE_REMOVE_FAILED
+                              worktree warm or remove reported failures
+  stim-server runs these actions for a connected client such as Stim Desktop.
+  Wait for a running action before retrying, or run the matching stim command
+  in the workspace to see its full output.`,
     },
     STIM_NODE_UNSUPPORTED: {
       summary: 'stim or stim-server started on a Node older than 22.12.0, often a project pin',

@@ -11,6 +11,7 @@ const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
 const PACKAGE_DIRS = ['stim-cli', 'cache-s3'];
 const EXACT_RANGE = 'workspace:*';
+const PEER_RANGE = 'workspace:^';
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
 const readManifest = (root, dir) => JSON.parse(readFileSync(manifestIn(root, dir), 'utf8'));
@@ -54,10 +55,10 @@ test('--check accepts the repository as it stands', () => {
   const result = spawnSync(process.execPath, [SCRIPT, '--check'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /packages at \d+\.\d+\.\d+/);
-  assert.match(result.stdout, /inter-package ranges, all workspace:\*/);
+  assert.match(result.stdout, /inter-package ranges, workspace:\^ for peers, else workspace:\*/);
 });
 
-test('the published packages share one version and only workspace:* ranges', () => {
+test('the published packages share one version, workspace:^ peer ranges and workspace:* other ranges', () => {
   const versions = new Set(PACKAGE_DIRS.map((dir) => readManifest(REPO, dir).version));
   assert.equal(versions.size, 1, `versions are not in lockstep: ${[...versions].join(', ')}`);
 
@@ -66,7 +67,8 @@ test('the published packages share one version and only workspace:* ranges', () 
     for (const group of ['dependencies', 'devDependencies', 'peerDependencies']) {
       for (const [name, range] of Object.entries(pkg[group] ?? {})) {
         if (name !== 'stim' && !name.startsWith('@stim-cli/')) continue;
-        assert.equal(range, EXACT_RANGE, `packages/${dir} ${group}.${name} is "${range}"`);
+        const expected = group === 'peerDependencies' ? PEER_RANGE : EXACT_RANGE;
+        assert.equal(range, expected, `packages/${dir} ${group}.${name} is "${range}"`);
       }
     }
   }
@@ -83,6 +85,18 @@ test('--check refuses an internal range that is not workspace:*', () => {
       assert.equal(result.status, 1, result.stdout);
       assert.ok(result.stderr.includes(`devDependencies.stim is "${range}", not "workspace:*"`), result.stderr);
     }
+  });
+});
+
+test('--check refuses a peer range that is not workspace:^', () => {
+  withWorkspace((root) => {
+    const s3 = readManifest(root, 'cache-s3');
+    s3.peerDependencies = { ...s3.peerDependencies, stim: 'workspace:*' };
+    writeFileSync(manifestIn(root, 'cache-s3'), `${JSON.stringify(s3, null, 2)}\n`);
+
+    const result = runPrep(root, '--check');
+    assert.equal(result.status, 1, result.stdout);
+    assert.ok(result.stderr.includes('peerDependencies.stim is "workspace:*", not "workspace:^"'), result.stderr);
   });
 });
 

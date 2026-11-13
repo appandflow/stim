@@ -2,7 +2,7 @@ import { failure, prepareCI, writeJson, type CIContextOptions } from './context.
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
-import { bindCIEngine, type AttachedHost } from 'stim/attached-stimd';
+import { bindCIEngine, type AttachedHost } from 'stim/internal/attached-stimd';
 import { runCommand, type CommandResult } from './command.ts';
 import { copyDiagnosticLogs } from './artifacts.ts';
 
@@ -43,7 +43,7 @@ function stimEnvironment(options: CIOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
     ...(options.home ? { STIM_HOME: resolve(options.home) } : {}),
-    ...(options.buildCache ? { STIM_BUILD_CACHE: resolve(options.buildCache) } : {}),
+    ...(options.buildCacheDir ? { STIM_BUILD_CACHE: resolve(options.buildCacheDir) } : {}),
   };
 }
 
@@ -135,7 +135,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let stim = createStim({
     projectRoot,
     home: options.home ? resolve(options.home) : undefined,
-    buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+    buildCacheDir: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
     onProgress,
   });
   let attempted = false;
@@ -155,7 +155,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       stim = createStim({
         projectRoot,
         home: options.home ? resolve(options.home) : undefined,
-        buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+        buildCacheDir: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
         env: { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
         onProgress,
       });
@@ -166,17 +166,11 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     const context = {
       projectRoot,
       home: options.home ? resolve(options.home) : undefined,
-      buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+      buildCache: options.buildCacheDir ? resolve(options.buildCacheDir) : undefined,
       env: host ? { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' } : { ...process.env },
       onProgress,
     };
-    stim = new Proxy(stim, {
-      get(target, name) {
-        const value: unknown = Reflect.get(target, name);
-        if (typeof name !== 'string' || typeof value !== 'function') return value;
-        return (...args: unknown[]) => binding.runOp(name, args, context);
-      },
-    });
+    stim = binding.client(context);
     attempted = true;
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
@@ -289,11 +283,11 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   return result;
 }
 
-function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string): string {
+function buildCommand({ run, home, buildCacheDir }: CIOptions, projectRoot: string): string {
   const flags = [`--platform ${run.platform}`];
   if (projectRoot !== realpathSync(process.cwd())) flags.push(`--project ${JSON.stringify(projectRoot)}`);
   if (home) flags.push(`--home ${JSON.stringify(resolve(home))}`);
-  if (buildCache) flags.push(`--build-cache ${JSON.stringify(resolve(buildCache))}`);
+  if (buildCacheDir) flags.push(`--build-cache ${JSON.stringify(resolve(buildCacheDir))}`);
   if (run.platform === 'ios') {
     if (run.scheme !== undefined) flags.push(`--scheme ${JSON.stringify(run.scheme)}`);
     if (run.configuration !== undefined) flags.push(`--configuration ${JSON.stringify(run.configuration)}`);
@@ -306,6 +300,3 @@ function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string)
 export type { CommandResult } from './command.ts';
 
 export { buildCI, type CIBuildOptions, type CIBuildResult } from './build.ts';
-
-/** F3's per-op entry, the same function `stim` exports: runs one operation of `createStim(ctx)` in this build. */
-export { runOp } from 'stim';

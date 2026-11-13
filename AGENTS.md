@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
+`ios`, `android`, `macos`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -328,7 +328,7 @@ outside it moves to its own issue and pull request.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
   default. Update `cache-packages.test.ts` when those rules change. The published packages are `stim` and
-  `@stim-cli/cache-s3`. Internal workspace ranges stay `workspace:*`; folded
+  `@stim-cli/cache-s3`. Internal workspace ranges stay `workspace:*`, and peer ranges `workspace:^`; folded
   packages are private and are bundled into `stim`.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.

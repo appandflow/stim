@@ -88,9 +88,9 @@ import {
   type VideoCodec,
 } from './protocol.ts';
 import { StimError } from 'stim';
-import { createStim } from 'stim/api-self';
-import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync } from 'stim/share-links';
+import { createLocalStim } from 'stim/internal/api-self';
+import { worktreePullRequests } from 'stim/internal/pull-requests';
+import { pauseShareLinkAsync } from 'stim/internal/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs } from './share-save.ts';
@@ -643,7 +643,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
       .then(async () => {
-        const stim = createStim({ projectRoot: cwd, env: options.env, admission: 'none' });
+        const stim = createLocalStim({ projectRoot: cwd, env: options.env, admission: 'none' });
         if (method === 'gc-history' || method === 'builds')
           return {
             records: queryMachineLogs({
@@ -858,7 +858,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const localAgents = new LocalAgentPresence({
     hub: presence,
     follow: (workspace, onRecord, signal) =>
-      createStim({ projectRoot: workspace, env: options.env, admission: 'none' }).followLogs(
+      createLocalStim({ projectRoot: workspace, env: options.env, admission: 'none' }).followLogs(
         { sources: ['agent'], tail: 0, signal },
         onRecord,
       ),
@@ -2239,7 +2239,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (closing) return settle(startup);
     if (reason === null) {
       try {
-        homeId = await createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity({
+        homeId = await createLocalStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity({
           signal: startupAbort.signal,
         });
         if (closing) return settle(startup);

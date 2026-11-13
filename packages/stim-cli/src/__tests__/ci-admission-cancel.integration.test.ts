@@ -3,7 +3,7 @@ import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { stimdSocket } from '@stim-cli/core/state';
-import { holdCIStimd } from '../api.ts';
+import { holdCIStimd } from '../stimd/attached.ts';
 
 test('cancelling CI admission closes its unanswered daemon socket', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-ci-admission-'));

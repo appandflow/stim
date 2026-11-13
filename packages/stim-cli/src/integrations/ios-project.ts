@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import type { BuildCacheCapability } from '@stim-cli/cache';
+import type { LocalBuildCache } from '@stim-cli/cache';
 import type { FingerprintCheck } from '../fingerprint/operation.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
@@ -39,7 +39,7 @@ export interface IosArtifactRecipe {
   identity(): Promise<IosArtifactIdentity | { cacheIneligible: string; incremental?: boolean }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
-  cache(): BuildCacheCapability;
+  cache(): LocalBuildCache;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
   validate(): Promise<IosArtifactIdentity | null>;

@@ -27,31 +27,6 @@ export interface CacheProviderConfig {
   baseDir: string;
 }
 
-export interface MetroCacheContext {
-  projectRoot: string;
-  cacheName: string;
-  signal: AbortSignal;
-}
-
-export interface MetroCacheGetInput extends MetroCacheContext {
-  key: Buffer;
-}
-
-export interface MetroCacheSetInput extends MetroCacheContext {
-  key: Buffer;
-  value: unknown;
-}
-
-/**
- * Metro transform cache. `get` returns `null` or `undefined` for a miss. `set`
- * stores the value under the key. Both receive an `AbortSignal` the provider
- * must honor.
- */
-export interface MetroCacheCapability {
-  get(input: MetroCacheGetInput): unknown;
-  set(input: MetroCacheSetInput): void | Promise<void>;
-}
-
 export interface BuildCacheTarget {
   projectRoot: string;
   platform: 'ios' | 'android';
@@ -89,9 +64,15 @@ export interface BuildStoreInput extends BuildCacheContext {
  * Stim owns fingerprints and cache keys; the capability owns transport,
  * archive format, authentication, and retention.
  */
-export interface BuildCacheCapability {
+/** Stim's own local build cache, which the tiers consult before a provider; unlike a provider's, it may answer synchronously. */
+export interface LocalBuildCache {
   resolve(input: BuildResolveInput): string | null | Promise<string | null>;
   store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+}
+
+export interface BuildCacheCapability {
+  resolve(input: BuildResolveInput): Promise<string | null>;
+  store(input: BuildStoreInput): Promise<string | null | void>;
 }
 
 export interface FileCacheResolveInput {
@@ -117,8 +98,6 @@ export interface FileCacheCapability {
 
 export interface CacheProvider {
   files?: FileCacheCapability;
-  /** Ignored by Stim; Metro uses its local filesystem store. */
-  metro?: MetroCacheCapability;
   builds?: BuildCacheCapability;
 }
 

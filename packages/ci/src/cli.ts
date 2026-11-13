@@ -71,7 +71,7 @@ function parse(argv: string[]): Invocation {
     projectRoot: values.project ?? process.cwd(),
     artifactsDir: values.artifacts,
     home: values.home,
-    buildCache: values['build-cache'],
+    buildCacheDir: values['build-cache'],
     timeoutMs,
   };
   for (const flag of ['arch', 'abi', 'eas-profile', 'export'] as const) {

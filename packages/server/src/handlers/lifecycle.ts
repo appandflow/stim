@@ -4,13 +4,11 @@ import {
   type StimProgress,
   StimError,
   type StimReloadOptions,
-  type StimClient,
   type StimStartOptions,
-  type StimGcItem,
   type StimWorktreeWarmOptions,
   type StimWorktreeRemoveOptions,
 } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createLocalStim, type EngineClient, type StimGcItem } from 'stim/internal/api-self';
 import { realpathSync, lstatSync } from 'node:fs';
 import {
   readFailure,
@@ -53,7 +51,7 @@ function stopAction(
   let root = realpathSync(cwd);
   if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
   let stderr = '';
-  const client = createStim({
+  const client = createLocalStim({
     admission: 'none',
     projectRoot: root,
     env,
@@ -132,7 +130,7 @@ function reloadAction(
   });
   const drained: Promise<ReloadOutcome> = Promise.resolve()
     .then(() =>
-      createStim({
+      createLocalStim({
         admission: 'none',
         projectRoot: cwd,
         env,
@@ -208,7 +206,7 @@ function lifecycleAction(
   limits: CommandLimits,
   label: string,
   timeoutCode: string,
-  execute: (client: StimClient, signal: AbortSignal) => Promise<StopOutcome>,
+  execute: (client: EngineClient, signal: AbortSignal) => Promise<StopOutcome>,
   onProgress?: (progress: StimProgress) => void,
 ) {
   const abort = new AbortController();
@@ -221,7 +219,7 @@ function lifecycleAction(
   const drained: Promise<StartOutcome> = Promise.resolve()
     .then(() =>
       execute(
-        createStim({
+        createLocalStim({
           admission: 'none',
           projectRoot: cwd,
           env,

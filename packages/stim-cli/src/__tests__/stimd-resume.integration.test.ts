@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, stimdBootsFile, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
-import { holdCIStimd } from '../api.ts';
+import { holdCIStimd } from '../stimd/attached.ts';
 import {
   acquireDeviceTicket,
   beforeCommand,

@@ -11,14 +11,14 @@ Import { createStim, StimError } from 'stim'. Node 22.12 or later is required.
     const result = await stim.run({ platform: 'ios' });
   } finally {
     try {
-      const diagnostics = await stim.diagnostics({ errors: true });
+      const diagnostics = await stim.diagnostics({ errorsOnly: true });
     } finally {
       const cleanup = await stim.stop();
       if (!cleanup.ok) throw new Error(cleanup.summary);
     }
   }
 
-createStim takes projectRoot, optional absolute home and buildCache paths, an
+createStim takes projectRoot, optional absolute home and buildCacheDir paths, an
 env object (default process.env) that Stim reads its settings overrides from
 and passes to its child processes, onProgress({ stream, message }), and
 admission ('command' by default, 'none' for a caller inside a Stim resident
@@ -26,7 +26,7 @@ process such as stim-server). message is an output chunk. Without onProgress,
 operations write nothing to the caller's stdout or stderr, except a diagnostic
 about an unresolvable stim-daemon claim. With admission 'command', start, build
 and run refuse and start the home's daemon as stim start, ios, android, macos
-and web do; gc and collectGarbage take the same refusals. The API never runs
+and web do; previewGarbage and collectGarbage take the same refusals. The API never runs
 the daemon's passes in the calling process. The home is fixed when the client
 is created: home, else STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
@@ -59,7 +59,7 @@ before the report settles. Plans use the report budgets below. Providers must se
 cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
 the download directory rather than deleting files a provider may still write.
 
-doctor({ platform? }) and gc({ pressure?, measureBuildState? }) read reports in
+doctor({ platform? }) and previewGarbage({ pressure?, measureBuildState? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt
 owned cleanup before rejecting. Deadline expiry rejects with
 STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
@@ -127,7 +127,7 @@ beforeRemove(workspace) runs for every canonical workspace in the resolved
 cleanup scope before effects, including registered descendants and pending
 branch cleanup. Throwing refuses the operation.
 
-gc() stays read-only: the stim gc --dry-run --json report, at the measured
+previewGarbage() stays read-only: the stim gc --dry-run --json report, at the measured
 pressure level or at pressure (normal, high or critical). measureBuildState
 false reports each worktree's buildState only from the disk-usage cache.
 collectGarbage({ pressure?, signal? }) runs stim gc in process at the measured
@@ -154,7 +154,7 @@ never repairs the project. By default it does not record a check; record: true
 registers a supported iOS/Android project and records the checked platforms only
 after the report and owned cleanup succeed. Recording waits asynchronously for
 the config lock, honors signal, and rejects unavailable state. Existing remote approval
-checks can refresh their own pending credential records. gc returns the GC
+checks can refresh their own pending credential records. previewGarbage returns the GC
 JSON dry-run report; it never deletes or shuts down idle devices. Report reads
 can refresh their own measured-usage caches. Supplying home or STIM_HOME retains
 the CLI's scoped-home restrictions on machine-global resources.
@@ -185,9 +185,10 @@ run takes platform plus its options:
   macos:   remoteBuild, remote
   web:     headed (default false)
 iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, remote,
-device, wait and easProfile. device: true auto-selects a physical device; a
-string pins its UDID or serial. wait takes seconds as a string, such as '30'.
-wait: false refuses a full owned-device slot immediately; on a physical device
+device, waitSeconds and easProfile. device: true auto-selects a physical device; a
+string pins its UDID or serial. waitSeconds takes a whole number of seconds
+above 0, such as 30.
+waitSeconds: false refuses a full owned-device slot immediately; on a physical device
 it bypasses another workspace's lease and can replace its running app, as CLI
 --no-wait does. easProfile downloads an existing compatible development build;
 it never starts an EAS build. iOS simulatorApp selects the simulator viewer.
@@ -293,7 +294,7 @@ cleanup before rejecting with STIM_CANCELLED. Its config, workspace-state, and l
 Stop with a fresh signal
 after cancellation or partial failure. Always inspect cleanup.ok.
 
-diagnostics({ tail: 200, errors: false }) returns { directory, records } from
+diagnostics({ tail: 200, errorsOnly: false }) returns { directory, records } from
 the local timeline, even before a successful run. tail: 0 returns paths only.
 It does not fetch remote logs or capture new crashes. Stim failures reject with
 StimError carrying code, message, remedy and details (including the log path).
@@ -305,12 +306,32 @@ Normal ownership, device creation, cache locks and coordination remain active.
 All concurrent artifact-cache writers must share the same coordinating home.
 Do not point independent Stim homes at a concurrently writable shared cache.
 
+The public entries are stim, stim/plugin, stim/ci, stim/ci/artifacts and
+stim/cache-manifest (register, unregister, CacheEntry). stim/internal/* exists
+for the bundled stim-server and CI runner and carries no compatibility, and so
+do identity(), deviceTool(), requestMachineAccess(), deleteGarbageItem() and the
+admission option, which serve Stim Desktop and stim-server.
+
+Within 2.x, --json payloads, logs --json records and API results only gain
+fields and enum values; ignore what you do not know. No compatibility covers
+status --json and doctor --json maintenance and daemon, the per-workspace idleStage,
+dormantStage, sourceDependenciesCleared and idleShutdown records, tutorial,
+gitChip, agentDevice.stateDir, or paths and pids of Stim's own state (a device
+lease's path and parsed, a build's waitingOn.path, gc --json lock path and pid).
+
 PLUGINS
 
 A plugin declares the kinds it implements and their integers in its
 package.json, such as "stimPlugin": { "kinds": { "transport": 1 } }, and
 imports only types from 'stim/plugin'; a runtime import of stim fails its test.
-The kinds are cache-provider, transport and agent-driver. runContract(kind,
+A cache-provider module exports createCacheProvider({ projectRoot, options, env })
+and apiVersion (CacheProviderModule), a transport id and createTransport({ env,
+options }) (TransportModule), and an agent driver id and createAgentDriver(input),
+optionally client and recover(input) (AgentDriverModule). Stim checks the
+package.json integer, not apiVersion, before importing the module.
+The kinds are cache-provider, transport and agent-driver. Only cache-provider
+is stable in 2.x; transport and agent-driver are experimental, and their
+contracts and integers may change in a minor release. runContract(kind,
 options) from 'stim/plugin' runs a kind's contract kit.
 
   stim plugin list [--json]

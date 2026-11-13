@@ -394,7 +394,9 @@ export interface DoctorReport {
   platform: DoctorPlatform | null;
   stim: StimVersionReport;
   pressure: DaemonPressure | null;
+  /** @internal Carries no compatibility: the maintenance state, as `status --json` prints it. */
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
+  /** @internal Carries no compatibility: the stim-daemon state, as `status --json` prints it. */
   daemon: DaemonStatus & { logPath: string };
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
