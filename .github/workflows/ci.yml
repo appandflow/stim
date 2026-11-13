@@ -124,6 +124,13 @@ jobs:
             node scripts/plugin-api-report.mjs
           fi
 
+      - name: Report agent guide size
+        if: github.event_name == 'pull_request' && matrix.node == 22
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/report-agent-guide-size.sh "$BASE"
+
       - name: Committed Action bundle matches source
         id: action-bundle
         run: git diff --exit-code -- .github/actions/stim-ci/dist
