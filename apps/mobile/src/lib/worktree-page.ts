@@ -7,7 +7,7 @@ import {
   workspaceUsage,
   type Usage,
 } from '@/lib/workspace-view';
-import { devicesOf, orderDevices, platformName, type DeviceRef } from '@/lib/workspaces';
+import { orderDevices, platformName, visibleDevices, type DeviceRef } from '@/lib/workspaces';
 import type {
   AgentSession,
   DevicePlatform,
@@ -120,7 +120,7 @@ export function hasBuildTabs(apps: EnvironmentState[]) {
 export function worktreeDevices(apps: EnvironmentState[], now: number) {
   const owners = new Map<DeviceRef, EnvironmentState>();
   for (const env of apps) {
-    const devices = orderDevices(devicesOf(env));
+    const devices = orderDevices(visibleDevices(env));
     const stopped = workspaceStage(env, now).kind === 'stopped';
     for (const device of devices) if (!stopped || device.platform === 'macos') owners.set(device, env);
   }
