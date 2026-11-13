@@ -114,7 +114,7 @@ test('a name that was removed from the settings is refused and warned about like
   const { note, exitCode } = await settings(['set', 'remote.buildMode', 'force', '--scope', 'machine']);
   expect(exitCode).toBe(1);
   expect(note.join('\n')).toContain('STIM_BAD_ARG: "remote.buildMode" is not a Stim setting.');
-  expect(note.join('\n')).not.toContain('remote.build ');
+  expect(note.join('\n')).not.toContain('replaced');
 
   writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
   const [printed] = (await settings(['--json'])).out;

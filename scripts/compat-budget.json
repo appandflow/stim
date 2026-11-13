@@ -16,7 +16,7 @@
       "mechanism": "home and machine state schema, snapshot and rollback to an equal schema"
     },
     "C5": {
-      "loc": 54,
+      "loc": 33,
       "end": "permanent",
       "mechanism": "removed settings and environment variables whose old value turned a mechanism off refuse the command and name the commands that keep the old behavior"
     },

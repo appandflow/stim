@@ -75,7 +75,7 @@ fails with `stim@<version> has no bin/stim.mjs`; set `version` to 2.0.0 or later
 
 C20 (removed flags and API methods name their replacement through one path) had
 no code and is gone from `scripts/compat-budget.json`. C5 (one map of removed
-settings and environment variables to their replacements) shrinks from 60 to 54
+settings and environment variables to their replacements) shrinks from 60 to 33
 lines: the five removed names that only printed a replacement (`remote.buildMode`
 with `STIM_REMOTE_BUILD_MODE`, `share.webrtc`, `devices.reclaimIdleMinutes`,
 `daemon.enabled`, `caches.injectMetroStore`) leave the map, and the messages that
@@ -90,7 +90,12 @@ B, "keep the upgrade bridges, drop the hints: keep those rows, since they expire
 at 2.1.0 anyway; remove C5 and C20 and close #5634". Earlier, on #5492: "no need
 for replacement we will release 2.0 I tihnk so can be breaking".
 
-C5 stays, smaller, because the rest of the map does more than print a name. The
+The twelve pressure-ladder settings (`budget.maxCommittedMemoryGb`,
+`budget.maxLiveWorkspaces` and ten `maintenance.*` keys) and their variables
+also leave the map: nothing replaced them, so their refusal was only a notice,
+and they are now ignored like any unknown name.
+
+C5 stays, smaller, as a permanent row, because the rest of the map does more than print a name. The
 maintainer has not ruled on these, and the code keeps them:
 
 - Environment variables of removed settings marked `refuses` (for example

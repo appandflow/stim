@@ -123,43 +123,22 @@ function sameNumber(old: unknown): string | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : null;
 }
 const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
-const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
-const fixed = (env: string): RemovedSetting => ({ replacement: FIXED_LADDER, env, refuses: true });
 // prettier-ignore
 export const REMOVED_SETTINGS: ReadonlyMap<string, RemovedSetting> = new Map(Object.entries({
-  'metro.idleStopMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['workspace', 'repo', 'committed'] },
-  'devices.idleShutdownMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'] },
+  'metro.idleStopMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', off: offAtZero, scopes: ['workspace', 'repo', 'committed'] },
+  'devices.idleShutdownMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'] },
   'maintenance.deviceIdleDays': { key: 'idle.dormantDays', replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted', env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS', refuses: true, value: sameNumber },
   'budget.minFreeDiskGb': { key: 'disk.minFreeGb', replacement: 'disk.minFreeGb', env: 'STIM_BUDGET_MIN_FREE_DISK_GB', refuses: true, value: sameNumber },
   'budget.hardFloorDiskGb': { key: 'disk.hardFloorGb', replacement: 'disk.hardFloorGb', env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB', refuses: true, value: sameNumber },
   'maintenance.criticalFreeDiskGb': { key: 'disk.criticalFreeGb', replacement: 'disk.criticalFreeGb', env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB', refuses: true, value: sameNumber },
   'maintenance.mode': { key: 'daemon.mode', replacement: 'daemon.mode', env: 'STIM_MAINTENANCE', refuses: true, value: (old) => old === 'on' || old === 'report' || old === 'off' ? old : null, off: (old) => old === 'off' || old === 'report' ? old : null, scopes: ['machine'] },
   'maintenance.idleStopHours': { key: 'idle.dormantDays', replacement: 'idle.dormantDays for workspace dormancy', off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'], kept: 'now applies to hosted device sessions only' },
-  'budget.maxCommittedMemoryGb': fixed('STIM_BUDGET_MAX_COMMITTED_MEMORY_GB'),
-  'budget.maxLiveWorkspaces': fixed('STIM_BUDGET_MAX_LIVE_WORKSPACES'),
-  'maintenance.pressureCheckMinutes': fixed('STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES'),
-  'maintenance.sizeCheckMinutes': fixed('STIM_MAINTENANCE_SIZE_CHECK_MINUTES'),
-  'maintenance.maxLoadPerCore': fixed('STIM_MAINTENANCE_MAX_LOAD_PER_CORE'),
-  'maintenance.memoryPressureLevel': fixed('STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL'),
-  'maintenance.memoryWarningMinutes': fixed('STIM_MAINTENANCE_MEMORY_WARNING_MINUTES'),
-  'maintenance.minAvailableMemoryGb': fixed('STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB'),
-  'maintenance.capTargetPercent': fixed('STIM_MAINTENANCE_CAP_TARGET_PERCENT'),
-  'maintenance.idleCheckMinutes': fixed('STIM_MAINTENANCE_IDLE_CHECK_MINUTES'),
-  'maintenance.urgentFreeDiskGb': fixed('STIM_MAINTENANCE_URGENT_FREE_DISK_GB'),
-  'maintenance.pressureProtectMinutes': fixed('STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES'),
 }));
-export function replacementAdvice(
-  key: string,
-  old: unknown,
-  scope?: SettingScope,
-): (RemovedSetting & { command: string | null }) | null {
+export function replacementAdvice(key: string, old: unknown): (RemovedSetting & { command: string | null }) | null {
   const removed = REMOVED_SETTINGS.get(key);
   if (!removed || removed.kept) return null;
   const value = removed.value?.(old);
-  const target = settingDefinition(removed.key ?? '');
-  const scoped =
-    scope && target && target.scopes.length > 1 && target.scopes.includes(scope) ? ` --scope ${scope}` : '';
-  const command = removed.key && value ? `stim settings set ${removed.key} ${value}${scoped}` : null;
+  const command = removed.key && value ? `stim settings set ${removed.key} ${value}` : null;
   return { ...removed, command };
 }
 // compat end

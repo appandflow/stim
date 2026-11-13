@@ -1911,8 +1911,8 @@ them as unknown settings; unset removes them from every layer, or just --scope.
 start, ios, android, web, macos, revive and gc refuse old environment variables
 marked "refused" and removed config values that turned a mechanism off. Their
 remedies name the set and unset commands that preserve that behavior. Any other
-removed name is an unknown one: Stim ignores it and does not name a replacement. maintenance.idleStopHours remains
-read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
+removed name is an unknown one: Stim ignores it and does not name a replacement.
+maintenance.idleStopHours remains read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
 
 ${[...REMOVED_SETTINGS]
   .filter(([, entry]) => !entry.kept)

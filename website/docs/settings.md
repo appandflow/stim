@@ -1178,15 +1178,6 @@ dormant.
 - `maintenance.criticalFreeDiskGb` (`STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB`):
   use `disk.criticalFreeGb` (`STIM_DISK_CRITICAL_FREE_GB`).
 - `maintenance.mode` (`STIM_MAINTENANCE`): use `daemon.mode` (`STIM_DAEMON`).
-- `budget.maxCommittedMemoryGb`, `budget.maxLiveWorkspaces`,
-  `maintenance.pressureCheckMinutes`, `maintenance.sizeCheckMinutes`,
-  `maintenance.maxLoadPerCore`, `maintenance.memoryPressureLevel`,
-  `maintenance.memoryWarningMinutes`, `maintenance.minAvailableMemoryGb`,
-  `maintenance.capTargetPercent`, `maintenance.idleCheckMinutes`,
-  `maintenance.urgentFreeDiskGb` and `maintenance.pressureProtectMinutes`:
-  nothing replaces them, because the pressure ladder has fixed rules. Each one's
-  variable is its key in upper snake case with a `STIM_` prefix, such as
-  `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`.
 
 ## Timing traces
 
