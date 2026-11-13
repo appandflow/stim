@@ -385,7 +385,12 @@ export async function waitForLaunchServices(
   signal?: AbortSignal,
 ): Promise<'listed' | 'timeout' | 'skipped' | 'exited'> {
   if (record.host || !record.app) return 'skipped';
-  const args = ['find', `bundleid=${record.bundleId}`, `pid=${record.app.pid}`];
+  const app = record.app;
+  const exited = () => {
+    const identity = inspectProcessIdentity(app);
+    return identity === 'gone' || identity === 'different';
+  };
+  const args = ['find', `bundleid=${record.bundleId}`, `pid=${app.pid}`];
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     const out = await getExecutor()
@@ -396,12 +401,11 @@ export async function waitForLaunchServices(
         return '';
       });
     signal?.throwIfAborted();
-    const identity = inspectProcessIdentity(record.app);
-    if (identity === 'gone' || identity === 'different') return 'exited';
+    if (exited()) return 'exited';
     if (out.includes('ASN:')) return 'listed';
     await cancellableSleep(100, { signal, what: 'LaunchServices' });
   }
-  return 'timeout';
+  return exited() ? 'exited' : 'timeout';
 }
 
 class MacosStartupError extends Error {
@@ -466,7 +470,7 @@ async function launchHere(
     }
     await cleanupFailedMacosLaunch(context, root, record, supervisor, undefined, error);
     const logs = readNdjsonGenerations(macosLogFile(root)).filter((entry) => entry.launchId === record.launchId);
-    if (logs.some((entry) => entry.event === 'macos_app_exit'))
+    if (logs.some((entry) => entry.event === 'macos_app_crash'))
       throw new MacosStartupError(record.product, macosStartupDiagnostics(root, record));
     throw error;
   }
