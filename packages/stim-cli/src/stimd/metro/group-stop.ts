@@ -35,10 +35,22 @@ function groupMembers(pgid: number): number[] | null {
  */
 export async function stopProcessGroup(
   leader: { pid: number; processToken: string },
-  { termMs, killMs = 1000 }: { termMs: number; killMs?: number },
+  {
+    termMs,
+    killMs = 1000,
+    groupAlive = processGroupAlive,
+    signalGroup = (pgid) => {
+      signalProcessTree(pgid, 'SIGTERM', { group: true });
+    },
+  }: {
+    termMs: number;
+    killMs?: number;
+    groupAlive?: (pgid: number) => boolean;
+    signalGroup?: (pgid: number) => void;
+  },
 ): Promise<void> {
   const pgid = leader.pid;
-  if (!processGroupAlive(pgid)) return;
+  if (!groupAlive(pgid)) return;
   const refuse = (detail: string) => new Error(`Could not stop the dev-server process group ${pgid}: ${detail}.`);
   const recorded = new Map<number, string | null>();
   const status = inspectProcessIdentity(leader);
@@ -46,13 +58,17 @@ export async function stopProcessGroup(
     for (const pid of groupMembers(pgid) ?? []) recorded.set(pid, captureProcessToken(pid));
     if (inspectProcessIdentity(leader) === 'same') {
       try {
-        signalProcessTree(pgid, 'SIGTERM', { group: true });
+        signalGroup(pgid);
       } catch {}
     }
   } else if (status !== 'gone') {
     throw refuse(`the leader's identity reads ${status}, so no signal was sent`);
   }
-  if (await waitUntil(() => !processGroupAlive(pgid), termMs)) return;
+  if (await waitUntil(() => !groupAlive(pgid), termMs)) return;
+  if (status !== 'same')
+    throw refuse(
+      `the leader had already exited and its members were not recorded while it ran, so no signal was sent; member pids ${(groupMembers(pgid) ?? []).join(', ') || 'unknown'} still run`,
+    );
   for (let round = 0; round < 3; round++) {
     const members = groupMembers(pgid);
     if (members === null) throw refuse('the group members could not be listed');
@@ -73,7 +89,7 @@ export async function stopProcessGroup(
       }
     }
     if (unreadable.length > 0) throw refuse(`the identity of member pids ${unreadable.join(', ')} cannot be read`);
-    if (await waitUntil(() => !processGroupAlive(pgid), killMs)) return;
+    if (await waitUntil(() => !groupAlive(pgid), killMs)) return;
   }
   throw refuse(`member pids ${(groupMembers(pgid) ?? []).join(', ') || 'unknown'} still run after SIGKILL`);
 }

@@ -192,7 +192,15 @@ export function superviseChildServer({
         if (!alive()) return;
         if (!child.pid || !processToken)
           throw new Error(`Could not verify the dev-server process group for pid ${child.pid ?? 'unknown'}.`);
-        await stopProcessGroup({ pid: child.pid, processToken }, { termMs: killTimeoutMs });
+        await stopProcessGroup(
+          { pid: child.pid, processToken },
+          {
+            termMs: killTimeoutMs,
+            killMs: Math.min(1000, killTimeoutMs),
+            groupAlive: () => alive(),
+            signalGroup: () => signal('SIGTERM'),
+          },
+        );
         return;
       }
       const running = () => !exited && Boolean(child.pid);

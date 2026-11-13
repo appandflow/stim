@@ -85,7 +85,7 @@ describe('a supervised dev server', () => {
     expect(records).toMatchObject([{ msg: 'written by a group member after the leader exited' }]);
   });
 
-  test('close refuses unconfirmed shutdown after signalling the group with SIGTERM and SIGKILL', async () => {
+  test('close refuses an unconfirmed shutdown after signalling the group with SIGTERM', async () => {
     vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
     vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('same');
     onTestFinished(() => {
@@ -99,12 +99,12 @@ describe('a supervised dev server', () => {
       },
     });
     await expect(server.close()).rejects.toThrow(/4242/);
-    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(signals).toEqual(['SIGTERM']);
   });
 
   describe.skipIf(process.platform === 'win32')('owned POSIX process', () => {
     test.each(['signal refused', 'exit unconfirmed'])(
-      'close keeps a real child visible after %s and permits a later successful retry',
+      'close kills a real leader by its own verified pid after the group signal had no effect (%s)',
       async (failure) => {
         const child = getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
           detached: true,
@@ -112,18 +112,16 @@ describe('a supervised dev server', () => {
         });
         const pid = child.pid;
         assert(pid);
-        let retry = false;
         try {
+          const exited = once(child, 'exit');
           const server = supervise(child, {
             killTimeoutMs: 25,
             groupAlive: () => processGroupAlive(pid),
-            signal: (sig) => (retry ? child.kill(sig) : failure !== 'signal refused'),
+            signal: () => failure !== 'signal refused',
           });
-          await expect(server.close()).rejects.toThrow(new RegExp(String(child.pid)));
-          expect(child.exitCode === null && child.signalCode === null).toBe(true);
-          retry = true;
           await expect(server.close()).resolves.toBeUndefined();
-          expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+          await exited;
+          expect(child.signalCode).toBe('SIGKILL');
         } finally {
           if (child.exitCode === null && child.signalCode === null) {
             const exited = once(child, 'exit');
@@ -151,11 +149,11 @@ describe('a supervised dev server', () => {
       },
     });
     child.emit('exit', 0, null);
-    await expect(server.close()).rejects.toThrow('Could not verify the dev-server process group');
+    await expect(server.close()).rejects.toThrow(/the leader had already exited/);
     expect(signals).toEqual([]);
   });
 
-  test('close checks identity again before escalating to SIGKILL', async () => {
+  test('close sends no group signal when the leader identity changed after it was first read', async () => {
     vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
     vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValueOnce('same').mockReturnValue('different');
     onTestFinished(() => {
@@ -168,7 +166,7 @@ describe('a supervised dev server', () => {
         return true;
       },
     });
-    await expect(server.close()).rejects.toThrow('Could not verify the dev-server process group');
-    expect(signals).toEqual(['SIGTERM']);
+    await expect(server.close()).rejects.toThrow(/process group 4242/);
+    expect(signals).toEqual([]);
   });
 });

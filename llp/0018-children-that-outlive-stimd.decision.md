@@ -154,6 +154,16 @@ description, each with the same port check.
   stays the only writer of `supervisor_stopped` and of the stop cause.
 - Readiness and heartbeat are unchanged: the heartbeat carries the dev server's
   pid, and stimd probes the port.
+- Group stop: one function, `stopProcessGroup` (`stimd/metro/group-stop.ts`), serves the helper's `close()` and stimd's
+  fallback, so they cannot diverge. While the leader reads `same` it records each group member's identity and sends
+  SIGTERM to the group. The group then gets 5 s to drain, since members outlive the leader by a moment; a leader that
+  already exited is waited for the same way and nothing is signalled. A member still alive after that is killed by its
+  own pid after its own identity reads `same` in the same synchronous step, never by a group signal. A leader reading
+  `unknown` or `different`, a member whose identity cannot be read, a leader that exited before its members were
+  recorded while members remain, and a group that does not empty are refusals naming the failed check and the pids
+  left; the claim stays. A pgid is not reused while any member lives (Linux keeps the struct pid of a group in use;
+  XNU skips the pids of existing groups), so a live group of a gone leader is the dev server's own. Not guaranteed: a
+  member forked after the last listing that exits between its listing and its kill can have its pid reused.
 - Stop: stimd checks the helper's identity and sends SIGTERM to that pid in one
   synchronous function. The helper stops its group (identity check, SIGTERM,
   up to 5 s, identity check, SIGKILL, up to 5 s), records the exit and ends. If
