@@ -1178,7 +1178,7 @@ async function admissionLost(token: string, wait: boolean): Promise<boolean> {
   const admission = admissions.get(token);
   if (!admission) return false;
   if (!admission.lost && wait)
-    await Promise.race([admission.closed, new Promise((done) => setTimeout(done, LOSS_GRACE_MS).unref())]);
+    await Promise.race([admission.closed, new Promise((done) => setTimeout(done, LOSS_GRACE_MS))]);
   return admission.lost;
 }
 

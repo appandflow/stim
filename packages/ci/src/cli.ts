@@ -142,8 +142,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   let finished = false;
+  const keepalive = setInterval(() => {}, 60_000);
   process.once('exit', (code) => {
-    if (!finished) process.stderr.write(`stim ci: the process exited with code ${code} before the run finished\n`);
+    if (finished) return;
+    process.stderr.write(`stim ci: the process exited with code ${code} before the run finished\n`);
+    if (code === 0) process.exitCode = 1;
   });
   try {
     const invocation = parse(argv);
@@ -166,6 +169,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1;
   } finally {
     finished = true;
+    clearInterval(keepalive);
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
   }
