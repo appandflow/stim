@@ -97,6 +97,8 @@ export interface AndroidBootLike {
   reason?: string;
   code?: string;
   remedy?: string;
+  lines?: string[];
+  logPath?: string | null;
 }
 
 export type AndroidWriter = ReturnType<typeof createNdjsonWriter>;

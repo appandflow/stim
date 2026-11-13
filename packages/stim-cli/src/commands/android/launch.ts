@@ -1283,8 +1283,8 @@ function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runComman
       code: booted.code,
       message: booted.reason ?? 'The emulator did not boot.',
       remedy: booted.remedy ?? null,
-      lines: [],
-      logPath: null,
+      lines: booted.lines ?? [],
+      logPath: booted.logPath ?? null,
     };
   }
   const diag = noDeviceDiagnostic({
