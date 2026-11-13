@@ -8,7 +8,7 @@
 
 This document follows the review of
 [#5592](https://github.com/appandflow/stim/issues/5592#issuecomment-6836925220)
-and the coordinating session's reviews of #5613 and #5628. The maintainer
+and the coordinating session's reviews of #5613 (into which #5628 was folded). The maintainer
 decided only that 2.0 is a breaking release. The rules below are the review's
 proposals and the coordinator's decisions as implemented; none is a maintainer
 decision, and the list at the end names the choices that wait for one.
@@ -98,34 +98,42 @@ declaration and union branch, and whether it sits in a parameter list.
   or a `StimClient` method, and the types those reach.
 - An added optional parameter, a wider union and a new enum value are
   additive, as the JSON rule says. A narrower one breaks.
+- A wider union in a type Stim builds and hands to a plugin breaks, because
+  an existing plugin never handled the new value.
+- Grouping parentheses in a type, as in `type StimBuildOptions = ((A & {`, are
+  not a parameter list, so members inside them are checked like any other.
 - A line tagged `@internal`, or of a declaration only `@internal` members
-  reach, changes without a bump; the baseline is still refreshed.
+  reach, changes without a bump; the baseline is still refreshed. One
+  `@internal` half of a merged interface does not exempt the public half.
 - A pull request and the merge queue also compare the reports with the base
   branch's baselines, so a hand-edited baseline fails.
 
-The reports were reset once, in #5613, with `--reset`. A reset is allowed only
-while `.github/next-version` names the next major, and only against a base whose
-baseline does not already record one, so it cannot recur after 2.0.0 or in a
-later pull request. #5628, stacked on #5613, bumps `STIM_API_VERSION` to 2
-instead of resetting again.
+The reports were reset once, in #5613, with `--reset`, so every integer is 1
+at 2.0.0. The base comparison accepts a reset only when the base's own
+`.github/next-version` names a later major than the base's packages carry,
+and the base's baseline does not already record one. A baseline that drops the
+base's reset header fails. Read from the base, these files cannot be edited by
+the pull request that resets, so a reset cannot recur after 2.0.0 or in a
+later pull request.
 
 ## Choices for the maintainer
 
 1. `gc()` renamed to `previewGarbage()` (see above).
 2. `buildCacheDir`, `waitSeconds` (`false` also bypasses another workspace's
    physical-device lease, as `--no-wait` does) and `errorsOnly`.
-3. `STIM_API_VERSION`, starting at 1 and at 2 when 2.0.0 ships, and
-   `RUN_OP_VERSION`.
-4. The `stim/internal/*` entries, the `@internal` members and the types no
+3. `STIM_API_VERSION` and `RUN_OP_VERSION`, both 1 at 2.0.0.
+4. `stim/cache-manifest`'s `register(entry)` and `unregister(dir)`, which no
+   longer take the manifest path.
+5. The `stim/internal/*` entries, the `@internal` members and the types no
    longer exported (`StimDeviceToolOptions`, `StimGcItem`,
    `StimGcItemOptions`, `StimGcItemResult`, `StimMachineAccessOptions`).
-5. `stim/plugin` reduced to an explicit list, including the removal of
+6. `stim/plugin` reduced to an explicit list, including the removal of
    `cacheProviderContractChecks`, and `loadCacheProvider` kept in it.
-6. The `transport` and `agent-driver` kinds declared experimental.
-7. `@stim-cli/cache-s3`'s peer range `^<version>` rather than `^2.0.0`: a
+7. The `transport` and `agent-driver` kinds declared experimental.
+8. `@stim-cli/cache-s3`'s peer range `^<version>` rather than `^2.0.0`: a
    `^2.0.0` range excludes the `2.0.0-next` prereleases the `next` channel
    publishes, so it would warn on every prerelease install.
-8. Left as they are: `ok` versus `exitCode` in results, `simulatorApp?: string`
+9. Left as they are: `ok` versus `exitCode` in results, `simulatorApp?: string`
    and `remote?: string` on run, the run and build facts differences (review
    item 1.8), `CacheProviderModule.apiVersion`, which the loader never reads,
    and the `before*` hooks, which stay public.
