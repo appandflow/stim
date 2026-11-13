@@ -81,8 +81,16 @@ function SmallCard({
   );
 }
 
-export function MacosBuildCard({ app, onPress }: { app: MacosAppState; onPress: () => void }) {
-  const state = macosBuildLabel(app);
+export function MacosBuildCard({
+  app,
+  pathMissing,
+  onPress,
+}: {
+  app: MacosAppState;
+  pathMissing?: boolean;
+  onPress: () => void;
+}) {
+  const state = macosBuildLabel(app, pathMissing);
   return (
     <SmallCard
       title={t`Build`}

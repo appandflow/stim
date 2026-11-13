@@ -4,7 +4,16 @@ import { archivedPage } from '@/lib/archived-page';
 import type { ArchivedWorkspace } from '@/lib/archived';
 import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
-import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
+import {
+  deviceKey,
+  devicesOf,
+  isMacosBuilding,
+  isShownLive,
+  orderDevices,
+  runningBuild,
+  visibleDevices,
+  type DeviceRef,
+} from '@/lib/workspaces';
 import type {
   DevicePlatform,
   EnvironmentState,
@@ -292,11 +301,7 @@ export function filterWorkspaces<T extends HomeEntry>(
         ))
     )
       continue;
-    if (
-      filters.buildingOnly &&
-      (!('env' in item) || (item.env.build?.state !== 'running' && item.env.macos?.build.state !== 'running'))
-    )
-      continue;
+    if (filters.buildingOnly && (!('env' in item) || (!runningBuild(item.env) && !isMacosBuilding(item.env)))) continue;
     if (!filters.statuses.includes(status)) {
       hidden.add(workspaceKey(item));
       continue;
@@ -347,12 +352,11 @@ export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: 
     { ...filters, statuses: [...STATUSES], errorsOnly: false, remoteOnly: false, buildingOnly: false },
     macIds,
   );
-  return shown.flatMap((item) => {
-    if (item.env.pathMissing) return [];
-    return orderDevices(devicesOf(item.env))
+  return shown.flatMap((item) =>
+    orderDevices(visibleDevices(item.env))
       .filter((device) => device.running && (!filters.platforms.length || filters.platforms.includes(device.platform)))
-      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device }));
-  });
+      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device })),
+  );
 }
 
 export function projectNames(items: HomeEntry[]): string[] {

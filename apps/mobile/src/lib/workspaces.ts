@@ -209,14 +209,22 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
   return out;
 }
 
+export function visibleDevices(env: EnvironmentState): DeviceRef[] {
+  return env.pathMissing ? [] : devicesOf(env);
+}
+
 export function livePlatforms(env: EnvironmentState): DevicePlatform[] {
   return [
     ...new Set(
-      devicesOf(env)
+      visibleDevices(env)
         .filter((d) => d.running && (d.owned || d.host) && !d.physical)
         .map((d) => d.platform),
     ),
   ];
+}
+
+export function isMacosBuilding(env: EnvironmentState): boolean {
+  return !env.pathMissing && env.macos?.build.state === 'running';
 }
 
 export function runningBuild(

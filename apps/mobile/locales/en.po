@@ -4626,6 +4626,7 @@ msgstr "workspace {where}"
 msgid "workspace {where}, on {macName}"
 msgstr "workspace {where}, on {macName}"
 
+#: src/lib/workspace-view.ts
 #: src/screens/workspace-detail.tsx
 msgid "Workspace Not Found"
 msgstr "Workspace Not Found"

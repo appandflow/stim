@@ -343,8 +343,8 @@ export function pullRequestReviewName(decision: NonNullable<PullRequestFacts['re
   }
 }
 
-export function macosBuildLabel(app: MacosAppState): string {
-  return app.build.state === 'running'
+export function macosBuildLabel(app: MacosAppState, pathMissing = false): string {
+  return app.build.state === 'running' && !pathMissing
     ? t`Building`
     : app.build.state === 'failed'
       ? t`Build failed`
