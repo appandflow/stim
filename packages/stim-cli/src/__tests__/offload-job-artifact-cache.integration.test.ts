@@ -8,6 +8,7 @@ import * as artifactQuery from '../job/offload/artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { waitForPid } from './_pid-file.ts';
 
 const identity = { fingerprint: 'source', cacheKey: 'source-xcode-sdk-arch-target' };
 
@@ -325,12 +326,7 @@ test.each(['disconnect', 'close'])('a native artifact query drains on %s', async
     .offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: query }, session.signal)
     .catch(() => null);
   try {
-    const deadline = Date.now() + 3000;
-    while (!existsSync(join(area, 'query-pid'))) {
-      if (Date.now() > deadline) throw new Error('The query did not start.');
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    const pid = Number(readFileSync(join(area, 'query-pid'), 'utf8'));
+    const pid = await waitForPid(join(area, 'query-pid'), 3000);
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
     if (reason === 'disconnect') session.close();
@@ -363,8 +359,7 @@ test('ending the job cancels its builds even when another repository query canno
   });
   if ('error' in job) throw new Error(job.error.message);
   try {
-    await vi.waitFor(() => expect(existsSync(join(area, 'build-pid'))).toBe(true));
-    const pid = Number(readFileSync(join(area, 'build-pid'), 'utf8'));
+    const pid = await waitForPid(join(area, 'build-pid'));
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
     vi.spyOn(artifactQuery, 'runArtifactQuery').mockReturnValue({

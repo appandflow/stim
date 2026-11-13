@@ -93,7 +93,9 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
-Metro, CocoaPods and fingerprint parity; [Exact](#exact-apps) checks cover
+Metro, CocoaPods and fingerprint parity (the parity check uses a temporary
+git worktree; doctor first removes the leftovers of ended Stim processes and
+unregisters them in the repository they were created for); [Exact](#exact-apps) checks cover
 Bun, rustup and the exact2 checkout. Shared findings appear before
 framework findings. Each run in a supported native app is recorded for the
 inspected platforms in Stim's state, which also registers the project for
@@ -219,6 +221,16 @@ the file: Watchman reads `ignore_dirs` only from a root's `.watchmanconfig`, wit
 no global equivalent. It reads the file only when it adds a root, so for a root
 it already watches run `watchman watch-del <checkout>`, then restart Watchman to
 free its memory now. Doctor never runs either command.
+
+On macOS, each stimd started by launchd registers a job named
+`dev.stim.stimd.<hash>.<id>` in your login domain. Doctor reports stopped jobs
+whose `STIM_HOME` folder no longer exists, which a deleted scratch or test home
+leaves behind. `--fix` removes them, and so does the next stimd that launchd
+starts. It never removes a running job or a job whose home exists, and it keeps
+a job whose home is under `/Volumes`, unreadable, or behind a broken symlink.
+A home on a share mounted elsewhere, such as SMB or NFS at `~/mnt/x`, reads as
+gone while it is unmounted, so its stopped job is removed; that loses nothing,
+because each stimd start registers a new job.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
@@ -2438,6 +2450,26 @@ only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
 link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
 
+Automatic maintenance and `stim gc` never delete a `node_modules` or
+`ios/Pods` folder in which they detect hand edits, at any pressure level,
+critical included, so its disk is not freed; `gc --dry-run`, `stim status` and
+`stim doctor` name the edited files. Automatic removal of a finished or
+discovered worktree waits while one of its dependency folders has edits.
+`stim worktree remove` runs no check. Detection is best effort, from file
+times: a file modified after the install (when an install, `pod install` or
+`stim worktree warm` that Stim ran there finished, or else the package
+manager's stamp) is an edit, except in a 10-minute window after the stamp when
+the root `package.json` declares an install script. Not checked:
+dot-directories at the `node_modules` root other than `.pnpm`, `.bun`, `.deno`
+and `.bin` (tool caches such as `.cache` and `.vite`, a custom pnpm
+virtual-store directory included), Gradle, CMake and Xcode output, and the
+package manager's state files. Known misses: an edit that keeps an older
+modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
+hand, an edit inside an install window, and an edit to a package whose
+`package.json` an editor replaced. An edit in `node_modules` is never durable:
+make it a patch with `pnpm patch`, `yarn patch` or `patch-package`, or
+reinstall to let maintenance free the folder.
+
 Everything `gc` deletes, by category (N normal, H high, C critical):
 
 | Category                                                                                                                                                                                                                                        | Pass or rung               | Level                 | Kept when                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -2544,10 +2576,10 @@ volume is not mounted, is kept and counted under "Skipped".
 `gc` also lists recognized leftovers directly in the user's `TMPDIR` under
 "TMPDIR leftovers", with their count, size and a remedy: Stim temp directories
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
-`stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`),
+`stim-server-*`, `stim-ws-*`, `stim-parity-*`), xctrace recordings (`instruments*.ktrace`),
 SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
 Jest's cache (`jest_<uid in base 36>`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
-temp directory only when nothing in it changed for 24 hours. It keeps a directory that contains or sits
+temp directory only when nothing in it changed for 24 hours. It removes a `stim-parity-*` directory, with its git worktree registration, only when its Stim record names a process that has ended. It keeps a directory that contains or sits
 inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
 cannot be read, and keeps every recording while `xctrace` or Instruments runs and every

@@ -9,6 +9,7 @@ import { createThreadTable } from '../stimd/threads.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { signalProcessTree } from '../metro.ts';
 import { waitForProcessExit } from '@stim-cli/core/process-identity';
+import { waitForPid } from './_pid-file.ts';
 
 async function stopFixture(pid: number, token: string): Promise<void> {
   const status = inspectProcessIdentity({ pid, processToken: token });
@@ -59,8 +60,7 @@ parentPort.on('message', (message) => {
           code: 'STIM_CLAIM_UNAVAILABLE',
           reportCleanup: true,
         });
-        expect(existsSync(pidFile)).toBe(true);
-        pid = Number(readFileSync(pidFile, 'utf8'));
+        pid = await waitForPid(pidFile);
         token = captureProcessToken(pid);
         expect(token).toBeTruthy();
         expect(inspectProcessIdentity({ pid, processToken: token ?? undefined })).toBe('same');

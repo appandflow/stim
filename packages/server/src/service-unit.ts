@@ -2,7 +2,7 @@ import { quoteUnitWord } from '@stim-cli/core';
 import { LABEL_VARIABLE } from '@stim-cli/core/state';
 import {
   environmentValues,
-  serverArguments,
+  jobArguments,
   THROTTLE_SECONDS,
   type ServeRecord,
   type ServiceSpec,
@@ -28,7 +28,7 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     `Description=stim-server (${spec.label})`,
     '',
     '[Service]',
-    execLine([spec.node, spec.script, ...serverArguments(spec)]),
+    execLine(jobArguments(spec)),
     ...[...environment].map(([name, value]) => `Environment=${quoteUnitWord(`${name}=${value}`, false)}`),
     'WorkingDirectory=%h',
     'Restart=always',
@@ -49,15 +49,17 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
   return lines.join('\n');
 }
 
-/** `text` with the server arguments and previous script, or the serve record, replaced; every other line kept. */
+/** `text` with the server arguments (and the previous script when given), or the serve record, replaced; every other line kept. */
 export function editUnit(
   text: string,
-  change: { programArguments: string[]; previousScript: string } | { serve: ServeRecord },
+  change: { programArguments: string[]; previousScript?: string } | { serve: ServeRecord },
 ): string {
   const replaced =
     'serve' in change
       ? { ServePort: String(change.serve.port), ServeCreated: String(change.serve.created) }
-      : { PreviousScript: quoteUnitWord(change.previousScript, false) };
+      : change.previousScript === undefined
+        ? {}
+        : { PreviousScript: quoteUnitWord(change.previousScript, false) };
   let section = '';
   const out: string[] = [];
   for (const line of text.split('\n')) {

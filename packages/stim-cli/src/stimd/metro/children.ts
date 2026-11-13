@@ -388,13 +388,27 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   await child.roots?.beforeClose();
   try {
     if (!GROUPS) {
-      if (
-        inspectProcessIdentity(child) !== 'same' ||
-        !(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' }))
-      )
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+      const unconfirmed = (detail: string) =>
+        new Error(`Could not confirm shutdown of dev-server pid ${child.pid}: ${detail}.`);
+      const identity = inspectProcessIdentity(child);
+      if (identity !== 'same') throw unconfirmed(`its identity reads ${identity}`);
+      const taskkill = join(
+        process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows',
+        'System32',
+        'taskkill.exe',
+      );
+      const failed = await getExecutor()
+        .runFileAsync(taskkill, ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000, killSignal: 'SIGKILL' })
+        .then(
+          () => null,
+          (error: { status?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown }) => error,
+        );
       if (!(await gone(() => running(child), STOP_MS)))
-        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+        throw unconfirmed(
+          failed
+            ? `taskkill /T /F exited ${String(failed.status ?? failed.message)}: ${`${String(failed.stdout ?? '')} ${String(failed.stderr ?? '')}`.replace(/\s+/g, ' ').trim()}`
+            : `it still runs ${STOP_MS / 1000} s after taskkill`,
+        );
     } else if (child.handle) await child.handle.close();
     else if (processGroupAlive(child.pid)) {
       const signal = (sig: NodeJS.Signals) => {
@@ -514,7 +528,9 @@ function spawnHost(
     ...(storeRoot ? ['--store-root', storeRoot] : []),
     ...(resetCache ? ['--reset-cache'] : []),
   ];
-  const child = spawn('node', args, {
+  // Windows shims (pnpm, Volta) run `node` from PATH as a child, so Metro would listen outside the recorded pid, the
+  // only one resolveProjectMetro accepts there; Stim runs the host with its own node (see startExpoServer).
+  const child = spawn(process.platform === 'win32' ? process.execPath : 'node', args, {
     cwd: root,
     stdio: ['ignore', ...output.fds],
     detached: GROUPS,

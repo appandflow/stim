@@ -6,7 +6,7 @@ import { reportSignal, reportTimeRemainingMs, trackReportResource } from '../rep
 import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { rm } from 'fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
@@ -26,7 +26,8 @@ import {
 } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { tailscaleStatus } from '../tailscale-status.ts';
-import { makeTemporaryDirectory } from '../temporary.ts';
+import { makeTemporaryDirectory, temporaryRoot } from '../temporary.ts';
+import { PARITY_PREFIX, sweepParityLeftovers, writeParityMarker } from './parity-worktrees.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
@@ -99,6 +100,7 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
+import { dependencyEditsFindings } from './doctor-dependency-edits.ts';
 
 export { brokenPodLinks } from './doctor-pods-flavor.ts';
 
@@ -1327,6 +1329,7 @@ export async function reactNativeDoctorFindings({
     await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
     appProjectFinding ? null : checkReadinessMarkers(projectRoot),
+    ...dependencyEditsFindings([...new Set([projectRoot, repositoryRoot ?? projectRoot])]),
   ].filter((value): value is Finding => Boolean(value));
 }
 
@@ -1600,11 +1603,25 @@ export async function detectFingerprintParity(
       skipped,
       'Run stim doctor in a terminal to get the check.',
     );
+  try {
+    await sweepParityLeftovers(
+      temporaryRoot(projectRoot, operation),
+      AbortSignal.any([operation?.signal ?? new AbortController().signal, AbortSignal.timeout(10_000)]),
+    );
+  } catch {
+    operation?.signal.throwIfAborted();
+  }
   const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
   const context = operation ?? processContext(projectRoot);
   let base: string;
   try {
-    base = makeTemporaryDirectory(projectRoot, 'stim-parity-');
+    base = makeTemporaryDirectory(projectRoot, PARITY_PREFIX, operation);
+    try {
+      writeParityMarker(base, projectRoot);
+    } catch (error) {
+      rmSync(base, { recursive: true, force: true });
+      throw error;
+    }
   } catch {
     return null;
   }

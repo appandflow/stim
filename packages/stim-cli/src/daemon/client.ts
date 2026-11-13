@@ -34,6 +34,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
+import { STIMD_LAUNCHD_ROOT } from './launchd-jobs.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLock } from '../workspace/workspace-state.ts';
 import { clearManagedMetroTunnel, readMetroTunnel, type ManagedTunnelRecord } from '../stimd/metro/state.ts';
@@ -767,7 +768,7 @@ const xml = (value: string) =>
 
 /** The prefix of the labels of this home's stimd launchd jobs. */
 export function launchdLabelPrefix(): string {
-  return `dev.stim.stimd.${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}.`;
+  return `${STIMD_LAUNCHD_ROOT}${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}.`;
 }
 
 /**

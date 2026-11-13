@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -90,6 +91,39 @@ describe.skipIf(process.platform !== 'darwin')('Xcode runtime installation', () 
     const claims = readClaimSet(join(home, 'ios-runtime-install'));
     expect(claims.live).toHaveLength(1);
     expect(claims.live[0]?.child).toEqual(claims.live[0]?.owner);
+  });
+  test('an installer that exited before its identity was read is refused with its own failure', async () => {
+    const exited = spawn(process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
+    await new Promise((resolve) => exited.once('close', resolve));
+    setExecutor(
+      makeExecutor({
+        runFileAsync: async (file, _args, options) => {
+          if (file === 'xcrun') return JSON.stringify({ runtimes: [] });
+          options.onSpawn?.(exited);
+          throw new Error('Command failed: xcodebuild\nxcodebuild broke');
+        },
+      }),
+    );
+    const result = await install();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).toContain('xcodebuild broke');
+    expect(JSON.stringify(result)).not.toContain('Cannot record');
+  });
+  test('an installer not seen to exit after a NOT_FOUND read is stopped when its identity stays unreadable', async () => {
+    const kill = vi.fn<() => boolean>(() => true);
+    const live = makeChildProcess({ kill });
+    setExecutor(
+      makeExecutor({
+        runFileAsync: async (file, _args, options) => {
+          if (file === 'xcrun') return JSON.stringify({ runtimes: [] });
+          options.onSpawn?.(live);
+          await vi.advanceTimersByTimeAsync(2500);
+          throw new Error('Command failed: xcodebuild\nstopped');
+        },
+      }),
+    );
+    await install();
+    expect(kill).toHaveBeenCalledWith('SIGKILL');
   });
   test('unresolved local installer cleanup retains the installer identity on both claims', async () => {
     vi.stubEnv('STIM_MAX_BUILDS', '1');
