@@ -2,10 +2,10 @@
 
 **Type:** Decision
 **Status:** Active
-**Systems:** Stimd, Metro, Claims
+**Systems:** Stimd, Metro, Claims, Devices
 **Author:** Janic Duplessis / Claude
 **Date:** 2026-11-12
-**Related:** LLP 0007, LLP 0016, LLP 0017
+**Related:** LLP 0007, LLP 0016, LLP 0017, LLP 0019
 
 ## Which children stimd may own
 
@@ -16,8 +16,8 @@ restart can drop it unnoticed: a pass, a measure, a fingerprint check, a probe.
 A child whose exit code and complete output matter, and that must keep running
 across a stimd restart, gets a small per-workspace helper process as its parent,
 not stimd. Today that is the macOS app (`macos-run`, LLP 0017) and the dev
-server (`metro-run`, below); the physical iPhone console is planned in another
-issue. stimd stays
+server (`metro-run`, below) and the physical iPhone console (`console-run`,
+below). stimd stays
 the coordinator of such a child: it starts and stops it, holds its claim, and
 finds a running helper again by that claim and the helper's verified process
 identity, never by name. Each helper costs one Node process while its child runs.
@@ -236,8 +236,86 @@ finds it matching nothing.
 Not determined: Windows behaviour; whether a `NODE_OPTIONS` meant for the
 project, which the helper inherits as 1.40's supervisor did, matters.
 
+## The physical iPhone console's helper
+
+Why: `stim ios --device` streams the app's console through `xcrun devicectl
+device process launch --console`, which launches the app and ends it when the
+console exits, so a successor stimd cannot start the console again without
+relaunching the app. As a stimd child the console was lost on a stimd crash,
+was never resumed after a restart, and held every engine switch and in-place
+update (`heldBy: "logs"`) until `stim stop` (#5586).
+
+**Process tree.** stimd starts `console-run` (`dist/console-run.mjs`,
+`src/stimd/logs/console-run.ts`) detached, with stdio `ignore`, the stream's
+`console-<hash>.log`, the same file, and `ipc`, and `unref`s it. The helper
+runs the fixed `xcrun devicectl ... --console` invocation stimd builds
+(`deviceConsoleArgs`, invariant 3) in its own process group with piped stdout
+and stderr. The env is the stream's forwarded env, as before; it never reaches
+disk.
+
+**Claim.** The stream keeps its claim under `log-streams/` (LLP 0007, LLP 0019).
+devicectl is the claim child; the details add `helper: {pid, processToken}`,
+the run id, the slot attribution and `engineDir`. The child is pending from the
+helper's spawn until it reports, as for the dev server. A helper that reports
+`failed` frees the claim and the stream record; a helper silent after 20 s, or
+ended without a report, leaves the claim pending and the start refuses with
+`STIM_CLAIM_UNAVAILABLE`, naming the helper pid and the claim's remove command.
+The workspace's collector record keeps `engineDir`, so the engine store keeps
+the build the helper runs from; the console no longer pins stimd's engine
+claim, and stimd no longer answers `heldBy: "logs"`.
+
+**Output.** The helper writes `device.ndjson` itself, with the stream's
+`streamId`, run id and slot attribution: `collector_started`, every console
+line parsed by `parseDeviceConsoleLine`, `collector_empty` when nothing came
+and the end was not a stop, and the closing record: `collector_stopped` for a
+stop, `collector_failed` for a non-zero exit ("treat the run as failed"),
+`collector_stopped` otherwise. It reads until devicectl's group is gone and
+both pipes closed (`drainGroupOutput`, shared with `metro-run`), so a final
+diagnostic precedes the closing record. Then it writes the exit file
+`log-streams/console-<hash>.exit.json` (`{pid, processToken, code, signal,
+exitedAt, helperPid}`, atomically) and exits. It rotates `device.ndjson` like
+the logs worker's writers, under the same lock.
+
+**Stop.** `logs.stop` checks the helper's identity and sends it SIGTERM in one
+synchronous function (`stopHelperProcess`, shared with the dev server). The
+helper stops devicectl's group with `stopProcessGroup` (3 s to drain), records
+the stop and ends. A helper still running after 6 s is handled as for the dev
+server: stimd stops the group by the claim child, then kills the helper after
+an identity check. A start in the same slot stops the running console first.
+
+**Settling.** stimd settles a console once its helper wrote the exit file or is
+gone: it checks every second, and at takeover. With the exit file, the helper
+already wrote the closing records; stimd removes the collector record, the
+claim, the exit file and the helper's log. A helper gone without one: stimd
+stops what is left of devicectl's group, writes a `collector_failed` record
+naming the helper and the end of its log, then removes the same state.
+
+**Events.**
+
+- stimd crash, in-place update or engine switch: the helper keeps
+  recording and stimd leaves the stream's record and claim as they are. At
+  boot the successor finds the claim by the record's stream id, waits up to
+  10 s for a predecessor still exiting, and takes the claim over once
+  `streamOwnerGone` proves its owner gone (LLP 0019). It neither relaunches the
+  app nor writes an interrupted record. A console that ended while no stimd ran
+  is settled from its exit file.
+- Idle exit: stimd does not idle-exit while it supervises a console, as before.
+- Logs worker failure: the console does not use the worker and is not
+  affected.
+- A record whose claim names no helper was written by an earlier stimd that
+  ran devicectl itself; it keeps the interrupted record of LLP 0019.
+- Readiness: the helper writes the log, so a readiness wait wakes when the
+  device log's size changes. Coverage stays `failed`, as before: the console
+  has no history to replay.
+
+Not determined: the console helper on hardware. Only fake devicectl processes
+have run it; Windows has no physical iPhone console.
+
 ## Code
 
 - `packages/stim-cli/src/stimd/metro/run.ts`: the dev server's helper.
+- `packages/stim-cli/src/stimd/logs/console-run.ts`: the physical iPhone console's helper.
+- `packages/stim-cli/src/stimd/logs/console.ts`: spawn, takeover, stop and settle of consoles.
+- `packages/stim-cli/src/stimd/metro/group-stop.ts`: the group stop, drain and helper stop both helpers share.
 - `packages/stim-cli/src/stimd/metro/children.ts`: spawn, adoption, stop and settle of dev servers.
 - `packages/stim-cli/src/macos/run.ts`: the helper this rule already applies to.
