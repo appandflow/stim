@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, openSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
@@ -10,35 +10,18 @@ import { createNdjsonWriter, type NdjsonRecord } from '../../ndjson.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { METRO_RUN_ACCEPT, superviseChildServer, type MetroRunMessage } from './child-server.ts';
+import { drainGroupOutput, writeExitRecord } from './group-stop.ts';
 import { outputRecord } from './output-records.ts';
 import { parseExpoWaitingOnUrl } from './server-expo.ts';
 
 const GROUPS = process.platform !== 'win32';
 const STOP_MS = 5000;
-const DRAIN_MS = 1000;
 const TUNNEL_RETRY_MS = 250;
 const TUNNEL_RETRIES = 40;
 const STREAMS = ['stdout', 'stderr'] as const;
 
-const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 const send = (message: MetroRunMessage) =>
   new Promise<void>((done) => (process.send ? process.send(message, () => done()) : done()));
-
-/**
- * Waits until the dev server's process group is gone (at once on Windows, which has none) and its stdout and stderr
- * close. Once the group is gone it waits at most `DRAIN_MS` more for the pipes, then stops reading, so a descendant
- * outside the group that still holds a pipe cannot keep the helper alive; that descendant gets EPIPE on its next write.
- */
-async function drain(child: ChildProcess, closed: Promise<void>, stuck: () => boolean): Promise<void> {
-  const pipes = { closed: false };
-  void closed.then(() => (pipes.closed = true));
-  const groupAlive = () => GROUPS && child.pid !== undefined && processGroupAlive(child.pid);
-  while (!stuck() && groupAlive()) await sleep(100);
-  if (!pipes.closed) await Promise.race([closed, sleep(DRAIN_MS)]);
-  if (pipes.closed) return;
-  for (const stream of STREAMS) child[stream]?.destroy();
-  await Promise.race([closed, sleep(DRAIN_MS)]);
-}
 
 /**
  * The dev server's parent: runs `command` with `args` from `root` in its own process group with piped output, copies
@@ -133,7 +116,7 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
     if (child.pid === undefined || !handle.processToken) {
       if (child.pid !== undefined) child.kill('SIGKILL');
       const ended = await exited;
-      await drain(child, closed, () => false);
+      await drainGroupOutput(child, closed, () => false);
       await send({
         type: 'failed',
         message: ended?.error?.message ?? 'the dev server started but its process identity could not be read',
@@ -171,7 +154,7 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
     process.on('SIGINT', stop);
     void send({ type: 'registered', ...server });
     const ended = await Promise.race([exited, stopFailed]);
-    await drain(child, closed, () => unverified);
+    await drainGroupOutput(child, closed, () => unverified);
     await stopping;
     process.off('message', onMessage);
     process.off('disconnect', onDisconnect);
@@ -188,15 +171,7 @@ async function runMetroHelper(argv: readonly string[]): Promise<void> {
       exitedAt: new Date().toISOString(),
       helperPid: process.pid,
     };
-    const file = metroExitFile(root);
-    const staging = `${file}.${process.pid}.tmp`;
-    try {
-      writeFileSync(staging, JSON.stringify(exit), { mode: 0o600 });
-      renameSync(staging, file);
-    } catch (error) {
-      rmSync(staging, { force: true });
-      throw error;
-    }
+    writeExitRecord(metroExitFile(root), exit);
   } finally {
     writer.close();
     for (const stream of STREAMS) closeSync(raw[stream]);
