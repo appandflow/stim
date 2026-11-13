@@ -795,7 +795,6 @@ export function doctorOp(
       const { selected, doctors } = prepared;
 
       if (opts.fix) {
-        if (clearCrashHold()) console.error('stimd crash hold cleared; the next command starts stimd again.');
         const interactive = !opts.json && process.stdin.isTTY === true && process.stderr.isTTY === true;
         const { value: failed, interrupted } = await runProcessOperation(root, (operation) =>
           repairDoctorProject(root, opts.platform, prepared, process.env, console.error, undefined, {
@@ -809,6 +808,7 @@ export function doctorOp(
           return;
         }
         if (failed) process.exitCode = 1;
+        if (clearCrashHold()) console.error('stimd crash hold cleared; the next command starts stimd again.');
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);

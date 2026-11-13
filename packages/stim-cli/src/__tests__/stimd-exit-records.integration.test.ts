@@ -90,6 +90,7 @@ beforeEach(() => {
     STIM_ENGINE_ROOT: join(dir, 'engine'),
     STIM_DAEMON: 'report',
   };
+  delete env.INVOCATION_ID;
 });
 
 /** The stimd launchd jobs of `home` that `launchctl` lists. */

@@ -1,4 +1,4 @@
-import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet, type ClaimHolder } from '@stim-cli/core/ownership-claim';
@@ -101,6 +101,7 @@ export function updateBoot(at: number, pid: number, change: (boot: Boot | undefi
 /** Removes the boots file, which ends a crash hold: what `stim doctor --fix` does, and what a person's `rm` does. */
 export function clearCrashHold(): boolean {
   const file = stimdBootsFile();
+  if (!existsSync(file)) return false;
   return withDirLock(`${file}.lock`, () => {
     const had = readStimdBoots().length > 0;
     rmSync(file, { force: true });
