@@ -130,7 +130,7 @@ describe('--json', () => {
   it('devices lists each record with its kind, access and owner, by key fingerprint, without public keys', () => {
     const phoneKey = generateNoiseKeyPair();
     spend(createPairingToken(Date.now(), ['read', 'control']).token, 'Phone', phoneKey);
-    const machine = setupClient(['build', 'device-host'], 'Laptop');
+    const machine = setupClient(['build', 'device-host', 'test'], 'Laptop');
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
     const machineKey = keyFingerprint(machine.keyPair.publicKey);
     const shape = ({ id, pairedAt, lastSeenAt, ...rest }: Record<string, unknown>) => {
@@ -152,6 +152,7 @@ describe('--json', () => {
       },
       { ...client, capabilities: ['build'], kind: 'build-client', access: ['build'] },
       { ...client, capabilities: ['device-host'], kind: 'device-host-client', access: ['run-devices'] },
+      { ...client, capabilities: ['test'], kind: 'test-client', access: ['test'] },
     ]);
   });
 
@@ -283,7 +284,7 @@ describe('entries it cannot read', () => {
   }, 20_000);
 });
 
-describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
+describe.each(['build', 'device-host', 'test'] as const)('%s approval', (capability) => {
   function plain(...args: string[]) {
     return spawnSync(process.execPath, [BIN, ...args], {
       env: { ...process.env, STIM_HOME: home, PATH: '' },

@@ -37,9 +37,11 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 /**
  * `read` serves state. `control` also runs {@link ACTIONS}; only the machine grants it. `build` lets another machine run
  * project code here to build for it; it never comes with `read` or `control`, and only the machine approves it.
- * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability.
+ * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability. `test`
+ * lets another machine run any command it sends here, as this user and with no sandbox; it never comes with another
+ * capability, and only the machine approves it.
  */
-export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
+export const CAPABILITIES = ['read', 'control', 'build', 'device-host', 'test'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -345,10 +347,10 @@ export interface HelloParams {
    */
   client: { name: string; version: string; runId?: string; peer?: number; phoneApi?: number; desktopApi?: number };
   /**
-   * Which of the key's own records this connection acts as: its `build` or `device-host` approval. Without it, the
-   * pairing in `devices.json`. It never widens what a record allows.
+   * Which of the key's own records this connection acts as: its `build`, `device-host` or `test` approval. Without it,
+   * the pairing in `devices.json`. It never widens what a record allows.
    */
-  access?: 'build' | 'device-host';
+  access?: 'build' | 'device-host' | 'test';
   /** On the local Unix socket only: asks for the private Desktop bootstrap challenge. It grants nothing by itself. */
   desktopBootstrap?: true;
 }

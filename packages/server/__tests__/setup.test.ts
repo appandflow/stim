@@ -229,6 +229,73 @@ test('build and device-host are offered through one stored secret and a rerun ne
   expect(f.stdout.some((line) => line.includes('already approved'))).toBe(true);
 });
 
+const testArgs = ['--expires', '2026-10-06T12:30:00Z', '--test'];
+
+const testHealth: SetupDeps['health'] = async () => ({
+  version: '1.16.0',
+  stim: '1.16.0',
+  stimHome: home,
+  protocol: 2,
+  stimBuild: 'digest',
+  busy: { builds: 0, hostedSessions: 0, tests: 0 },
+});
+
+test('approving tests asks its own question, stores only test and checks no build tools', async () => {
+  const questions: string[] = [];
+  const f = fixture({
+    tty: true,
+    health: testHealth,
+    confirm: async (question) => {
+      questions.push(question);
+      return true;
+    },
+    toolchain: async () => {
+      throw new Error('a test approval must not check build tools');
+    },
+  });
+  expect(await runSetup(testArgs, '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup([...testArgs, '--verbose'], '1.16.0', { ...f.deps, records: () => [] })).toBe(2);
+  expect(questions).toEqual([
+    'Approve the machine holding this ticket to run any command it sends on this Mac, as this user, with no sandbox? [Y/n] ',
+    'Let the machine holding this setup ticket run any command it sends on this Mac, as this user, with no sandbox? [Y/n] ',
+  ]);
+  expect(f.stored[0]).toEqual(['test']);
+  expect(readSetupJournal(options.journal)?.steps.some((step) => step.id.startsWith('tools'))).toBe(false);
+});
+
+test('an app server that predates test approval is refused for --test with its update remedy', async () => {
+  const old = fixture({
+    installed: async () => null,
+    health: async () => ({ version: '1.16.0', protocol: 2, stim: '1.16.0', stimHome: home, stimBuild: 'digest' }),
+  });
+  expect(await runSetup([...testArgs, '--yes'], '1.16.0', old.deps)).toBe(1);
+  expect(old.stored).toEqual([]);
+  const server = readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server');
+  expect(server?.detail).toContain('predates test approval');
+  expect(server?.fix).toContain('update Stim Desktop');
+  const current = fixture({ installed: async () => null, health: testHealth });
+  expect(await runSetup([...testArgs, '--yes'], '1.16.0', current.deps)).toBe(0);
+  expect(current.stored).toEqual([['test']]);
+});
+
+test('on Linux, setup approves --test', async () => {
+  const f = fixture({ platform: 'linux', health: testHealth });
+  expect(await runSetup([...testArgs, '--yes'], '1.16.0', f.deps)).toBe(0);
+  expect(f.stored).toEqual([['test']]);
+});
+
+test('on Windows, setup refuses --test before preflight', async () => {
+  const f = fixture({
+    platform: 'win32',
+    preflight: async () => {
+      throw new Error('Preflight must not run');
+    },
+  });
+  expect(await runSetup([...testArgs, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(f.stored).toEqual([]);
+  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain('Windows machine does not take test approval');
+});
+
 test('a declined capability is left out of the stored secret', async () => {
   const f = fixture({ tty: true, confirm: async (question) => question.includes('build') });
   expect(await runSetup([...args, '--device-host'], '1.16.0', f.deps)).toBe(1);
