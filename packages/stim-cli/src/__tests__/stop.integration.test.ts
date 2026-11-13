@@ -1251,7 +1251,11 @@ test('clearCollectorState drops only the collectors key', () => {
 
 test('stop retains a stream record when its owner cannot stop it, and prints the refusal remedy', async () => {
   const remedy = 'Run rm -f /home/claim and retry.';
-  const stopStream = vi.fn(async () => ({ error: 'ownership unresolved', code: 'STIM_CLAIM_UNAVAILABLE', remedy }));
+  const stopStream = vi.fn<() => Promise<{ error: string; code: string; remedy: string }>>(async () => ({
+    error: 'ownership unresolved',
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    remedy,
+  }));
   const lines: string[] = [];
   const { calls, opts } = seams({
     collectors: { ios: { kind: 'stream', streamId: 'stream-1' } },

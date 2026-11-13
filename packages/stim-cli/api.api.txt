@@ -254,9 +254,11 @@
 [*] interface CcacheActivity { @@1 misses: number | null;
 [*] interface CcacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
 [*] interface CollectorEntry {
+[*] interface CollectorEntry { @@1 code?: string;
 [*] interface CollectorEntry { @@1 pid: number | null;
 [*] interface CollectorEntry { @@1 platform: string;
 [*] interface CollectorEntry { @@1 reason?: string;
+[*] interface CollectorEntry { @@1 remedy?: string;
 [*] interface CollectorEntry { @@1 status: string;
 [*] interface CollectorsOutcome {
 [*] interface CollectorsOutcome { @@1 entries: CollectorEntry[];
