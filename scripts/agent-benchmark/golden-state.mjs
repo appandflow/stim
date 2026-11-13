@@ -37,11 +37,12 @@ function activeGoldenDaemon(home) {
 }
 
 export async function waitForGoldenDaemonToStop(home) {
-  const deadline = Date.now() + 3 * 60_000;
-  for (;;) {
-    if (!hasDaemonState(home)) return;
+  if (!hasDaemonState(home)) return;
+  process.stderr.write(`Waiting for the benchmark seed daemon in ${home} to exit.\n`);
+  const deadline = Date.now() + 12 * 60_000;
+  while (hasDaemonState(home)) {
     if (Date.now() >= deadline) throw activeGoldenDaemon(home);
-    await setTimeout(500);
+    await setTimeout(1000);
   }
 }
 
