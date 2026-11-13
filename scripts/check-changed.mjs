@@ -69,6 +69,9 @@ export function planChecks(files, base, platform, exists = () => true) {
   if (demo) {
     pnpm('--filter', 'stim-demo-server', 'run', 'typecheck');
     pnpm('--filter', 'stim-demo-server', 'test');
+    if (touches('apps/demo-server/test/live/') || touches('apps/demo-server/vitest.live.config.')) {
+      pnpm('--filter', 'stim-demo-server', 'run', 'test:live');
+    }
   }
   if (broad || files.some((file) => file.startsWith('website/'))) pnpm('--filter', 'website', 'run', 'build');
   if (platform === 'darwin' && (broad || touches('apps/desktop/'))) {

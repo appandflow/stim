@@ -48,3 +48,7 @@ test('a benchmark input outside its script directory selects the benchmark suite
   expect(plan(['website/src/data/benchmark-matrix.json'])).toContain('pnpm run test:bench');
   expect(plan(['scripts/launch-crash-benchmark.mjs'])).toContain('pnpm run test:bench');
 });
+
+test('a changed live demo test uses the live test config', () => {
+  expect(plan(['apps/demo-server/test/live/demo.test.ts'])).toContain('pnpm --filter stim-demo-server run test:live');
+});
