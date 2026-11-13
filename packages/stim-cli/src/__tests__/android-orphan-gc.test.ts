@@ -229,6 +229,56 @@ test('AVD data this home did not record is listed with a command that removes th
   ]);
 });
 
+test.each([
+  {
+    description: 'emulator update metadata',
+    name: 'emu-update-last-check.ini',
+    contents: '_version.3D35.6.11.0.26coreVersion.3Dqemu2.25202.12.0 = 123\n',
+    removed: true,
+  },
+  {
+    description: 'a malformed registration with the same filename',
+    name: 'emu-update-last-check.ini',
+    contents: 'path=\n',
+    removed: false,
+  },
+  {
+    description: 'an unrelated malformed registration',
+    name: 'another.ini',
+    contents: 'target=android-35\n',
+    removed: false,
+  },
+  {
+    description: 'a real registration with the same filename',
+    name: 'emu-update-last-check.ini',
+    contents: 'path.rel=avd/stim-orphan.avd\n',
+    removed: false,
+  },
+])('parked AVD teardown distinguishes $description', async ({ name, contents, removed }) => {
+  const directory = orphan();
+  process.env.ANDROID_EMULATOR_HOME = avdRoot;
+  writeFileSync(join(avdRoot, name), contents);
+  upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
+  parkSim({
+    platform: 'android',
+    projectPath: home,
+    max: 1,
+    record: {
+      udid: 'stim-orphan',
+      name: 'stim-orphan',
+      systemImage: 'image',
+      configuration: 'config',
+      parkedAt: new Date().toISOString(),
+    },
+  });
+
+  const outcome = await teardownParkedAvd('stim-orphan');
+  expect(outcome.status).toBe(removed ? 'torn-down' : 'failed');
+  expect(existsSync(directory)).toBe(!removed);
+  expect(readParked('android').map((entry) => entry.name)).toEqual(removed ? [] : ['stim-orphan']);
+  expect(readFileSync(join(avdRoot, name), 'utf8')).toBe(contents);
+});
+
 test('an unreadable or symlinked orphan prevents stale device records from being cleared', async () => {
   const outside = join(home, 'outside');
   mkdirSync(outside);
