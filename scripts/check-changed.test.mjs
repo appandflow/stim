@@ -43,3 +43,8 @@ test('a shared mobile fixture checks both consumers without rewriting locale fil
   expect(commands).toContain('pnpm --filter stim-mobile run test');
   expect(commands).not.toContain('pnpm --filter stim-mobile run intl:check');
 });
+
+test('a benchmark input outside its script directory selects the benchmark suite', () => {
+  expect(plan(['website/src/data/benchmark-matrix.json'])).toContain('pnpm run test:bench');
+  expect(plan(['scripts/launch-crash-benchmark.mjs'])).toContain('pnpm run test:bench');
+});

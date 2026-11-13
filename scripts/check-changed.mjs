@@ -52,7 +52,15 @@ export function planChecks(files, base, platform, exists = () => true) {
       if (direct.length) pnpm('run', stage, ...direct.map((file) => `./${file}`));
     }
   }
-  if (broad || touches('scripts/agent-benchmark/')) pnpm('run', 'test:bench');
+  const benchmarkInputs = [
+    'scripts/agent-benchmark/',
+    'scripts/launch-crash-benchmark.mjs',
+    'test/e2e/native/fixtures/xcode/',
+    'website/src/data/benchmark-matrix.json',
+    'packages/stim-cli/src/engine/eas-machine-root-guard-env.ts',
+    'packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts',
+  ];
+  if (broad || benchmarkInputs.some(touches)) pnpm('run', 'test:bench');
   if (mobile) {
     for (const script of ['format:check', 'lint', 'typecheck', 'test']) {
       pnpm('--filter', 'stim-mobile', 'run', script);
