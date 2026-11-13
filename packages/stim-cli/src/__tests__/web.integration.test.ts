@@ -68,6 +68,7 @@ import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
 import { testContext } from './_context.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import * as webState from '../web/state.ts';
+import { waitForPid } from './_pid-file.ts';
 
 let home: string;
 let root: string;
@@ -1426,8 +1427,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
         ],
         { detached: true, stdio: 'ignore' },
       );
-      await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
-      const pid = Number(readFileSync(helperFile, 'utf8'));
+      const pid = await waitForPid(helperFile);
       const processToken = captureProcessToken(pid);
       assert(processToken);
       helper = { pid, processToken };

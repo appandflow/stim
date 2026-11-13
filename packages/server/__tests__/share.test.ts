@@ -2090,6 +2090,33 @@ describe('a web share', () => {
       expect(f.routeOpens).toHaveLength(opens);
     });
 
+    it('replaces the share a restore started when its link is started again, with the new expiry and the saved password', async () => {
+      const saved = shareRequest({ token: TOKEN, password: 'saved-password', expiresAt: Date.now() + 60_000 });
+      const restored = await f.hub.start(saved, { restore: true });
+      if ('code' in restored) throw new Error(restored.message);
+      const { expiresAt: _expires, ...rest } = saved;
+      const again = await f.hub.start({ ...rest, expiresMinutes: 30 });
+      if ('code' in again) throw new Error(again.message);
+      expect(again.id).not.toBe(restored.id);
+      expect(again.url).toBe(restored.url);
+      expect(f.hub.list().map((row) => row.id)).toEqual([again.id]);
+      expect(Date.parse(again.expiresAt) - Date.now()).toBeGreaterThan(29 * 60_000);
+      expect(await login(local(again, f.hub.port ?? 0), 'saved-password')).toContain('stim_share=');
+      expect(await f.hub.start({ ...rest, expiresMinutes: 30 })).toMatchObject({
+        code: 'bad-request',
+        message: 'That link is live now.',
+      });
+    });
+
+    it('ends the shares a restore started for a target once a new share of it replaced them', async () => {
+      const restored = await f.hub.start(shareRequest({ token: TOKEN }), { restore: true });
+      if ('code' in restored) throw new Error(restored.message);
+      const fresh = await started(f);
+      expect(f.hub.list()).toHaveLength(2);
+      await f.hub.endReplaced(shareRequest(), fresh.id);
+      expect(f.hub.list().map((row) => row.id)).toEqual([fresh.id]);
+    });
+
     it('starts a restored share waiting when its device is not there, and feeds the same link once it is', async () => {
       f.status(payload('Shutdown'));
       expect(await f.hub.start(shareRequest({ token: TOKEN }))).toMatchObject({ code: 'action-failed' });

@@ -534,8 +534,12 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
 import { existsSync, readFileSync } from 'node:fs';
 const streams = createStreams(console.error);
 await streams.start({ root: ${JSON.stringify(root)}, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' }, process.env);
-while (!existsSync(${JSON.stringify(pidFile)})) await new Promise(r => setTimeout(r, 10));
-console.log(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim());
+let pid = 0;
+while (!(pid > 0)) {
+  pid = existsSync(${JSON.stringify(pidFile)}) ? Number(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim()) : 0;
+  if (!(pid > 0)) await new Promise(r => setTimeout(r, 10));
+}
+console.log(pid);
 process.exit(0);`;
     const ownerScript = join(home, 'owner.mjs');
     writeFileSync(ownerScript, script);
@@ -674,8 +678,7 @@ process.exit(0);`;
     try {
       const spec = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
       const { streamId } = await streams.start(spec, env);
-      await vi.waitFor(() => expect(existsSync(readyFile)).toBe(true));
-      const pid = Number(readFileSync(readyFile, 'utf8'));
+      const pid = await waitForPid(readyFile);
       const token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       child = { pid, processToken: token };
