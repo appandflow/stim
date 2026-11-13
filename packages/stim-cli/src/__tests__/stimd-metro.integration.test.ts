@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
+import { resolveProjectMetro } from '../metro.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
@@ -245,6 +246,26 @@ test.skipIf(process.platform !== 'win32')(
       expect(claims.unresolved).toEqual([]);
       expect(claims.live).toEqual([]);
       await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+    } finally {
+      await stopSupervisor(root);
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform !== 'win32')(
+  'on Windows the recorded dev server is the process that listens, when PATH runs node through a shim',
+  async () => {
+    const root = bareProject();
+    rmSync(join(root, '.nvmrc'));
+    write(join(dir, 'bin', 'node.cmd'), `@"${process.execPath}" %*\r\n`);
+    await startStimd();
+    const port = await freePort();
+    try {
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
+      const found = await resolveProjectMetro(port, root);
+      expect(found.notOurs).toBeUndefined();
+      expect(found.metro?.pid).toBe(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor.pid);
     } finally {
       await stopSupervisor(root);
     }

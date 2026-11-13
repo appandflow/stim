@@ -65,6 +65,7 @@ import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { hiddenEditHold } from '../../workspace/hidden-edits.ts';
+import { dependencyEditsHold } from '../../workspace/dependency-edits.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -1121,6 +1122,9 @@ export async function removeWorktrees(
         );
         if (recent) reasons.push(recent.text);
       }
+      // @ref LLP 0002#edits-inside-dependency-folders -- automatic removal waits for edited dependencies
+      const edited = await dependencyEditsHold(candidate.path, operation?.signal);
+      if (edited) reasons.push(edited);
       kept = reasons;
       return reasons;
     };

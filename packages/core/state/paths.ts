@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { configDir, workspaceStateDir as workspaceDir } from '../index.ts';
+import { configDir, workspaceName, workspaceStateDir as workspaceDir } from '../index.ts';
 
 export function getConfigPath(): string {
   return join(configDir(), 'config.json');
@@ -74,6 +74,19 @@ export function workspaceStateFile(projectRoot: string): string {
 /** The dependency directories `stim gc` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
 export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
+}
+
+/**
+ * What Stim knows about one installed node_modules or Pods tree: when an install or warm copy Stim ran there finished,
+ * and the files maintenance found changed after it. One file per tree, outside workspace state, since a tree can belong
+ * to no workspace and writing state.json is workspace activity.
+ */
+export function dependencyInstallFile(tree: string): string {
+  return join(dependencyInstallDir(), `${workspaceName(tree)}.json`);
+}
+
+export function dependencyInstallDir(): string {
+  return join(configDir(), 'dependency-installs');
 }
 
 /** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */
