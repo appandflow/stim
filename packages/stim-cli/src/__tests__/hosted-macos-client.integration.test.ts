@@ -245,6 +245,7 @@ function credentials(state: 'approved' | 'pending' = 'approved', serverKey = FAK
 }
 
 beforeEach(() => {
+  vi.stubEnv('AGENT_DEVICE_SESSION', undefined);
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-macos-')));
   process.env.STIM_HOME = join(dir, 'home');
   mkdirSync(process.env.STIM_HOME);
@@ -284,6 +285,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   resetExecutor();
   rmSync(dir, { recursive: true, force: true });
@@ -481,6 +483,62 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     'canonical config',
     'missing config',
   ];
+  test.each(['custom', 'wrong config', 'wrong session', 'same name'])(
+    'stop checks an explicit session without selecting another workspace: %s',
+    async (scenario) => {
+      host.grant = GRANT;
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const config = agentRemoteConfig(root);
+      const standard = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
+      const session = scenario === 'same name' ? standard : "agent's desktop";
+      const otherConfig = join(dir, 'other-config.json');
+      writeFileSync(otherConfig, '{}');
+      vi.stubEnv('AGENT_DEVICE_SESSION', session);
+      const calls: string[][] = [];
+      setExecutor({
+        ...getExecutor(),
+        findExecutable: () => '/fake/agent-device',
+        runFile: (_file: string, args: string[]) => {
+          calls.push(args);
+          const name = args[args.indexOf('--session') + 1];
+          if (args[0] === 'disconnect' && scenario === 'custom')
+            throw new Error('should not leak secret-from-agent-device');
+          return JSON.stringify({
+            success: true,
+            data: {
+              connected: name === session,
+              session: scenario === 'wrong session' ? standard : name,
+              remoteConfig: scenario === 'wrong config' ? otherConfig : config,
+            },
+          });
+        },
+      });
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await stopMacosApp(root);
+      const owned = scenario === 'custom' || scenario === 'same name';
+      expect(calls).toEqual([
+        ['connection', 'status', '--session', standard, '--json'],
+        ...(session === standard ? [] : [['connection', 'status', '--session', session, '--json']]),
+        ...(owned
+          ? [
+              ['close', '--remote-config', config, '--session', session, '--json'],
+              ['disconnect', '--session', session, '--json'],
+            ]
+          : []),
+      ]);
+      const output = stderr.mock.calls.map(([line]) => line).join('');
+      expect(output).toMatch(
+        scenario === 'custom'
+          ? "agent-device disconnect --session 'agent'\\''s desktop'"
+          : owned
+            ? `closed agent-device connection for ${standard}`
+            : /^$/,
+      );
+      expect(output).not.toContain('secret-from-agent-device');
+      expect(host.methods).toContain('device-host.stop');
+    },
+  );
+
   test.each(hostedAgentConnectionCleanupScenarios)(
     'stop cleans up only its own agent connection, best effort: %s',
     async (scenario) => {
@@ -528,7 +586,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       try {
         await stopMacosApp(root);
         expect(calls).toEqual(
-          scenario === 'unavailable'
+          scenario === 'unavailable' || scenario === 'missing config'
             ? []
             : [
                 ['connection', 'status', '--session', session, '--json'],
@@ -543,7 +601,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         expect(stderr).toHaveBeenCalledTimes(cleansUp ? 1 : 0);
         expect(stderr.mock.calls.map(([line]) => line).join('')).toMatch(
           closeFails
-            ? new RegExp(`could not clean up agent-device connection for ${session}: agent-device close failed`)
+            ? new RegExp(`agent-device disconnect --session '${session}'`)
             : cleansUp
               ? new RegExp(`closed agent-device connection for ${session}`)
               : /^$/,

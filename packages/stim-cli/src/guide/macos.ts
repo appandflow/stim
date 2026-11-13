@@ -461,13 +461,15 @@ how a coding agent drives the app: { driver: "none", setting:
 or { driver: "agent-device", remoteConfig, command }. remoteConfig is a mode
 0600 file in the workspace directory that holds the credential. Use the
 command Stim prints with its workspace-specific --session and --remote-config.
-Never print the config file. stop, worktree remove and gc close and disconnect
-that named session only when agent-device reports the same remote config. They
-delete the file once the host confirms stop or revocation. If you used another
-session name, including default from older Stim versions, run
-agent-device disconnect --session <your-name> before stim stop. Use the same
-agent-device state directory you used to connect. A cleanup error is reported
-without blocking the hosted stop.
+Never print the config file. stop, worktree remove and gc check the printed
+session name and any AGENT_DEVICE_SESSION in their environment. They close
+and disconnect only names that agent-device reports using this remote config.
+Use the same agent-device state directory you used to connect. If you used
+another name, including default from older Stim versions, set
+AGENT_DEVICE_SESSION=<your-name> when stopping, or run
+agent-device disconnect --session <your-name> yourself. Stim deletes the config
+file when the host confirms stop or revocation. A local cleanup error does not
+block the hosted stop.
 When the hosted session ends, stim-server removes its agent-device session
 directories under its own state directory. Start with agent-device open
 <bundleId> --remote-config <path> --session <name>, using macos.host.bundleId

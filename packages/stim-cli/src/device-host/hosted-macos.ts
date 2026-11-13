@@ -35,7 +35,7 @@ import {
 } from './hosted-client.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
-import { ambientContext, ambientWrite } from '@stim-cli/core';
+import { ambientContext, ambientEnv, ambientWrite } from '@stim-cli/core';
 export {
   connectHost,
   probeHostedSession as probeHostedMacos,
@@ -217,8 +217,11 @@ export async function stopHostedMacos(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  if (placement.agent.driver === 'agent-device')
-    closeAgentConnection(placement.agent.remoteConfig, hostedAgentSessionName(root, 'macos', 'default'));
+  if (placement.agent.driver === 'agent-device') {
+    const session = ambientEnv().AGENT_DEVICE_SESSION?.trim();
+    const standard = hostedAgentSessionName(root, 'macos', 'default');
+    closeAgentConnection(placement.agent.remoteConfig, standard, ...(session ? [session] : []));
+  }
   let host: HostConnection | undefined;
   const cancel = () => host?.connection.close();
   signal?.addEventListener('abort', cancel, { once: true });
