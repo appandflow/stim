@@ -116,6 +116,17 @@ instead of waiting out the handover wait. The next stimd removes the marker. The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 
+## Collect diagnostics with the existing reports
+
+The [diagnostic procedure](../website/docs/dev-server-and-logs.md#collect-diagnostics-for-a-stimd-problem)
+uses `status`, `doctor`, `engine status`, and the affected home's daemon logs
+and state records. It tells the reporter what to preserve for correlation and
+how to redact the excerpts before sharing.
+
+Maintainer decision: "start with a documented redacted diagnostic collection procedure. Proceed with the daemon logging fixes. Defer a public `stim doctor --bundle` flag.", 2026-11-13.
+
+[Decision on #5582](https://github.com/appandflow/stim/issues/5582#issuecomment-6864811705).
+
 ## Provenance
 
 Maintainer decision: "I approve of all fixes", 2026-11-12.

@@ -509,6 +509,40 @@ matches; JSON mode writes NDJSON and writes zero bytes for zero matches. A
 workspace that has never produced a timeline refuses with `STIM_NO_PROJECT`
 and, in a monorepo, names the nearest registered descendant app with logs.
 
+### Collect diagnostics for a stimd problem
+
+From the affected workspace, record the failing command, the approximate time
+with its time zone, and the last error and remedy Stim printed. Save the output
+of these commands in a private directory outside the checkout before restarting
+stimd or running repairs. If a command hangs, keep the evidence you already
+have and record which command stopped responding.
+
+<StimTabs
+code={`stim status --json
+stim doctor --json
+stim engine status --json`}
+/>
+
+Use the daemon log path printed by `stim doctor` or named in its JSON as
+`daemon.logPath`. It is normally `daemon/daemon.ndjson` inside `STIM_HOME`
+(`~/.stim` by default). Copy the lines around the incident and, if the log
+rotated during it, look in `daemon.ndjson.1` too. Include records from both
+sides of a restart or engine switch. Preserve timestamps, event names, error
+codes, build versions, and the run IDs needed to join those records.
+
+For a startup failure, check the last lines of `run/stimd.log` if present. The
+latest tick is in `daemon/snapshot.json`, the current daemon record is in
+`run/stimd.json`, and recent abnormal starts are in `run/stimd-boots.json`.
+These paths are relative to the affected Stim home. Include an excerpt only
+when it helps explain the incident, such as the reason for a crash hold.
+
+Review the copies before sharing. Remove tokens, keys, session or pairing
+links, and credentials in URLs from both structured fields and messages.
+Replace usernames, private paths, hostnames and IP addresses with consistent
+placeholders so related records still line up. Share those redacted excerpts
+and the command details. Keep the original files, configuration, and launchd
+plists private.
+
 ### Placement decisions
 
 A `stim ios`, `stim android` or `stim macos` run that decides where to build or host records where it put the
