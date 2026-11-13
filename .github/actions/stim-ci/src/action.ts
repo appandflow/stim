@@ -295,14 +295,16 @@ export async function runAction(): Promise<number> {
         core.error(`stim ci exited with code ${code} and wrote no ${resultPath}.`);
         const home = options.home || process.env.STIM_HOME;
         if (home) {
+          const logs = [join(home, 'run', 'stimd.log')];
           try {
-            const tail = readFileSync(join(home, 'run', 'stimd.log'), 'utf8')
-              .trim()
-              .split('\n')
-              .slice(-60)
-              .join('\n');
-            core.warning(`The end of ${join(home, 'run', 'stimd.log')}:\n${tail}`);
+            for (const name of readdirSync(join(home, 'daemon'))) logs.push(join(home, 'daemon', name));
           } catch {}
+          for (const file of logs) {
+            try {
+              const tail = readFileSync(file, 'utf8').trim().split('\n').slice(-40).join('\n');
+              core.warning(`The end of ${file}:\n${tail}`);
+            } catch {}
+          }
         }
       }
     } catch (error) {

@@ -97803,10 +97803,15 @@ async function runAction() {
 		if (!result) {
 			error(`stim ci exited with code ${code} and wrote no ${resultPath}.`);
 			const home = options.home || process.env.STIM_HOME;
-			if (home) try {
-				const tail = readFileSync$1(join(home, "run", "stimd.log"), "utf8").trim().split("\n").slice(-60).join("\n");
-				warning(`The end of ${join(home, "run", "stimd.log")}:\n${tail}`);
-			} catch {}
+			if (home) {
+				const logs = [join(home, "run", "stimd.log")];
+				try {
+					for (const name of readdirSync(join(home, "daemon"))) logs.push(join(home, "daemon", name));
+				} catch {}
+				for (const file of logs) try {
+					warning(`The end of ${file}:\n${readFileSync$1(file, "utf8").trim().split("\n").slice(-40).join("\n")}`);
+				} catch {}
+			}
 		}
 	} catch (error) {
 		warning(String(error));
