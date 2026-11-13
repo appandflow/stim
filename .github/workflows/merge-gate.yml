@@ -99,7 +99,16 @@ jobs:
         if: always() && github.event_name != 'pull_request'
         env:
           SHARDS: ${{ needs.merge-tests.result }}
-        run: test "$SHARDS" = success
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$SHARDS" = success
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" |
+            jq -e '
+              .jobs as $jobs |
+              all([1, 2][]; . as $shard |
+                any($jobs[]; .name == "merge tests (shard \($shard)/2)" and .conclusion == "success")
+              )
+            '
       - if: github.event_name != 'pull_request'
         uses: actions/checkout@v4
       - name: Report merge test timings
