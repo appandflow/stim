@@ -417,10 +417,11 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(record?.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
     expect(macosAppState(readMacosRecord(root))?.state).toBe('running');
     const config = agentRemoteConfig(root);
+    const session = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
     expect(record?.host?.agent).toEqual({
       driver: 'agent-device',
       remoteConfig: config,
-      command: `agent-device <command> --remote-config ${config}`,
+      command: `agent-device <command> --remote-config ${config} --session ${session}`,
     });
     expect(statSync(config).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({
@@ -452,14 +453,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         expect(existsSync(config)).toBe(true);
         expect(host.methods).not.toContain('device-host.stop');
         calls.push(commandArgs);
-        return JSON.stringify({ success: true, data: { connected: true, session: 'default', remoteConfig: config } });
+        if (commandArgs[0] === 'connection' && !commandArgs.includes('--session')) {
+          throw new Error('A leased remote connection needs its session named');
+        }
+        return JSON.stringify({ success: true, data: { connected: true, session, remoteConfig: config } });
       },
     });
     await stopMacosApp(root);
     expect(calls).toEqual([
-      ['connection', 'status', '--json'],
-      ['close', '--remote-config', config, '--session', 'default', '--json'],
-      ['disconnect', '--session', 'default', '--json'],
+      ['connection', 'status', '--session', session, '--json'],
+      ['close', '--remote-config', config, '--session', session, '--json'],
+      ['disconnect', '--session', session, '--json'],
     ]);
     expect(host.methods).toContain('device-host.stop');
     expect(existsSync(config)).toBe(false);
@@ -483,6 +487,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       host.grant = GRANT;
       await runMacos(testContext(), root, () => {}, 'mini');
       const config = agentRemoteConfig(root);
+      const session = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
       const otherConfig = join(dir, 'other-config.json');
       if (scenario === 'canonical config') symlinkSync(config, otherConfig);
       else writeFileSync(otherConfig, '{}');
@@ -513,7 +518,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
             success: true,
             data: {
               connected: scenario !== 'disconnected',
-              session: 'named-session',
+              session,
               remoteConfig: ['different config', 'canonical config'].includes(scenario) ? otherConfig : config,
             },
           });
@@ -526,11 +531,11 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
           scenario === 'unavailable'
             ? []
             : [
-                ['connection', 'status', '--json'],
+                ['connection', 'status', '--session', session, '--json'],
                 ...(cleansUp
                   ? [
-                      ['close', '--remote-config', config, '--session', 'named-session', '--json'],
-                      ['disconnect', '--session', 'named-session', '--json'],
+                      ['close', '--remote-config', config, '--session', session, '--json'],
+                      ['disconnect', '--session', session, '--json'],
                     ]
                   : []),
               ],
@@ -538,9 +543,9 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         expect(stderr).toHaveBeenCalledTimes(cleansUp ? 1 : 0);
         expect(stderr.mock.calls.map(([line]) => line).join('')).toMatch(
           closeFails
-            ? /could not clean up agent-device connection for named-session: agent-device close failed/
+            ? new RegExp(`could not clean up agent-device connection for ${session}: agent-device close failed`)
             : cleansUp
-              ? /closed agent-device connection for named-session/
+              ? new RegExp(`closed agent-device connection for ${session}`)
               : /^$/,
         );
         expect(host.methods).toContain('device-host.stop');

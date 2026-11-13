@@ -16,11 +16,10 @@ function report(message: string): void {
   ambientWrite('stderr', `${phaseLine('device', message.replace(/\s+/g, ' '))}\n`);
 }
 
-/** Closes the saved agent-device connection `session` (agent-device's `default` when omitted) if it uses `remoteConfig`. */
-export function closeAgentConnection(remoteConfig: string, session?: string): void {
+/** Closes the saved agent-device connection `session` if it uses `remoteConfig`. */
+export function closeAgentConnection(remoteConfig: string, session: string): void {
   const exec = getExecutor();
   const deadline = Date.now() + 30_000;
-  const sessionArgs = session === undefined ? [] : ['--session', session];
   const run = (args: string[]) => {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error('agent-device cleanup timed out');
@@ -35,9 +34,8 @@ export function closeAgentConnection(remoteConfig: string, session?: string): vo
   };
   try {
     if (!exec.findExecutable('agent-device')) return;
-    const status = run(['connection', 'status', ...sessionArgs]);
-    if (status?.connected !== true || typeof status.session !== 'string' || typeof status.remoteConfig !== 'string')
-      return;
+    const status = run(['connection', 'status', '--session', session]);
+    if (status?.connected !== true || status.session !== session || typeof status.remoteConfig !== 'string') return;
     const config = canonical(remoteConfig);
     if (config === null || canonical(status.remoteConfig) !== config) return;
     const failures: string[] = [];

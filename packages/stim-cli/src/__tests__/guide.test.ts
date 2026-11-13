@@ -1074,6 +1074,8 @@ test('the macos guide covers the declared command flags and project settings', (
   const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
   expect(agentActions).toContain('agent-device open <bundleId>');
   expect(agentActions).not.toContain('lsappinfo find');
+  expect(body).toContain('<bundleId> --remote-config <path> --session <name>');
+  expect(body).toContain('agent-device disconnect --session <your-name>');
 });
 
 test.each([iosCommand, androidCommand, macosCommand])(

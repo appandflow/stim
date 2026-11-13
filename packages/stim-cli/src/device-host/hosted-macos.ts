@@ -10,6 +10,7 @@ import { macosDir } from '../macos/state.ts';
 import { type BuildHandoff } from '../offload/client.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { phaseLine } from '../command-output.ts';
+import { hostedAgentSessionName } from '../hosted-names.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
 import {
@@ -199,11 +200,11 @@ export async function placeHostedMacos(
   if (JSON.stringify(appliedArguments) !== JSON.stringify(requestedArguments))
     note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);
+  const agent = await agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note);
+  if (agent.driver === 'agent-device' && 'command' in agent)
+    agent.command += ` --session ${hostedAgentSessionName(root, 'macos', 'default')}`;
   return {
-    placement: {
-      ...placement,
-      agent: await agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note),
-    },
+    placement: { ...placement, agent },
     launched: delivery.launched === true ? true : 'unverified',
     arguments: appliedArguments,
   };
@@ -216,7 +217,8 @@ export async function stopHostedMacos(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
+  if (placement.agent.driver === 'agent-device')
+    closeAgentConnection(placement.agent.remoteConfig, hostedAgentSessionName(root, 'macos', 'default'));
   let host: HostConnection | undefined;
   const cancel = () => host?.connection.close();
   signal?.addEventListener('abort', cancel, { once: true });

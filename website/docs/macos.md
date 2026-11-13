@@ -187,7 +187,7 @@ stim stop`}
 
 Use `macos.remote` for a default. A named Mac is strict and never launches locally. Use `remote-only` to allow any eligible worker and prevent a local launch. Stop the session before switching hosts. If stop cannot reach the host, retry when it is available.
 
-The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. The installed guide covers driver setup, build inputs and placement.
+The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. Keep the command's `--session` so `stim stop` can close that connection. If you chose another name, run `agent-device disconnect --session <your-name>` before stopping. The installed guide covers driver setup, build inputs and placement.
 
 <StimTabs code="stim guide macos" />
 
