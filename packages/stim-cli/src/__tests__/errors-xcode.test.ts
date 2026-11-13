@@ -100,6 +100,24 @@ describe('what is and is not a diagnostic', () => {
     expect(found).toEqual([{ file: '/app/Auth.swift', line: 12, column: 16, message: 'cannot find type in scope' }]);
   });
 
+  test('ignores an error marker inside a Swift source string', () => {
+    const message = "cannot convert value of type 'String' to specified type 'Int'";
+    const found = extractXcodeDiagnostics(
+      [
+        `<stdin>:1:18: error: ${message}`,
+        'let value: Int = "Network: error: could not proceed"',
+        '                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
+      ].join('\n'),
+    );
+    expect(found).toEqual([{ file: '<stdin>', line: 1, column: 18, message }]);
+  });
+
+  test('preserves the entire message in an unprefixed error', () => {
+    expect(extractXcodeDiagnostics('error: Xcode reported error: missing module')).toEqual([
+      { message: 'Xcode reported error: missing module' },
+    ]);
+  });
+
   test('a development team error is a signing error however it is phrased', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);
