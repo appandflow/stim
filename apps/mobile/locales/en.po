@@ -4277,6 +4277,7 @@ msgid "This workspace is no longer in the status."
 msgstr "This workspace is no longer in the status."
 
 #: src/lib/device-unavailable.ts
+#: src/lib/device-unavailable.ts
 msgid "This workspace is no longer on the machine."
 msgstr "This workspace is no longer on the machine."
 
@@ -4626,6 +4627,7 @@ msgstr "workspace {where}"
 msgid "workspace {where}, on {macName}"
 msgstr "workspace {where}, on {macName}"
 
+#: src/lib/workspace-view.ts
 #: src/screens/workspace-detail.tsx
 msgid "Workspace Not Found"
 msgstr "Workspace Not Found"

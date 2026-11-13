@@ -71,10 +71,6 @@ All keys below are inside `optimizations`.
 Remote artifact reuse is available through [optional cache providers](./build-caches.md#optional-artifact-providers).
 It does not synchronize compiler caches between machines.
 
-The machine setting `caches.injectMetroStore` has been removed. If you used
-`caches.injectMetroStore: false`, replace it with
-`optimizations.metroSharedCache: false` to keep the shared Metro store disabled.
-
 ## iOS options
 
 These keys are inside `optimizations.ios`. They apply to Xcode 26 or newer unless

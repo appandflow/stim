@@ -284,7 +284,9 @@
 [*] interface DaemonPressure { @@1 memoryWarningSince: string | null;
 [*] interface DaemonPressure { @@1 reasons: string[];
 [*] interface DaemonStatus {
+[*] interface DaemonStatus { @@1 abnormalExits?: {
 [*] interface DaemonStatus { @@1 claim?: {
+[*] interface DaemonStatus { @@1 crashHold?: {
 [*] interface DaemonStatus { @@1 intervalMs: number | null;
 [*] interface DaemonStatus { @@1 lastTickAt: string | null;
 [*] interface DaemonStatus { @@1 mode: DaemonMode;
@@ -296,10 +298,19 @@
 [*] interface DaemonStatus { @@1 unverified?: UnverifiedCleanup[];
 [*] interface DaemonStatus { @@1 waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { @@1 } | null;
+[*] interface DaemonStatus { @@1 }[];
+[*] interface DaemonStatus { @@2 at: string;
+[*] interface DaemonStatus { @@2 build: string;
+[*] interface DaemonStatus { @@2 cause: "engine" | "home" | "unknown";
+[*] interface DaemonStatus { @@2 count: number;
+[*] interface DaemonStatus { @@2 home?: string;
 [*] interface DaemonStatus { @@2 pid: number;
+[*] interface DaemonStatus { @@2 reason: string;
+[*] interface DaemonStatus { @@2 remedy: string;
 [*] interface DaemonStatus { @@2 removeCommand: string;
 [*] interface DaemonStatus { @@2 since: string;
 [*] interface DaemonStatus { @@2 unresolved: string;
+[*] interface DaemonStatus { @@2 until: string;
 [*] interface DaemonTestWaiter {
 [*] interface DaemonTestWaiter { @@1 label: string;
 [*] interface DaemonTestWaiter { @@1 position: number;

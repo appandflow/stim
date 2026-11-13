@@ -896,7 +896,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
     if (shapeErrors.length) {
       throw new StimError({ code: 'STIM_BAD_ARG', message: shapeErrors.join('\n'), remedy: SETTING_SHAPE_REMEDY });
     }
-    for (const key of unknownSettingKeys(settings)) note(context)(inertSettingWarning(settings, key));
+    for (const key of unknownSettingKeys(settings)) note(context)(inertSettingWarning(key));
     const cacheError = cacheProviderSettingError(settings);
     if (cacheError) note(context)(`Warning: ${cacheError} No cache provider is used.`);
     await ensureWorkspaceStorageAsync(root, context.signal);

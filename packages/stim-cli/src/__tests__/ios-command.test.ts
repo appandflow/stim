@@ -10176,6 +10176,25 @@ describe('strict remote machine selection', () => {
     return choose;
   }
 
+  test('keeps unused signing files out of an iOS build offload', async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    const unused = 'AuthKey_fixture.p8';
+    const needed = 'BuildFixture.mobileprovision';
+    const script = 'prepare-build.sh';
+    writeFileSync(join(root, unused), 'fake signing key');
+    writeFileSync(join(root, needed), 'fake build input');
+    writeFileSync(join(root, script), `cat ${needed}\n`);
+
+    const result = await run({ remoteBuild: 'mini', json: true });
+    expect(result.exitCode).toBeNull();
+    const offload = vi.mocked(offloadClient.offloadBuild);
+    expect(offload).toHaveBeenCalledTimes(1);
+    const plan = await offload.mock.calls[0]?.[0].syncPlan?.(root, [unused, needed, script]);
+    expect(plan).toEqual({ omit: new Set([unused]), refusal: null });
+  });
+
   test('stores an offloaded post-pods artifact only under the worker fingerprint', async () => {
     reserve();
     configureMini();

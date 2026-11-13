@@ -69,7 +69,7 @@ export function resolveIosBuildSetup(
     };
   }
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', inertSettingWarning(settings, key));
+    warn('setting', inertSettingWarning(key));
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);

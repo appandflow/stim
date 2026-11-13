@@ -63,9 +63,11 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:core)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": ["@stim-cli/**", "!@stim-cli/core", "!@stim-cli/core/**", "stim/**"]
               }
             ]
           }
@@ -79,9 +81,18 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:cache|core)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/cache",
+                  "!@stim-cli/cache/**",
+                  "!@stim-cli/core",
+                  "!@stim-cli/core/**",
+                  "stim/**"
+                ]
               }
             ]
           }
@@ -97,7 +108,20 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:ci)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|internal/pull-requests|internal/share-links|ci|ci/artifacts)$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/ci",
+                  "!@stim-cli/ci/**",
+                  "stim/**",
+                  "!stim/package.json",
+                  "!stim/cache-manifest",
+                  "!stim/internal/pull-requests",
+                  "!stim/internal/share-links",
+                  "!stim/ci",
+                  "!stim/ci/artifacts",
+                  "!stim/internal/attached-stimd"
+                ]
               }
             ]
           }
@@ -113,7 +137,33 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:server|agent-driver|agent-driver-agent-device|core|transport|transport-local|transport-tailscale)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|internal/pull-requests|internal/share-links|ci|ci/artifacts)$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/server",
+                  "!@stim-cli/server/**",
+                  "!@stim-cli/agent-driver",
+                  "!@stim-cli/agent-driver/**",
+                  "!@stim-cli/agent-driver-agent-device",
+                  "!@stim-cli/agent-driver-agent-device/**",
+                  "!@stim-cli/core",
+                  "!@stim-cli/core/**",
+                  "!@stim-cli/transport",
+                  "!@stim-cli/transport/**",
+                  "!@stim-cli/transport-local",
+                  "!@stim-cli/transport-local/**",
+                  "!@stim-cli/transport-tailscale",
+                  "!@stim-cli/transport-tailscale/**",
+                  "stim/**",
+                  "!stim/package.json",
+                  "!stim/cache-manifest",
+                  "!stim/internal/pull-requests",
+                  "!stim/internal/share-links",
+                  "!stim/ci",
+                  "!stim/ci/artifacts",
+                  "!stim/internal/api-self",
+                  "!stim/internal/engine-state"
+                ]
               }
             ]
           }
@@ -150,9 +200,18 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:transport)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/transport",
+                  "!@stim-cli/transport/**",
+                  "!@stim-cli/core/plugin-loader",
+                  "!@stim-cli/core/protocol",
+                  "stim/**"
+                ]
               }
             ]
           }
@@ -166,9 +225,18 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:transport-local|transport)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/transport-local",
+                  "!@stim-cli/transport-local/**",
+                  "!@stim-cli/transport",
+                  "!@stim-cli/transport/**",
+                  "stim/**"
+                ]
               }
             ]
           }
@@ -182,9 +250,20 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:transport-tailscale|core|transport)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/transport-tailscale",
+                  "!@stim-cli/transport-tailscale/**",
+                  "!@stim-cli/core",
+                  "!@stim-cli/core/**",
+                  "!@stim-cli/transport",
+                  "!@stim-cli/transport/**",
+                  "stim/**"
+                ]
               }
             ]
           }
@@ -198,9 +277,18 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": ["stim"],
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:agent-driver|core)(?:/|$))|^stim(?:/|$)"
+                "caseSensitive": true,
+                "group": [
+                  "@stim-cli/**",
+                  "!@stim-cli/agent-driver",
+                  "!@stim-cli/agent-driver/**",
+                  "!@stim-cli/core",
+                  "!@stim-cli/core/**",
+                  "stim/**"
+                ]
               }
             ]
           }

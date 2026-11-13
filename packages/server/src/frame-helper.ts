@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper } from '@stim-cli/core';
@@ -12,6 +11,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, unlessChildExits } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
+import { defaultAndroidSdkRoot } from '@stim-cli/core/toolchain';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
 import {
   FRAME_EDGE,
@@ -76,8 +76,11 @@ function parseMacosWindow(value: unknown): MacosWindow | null {
 }
 
 export function adbPath(env: NodeJS.ProcessEnv): string {
-  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
-    if (sdk && existsSync(join(sdk, 'platform-tools/adb'))) return join(sdk, 'platform-tools/adb');
+  const name = process.platform === 'win32' ? 'adb.exe' : 'adb';
+  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, defaultAndroidSdkRoot(env)]) {
+    if (!sdk) continue;
+    const path = join(sdk, 'platform-tools', name);
+    if (existsSync(path)) return path;
   }
   return 'adb';
 }

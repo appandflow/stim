@@ -55,7 +55,7 @@ import {
 } from '@/lib/workspace-view';
 import { buildEntries, hasBuildTabs, worktreeApps, worktreePage } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
-import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
+import { devicesOf, isMacosBuilding, platformName, runningBuild } from '@/lib/workspaces';
 import type {
   BuildDiagnostic,
   BuildHistoryEntry,
@@ -204,7 +204,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
         project: subtitles[i],
         building:
           entry.platform === 'macos'
-            ? entry.env.macos?.build.state === 'running'
+            ? isMacosBuilding(entry.env)
             : runningBuild(entry.env)?.platform === entry.platform,
       }))}
     />
@@ -219,7 +219,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
   const remote = running ? remoteBuild(running, now) : null;
   const remoteHost = remote?.host ?? '';
   const startedAge = running ? formatDuration(Math.max(0, now - Date.parse(running.startedAt))) : '';
-  const state = app ? macosBuildLabel(app) : '';
+  const state = app ? macosBuildLabel(app, active?.env.pathMissing) : '';
   return (
     <SheetScreen
       title={t`Build`}

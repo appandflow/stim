@@ -148,25 +148,11 @@ export function checkMachineSettings({
     for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
       const file = holder.file;
       if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) continue;
-      const advice = replacementAdvice(key, settingValueAt(holder.settings, key), holder.scope);
-      if (advice) {
-        findings.push({
-          level: 'note',
-          title: advice.key ? `${key} was replaced by ${advice.key}` : `${key} is no longer read by Stim`,
-          detail: advice.key
-            ? `${key} in ${file} is not read by Stim, so ${advice.key} applies, at its default until you set it.`
-            : `${key} in ${file} is not read by Stim: ${advice.replacement}.`,
-          fix: advice.key
-            ? `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key} from ${file}.`
-            : `Remove ${key} from ${file}.`,
-        });
-        continue;
-      }
       findings.push({
         level: 'note',
         title: 'A key in the config is inert',
         detail: `${key} in ${file} is not read by Stim, so its value changes nothing.`,
-        fix: `Remove ${key} from ${file}, or run \`stim guide settings\` for the name that replaced it.`,
+        fix: `Remove ${key} from ${file}.`,
       });
     }
   }

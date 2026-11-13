@@ -23,6 +23,7 @@ import {
   orderDevices,
   platformName,
   runningBuild,
+  visibleDevices,
   type DeviceRef,
 } from '@/lib/workspaces';
 import type { AgentSession, EnvironmentState, Platform } from '@/protocol/types';
@@ -269,7 +270,7 @@ export interface RowHosts {
 
 export function rowHosts(env: EnvironmentState): RowHosts {
   const build = runningBuild(env);
-  const hosts = orderDevices(devicesOf(env))
+  const hosts = orderDevices(visibleDevices(env))
     .filter((d) => d.running)
     .flatMap((d) => (d.host ? [d.host] : []));
   return { build: build ? (remoteBuild(build, 0)?.host ?? null) : null, devices: [...new Set(hosts)] };
@@ -281,7 +282,7 @@ const kindName = (d: DeviceRef) => {
 };
 
 export function rowDevices(env: EnvironmentState, now: number): RowDevices {
-  const running = orderDevices(devicesOf(env)).filter((d) => d.running);
+  const running = orderDevices(visibleDevices(env)).filter((d) => d.running);
   const counts = new Map<string, number>();
   for (const d of running) counts.set(kindName(d), (counts.get(kindName(d)) ?? 0) + 1);
   const names = counts.size ? [...counts].map(([name, n]) => (n > 1 ? `${n} ${name}` : name)).join(', ') : null;
@@ -330,7 +331,7 @@ export function rowLabel({
   const build = runningBuild(env);
   const phase = build ? currentPhaseLabel(build) : null;
   const buildHost = rowHosts(env).build;
-  const running = orderDevices(devicesOf(env)).filter((d) => d.running);
+  const running = orderDevices(visibleDevices(env)).filter((d) => d.running);
   const devices = running.map((d) => {
     const kind = kindName(d);
     const { slot } = d;

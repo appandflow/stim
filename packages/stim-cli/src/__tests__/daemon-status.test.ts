@@ -18,6 +18,20 @@ const titles = (value: DaemonStatus, serving: string[] = []) =>
   daemonFindings(value, { now: NOW, serving: () => serving }).map((finding) => finding.title);
 
 test.each<[string, DaemonStatus, string[], string[]]>([
+  [
+    'a crash hold',
+    status({ crashHold: { build: 'b', count: 3, until: '2026-11-02T12:05:00.000Z', remedy: 'fix it' } }),
+    [],
+    ['stimd is held after a crash loop'],
+  ],
+  [
+    'an abnormal exit with no hold',
+    status({
+      abnormalExits: [{ at: '2026-11-02T10:00:00.000Z', build: 'b', pid: 1, reason: 'killed', cause: 'unknown' }],
+    }),
+    [],
+    ['stimd exited abnormally once in the last day'],
+  ],
   ['a daemon that ticked a minute ago', status({ running, lastTickAt: '2026-11-02T11:59:00.000Z' }), ['/app'], []],
   [
     'a daemon whose last tick is older than three intervals',

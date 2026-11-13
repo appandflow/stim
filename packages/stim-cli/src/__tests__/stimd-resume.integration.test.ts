@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
-import { stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
+import { stimdBootsFile, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
@@ -16,6 +16,7 @@ import {
   ensureMetroThroughStimd,
   releaseDeviceTicket,
   releaseOrphanedTicket,
+  stimdBuildId,
 } from '../daemon/client.ts';
 import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -283,6 +284,36 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     await vi.waitFor(() => expect(stimdPid()).not.toBe(first.pid), { timeout: 20_000, interval: 50 });
     expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
+  }, 60_000);
+
+  test('a resume that meets the crash hold fails at once with the hold and its remedy', async () => {
+    const other = workspace('other');
+    const root = workspace('app');
+    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
+    const first = await startStimd();
+    await admitCli(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const now = Date.now();
+    const boots = [3, 2, 1].map((ago) => ({
+      at: now - ago * 1000,
+      build: stimdBuildId(),
+      pid: 1,
+      abnormal: true,
+      cause: 'engine',
+      reason: 'thrown for the test',
+    }));
+    const started = Date.now();
+    let killed = false;
+    await expect(
+      acquireDeviceTicket(leaseParams(root), context(root), (line) => {
+        if (killed || !line.startsWith('waiting for')) return;
+        killed = true;
+        writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
+        first.kill('SIGKILL');
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE', remedy: expect.stringContaining('stim doctor --fix') });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(stimdPid()).toBe(first.pid);
   }, 60_000);
 
   test('a wait whose stimd does not come back fails within the bound with the unavailable-daemon error', async () => {
