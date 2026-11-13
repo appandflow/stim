@@ -100,16 +100,17 @@ describe('what is and is not a diagnostic', () => {
     expect(found).toEqual([{ file: '/app/Auth.swift', line: 12, column: 16, message: 'cannot find type in scope' }]);
   });
 
-  test('ignores an error marker inside a Swift source string', () => {
+  test.each([
+    [18, 'let value: Int = "Network: error: could not proceed"', 35],
+    [52, '/* Build log: error: timed out */ let value: Int = "x"', 3],
+  ])('ignores an error marker inside a Swift source echo (%s)', (column, source, length) => {
     const message = "cannot convert value of type 'String' to specified type 'Int'";
     const found = extractXcodeDiagnostics(
-      [
-        `<stdin>:1:18: error: ${message}`,
-        'let value: Int = "Network: error: could not proceed"',
-        '                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
-      ].join('\n'),
+      [`<stdin>:1:${column}: error: ${message}`, source, `${' '.repeat(column - 1)}^${'~'.repeat(length - 1)}`].join(
+        '\n',
+      ),
     );
-    expect(found).toEqual([{ file: '<stdin>', line: 1, column: 18, message }]);
+    expect(found).toEqual([{ file: '<stdin>', line: 1, column, message }]);
   });
 
   test('preserves the entire message in an unprefixed error', () => {
