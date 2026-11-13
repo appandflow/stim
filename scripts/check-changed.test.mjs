@@ -6,6 +6,7 @@ test('a prose change formats, and an integration test uses the integration runne
   expect(plan(['docs/testing.md'])).toEqual(['pnpm run format:check']);
   const file = 'packages/server/__tests__/changed.integration.test.ts';
   const commands = plan([file]);
+  expect(commands).toContain('pnpm run typecheck');
   expect(commands).toContain(`pnpm run test:integration ./${file}`);
   expect(commands.some((command) => command.includes('test:unit'))).toBe(false);
 });
@@ -50,5 +51,8 @@ test('a benchmark input outside its script directory selects the benchmark suite
 });
 
 test('a changed live demo test uses the live test config', () => {
-  expect(plan(['apps/demo-server/test/live/demo.test.ts'])).toContain('pnpm --filter stim-demo-server run test:live');
+  const commands = plan(['apps/demo-server/test/live/demo.test.ts']);
+  expect(commands).toContain('pnpm run lint');
+  expect(commands).toContain('node scripts/ratchet.mjs apps/demo-server');
+  expect(commands).toContain('pnpm --filter stim-demo-server run test:live');
 });

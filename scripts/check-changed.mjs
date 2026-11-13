@@ -35,9 +35,9 @@ export function planChecks(files, base, platform, exists = () => true) {
   const mobile = appChecks || touches('apps/mobile/');
   const demo = appChecks || touches('apps/demo-server/') || code.includes('apps/mobile/mock-server/payloads.mjs');
 
-  if (broad || rootSource || testFiles.length) pnpm('run', 'lint');
+  if (broad || rootSource || testFiles.length || demo) pnpm('run', 'lint');
   if (broad || rootSource || testFiles.length || mobile || demo) pnpm('run', 'build');
-  if (broad || rootSource) pnpm('run', 'typecheck');
+  if (broad || rootSource || testFiles.some((file) => file.endsWith('.ts'))) pnpm('run', 'typecheck');
   if (broad || touches('packages/core/') || touches('packages/server/') || touches('apps/mobile/src/protocol/')) {
     pnpm('run', 'rpc:check');
   }
@@ -67,6 +67,7 @@ export function planChecks(files, base, platform, exists = () => true) {
     }
   }
   if (demo) {
+    checks.push(['node', 'scripts/ratchet.mjs', 'apps/demo-server']);
     pnpm('--filter', 'stim-demo-server', 'run', 'typecheck');
     pnpm('--filter', 'stim-demo-server', 'test');
     if (touches('apps/demo-server/test/live/') || touches('apps/demo-server/vitest.live.config.')) {
