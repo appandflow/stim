@@ -340,10 +340,13 @@ function traceRows(
   const packages = new Set<string>();
   const modules: string[] = [];
   let portable = true;
-  const contentRow = (path: string): Input => {
+  const versions = new Map<string, string>();
+  const contentRow = (path: string, dir: string): Input => {
     const row = fileRow(path, roots);
-    if (row.name.startsWith('npm:') && !projectPackagePath(roots.project, realOr(path))) portable = false;
-    return row;
+    if (!row.name.startsWith('npm:')) return row;
+    if (!projectPackagePath(roots.project, realOr(path))) portable = false;
+    if (!versions.has(dir)) versions.set(dir, packageIdentity(dir)?.version ?? '');
+    return { ...row, version: versions.get(dir) };
   };
   const ours = (path: string) => within(path, SHIMS) || excluded.some((dir) => within(path, dir));
   for (const { path, hash } of trace.modules) {
@@ -351,7 +354,7 @@ function traceRows(
     const dir = owner(path);
     if (dir) {
       packages.add(dir);
-      if (content(dir)) rows.push(contentRow(path));
+      if (content(dir)) rows.push(contentRow(path, dir));
     } else if (existsSync(path)) {
       const row = fileRow(path, roots);
       modules.push(row.name);
@@ -387,7 +390,7 @@ function traceRows(
       !compiled.has(path)
     )
       return { uncertain: `${path} was read as a module this Node cannot capture; use Node 22.15 or later` };
-    rows.push(dir && content(dir) ? contentRow(path) : fileRow(path, roots));
+    rows.push(dir && content(dir) ? contentRow(path, dir) : fileRow(path, roots));
   }
   return {
     rows,
