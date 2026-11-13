@@ -346,7 +346,10 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   for GitHub Actions with subject `repo:appandflow/stim:ref:refs/heads/main`,
   custom claim `workflow_ref` equal to `appandflow/stim/.github/workflows/windows-debug.yml@refs/heads/main`,
   and only the Auth Keys Write scope for `tag:stim-windows-debug`. Allow the
-  intended tailnet users to reach that tag on TCP 22. Save the client ID and
+  intended tailnet users to reach that tag on TCP 22. If the runner is used as
+  a build worker, allow the intended build clients to reach it on TCP 7443 too.
+  Check that broad tailnet grants give the tag only the access it needs.
+  Save the client ID and
   audience as the repository Actions variables `TAILSCALE_WINDOWS_DEBUG_CLIENT_ID`
   and `TAILSCALE_WINDOWS_DEBUG_AUDIENCE`.
 
@@ -354,8 +357,9 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   gh workflow run windows-debug.yml --ref main -F public_key=@~/.ssh/id_rsa.pub -f hours=2
   ```
 
-  Use the address printed by the **Open SSH** step. Create a file named `stop`
-  at the workspace root to end the run.
+  Use the IPv4 address and verify the host-key fingerprint printed by the
+  **Open SSH** step. Create a file named `stop` at the workspace root to end
+  the run.
 
 - **`e2e-native.yml`** -- the native matrix, every native gate in one
   workflow. Nothing native runs on an unlabeled pull request; what runs is:
