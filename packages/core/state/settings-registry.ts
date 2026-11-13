@@ -127,19 +127,14 @@ const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
 const fixed = (env: string): RemovedSetting => ({ replacement: FIXED_LADDER, env, refuses: true });
 // prettier-ignore
 export const REMOVED_SETTINGS: ReadonlyMap<string, RemovedSetting> = new Map(Object.entries({
-  'remote.buildMode': { key: 'remote.build', replacement: 'remote.build', env: 'STIM_REMOTE_BUILD_MODE', value: (old) => old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null },
   'metro.idleStopMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['workspace', 'repo', 'committed'] },
   'devices.idleShutdownMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'] },
-  'share.webrtc': { replacement: 'nothing replaced it; web share viewers take video over the share socket only', env: 'STIM_WEBRTC_STUN' },
-  'devices.reclaimIdleMinutes': { replacement: "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more" },
   'maintenance.deviceIdleDays': { key: 'idle.dormantDays', replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted', env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS', refuses: true, value: sameNumber },
   'budget.minFreeDiskGb': { key: 'disk.minFreeGb', replacement: 'disk.minFreeGb', env: 'STIM_BUDGET_MIN_FREE_DISK_GB', refuses: true, value: sameNumber },
   'budget.hardFloorDiskGb': { key: 'disk.hardFloorGb', replacement: 'disk.hardFloorGb', env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB', refuses: true, value: sameNumber },
   'maintenance.criticalFreeDiskGb': { key: 'disk.criticalFreeGb', replacement: 'disk.criticalFreeGb', env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB', refuses: true, value: sameNumber },
   'maintenance.mode': { key: 'daemon.mode', replacement: 'daemon.mode', env: 'STIM_MAINTENANCE', refuses: true, value: (old) => old === 'on' || old === 'report' || old === 'off' ? old : null, off: (old) => old === 'off' || old === 'report' ? old : null, scopes: ['machine'] },
-  'daemon.enabled': { key: 'daemon.mode', replacement: 'daemon.mode', value: (old) => old === true || old === 'true' ? 'on' : old === false || old === 'false' ? 'off' : null },
   'maintenance.idleStopHours': { key: 'idle.dormantDays', replacement: 'idle.dormantDays for workspace dormancy', off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'], kept: 'now applies to hosted device sessions only' },
-  'caches.injectMetroStore': { key: 'optimizations.metroSharedCache', replacement: 'optimizations.metroSharedCache', value: (old) => old === true || old === 'true' ? 'true' : old === false || old === 'false' ? 'false' : null },
   'budget.maxCommittedMemoryGb': fixed('STIM_BUDGET_MAX_COMMITTED_MEMORY_GB'),
   'budget.maxLiveWorkspaces': fixed('STIM_BUDGET_MAX_LIVE_WORKSPACES'),
   'maintenance.pressureCheckMinutes': fixed('STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES'),

@@ -1243,11 +1243,6 @@ the configured entry.
   name         requires a matching entry in remote.machines, already paired and
                approved for builds; ignores this machine's load/slot gating
 
-\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
-\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
-replaces it (auto stays auto, force becomes remote, off becomes local). See
-REMOVED SETTINGS below.
-
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
 machine (device, an unknown simulator runtime, the build cache off), and when no
@@ -1911,12 +1906,12 @@ temporary directory, the Stim config directory or a filesystem root, and gc
 never prunes or empties such a directory.
 
 REMOVED SETTINGS
-Removed keys and environment variables are listed below with their replacements.
-Get and set refuse removed keys with STIM_BAD_ARG; unset removes them from every
-layer, or just --scope. Doctor reports them. start, ios, android, web, macos,
-revive and gc refuse old environment variables marked "refused" and removed
-config values that turned a mechanism off. Their remedies name the set and
-unset commands that preserve that behavior. maintenance.idleStopHours remains
+The keys and environment variables below are no longer read. Get and set refuse
+them as unknown settings; unset removes them from every layer, or just --scope.
+start, ios, android, web, macos, revive and gc refuse old environment variables
+marked "refused" and removed config values that turned a mechanism off. Their
+remedies name the set and unset commands that preserve that behavior. Any other
+removed name is an unknown one: Stim ignores it and does not name a replacement. maintenance.idleStopHours remains
 read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
 
 ${[...REMOVED_SETTINGS]

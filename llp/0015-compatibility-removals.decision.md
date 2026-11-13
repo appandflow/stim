@@ -71,8 +71,44 @@ The action installs the `version` it is given and runs the installed
 `node_modules/stim/bin/stim.mjs` with `ci`. A package that ships no such file
 fails with `stim@<version> has no bin/stim.mjs`; set `version` to 2.0.0 or later.
 
+## Removed names get no replacement hint
+
+C20 (removed flags and API methods name their replacement through one path) had
+no code and is gone from `scripts/compat-budget.json`. C5 (one map of removed
+settings and environment variables to their replacements) shrinks from 60 to 54
+lines: the five removed names that only printed a replacement (`remote.buildMode`
+with `STIM_REMOTE_BUILD_MODE`, `share.webrtc`, `devices.reclaimIdleMinutes`,
+`daemon.enabled`, `caches.injectMetroStore`) leave the map, and the messages that
+named a replacement for an unknown key go: `stim settings set` and `get` answer
+"is not a Stim setting", the `stim settings` and start-command warnings and the
+`stim settings --json` `unknown` entries carry no replacement, and `stim doctor`
+reports a leftover key as inert. `stim settings unset` of a removed key no longer
+reports `replacedBy`.
+
+Maintainer decision on #5650, 2026-11-13: "ok sure", to the coordinator's option
+B, "keep the upgrade bridges, drop the hints: keep those rows, since they expire
+at 2.1.0 anyway; remove C5 and C20 and close #5634". Earlier, on #5492: "no need
+for replacement we will release 2.0 I tihnk so can be breaking".
+
+C5 stays, smaller, because the rest of the map does more than print a name. The
+maintainer has not ruled on these, and the code keeps them:
+
+- Environment variables of removed settings marked `refuses` (for example
+  `STIM_MAINTENANCE`, `STIM_BUDGET_MIN_FREE_DISK_GB`): `start`, `ios`,
+  `android`, `web`, `macos`, `revive` and `gc` refuse while one is set. Without
+  the refusal `STIM_MAINTENANCE=off` would be ignored and `daemon.mode` would
+  apply at its default.
+- Old config values that turned a mechanism off (`maintenance.mode` `off` or
+  `report`, `metro.idleStopMinutes` or `devices.idleShutdownMinutes` `0`) refuse
+  the same commands and `stim doctor` rates them a cost, so they do not become
+  the new defaults without notice.
+- `maintenance.idleStopHours`, which is still a live setting for hosted
+  sessions.
+- `stim settings unset <removed key>`, which edits config files and is the only
+  command that clears a leftover key.
+
 ## Links
 
-- Issue: #5552.
+- Issues: #5552, #5650.
 - Code: `packages/stim-cli/src/stimd/main.ts` (`daemonClaimRefusal`),
   `packages/server/src/cli.ts`, `.github/actions/stim-ci/src/action.ts`.

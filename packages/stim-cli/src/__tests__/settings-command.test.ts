@@ -110,123 +110,20 @@ test('--json reports each layer, the winning one, environment overrides, and def
   expect(payload.unknown).toEqual([{ key: 'bogus', scope: 'committed', file: join(repo, '.stim.json'), value: true }]);
 });
 
-test('a removed setting is listed with the command that replaces it', async () => {
+test('a name that was removed from the settings is refused and warned about like any unknown name', async () => {
+  const { note, exitCode } = await settings(['set', 'remote.buildMode', 'force', '--scope', 'machine']);
+  expect(exitCode).toBe(1);
+  expect(note.join('\n')).toContain('STIM_BAD_ARG: "remote.buildMode" is not a Stim setting.');
+  expect(note.join('\n')).not.toContain('remote.build ');
+
   writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
   const [printed] = (await settings(['--json'])).out;
   expect(JSON.parse(printed ?? '').unknown).toEqual([
-    {
-      key: 'remote.buildMode',
-      scope: 'committed',
-      file: join(app, '.stim.json'),
-      value: 'force',
-      replacement: 'stim settings set remote.build remote',
-    },
+    { key: 'remote.buildMode', scope: 'committed', file: join(app, '.stim.json'), value: 'force' },
   ]);
-  const { note } = await settings([]);
-  expect(note).toEqual([
-    expect.stringContaining(
-      `remote.buildMode in ${join(app, '.stim.json')} is not read by Stim. Run \`stim settings set remote.build remote\` instead.`,
-    ),
+  expect((await settings([])).note).toEqual([
+    expect.stringContaining(`remote.buildMode in ${join(app, '.stim.json')} is not read by Stim.`),
   ]);
-});
-
-test('a removed setting in the machine config is listed with its replacement too', async () => {
-  writeFileSync(
-    join(home, 'config.json'),
-    JSON.stringify({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } }),
-  );
-  const [printed] = (await settings(['--json'])).out;
-  expect(JSON.parse(printed ?? '').unknown).toEqual([
-    expect.objectContaining({
-      key: 'remote.buildMode',
-      scope: 'machine',
-      value: 'off',
-      replacement: 'stim settings set remote.build local',
-    }),
-  ]);
-});
-
-test.each([
-  ['auto', 'auto'],
-  ['force', 'remote'],
-  ['off', 'local'],
-])(
-  'set of the removed remote.buildMode %s names stim settings set remote.build %s and writes nothing',
-  async (old, value) => {
-    const file = join(home, 'config.json');
-    const before = JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'off' } });
-    writeFileSync(file, before);
-    const { note, exitCode } = await settings(['set', 'remote.buildMode', old, '--scope', 'machine']);
-    expect(exitCode).toBe(1);
-    expect(note.join('\n')).toContain('STIM_BAD_ARG: "remote.buildMode" was replaced by remote.build');
-    expect(note.join('\n')).toContain(`stim settings set remote.build ${value}`);
-    expect(readFileSync(file, 'utf-8')).toBe(before);
-  },
-);
-
-test.each([
-  ['metro.idleStopMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30 --scope machine'],
-  ['devices.idleShutdownMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30'],
-  ['maintenance.deviceIdleDays', '2', 'idle.dormantDays', 'stim settings set idle.dormantDays 2'],
-  ['budget.minFreeDiskGb', '12', 'disk.minFreeGb', 'stim settings set disk.minFreeGb 12'],
-  ['budget.hardFloorDiskGb', '3', 'disk.hardFloorGb', 'stim settings set disk.hardFloorGb 3'],
-  ['maintenance.criticalFreeDiskGb', '4', 'disk.criticalFreeGb', 'stim settings set disk.criticalFreeGb 4'],
-  ['maintenance.mode', 'report', 'daemon.mode', 'stim settings set daemon.mode report'],
-  ['daemon.enabled', 'false', 'daemon.mode', 'stim settings set daemon.mode off'],
-])('set of the removed %s names %s and writes nothing', async (key, value, replacement, remedy) => {
-  const file = join(home, 'config.json');
-  const before = JSON.stringify({ version: 2, projects: {}, repos: {} });
-  writeFileSync(file, before);
-  const { note, exitCode } = await settings(['set', key, value, '--scope', 'machine']);
-  expect(exitCode).toBe(1);
-  expect(note.join('\n')).toContain(`STIM_BAD_ARG: "${key}" was replaced by ${replacement}`);
-  expect(note.join('\n')).toContain(remedy);
-  expect(readFileSync(file, 'utf-8')).toBe(before);
-});
-
-test.each([
-  'devices.reclaimIdleMinutes',
-  'budget.maxCommittedMemoryGb',
-  'budget.maxLiveWorkspaces',
-  'maintenance.pressureCheckMinutes',
-  'maintenance.sizeCheckMinutes',
-  'maintenance.maxLoadPerCore',
-  'maintenance.memoryPressureLevel',
-  'maintenance.memoryWarningMinutes',
-  'maintenance.minAvailableMemoryGb',
-  'maintenance.capTargetPercent',
-  'maintenance.idleCheckMinutes',
-  'maintenance.urgentFreeDiskGb',
-  'maintenance.pressureProtectMinutes',
-])('set of the removed %s says what replaced it and writes nothing', async (key) => {
-  const { note, exitCode } = await settings(['set', key, '1', '--scope', 'machine']);
-  expect(exitCode).toBe(1);
-  expect(note.join('\n')).toContain(`STIM_BAD_ARG: "${key}" is no longer read by Stim: `);
-  expect(note.join('\n')).toMatch(/reclaim rule replaced it|nothing replaced it; the pressure ladder has fixed rules/);
-  expect(existsSync(join(home, 'config.json'))).toBe(false);
-});
-
-test('a removed setting left in the project config names its replacement with the layer it lives in', async () => {
-  writeFileSync(
-    join(app, '.stim.json'),
-    JSON.stringify({
-      metro: { idleStopMinutes: 30 },
-      maintenance: { capTargetPercent: 50 },
-      budget: { hardFloorDiskGb: 4 },
-    }),
-  );
-  const { note, exitCode } = await settings([]);
-  expect(exitCode).toBe(0);
-  expect(note.join('\n')).toContain('Run `stim settings set idle.minutes 30 --scope committed` instead.');
-  expect(note.join('\n')).toContain('Run `stim settings set disk.hardFloorGb 4` instead.');
-  expect(note.join('\n')).toContain('maintenance.capTargetPercent in');
-  expect(note.join('\n')).toContain('Nothing replaced it; the pressure ladder has fixed rules.');
-});
-
-test('get of the removed remote.buildMode points at remote.build', async () => {
-  const { note, exitCode } = await settings(['get', 'remote.buildMode']);
-  expect(exitCode).toBe(1);
-  expect(note.join('\n')).toContain('was replaced by remote.build');
 });
 
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
@@ -239,25 +136,25 @@ test('unset of maintenance.idleStopHours removes the still-active machine settin
   expect(loadConfig()?.maintenance ?? {}).not.toHaveProperty('idleStopHours');
 });
 
-test('unset of the removed remote.buildMode removes it from every layer that has it', async () => {
+test('unset of a removed setting removes it from every layer that has it', async () => {
   const machine = join(home, 'config.json');
   writeFileSync(
     machine,
     JSON.stringify({
       version: 2,
-      projects: { [app]: { settings: { remote: { buildMode: 'auto' }, ios: { runtime: '26.0' } } } },
+      projects: { [app]: { settings: { maintenance: { mode: 'off' }, ios: { runtime: '26.0' } } } },
       repos: {},
-      remote: { machines: ['mini'], buildMode: 'force' },
+      concurrency: { maxBuilds: 2 },
+      maintenance: { mode: 'report' },
     }),
   );
-  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' }, ios: { runtime: '26.2' } }));
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ maintenance: { mode: 'on' }, ios: { runtime: '26.2' } }));
 
-  const { out, exitCode } = await settings(['unset', 'remote.buildMode', '--json']);
+  const { out, exitCode } = await settings(['unset', 'maintenance.mode', '--json']);
 
   expect(exitCode).toBe(0);
   expect(JSON.parse(out[0] ?? '')).toEqual({
-    key: 'remote.buildMode',
-    replacedBy: 'remote.build',
+    key: 'maintenance.mode',
     removed: [
       { scope: 'machine', file: machine },
       { scope: 'workspace', file: `${machine} (projects["${app}"].settings)` },
@@ -265,23 +162,24 @@ test('unset of the removed remote.buildMode removes it from every layer that has
     ],
   });
   const config = JSON.parse(readFileSync(machine, 'utf-8'));
-  expect(config.remote).toEqual({ machines: ['mini'] });
+  expect(config.concurrency).toEqual({ maxBuilds: 2 });
+  expect(config.maintenance ?? {}).not.toHaveProperty('mode');
   expect(config.projects[app].settings).toEqual({ ios: { runtime: '26.0' } });
   expect(JSON.parse(readFileSync(join(app, '.stim.json'), 'utf-8'))).toEqual({ ios: { runtime: '26.2' } });
   expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
 });
 
-test('unset of the removed remote.buildMode with --scope leaves the other layers alone', async () => {
+test('unset of a removed setting with --scope leaves the other layers alone', async () => {
   const machine = join(home, 'config.json');
-  writeFileSync(machine, JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'force' } }));
-  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+  writeFileSync(machine, JSON.stringify({ version: 2, projects: {}, repos: {}, maintenance: { mode: 'report' } }));
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ maintenance: { mode: 'on' } }));
 
-  const { out } = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
+  const { out } = await settings(['unset', 'maintenance.mode', '--scope', 'committed']);
 
-  expect(out).toEqual([`unset remote.buildMode in ${join(app, '.stim.json')}`]);
-  expect(JSON.parse(readFileSync(machine, 'utf-8')).remote).toEqual({ buildMode: 'force' });
-  const again = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
-  expect(again.out).toEqual(['remote.buildMode was not set in the committed layer.']);
+  expect(out).toEqual([`unset maintenance.mode in ${join(app, '.stim.json')}`]);
+  expect(JSON.parse(readFileSync(machine, 'utf-8')).maintenance).toEqual({ mode: 'report' });
+  const again = await settings(['unset', 'maintenance.mode', '--scope', 'committed']);
+  expect(again.out).toEqual(['maintenance.mode was not set in the committed layer.']);
 });
 
 test('set and unset edit .stim.json in place, keeping other keys and indentation', async () => {

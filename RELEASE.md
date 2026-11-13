@@ -477,8 +477,9 @@ preparation, `git status --short` may show only the draft
    `## Removed (breaking)` in its release notes. Clients too old to know the
    integer get `protocol-unsupported`. A patch never breaks anything (1.17.1
    did). Only a frozen surface (rule 6) needs a major.
-5. **A changed meaning gets a new name.** The old name refuses and names the
-   new one for 30 days; an unchanged meaning keeps its name. 1.36.0 changed
+5. **A changed meaning gets a new name.** The old name is an unknown one, and
+   the CLI does not explain it; the release notes list old and new names. An
+   unchanged meaning keeps its name. 1.36.0 changed
    `stim ci run` in place, which this rule forbids.
 6. **Frozen surfaces change only in a major.** The phone's native framing is
    frozen: its first byte is the protocol version and anything else gets

@@ -532,10 +532,7 @@ test('the placement words are documented for every workload, and a removed setti
 });
 
 test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
-  const removed = [...REMOVED_SETTINGS]
-    .filter(([, entry]) => !entry.kept)
-    .map(([key]) => key)
-    .filter((key) => key !== 'remote.buildMode');
+  const removed = [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept).map(([key]) => key);
   for (const [name, topic] of Object.entries(TOPICS)) {
     if (name === 'settings') continue;
     const bodies = [
