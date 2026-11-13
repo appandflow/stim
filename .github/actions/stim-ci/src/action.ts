@@ -13,7 +13,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
 import { diagnosticArtifactFiles } from 'stim/ci/artifacts';
@@ -120,7 +120,13 @@ async function execute(file: string, args: string[], cwd: string, stdout?: Buffe
   try {
     return await new Promise<number>((done, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => done(code ?? (signal === 'SIGINT' ? 130 : 143)));
+      child.once('close', (code, signal) => {
+        if (code !== 0)
+          core.error(
+            `${[basename(file), ...args.slice(0, 4).map((arg) => basename(arg))].join(' ')} exited with ${signal ? `signal ${signal}` : `code ${code}`}`,
+          );
+        done(code ?? (signal === 'SIGINT' ? 130 : 143));
+      });
     });
   } finally {
     process.off('SIGINT', interrupt);
@@ -285,6 +291,22 @@ export async function runAction(): Promise<number> {
   if (options.artifacts) {
     try {
       result = currentResult(resultPath, options, started);
+      if (!result) {
+        core.error(`stim ci exited with code ${code} and wrote no ${resultPath}.`);
+        const home = options.home || process.env.STIM_HOME;
+        if (home) {
+          const logs = [join(home, 'run', 'stimd.log')];
+          try {
+            for (const name of readdirSync(join(home, 'daemon'))) logs.push(join(home, 'daemon', name));
+          } catch {}
+          for (const file of logs) {
+            try {
+              const tail = readFileSync(file, 'utf8').trim().split('\n').slice(-40).join('\n');
+              core.warning(`The end of ${file}:\n${tail}`);
+            } catch {}
+          }
+        }
+      }
     } catch (error) {
       core.warning(String(error));
       return code || 1;
