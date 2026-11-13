@@ -33,7 +33,7 @@ import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { isUncertain } from '../fingerprint/key.ts';
-import { fingerprintInstallProblem } from '../fingerprint/operation.ts';
+import { fingerprintInstallWarning } from '../fingerprint/operation.ts';
 import { recordPrebuild } from '../engine/prebuild.ts';
 import { workspaceName } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -459,7 +459,7 @@ test.each([
       'manifest rewritten in source after install',
       'generated native directory after warm',
     ].includes(scenario);
-    expect(fingerprintInstallProblem(target)).toEqual(matches ? null : stale);
+    expect(fingerprintInstallWarning(target)).toEqual(matches ? null : stale);
   },
   30_000,
 );
@@ -487,7 +487,7 @@ test('warm does not certify an npm workspace with a pre-existing app-local depen
 
   expect((await runWarm(targetApp)).code).toBe(0);
   expect(existsSync(join(target, stamp))).toBe(true);
-  expect(fingerprintInstallProblem(targetApp)).toMatch(/package-lock.json changed after the last install/);
+  expect(fingerprintInstallWarning(targetApp)).toMatch(/package-lock.json changed after the last install/);
 }, 30_000);
 
 test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {

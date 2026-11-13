@@ -12,10 +12,6 @@ export function matchesExpectedIosSimulator(device, expected) {
   );
 }
 
-function withoutName(expected) {
-  return { ...expected, name: undefined, namePrefix: undefined, matchAnyName: true };
-}
-
 export function selectIosCandidate(devices, { arm, baseline, parkedUdid, expectedControl }) {
   const candidates = devices.filter((device) => {
     if (!device.isAvailable) return false;
@@ -23,16 +19,8 @@ export function selectIosCandidate(devices, { arm, baseline, parkedUdid, expecte
   });
   if (candidates.length > 1) return { error: 'multiple-candidate-simulators', candidates };
   const candidate = candidates[0] ?? null;
-  if (arm === 'control' && candidate && !matchesExpectedIosSimulator(candidate, expectedControl)) {
-    return { error: 'control-simulator-mismatch', candidates, expected: expectedControl };
-  }
-  if (
-    arm === 'expo-agent-cli' &&
-    candidate &&
-    (candidate.deviceTypeIdentifier !== expectedControl.deviceTypeIdentifier ||
-      candidate.runtimeIdentifier !== expectedControl.runtimeIdentifier)
-  ) {
-    return { error: 'expo-agent-cli-simulator-mismatch', candidates, expected: expectedControl };
+  if (arm !== 'stim' && candidate && !matchesExpectedIosSimulator(candidate, expectedControl)) {
+    return { error: `${arm}-simulator-mismatch`, candidates, expected: expectedControl };
   }
   return { candidate };
 }
@@ -69,8 +57,7 @@ export function selectAndroidCandidate(
   if (arm === 'expo-agent-cli' && candidate && preexistingNames.has(candidate.name)) {
     return { error: 'expo-agent-cli-adopted-preexisting-emulator', candidates };
   }
-  const expected =
-    arm === 'stim' ? expectedStim : arm === 'expo-agent-cli' ? withoutName(expectedControl) : expectedControl;
+  const expected = arm === 'stim' ? expectedStim : expectedControl;
   if (candidate && !matchesExpectedAndroidEmulator(candidate, expected)) {
     return { error: `${arm}-emulator-mismatch`, candidates, expected };
   }

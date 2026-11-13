@@ -1,6 +1,7 @@
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
+import { LOCKFILES, readJsonObject } from '@stim-cli/core/state';
 import { backgroundPassesAvailable } from '../daemon/client.ts';
 import { shortHash } from '../command-output.ts';
 import { processContext } from '../cli-operation.ts';
@@ -102,11 +103,23 @@ export function fingerprintOffloadInputs(
   };
 }
 
-export function fingerprintInstallProblem(root: string): string | null {
+export function fingerprintInstallWarning(root: string): string | null {
   const project = realpathSync.native(root);
-  const pending = newerThanInstall({ project, install: installRoot(project) });
-  if (isUncertain(pending)) return pending.uncertain;
-  return pending ? `${pending} changed after the last install` : null;
+  const install = installRoot(project);
+  const pending = newerThanInstall({ project, install });
+  if (!pending) return null;
+  const consequence = 'the build will be installed but not cached';
+  if (isUncertain(pending)) return `${pending.uncertain}; ${consequence}`;
+  const warning = `${pending.input} changed after the last install; ${consequence}`;
+  if (
+    pending.input !== join(install, 'package-lock.json') ||
+    pending.stamp !== join(install, 'node_modules', '.package-lock.json') ||
+    LOCKFILES.some((file) => file !== 'package-lock.json' && existsSync(join(install, file)))
+  )
+    return warning;
+  const declared = readJsonObject(join(install, 'package.json'))?.packageManager;
+  if (typeof declared === 'string' && !declared.startsWith('npm@')) return warning;
+  return `${warning}. Run \`npm install\` in ${JSON.stringify(install)} before the next build.`;
 }
 
 export async function settleFingerprintCheck(
