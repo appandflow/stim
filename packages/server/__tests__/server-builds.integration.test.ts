@@ -762,6 +762,8 @@ test('native build admission rejects invalid provider identity before toolchain 
 });
 
 describe('offloaded builds', () => {
+  const startWorker = (options: NonNullable<Parameters<typeof start>[0]> = {}) =>
+    start({ ...options, buildLimits: { minFreeBytes: 0, evictionMarginBytes: 0, ...options.buildLimits } });
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
   const file = (path: string, text: string) => ({ path, kind: 'file', size: text.length, sha256: sha(text) });
   const blob = (text: string) => Buffer.concat([Buffer.from(sha(text), 'hex'), Buffer.from(text)]);
@@ -826,7 +828,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'a machine that cannot host refuses device-host access and still takes builds',
     async () => {
-      const port = await start({ hostsDevices: false });
+      const port = await startWorker({ hostsDevices: false });
       const machine = setupClient(['build', 'device-host'], 'Host client');
       const asking = await connect(port, '100.64.0.3', { keyPair: machine.keyPair });
       expect(await asking.request('hello', { client: CLIENT, access: 'device-host' })).toMatchObject({
@@ -842,7 +844,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'mirrors a content-addressed manifest, builds it and returns the artifact with its digest',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const { client, id } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
@@ -962,7 +964,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'a reconnected approved client fetches an exact completed archive without another build',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const { client, id, keyPair } = await buildClient(port);
       const identity = { fingerprint: 'f00d', cacheKey: 'source-sdk27-arm64-target' };
       expect(await client.request('build.sync', { repo: 'app-1', files: [], done: true })).toHaveProperty(
@@ -1015,7 +1017,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'lets only a machine approved for builds or device hosting ask the server to update itself',
     async () => {
-      const port = await start({
+      const port = await startWorker({
         service: {
           label: 'dev.stim.test',
           node: process.execPath,
@@ -1063,7 +1065,7 @@ describe('offloaded builds', () => {
       mkdirSync(dirname(script), { recursive: true });
       writeFileSync(script, '');
       process.env.STIM_ENGINE_ROOT = join(root, 'engine');
-      const port = await start({
+      const port = await startWorker({
         service: {
           label: 'dev.stim.drain',
           node: process.execPath,
@@ -1112,7 +1114,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     "builds an Android job with its Gradle options in the repository's own Gradle home",
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1139,7 +1141,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'refuses malformed macOS jobs and launches valid jobs with a private SwiftPM cache',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1222,7 +1224,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     "keeps a client's retained build per repository until that repository fetches another",
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const machine = setupClient(['build'], 'Laptop');
       const first = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-1');
       const other = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-2');
@@ -1237,7 +1239,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'hands a fetched macOS build once, and only to a hosted session of the same machine key',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       writeFileSync(
         join(root, 'device-host-worker.mjs'),
         `
@@ -1334,7 +1336,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'Android handoff checks same-node approvals, archive digest and APK-only manifest before copying verified bytes',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       writeFileSync(
         join(root, 'device-host-worker.mjs'),
         `
@@ -1399,7 +1401,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
-    const port = await start({ buildLimits: { handoffMs: 50, daemonSweepMs: 50 } });
+    const port = await startWorker({ buildLimits: { handoffMs: 50, daemonSweepMs: 50 } });
     const { out } = await nativeBuild(port, '100.64.0.2');
     await eventually(() => !existsSync(out));
   });
@@ -1419,7 +1421,7 @@ describe('offloaded builds', () => {
           JSON.stringify({ activeBuild: { phase, claim: { root: claim.root, claimId: claim.claimId } } }),
         );
       writeActive('install');
-      const port = await start();
+      const port = await startWorker();
       const { client } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
@@ -1461,7 +1463,7 @@ describe('offloaded builds', () => {
     async () => {
       configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
       const local = tryAcquireBuildSlotClaim({ max: 1, details: { projectRoot: root } })!;
-      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+      const port = await startWorker({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1502,7 +1504,7 @@ describe('offloaded builds', () => {
     'keeps a build running when its connection drops and hands it to a new connection of the same client',
     async () => {
       const gate = join(root, 'gate');
-      const port = await start({ env: { FAKE_WORKER_GATE: gate } });
+      const port = await startWorker({ env: { FAKE_WORKER_GATE: gate } });
       const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1533,7 +1535,7 @@ describe('offloaded builds', () => {
     'moves a build off a connection that is still open, so closing that one does not cancel it',
     async () => {
       const gate = join(root, 'gate');
-      const port = await start({ env: { FAKE_WORKER_GATE: gate } });
+      const port = await startWorker({ env: { FAKE_WORKER_GATE: gate } });
       const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1550,7 +1552,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)('cancels a detached build when its client is revoked', async () => {
-    const port = await start({
+    const port = await startWorker({
       env: { FAKE_WORKER_HANG: '1' },
       buildLimits: { killGraceMs: 100, detachGraceMs: 60_000 },
     });
@@ -1572,7 +1574,7 @@ describe('offloaded builds', () => {
     'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
     async () => {
       configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
-      const port = await start({
+      const port = await startWorker({
         env: { FAKE_WORKER_HANG: '1' },
         buildLimits: { killGraceMs: 100, detachGraceMs: 1500 },
       });
@@ -1607,7 +1609,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'refuses paths outside the mirror, and closes the connection on a blob it did not ask for or whose bytes differ',
     async () => {
-      const port = await start();
+      const port = await startWorker();
       const { client } = await buildClient(port);
       for (const path of ['../escape', '/abs', 'a/./b', '.GIT/config', 'a//b']) {
         expect(
@@ -1628,7 +1630,7 @@ describe('offloaded builds', () => {
 
   test.skipIf(!fakeTailscale)('declines an offloaded build past server.maxOffloadedBuilds', async () => {
     configure({ server: { maxLoadPerCore: 100_000, maxOffloadedBuilds: 1 } });
-    const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+    const port = await startWorker({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
     const { client } = await buildClient(port);
     await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
     client.socket.send(blob('x'));
@@ -1652,7 +1654,7 @@ describe('offloaded builds', () => {
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
       configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
-      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+      const port = await startWorker({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -1729,7 +1731,7 @@ describe('offloaded builds', () => {
       'leaves daemon idle policy to Gradle, and stops an idle one once its client is revoked',
       async () => {
         configure({ server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
-        const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
+        const port = await startWorker({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
         const { client, id } = await buildClient(port);
         await launch(client);
         await progress(client);
@@ -1751,7 +1753,7 @@ describe('offloaded builds', () => {
       'defers low-memory daemon stops until no client is building, while still stopping revoked clients',
       async () => {
         const gate = join(root, 'gate');
-        const port = await start({
+        const port = await startWorker({
           env: { FAKE_WORKER_GATE: gate },
           buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
         });
@@ -1777,7 +1779,7 @@ describe('offloaded builds', () => {
       async (reason) => {
         configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
         const gate = join(root, 'crash-gate');
-        const port = await start({
+        const port = await startWorker({
           env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
           buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
         });
@@ -1829,7 +1831,7 @@ describe('offloaded builds', () => {
       'retains the failed build claims when a Gradle daemon cannot be classified',
       async () => {
         configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
-        const port = await start({
+        const port = await startWorker({
           env: { FAKE_WORKER_CRASH: '1' },
           buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
         });

@@ -55,7 +55,7 @@ if (process.argv[2] !== 'build') {
     );
     await mkdir(join(root, 'home'), { recursive: true });
     await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
-    const host = new BuildHost({ worker, env: process.env });
+    const host = new BuildHost({ worker, env: process.env, limits: { minFreeBytes: 0 } });
     const frames: Buffer[] = [];
     const socket = {
       OPEN: 1,
@@ -192,7 +192,7 @@ if (mode === 'offer-native-gradle') {
   );
   await mkdir(join(root, 'home'), { recursive: true });
   await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
-  const host = new BuildHost({ worker, env: process.env, limits: { killGraceMs: 50 } });
+  const host = new BuildHost({ worker, env: process.env, limits: { minFreeBytes: 0, killGraceMs: 50 } });
   const frames: Buffer[] = [];
   const socket = {
     OPEN: 1,
@@ -495,6 +495,7 @@ else {
     const host = new BuildHost({
       worker,
       env: { ...process.env, TEST_RN_QUERY: JSON.stringify(reactNativeArtifactQuery(query)) },
+      limits: { minFreeBytes: 0 },
     });
     const frames: Buffer[] = [];
     const session = host.session(

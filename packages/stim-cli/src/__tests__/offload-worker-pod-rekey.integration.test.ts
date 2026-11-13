@@ -118,7 +118,12 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
         if (isUncertain(initial)) throw new Error(initial.uncertain);
         const replay = fingerprintOffloadInputs(project, target, initial, process.env);
         if (isUncertain(replay)) throw new Error(replay.uncertain);
-        host = new BuildHost({ worker: cli, workerArgs: ['__job', 'offload-worker'], env: process.env });
+        host = new BuildHost({
+          worker: cli,
+          workerArgs: ['__job', 'offload-worker'],
+          env: process.env,
+          limits: { minFreeBytes: 0 },
+        });
         let finish!: (value: unknown) => void;
         const outcome = new Promise<unknown>((resolve) => {
           finish = resolve;

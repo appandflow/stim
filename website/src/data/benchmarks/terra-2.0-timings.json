@@ -1,0 +1,202 @@
+{
+  "completedOn": "2026-11-13",
+  "model": "GPT-6.1 Terra",
+  "reasoning": "high",
+  "stimVersion": "2.0.0-next.20261112231736.gf9f5c15",
+  "campaign": [
+    {
+      "platform": "Expo iOS",
+      "task": "App launch",
+      "endpoint": "settings",
+      "stim": 87.365,
+      "control": 321.276,
+      "expoAgentCli": 316.612
+    },
+    {
+      "platform": "Expo iOS",
+      "task": "Native change",
+      "endpoint": "settings",
+      "stim": 143.53,
+      "control": 390.385,
+      "expoAgentCli": 339.878
+    },
+    {
+      "platform": "Expo iOS",
+      "task": "Launch-error repair",
+      "endpoint": "settings",
+      "stim": 84.47,
+      "control": 349.903,
+      "expoAgentCli": 332.253
+    },
+    {
+      "platform": "Expo Android",
+      "task": "App launch",
+      "endpoint": "settings",
+      "stim": 68.407,
+      "control": 349.746,
+      "expoAgentCli": 449.808
+    },
+    {
+      "platform": "Expo Android",
+      "task": "Native change",
+      "endpoint": "settings",
+      "stim": 102.62,
+      "control": 299.019,
+      "expoAgentCli": 240.949
+    },
+    {
+      "platform": "Expo Android",
+      "task": "Launch-error repair",
+      "endpoint": "settings",
+      "stim": 74.835,
+      "control": 269.524,
+      "expoAgentCli": 278.009
+    },
+    {
+      "platform": "Bare React Native iOS",
+      "task": "App launch",
+      "endpoint": "settings",
+      "stim": 87.879,
+      "control": 282.915,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Bare React Native iOS",
+      "task": "Native change",
+      "endpoint": "settings",
+      "stim": 119.303,
+      "control": 254.332,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Bare React Native iOS",
+      "task": "Launch-error repair",
+      "endpoint": "settings",
+      "stim": 90.079,
+      "control": 289.119,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Bare React Native Android",
+      "task": "App launch",
+      "endpoint": "settings",
+      "stim": 64.848,
+      "control": 180.409,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Bare React Native Android",
+      "task": "Native change",
+      "endpoint": "settings",
+      "stim": 116.188,
+      "control": 216.305,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Bare React Native Android",
+      "task": "Launch-error repair",
+      "endpoint": "settings",
+      "stim": 67.108,
+      "control": 222.481,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "SwiftUI macOS",
+      "task": "App launch",
+      "endpoint": "task",
+      "stim": 61.439,
+      "control": 77.055,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "SwiftUI macOS",
+      "task": "Launch-error repair",
+      "endpoint": "task",
+      "stim": 94.289,
+      "control": 115.882,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Native SwiftUI iOS",
+      "task": "App launch",
+      "endpoint": "task",
+      "stim": 105.4,
+      "control": 98.706,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Native SwiftUI iOS",
+      "task": "Launch-error repair",
+      "endpoint": "task",
+      "stim": 106.381,
+      "control": 116.182,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Native Compose Android",
+      "task": "App launch",
+      "endpoint": "task",
+      "stim": 91.215,
+      "control": 77.074,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Native Compose Android",
+      "task": "Launch-error repair",
+      "endpoint": "task",
+      "stim": 105.756,
+      "control": 100.075,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Exact iOS",
+      "task": "App launch",
+      "endpoint": "task",
+      "stim": 309.085,
+      "control": 344.583,
+      "expoAgentCli": null
+    },
+    {
+      "platform": "Exact iOS",
+      "task": "Launch-error repair",
+      "endpoint": "task",
+      "stim": 252.88,
+      "control": 312.591,
+      "expoAgentCli": null
+    }
+  ],
+  "followup": [
+    {
+      "platform": "Native Compose Android",
+      "task": "App launch",
+      "stimDevice": "Parked",
+      "stim": 57.441,
+      "stimCold": 66.006,
+      "control": 59.51
+    },
+    {
+      "platform": "Native Compose Android",
+      "task": "Launch-error repair",
+      "stimDevice": "Parked",
+      "stim": 68.915,
+      "stimCold": null,
+      "control": 76.065
+    },
+    {
+      "platform": "Native SwiftUI iOS",
+      "task": "App launch",
+      "stimDevice": "Parked",
+      "stim": 55.746,
+      "stimCold": 63.951,
+      "control": 73.01
+    },
+    {
+      "platform": "SwiftUI macOS",
+      "task": "Launch-error repair",
+      "stimDevice": "Local app",
+      "stim": 67.243,
+      "stimCold": null,
+      "control": 48.323
+    }
+  ]
+}

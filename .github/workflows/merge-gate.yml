@@ -32,8 +32,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
-          # Waits for every other check run, workflow run and commit status on
-          # the head SHA, then fails if any ended unsuccessfully.
+          # Waits for checks, workflow runs and commit statuses on the head SHA,
+          # excluding advisory workflows, then fails if any ended unsuccessfully.
           api() {
             for _ in 1 2 3; do
               if out=$(gh api --paginate "$@"); then
@@ -57,7 +57,8 @@ jobs:
             result=$(jq -n -c --argjson c "$checks" --argjson r "$runs" --argjson s "$statuses" --argjson self "$RUN_ID" '
               def ignored:
                 (.path == ".github/workflows/e2e-native.yml" and .title == "Native E2E (unrelated label)")
-                or (.path == ".github/workflows/merge-gate.yml" and .event == "workflow_dispatch");
+                or (.event == "workflow_dispatch"
+                    and (.path | IN(".github/workflows/windows-full.yml", ".github/workflows/windows-debug.yml", ".github/workflows/merge-gate.yml")));
               ($r | map(select(.id != $self and (ignored | not)))) as $runs
               | ($r | map(select(ignored) | .suite)) as $ignored
               | ($c | map(select(.name != "merge gate"))
