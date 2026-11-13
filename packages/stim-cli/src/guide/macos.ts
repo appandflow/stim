@@ -501,14 +501,11 @@ script such as mini-desktop.sh use these instead:
 
 The agent-device rows work once the host's agent field names agent-device.
 
-On macOS 27, agent-device screenshot of a hosted app can return an image of the
-window-sharing indicator (66x20 points, 132x40 pixels) instead of the app
-window. macOS adds that small window to the app while something captures the
-app, and agent-device picks it as the front window (callstack/agent-device#3961).
-snapshot -i lists it as an axdialog named "Window" with a
-WindowSharingSessionButton before the real window. Read the UI with snapshot
-until agent-device selects the app's main window. Commands that use the front
-window's frame, such as scroll, may also target the indicator.
+For screenshots and scrolling while a hosted app's window is being shared on
+macOS 27, use agent-device 0.21.37 or later on the hosting Mac. Earlier versions
+can select the macOS sharing indicator instead of the app window. If a
+screenshot is only 132x40 pixels, update agent-device on the host
+(https://github.com/callstack/agent-device/releases/tag/v0.21.37).
 
 DESKTOP DOGFOOD
 
