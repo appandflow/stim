@@ -107,13 +107,21 @@ function leadingTag(comment) {
   return /^@(internal|experimental)\b/.exec(body)?.[1] ?? null;
 }
 
-function parenBalance(text) {
-  let balance = 0;
-  for (const char of text) {
-    if (char === '(') balance += 1;
-    else if (char === ')') balance -= 1;
+/**
+ * Pushes and pops the parentheses of `text` on `stack`: `param` for one that opens a parameter list (after a name, a
+ * `?` or a type argument list, or starting `(name:`, `(name?:`, `(...` or `()`), `group` for a grouping parenthesis
+ * in a type such as `((A & {`.
+ */
+function trackParens(text, stack) {
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === ')') stack.pop();
+    if (char !== '(') continue;
+    const before = text.slice(0, index).trimEnd();
+    const after = text.slice(index + 1);
+    const param = /[\w?>]$/.test(before) || /^\s*(?:\)|\.\.\.|\w+\??:)/.test(after);
+    stack.push(param ? 'param' : 'group');
   }
-  return balance;
 }
 
 /**
@@ -131,7 +139,7 @@ export function normalizeDeclarations(text) {
   let module = '*';
   let top = '';
   let branch = 0;
-  let parens = 0;
+  const parens = [];
   let tag = '';
   const source = text
     .replace(/\r\n?/g, '\n')
@@ -151,7 +159,7 @@ export function normalizeDeclarations(text) {
     if (region) module = MODULE_KINDS[region[1] ?? region[2]] ?? '*';
     if (trimmed === '' || trimmed.startsWith('//')) continue;
     if (/^[\])}>;,]+$/.test(trimmed)) {
-      parens += parenBalance(trimmed);
+      trackParens(trimmed, parens);
       continue;
     }
     const exported = /^export \{(.*)\};?$/.exec(trimmed);
@@ -173,23 +181,23 @@ export function normalizeDeclarations(text) {
     const head = () => (branch ? `${top} @branch${branch}` : top);
     if (line === trimmed && /^[\])}]/.test(trimmed)) {
       branch += 1;
-      entries.push({ module, text: `${head()} @@0${parens > 0 ? 'p' : ''} ${tag}${trimmed}` });
+      entries.push({ module, text: `${head()} @@0${parens.includes('param') ? 'p' : ''} ${tag}${trimmed}` });
     } else if (line === trimmed) {
       const declaration = trimmed.replace(/^(declare const \w+) = .*;$/, '$1;');
       const declared = DECLARED.exec(declaration);
       if (declared) declaredIn.set(declared[1], module);
       top = `${tag}${declaration}`;
       branch = 0;
-      parens = 0;
+      parens.length = 0;
       entries.push({ module, text: top });
     } else {
       const depth = Math.max(
         1,
         Math.floor(line.slice(0, line.length - trimmed.length).replace(/\t/g, '  ').length / 2),
       );
-      entries.push({ module, text: `${head()} @@${depth}${parens > 0 ? 'p' : ''} ${tag}${trimmed}` });
+      entries.push({ module, text: `${head()} @@${depth}${parens.includes('param') ? 'p' : ''} ${tag}${trimmed}` });
     }
-    parens += parenBalance(trimmed);
+    trackParens(trimmed, parens);
     tag = '';
   }
   const lines = entries.map((entry) => `[${entry.module ?? declaredIn.get(entry.name) ?? '*'}] ${entry.text}`);
@@ -282,7 +290,7 @@ function publicDeclarations(lines) {
     const name = queue.pop();
     if (seen.has(name) || !byName.has(name)) continue;
     const own = byName.get(name);
-    if (own.some((line) => line.depth === null && line.internal)) continue;
+    if (own.every((line) => line.internal)) continue;
     seen.add(name);
     for (const line of own) {
       if (line.internal) continue;
@@ -327,13 +335,49 @@ function producedDeclarations(lines, produced) {
   return seen;
 }
 
+/**
+ * Declarations Stim builds and hands to a plugin: what the implemented interfaces' methods take, and the types that
+ * reaches. A wider union there gives an existing plugin a value it never handled.
+ */
+function pluginInputs(lines) {
+  const parsed = lines.map(parseLine).filter((line) => !line.internal);
+  const byName = new Map();
+  for (const line of parsed) if (line.name) byName.set(line.name, [...(byName.get(line.name) ?? []), line]);
+  const queue = [];
+  for (const name of IMPLEMENTED)
+    for (const line of byName.get(name) ?? []) {
+      if (line.inParams) queue.push(...identifiers(line.member ?? ''));
+      const method = line.member && !line.inParams ? splitMethod(line.member) : null;
+      if (method) queue.push(...identifiers(method.params));
+    }
+  const seen = new Set();
+  while (queue.length) {
+    const name = queue.pop();
+    if (seen.has(name) || !byName.has(name)) continue;
+    seen.add(name);
+    for (const line of byName.get(name))
+      for (const word of identifiers(
+        `${line.top.replace(/^.*?\b(?:interface|type|class) \w+/, '')} ${line.member ?? ''}`,
+      ))
+        if (byName.has(word)) queue.push(word);
+  }
+  return seen;
+}
+
 /** Added lines that give an existing produced declaration a new required member. */
+function memberName(member) {
+  return /^(?:readonly )?(\w+|"[^"]*"|\[[^\]]+\])/.exec(member ?? '')?.[1] ?? null;
+}
+
 function requiredMembers(added, baseline, produced) {
-  const existing = new Set(baseline.map(parseLine).map((line) => `${line.name}@${line.branch}`));
+  const parsed = baseline.map(parseLine);
+  const existing = new Set(parsed.map((line) => `${line.name}@${line.branch}`));
+  const members = new Set(parsed.map((line) => `${line.name}@${line.branch}@${line.depth}@${memberName(line.member)}`));
   return added.filter((raw) => {
     const line = parseLine(raw);
     if (!line.member || line.internal || line.inParams || !produced.has(line.name)) return false;
     if (!existing.has(`${line.name}@${line.branch}`)) return false;
+    if (members.has(`${line.name}@${line.branch}@${line.depth}@${memberName(line.member)}`)) return false;
     return /^(?:readonly )?(?:\w+|"[^"]*"|\[[^\]]+\])[(:<]/.test(line.member);
   });
 }
@@ -402,8 +446,8 @@ function breakingSection(notes) {
 }
 
 /**
- * What a new report means against the baseline: `same`; `additive` when it only adds lines, widens a union, adds
- * optional parameters, or changes a line that carries no compatibility; `accepted` when it removes or changes other
+ * What a new report means against the baseline: `same`; `additive` when it only adds lines, widens a union (except in
+ * what Stim hands a plugin), adds optional parameters, or changes a line that carries no compatibility; `accepted` when it removes or changes other
  * lines, or adds a required member to an object the other side builds, and, for each kind that owns one of them, that
  * kind's integer went up and the unreleased notes' `## Removed (breaking)` section names the new integer as
  * `<kind> <integer>`; else `breaking`. A line carries no compatibility when it is tagged `@internal`, or belongs to a
@@ -416,11 +460,13 @@ export function apiReportVerdict({ baseline, current, notes, untagged, produced,
   const added = missing(current, baseline);
   const required = requiredMembers(added, baseline, producedDeclarations(current, produced));
   const reachable = publicDeclarations(baseline);
+  const inputs = produced === 'implemented' ? pluginInputs(baseline) : new Set();
   const breaks = [
     ...removed.filter((line) => {
       if (/_API_VERSION: \d+;$/.test(line)) return false;
       const parsed = parseLine(line);
       if (parsed.internal || (parsed.name && !reachable.has(parsed.name))) return false;
+      if (inputs.has(parsed.name)) return true;
       return !added.some((next) => widens(line, next));
     }),
     ...required,
@@ -495,22 +541,37 @@ export function readBaseline(report = REPORTS[0]) {
   return reportLines(readFile(report));
 }
 
-/** The baseline `ref` committed, or null when it has none. */
-function baselineAt(ref, report) {
-  const shown = spawnSync('git', ['show', `${ref}:${report.baselineFile}`], { cwd: root, encoding: 'utf8' });
+/** The text of `path` at `ref`, or null when that ref has no such file. */
+function fileAt(ref, path) {
+  const shown = spawnSync('git', ['show', `${ref}:${path}`], { cwd: root, encoding: 'utf8' });
   return shown.status === 0 ? shown.stdout : null;
 }
 
 /**
- * Whether this tree may reset its reports: only while `.github/next-version` names the next major (the prerelease line
- * of a breaking release), and only once, so a baseline that already records the reset refuses another.
+ * Whether a tree may reset its reports, judged from that tree's files (`read` returns a repository file's text or
+ * null): only while `.github/next-version` names a later major than the published packages carry, the prerelease
+ * line of a breaking release.
  */
-function resetAllowed() {
-  const nextFile = join(root, '.github', 'next-version');
-  if (!existsSync(nextFile)) return false;
-  const next = Number(/^(\d+)\./.exec(readFileSync(nextFile, 'utf8').trim())?.[1]);
-  const current = Number(/^(\d+)\./.exec(JSON.parse(readFileSync(join(stimCli, 'package.json'), 'utf8')).version)?.[1]);
-  return next > current;
+export function resetAllowed(read) {
+  const next = Number(/^(\d+)\./.exec(read('.github/next-version')?.trim() ?? '')?.[1]);
+  const manifest = read('packages/stim-cli/package.json');
+  const current = Number(/^(\d+)\./.exec(manifest ? JSON.parse(manifest).version : '')?.[1]);
+  return Number.isInteger(next) && Number.isInteger(current) && next > current;
+}
+
+/**
+ * Whether a branch's reports may land on a base: `before` is the base's committed baseline, `committed` the branch's,
+ * `verdict` the branch's report against `before`, and `baseAllowsReset` whether the base's own files allow a reset.
+ * A baseline may not drop the base's reset header, and a breaking change passes only as the one reset: the branch
+ * records it, the base does not, and the base allows it.
+ */
+export function baseDecision({ before, committed, verdict, baseAllowsReset }) {
+  if (before.includes(RESET_HEADER) && !committed.includes(RESET_HEADER))
+    return { ok: false, reason: 'it drops the reset header the base baseline records' };
+  if (verdict.status !== 'breaking') return { ok: true };
+  if (committed.includes(RESET_HEADER) && !before.includes(RESET_HEADER) && baseAllowsReset)
+    return { ok: true, reset: true };
+  return { ok: false, reason: verdict.needs.join('; ') };
 }
 
 const RUN_UPDATE = 'node scripts/plugin-api-report.mjs --update';
@@ -521,7 +582,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const baseIndex = process.argv.indexOf('--base');
   const base = baseIndex === -1 ? null : process.argv[baseIndex + 1];
   const notes = existsSync(join(root, notesFile)) ? readFileSync(join(root, notesFile), 'utf8') : '';
-  if (reset && !resetAllowed()) {
+  const readHere = (path) => (existsSync(join(root, path)) ? readFileSync(join(root, path), 'utf8') : null);
+  if (reset && !resetAllowed(readHere)) {
     console.error('--reset is only for the prerelease line of a major: .github/next-version names no later major.');
     process.exit(1);
   }
@@ -570,18 +632,21 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       continue;
     }
     if (base === null) continue;
-    const before = baselineAt(base, report);
+    const before = fileAt(base, baselineFile);
     if (before === null) continue;
-    const against = apiReportVerdict({ ...options, baseline: reportLines(before), current });
-    if (against.status !== 'breaking') continue;
-    if (committed.includes(RESET_HEADER) && !before.includes(RESET_HEADER) && resetAllowed()) {
-      console.log(`${name}: ${baselineFile} records the one reset before the major, so ${base} is not compared.`);
+    const againstBase = apiReportVerdict({ ...options, baseline: reportLines(before), current });
+    const decision = baseDecision({
+      before,
+      committed,
+      verdict: againstBase,
+      baseAllowsReset: resetAllowed((path) => fileAt(base, path)),
+    });
+    if (decision.ok) {
+      if (decision.reset)
+        console.log(`${name}: ${baselineFile} records the one reset before the major against ${base}.`);
       continue;
     }
-    console.error(
-      `${name} breaks the baseline ${base} committed, and the committed baseline does not record an allowed reset:\n` +
-        against.needs.map((need) => `  * ${need}`).join('\n'),
-    );
+    console.error(`${name} cannot land on ${base}: ${decision.reason}.`);
     process.exitCode = 1;
   }
 }

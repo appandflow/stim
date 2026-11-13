@@ -1,11 +1,23 @@
 import { expect, test } from 'vitest';
-import { apiReportVerdict, normalizeDeclarations } from './plugin-api-report.mjs';
+import { apiReportVerdict, baseDecision, normalizeDeclarations, resetAllowed } from './plugin-api-report.mjs';
 
-const declarations = ({ version = 1, cacheVersion = 1, members = [], files = [], exports = [], timeout = '1e4' }) =>
+const declarations = ({
+  version = 1,
+  cacheVersion = 1,
+  members = [],
+  files = [],
+  exports = [],
+  timeout = '1e4',
+  platforms = '"ios" | "android"',
+}) =>
   `//#region ../cache/dist/provider-core-Zz99.d.mts\r
 declare const CACHE_PROVIDER_API_VERSION: ${cacheVersion};\r
 declare const PROVIDER_LOAD_TIMEOUT_MS = ${timeout};\r
+interface ResolveInput {
+  platform: ${platforms};
+}
 interface FileCacheCapability {
+  resolve(input: ResolveInput): Promise<string | null>;
   stat?(input: {
     key: string;
   }): Promise<{
@@ -34,7 +46,7 @@ const plugin = (options, baseline, notes = '') =>
     produced: 'implemented',
   }).status;
 
-const root = ({ version = 1, start = [], client = [], device = [] }) =>
+const root = ({ version = 1, start = [], client = [], device = [], android = [], merged = [] }) =>
   normalizeDeclarations(`declare const STIM_API_VERSION: ${version};
 interface StimStartOptions {
   waitSeconds?: number;
@@ -51,9 +63,30 @@ type StimBuildOptions = {
   platform: "android";
   buildCache?: boolean;
 };
+type StimPlanOptions = (({
+  platform: "ios";
+} & {
+  slot?: string;
+}) | ({
+  platform: "android";
+${android.map((line) => `  ${line}`).join('\n')}
+} & {
+  slot?: string;
+})) & {
+  signal?: AbortSignal;
+};
+interface StimResult {
+  ok: boolean;
+${merged.map((line) => `  ${line}`).join('\n')}
+}
+/** @internal Desktop only. */
+interface StimResult {
+  desktop?: string;
+}
 interface StimClient {
   start(options?: StimStartOptions): Promise<void>;
-  build(options: StimBuildOptions): Promise<void>;
+  build(options: StimBuildOptions): Promise<StimResult>;
+  plan(options: StimPlanOptions): Promise<void>;
   /** @internal For stim-server. */
   deviceTool(options: DeviceToolOptions): Promise<void>;
 ${client.map((line) => `  ${line}`).join('\n')}
@@ -168,4 +201,44 @@ test('a changed line of the stim report needs the stim integer, not a plugin kin
   const verdict = (version, notes) => stim(root({ version, client: ['gcReport(): Promise<void>;'] }), baseline, notes);
   expect(verdict(1, '')).toMatchObject({ status: 'breaking', needs: ['a bump of the stim integer (now 1)'] });
   expect(verdict(2, note('`gc` is `gcReport`, stim 2')).status).toBe('accepted');
+});
+
+test('a new required member inside grouping parentheses of an options type breaks', () => {
+  const baseline = root({});
+  expect(baseline).toContain('[*] type StimPlanOptions = (({ @@1 platform: "ios";');
+  expect(stim(root({ android: ['variant: string;'] }), baseline).status).toBe('breaking');
+  expect(stim(root({ android: ['variant?: string;'] }), baseline).status).toBe('additive');
+});
+
+test('a wider union in what Stim hands a plugin breaks; one in what the plugin returns does not', () => {
+  expect(plugin({ platforms: '"ios" | "android" | "macos"' }, {})).toBe('breaking');
+  expect(plugin({ files: ['size: number | bigint;'] }, { files: ['size: number;'] })).toBe('additive');
+});
+
+test('an @internal half of a merged interface does not exempt its public half', () => {
+  const baseline = root({ merged: ['count: number;'] });
+  expect(stim(root({}), baseline).status).toBe('breaking');
+});
+
+const filesAt = (next, version) => (path) =>
+  path === '.github/next-version'
+    ? next
+    : path === 'packages/stim-cli/package.json'
+      ? JSON.stringify({ version })
+      : null;
+
+test('a baseline cannot drop the reset header, and only a base on a major prerelease line allows the one reset', () => {
+  const header = '// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.\n';
+  const breaking = { status: 'breaking', needs: ['a bump of the stim integer (now 1)'] };
+  const same = { status: 'same', needs: [] };
+  expect(baseDecision({ before: header, committed: '', verdict: same, baseAllowsReset: true }).ok).toBe(false);
+  expect(baseDecision({ before: '', committed: header, verdict: breaking, baseAllowsReset: true })).toEqual({
+    ok: true,
+    reset: true,
+  });
+  expect(baseDecision({ before: header, committed: header, verdict: breaking, baseAllowsReset: true }).ok).toBe(false);
+  expect(baseDecision({ before: '', committed: header, verdict: breaking, baseAllowsReset: false }).ok).toBe(false);
+  expect(resetAllowed(filesAt('2.0.0\n', '1.40.0'))).toBe(true);
+  expect(resetAllowed(filesAt(null, '2.0.0'))).toBe(false);
+  expect(resetAllowed(filesAt('2.0.0\n', '2.0.0'))).toBe(false);
 });
