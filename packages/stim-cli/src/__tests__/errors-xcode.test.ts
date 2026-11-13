@@ -93,6 +93,13 @@ describe('real transcripts', () => {
 });
 
 describe('what is and is not a diagnostic', () => {
+  test('ignores a Swift parameter label in a source echo', () => {
+    const found = extractXcodeDiagnostics(
+      '/app/Auth.swift:12:16: error: cannot find type in scope\nstatic func map(error: ASAuthorizationError) -> Exception {',
+    );
+    expect(found).toEqual([{ file: '/app/Auth.swift', line: 12, column: 16, message: 'cannot find type in scope' }]);
+  });
+
   test('a development team error is a signing error however it is phrased', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);

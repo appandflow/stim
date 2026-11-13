@@ -14,7 +14,7 @@ const BUILD_FAILED = '** BUILD FAILED **';
 
 const POSITIONED = /^(\S[^\t]*?):(\d+):(?:(\d+):)?\s*(?:fatal\s+)?error:\s+(.+)$/;
 
-const UNPOSITIONED = /^(\S[^\t]*?)?\berror:\s+(.+)$/;
+const UNPOSITIONED = /^(?:(\S[^\t]*?):\s+)?(?:fatal\s+)?error:\s+(.+)$/;
 
 const SCRIPT_WRAPPER = /^error: ([\w.@/-]+) - (.*)$/;
 const XTRACE = /^\++ /;
