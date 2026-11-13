@@ -129,6 +129,9 @@ describe('launch crash benchmark', () => {
       reason: 'launch-crash-pre-capture-command-not-allowed',
       commandId: 'read',
     });
+    expect(
+      launchCrashDiagnosis([{ ...launch, command: `cat app/_layout.tsx && npx expo run:${platform}` }, logs], options),
+    ).toMatchObject({ reason: 'launch-crash-pre-capture-command-not-allowed', commandId: 'launch' });
   });
 
   it.each(['ios', 'android'])(

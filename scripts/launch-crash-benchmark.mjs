@@ -600,7 +600,6 @@ export function launchCrashDiagnosis(
   const unrecognizedBeforeCapture = preCaptureActivity.filter(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
-      !(arm === 'expo-agent-cli' && command === initialLaunch) &&
       !successfulAgentDeviceLaunch(command, agentDeviceLaunch) &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );
