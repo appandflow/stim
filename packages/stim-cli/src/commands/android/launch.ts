@@ -10,6 +10,8 @@ import {
 } from '../../devices/android.ts';
 import { teardownOwnedAvd } from '../../devices/teardown.ts';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
+import { runCancellationSignal } from '../../engine/native-run.ts';
+import { throwIfCancelled } from '../../cancellation.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -828,6 +830,8 @@ export async function finishAndroidRun({
   if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
   enterActivity(null);
+  const cancellation = runCancellationSignal(operation);
+  throwIfCancelled(cancellation, 'Android launch');
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = diagnoseBootFailure(booted, emuLog, runCommand, physical);
@@ -872,12 +876,14 @@ export async function finishAndroidRun({
     return fail(LAUNCH_FAILED, androidPackageProblem, packageRemedy, { lastBuildStatus: true });
   }
 
+  throwIfCancelled(cancellation, 'Android launch');
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
   if (adopting || (cleanAppState && !physical && !remoteDevice)) {
     const cleanupFailure = await cleanEmulatorAppState(device, serial, androidPackage, adopting, phase);
     if (cleanupFailure) return fail(cleanupFailure.code, cleanupFailure.message, cleanupFailure.remedy);
   }
 
+  throwIfCancelled(cancellation, 'Android launch');
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
   if (lostBeforeInstall) return lostBeforeInstall;
   enterPhase('install');
@@ -1283,8 +1289,8 @@ function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runComman
       code: booted.code,
       message: booted.reason ?? 'The emulator did not boot.',
       remedy: booted.remedy ?? null,
-      lines: [],
-      logPath: null,
+      lines: booted.lines ?? [],
+      logPath: booted.logPath ?? null,
     };
   }
   const diag = noDeviceDiagnostic({

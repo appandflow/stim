@@ -681,6 +681,25 @@ function slotKeepsAvd(root: string, slot: string): boolean {
   return Boolean(ownedAvdDirectory(android.avdName));
 }
 
+function joinPreparedAndroidBoot(
+  device: OwnedDeviceRecord,
+  boot: () => Promise<AndroidBootLike>,
+  failure: (error: unknown) => ReturnType<typeof avdSetupFailure>,
+): Promise<AndroidBootLike> {
+  if (!device.androidBoot) return boot();
+  return device.androidBoot.then(
+    ({ serial }) => ({ ok: true, serial }),
+    (error: unknown) => {
+      const { code, message, remedy, extra } = failure(error);
+      return { failed: true, code, reason: message, remedy, lines: extra?.lines, logPath: extra?.logPath };
+    },
+  );
+}
+
+async function finishPreparedAndroidBoot(device: OwnedDeviceRecord, boot: Promise<AndroidBootLike>) {
+  if (device.androidBoot) await boot;
+}
+
 async function localRunRefusal(
   budgetRefusal: { code: string; message: string; remedy: string } | null,
   target: { kind: string },
@@ -1229,7 +1248,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let device: OwnedDeviceRecord;
   let bootDuration = '';
   let bootPending = false;
-  let bootPromise: Promise<AndroidBootLike>;
+  let bootPromise!: Promise<AndroidBootLike>;
   let startRemoteBoot: (() => Promise<AndroidBootLike>) | null = null;
 
   if (hostedTarget) {
@@ -1307,6 +1326,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           systemImageFlag: systemImageFlag?.trim() || null,
           deviceProfile: target.deviceProfile,
           expectedDevice,
+          allowPendingAndroidBoot: !remoteDevice,
         },
         note: out,
         out,
@@ -1352,7 +1372,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               register: registerProject,
               notice: (line: string) => out(chalk.dim(phaseLine('lock', line))),
             })
-          : boot()
+          : joinPreparedAndroidBoot(device, boot, (error) => avdSetupFailure(error, root, emuLog))
       ).then((result) => {
         bootDuration = bootTimer();
         bootPending = false;
@@ -1708,6 +1728,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     artifactFailure = error;
     return reportRunFailure(error);
   } finally {
-    await settleArtifactCleanup(artifactFailure, preparedArtifact?.release());
+    try {
+      await settleArtifactCleanup(artifactFailure, preparedArtifact?.release());
+    } finally {
+      await finishPreparedAndroidBoot(device, bootPromise);
+    }
   }
 }
