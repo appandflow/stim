@@ -20,9 +20,19 @@ export function savedShareParams({ workspace, share }: LiveShareLink): Record<st
 
 export interface ShareRestoreDeps {
   /** Starts a share from `share.start` params, waiting for its device when that is not there yet. */
-  start: (params: Record<string, unknown>) => Promise<{ started: true; id: string } | Refusal>;
+  start: (
+    params: Record<string, unknown>,
+    origin: string | undefined,
+  ) => Promise<{ started: true; id: string } | Refusal>;
   /** Whether the saved entry is still `live` with the link and expiry `link` has: it is read again before every start. */
   wanted: (link: LiveShareLink) => boolean;
+  /** Why the saved share must not come back now (its exposure is not the one it was shared under); null when it may. */
+  refused: (link: LiveShareLink) => Promise<{ why: string; retry: boolean } | null>;
+  /**
+   * Marks the saved entry stopped, so no later boot counts it as work and `--reuse` starts it again deliberately;
+   * false when this server leaves the entry as it is.
+   */
+  leave: (link: LiveShareLink) => Promise<boolean>;
   /** Ends a share this module started after its saved entry was stopped or replaced. */
   end: (link: LiveShareLink, id: string) => Promise<void>;
   wait: (ms: number) => Promise<void>;
@@ -35,8 +45,9 @@ export interface ShareRestoreDeps {
  * the same link and passwords, until the saved expiry. A share the server cannot start yet (for example Tailscale is
  * not up after a restart) is tried again with a growing wait; one that is refused for its own sake (bad params, a link
  * already live) is left alone; one refused because the workspace's native-run claim is busy is tried again for as long
- * as the saved entry is wanted. A share stopped or replaced while a start was pending never stays up. Nothing here
- * writes the saved links.
+ * as the saved entry is wanted. A share whose exposure is not the one it was shared under, or whose entry does not
+ * say, is not started; a share-only server marks it stopped. A share stopped or replaced while a start was pending never stays up.
+ * Nothing else here writes the saved links.
  */
 export async function restoreSavedShares(
   deps: ShareRestoreDeps,
@@ -49,7 +60,21 @@ async function restoreOne(deps: ShareRestoreDeps, link: LiveShareLink): Promise<
   const what = `${link.share.platform}${link.share.slot === 'default' ? '' : `@${link.share.slot}`} of ${link.workspace}`;
   for (let attempt = 0; ; attempt++) {
     if (deps.closed() || !deps.wanted(link)) return;
-    const answer = await deps.start(savedShareParams(link));
+    const refused = await deps.refused(link);
+    if (refused !== null) {
+      if (refused.retry && attempt < RETRY_MS.length) {
+        await deps.wait(RETRY_MS[attempt] ?? 60_000);
+        continue;
+      }
+      if (refused.retry) {
+        return deps.log(`did not restore the web share of ${what}: ${refused.why}. It stays saved for a later start.`);
+      }
+      const stopped = await deps.leave(link);
+      return deps.log(
+        `did not restore the web share of ${what}: ${refused.why}.${stopped ? ' It stays stopped; stim share --reuse starts it again.' : ''}`,
+      );
+    }
+    const answer = await deps.start(savedShareParams(link), link.share.origin);
     if ('started' in answer) {
       if (!deps.wanted(link)) return deps.end(link, answer.id);
       return deps.log(`restored the web share of ${what}`);

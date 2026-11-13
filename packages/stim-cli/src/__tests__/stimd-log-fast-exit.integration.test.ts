@@ -1,16 +1,8 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const fault = vi.hoisted(() => ({ capture: false }));
 vi.mock('../process-identity.ts', async (original) => {
@@ -77,8 +69,7 @@ test.skipIf(process.platform === 'win32')('an unverified live child is retained 
       { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
       env,
     );
-    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-    const pid = Number(readFileSync(pidFile, 'utf8'));
+    const pid = await waitForPid(pidFile);
     const token = captureProcessToken(pid);
     if (!token) throw new Error('the fixture child has no process identity');
     const childIdentity = { pid, processToken: token };

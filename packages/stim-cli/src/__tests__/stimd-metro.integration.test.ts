@@ -22,6 +22,7 @@ import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { waitForPid } from './_pid-file.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -392,8 +393,7 @@ exports.runServer = (config) => new Promise((resolve) => {
       const first = await startStimd();
       await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro', state: 'started' });
       const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
-      await vi.waitFor(() => expect(existsSync(straggler)).toBe(true), { timeout: 10_000, interval: 20 });
-      sleeper = Number(readFileSync(straggler, 'utf8'));
+      sleeper = await waitForPid(straggler, 10_000);
       process.kill(supervisor.pid, 'SIGKILL');
       await vi.waitFor(() => expect(alive(supervisor.pid)).toBe(false), { timeout: 10_000, interval: 20 });
       expect(processGroupAlive(supervisor.pid)).toBe(true);

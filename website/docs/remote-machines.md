@@ -701,9 +701,11 @@ the Windows machine:
    ```
 
    The task starts at your logon and keeps running after you sign out; the
-   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `stim engine update`
-   and `stim engine rollback` work as on macOS and Linux, and an approved client can update
-   the engine remotely.
+   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. A Windows
+   task runs the build it was installed with; `stim engine update` and
+   `stim engine rollback` do not move it
+   ([#5602](https://github.com/appandflow/stim/issues/5602)). Install again after an
+   update to move it.
    `--path-prepend` puts the real Node first on the server's `PATH`. A version
    manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's
    config loader uses, and the build then fails with `fingerprint-mismatch`;

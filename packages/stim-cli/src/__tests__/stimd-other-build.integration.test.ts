@@ -263,7 +263,7 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(join(bin, 'xcrun'), 0o755);
     const childPids = () => {
       try {
-        return readFileSync(streamPids, 'utf8').trim().split('\n').map(Number);
+        return readFileSync(streamPids, 'utf8').trim().split('\n').filter(Boolean).map(Number);
       } catch {
         return [];
       }

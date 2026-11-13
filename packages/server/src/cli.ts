@@ -130,12 +130,14 @@ export class NetRefusal extends Error {}
 
 /**
  * stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends;
- * `requestUpdate` asks stimd to check for a newer engine.
+ * `requestUpdate` asks stimd to check for a newer engine; `requestRestart` asks it to exit once it is idle, so the
+ * service manager starts it again from the unit it rewrote.
  */
 export async function serve(
   options: NetOptions,
   idle: () => void,
   requestUpdate: (why: string) => void = () => {},
+  requestRestart: (why: string) => void = () => {},
 ): Promise<NetThread> {
   const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
@@ -208,7 +210,16 @@ export async function serve(
   const label = serviceManagerOrNull()?.runningLabel(process.env);
   if (label)
     void rewriteUnitToShim(label).then(
-      (rewritten) => rewritten && console.log(`Rewrote ${label} to start the Stim engine's stimd shim.`),
+      (rewritten) => {
+        if (rewritten) {
+          const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
+          console.log(
+            `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
+          );
+          if (reloaded) requestRestart('its service unit now starts the engine shim');
+        }
+        return rewritten;
+      },
       (error: Error) =>
         console.error(`stim-server: could not rewrite ${label} to name the stimd shim: ${error.message}`),
     );

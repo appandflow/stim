@@ -25,7 +25,7 @@ export interface ServiceSpec {
   host: string | null;
   node: string;
   script: string;
-  /** The engine store's `bin/stimd` shim, which a LaunchAgent names instead of `node` and `script` when it exists. */
+  /** The engine store's `bin/stimd` shim, which a LaunchAgent or systemd unit names instead of `node` and `script` when it exists. */
   stimd?: string;
   port: number;
   /** `KEY=VALUE` entries and directories the server applies after it reads the login shell's environment. The plist keeps the values in `EnvironmentVariables`, not in the server's arguments. */
@@ -145,8 +145,8 @@ export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPr
   ];
 }
 
-/** What a LaunchAgent runs after its host app: the `bin/stimd` shim with the server's options, else node and script. */
-export function launchdArguments(
+/** What a LaunchAgent or systemd unit runs: the `bin/stimd` shim with the server's options, else node and script. */
+export function jobArguments(
   spec: Pick<ServiceSpec, 'node' | 'script' | 'stimd' | 'port' | 'env' | 'pathPrepend'>,
 ): string[] {
   const args = serverArguments(spec);
@@ -183,9 +183,7 @@ export function renderPlist(spec: ServiceSpec): string {
     string(spec.label, '\t'),
     key('ProgramArguments', '\t'),
     '\t<array>',
-    ...[...(spec.host ? [spec.host, 'run'] : []), ...launchdArguments(spec)].map((argument) =>
-      string(argument, '\t\t'),
-    ),
+    ...[...(spec.host ? [spec.host, 'run'] : []), ...jobArguments(spec)].map((argument) => string(argument, '\t\t')),
     '\t</array>',
   ];
   const environment = new Map(Object.entries(spec.environment));

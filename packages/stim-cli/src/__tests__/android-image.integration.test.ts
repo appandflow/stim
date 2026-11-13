@@ -1,8 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { readCreatedDevices } from '@stim-cli/core/state';
+import * as ownership from '@stim-cli/core/ownership-claim';
+import * as identities from '@stim-cli/core/process-identity';
 import { decideSystemImage, ensureSystemImage, installSystemImage } from '../devices/android-image.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -116,6 +127,50 @@ test.skipIf(!roomToInstall)(
     });
     expect(existsSync(join(sdk, 'system-images'))).toBe(false);
   },
+);
+
+test.skipIf(!roomToInstall || process.platform === 'win32')(
+  'an sdkmanager that exits before its identity is read refuses with its own output',
+  async () => {
+    const tool = join(sdk, 'cmdline-tools', 'latest', 'bin', 'sdkmanager');
+    writeFileSync(tool, `#!${process.execPath}\nprocess.stdout.write('sdkmanager broke\\n');process.exit(1);\n`);
+    chmodSync(tool, 0o755);
+    const real = identities.captureProcessIdentity;
+    vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) =>
+      pid === process.pid ? real(pid) : { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' },
+    );
+    const result = await installSystemImage({ pkg: ARM, env, note: () => {} });
+    vi.restoreAllMocks();
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining('sdkmanager broke') });
+    expect(JSON.stringify(result)).not.toContain('Cannot record');
+  },
+);
+
+test.skipIf(!roomToInstall || process.platform === 'win32')(
+  'an sdkmanager still running after a NOT_FOUND read is recorded by a second read',
+  async () => {
+    const tool = join(sdk, 'cmdline-tools', 'latest', 'bin', 'sdkmanager');
+    writeFileSync(
+      tool,
+      `#!${process.execPath}\nsetTimeout(()=>{process.stdout.write('sdkmanager late\\n');process.exit(1)},2600);\n`,
+    );
+    chmodSync(tool, 0o755);
+    const real = identities.captureProcessIdentity;
+    let forced = 0;
+    vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
+      if (pid === process.pid || forced++ > 0) return real(pid);
+      return { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' };
+    });
+    const recorded = vi.spyOn(ownership, 'setClaimChild');
+    try {
+      const result = await installSystemImage({ pkg: ARM, env, note: () => {} });
+      expect(result).toMatchObject({ ok: false, message: expect.stringContaining('sdkmanager late') });
+      expect(recorded).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+  20_000,
 );
 
 test('an image left mid-install is never used, and under never it is refused instead of installed', async () => {
