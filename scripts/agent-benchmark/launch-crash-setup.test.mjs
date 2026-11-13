@@ -6,6 +6,12 @@ import { launchCrashSetup } from './launch-crash-setup.mjs';
 
 const systemImage = 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a';
 
+it.each(['ios', 'android'])('carries the same %s fixture outputs for the Expo CLI and control', (platform) => {
+  expect(launchCrashSetup({ platform, arm: 'expo-agent-cli', systemImage })).toEqual(
+    launchCrashSetup({ platform, arm: 'control', systemImage }),
+  );
+});
+
 it('carries reusable Android outputs without importing a sibling autolinking cache', () => {
   const root = mkdtempSync(join(tmpdir(), 'bench-android-carry-'));
   const source = join(root, 'source');

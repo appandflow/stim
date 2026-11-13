@@ -17,7 +17,7 @@ import { configInputsChanged, inputsChangedDuringBuild } from '../fingerprint/ch
 import { fingerprint, type Fingerprint } from '../fingerprint/evaluate.ts';
 import {
   fingerprintForBuild,
-  fingerprintInstallProblem,
+  fingerprintInstallWarning,
   fingerprintOffloadInputs,
   type FingerprintCheck,
 } from '../fingerprint/operation.ts';
@@ -396,9 +396,9 @@ function reactNativeAndroidArtifact(
         return null;
       }
       if (!hash || !lookupFingerprint || !storeFingerprint) return null;
-      const installProblem = fingerprintInstallProblem(root);
-      if (installProblem) {
-        phase('fingerprint', chalk.yellow(`${installProblem}; the build will be installed but not cached`));
+      const installWarning = fingerprintInstallWarning(root);
+      if (installWarning) {
+        phase('fingerprint', chalk.yellow(installWarning));
         return null;
       }
       const after = await computeFresh();
@@ -533,7 +533,7 @@ function reactNativeAndroidArtifact(
           }
         : {}),
       unchanged: async () => {
-        if (fingerprintInstallProblem(root)) return false;
+        if (fingerprintInstallWarning(root)) return false;
         const after = await computeFresh();
         return Boolean(after && after.hash === hash);
       },

@@ -40,6 +40,13 @@ test('names a removed workspace before recording state once status confirms it i
   }
 });
 
+test('explains why an open hosted viewer lost its live workspace even if the host still reports it ready', () => {
+  const device = { ...stopped, host: 'mini', running: true, state: 'ready' };
+  expect(deviceUnavailable({ ...unavailable, pathMissing: true, device })).toBe(
+    'This workspace is no longer on the machine.',
+  );
+});
+
 test('explains recording was off before reporting an empty range', () => {
   expect(deviceUnavailable({ ...unavailable, recordingDisabled: true, range: empty })).toBe(
     'Recording was off for this workspace.',
