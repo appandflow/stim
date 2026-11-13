@@ -91,6 +91,7 @@ import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
+import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -499,6 +500,11 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
+              recordDependencyInstall(
+                result.copied
+                  .filter((rel) => basename(rel) === 'node_modules' || basename(rel) === 'Pods')
+                  .map((rel) => join(target, rel)),
+              );
               const stale = reportCarriedStateHealth(
                 root,
                 target,

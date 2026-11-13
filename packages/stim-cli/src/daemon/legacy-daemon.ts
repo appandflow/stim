@@ -2,7 +2,7 @@ import { daemonClaimRoot, legacyDaemonSocket } from '@stim-cli/core/state';
 import { readClaimSet, type ClaimHolder, type ClaimOwner } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, waitForProcessExit, type ProcessIdentityStatus } from '../process-identity.ts';
 
-// compat C30 until 2.1.0
+// compat C32 until 2.1.0
 const EXIT_WAIT_MS = 3000;
 
 type Log = (level: 'info' | 'warn', event: string, message: string) => void;

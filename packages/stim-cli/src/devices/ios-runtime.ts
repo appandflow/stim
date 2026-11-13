@@ -14,7 +14,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, recordIdentityUnlessExited } from '../process-identity.ts';
 import { createLineReader, stripAnsi } from '../process-output.ts';
 import { iosRuntimeMatches, listIosRuntimesAsync } from './ios.ts';
 
@@ -119,6 +119,7 @@ export async function ensureIosRuntime({
       30_000,
     );
     heartbeat.unref();
+    let recordFailure: string | undefined;
     try {
       markClaimChildPending(held);
       if (slot?.claim) markClaimChildPending(slot.claim);
@@ -146,10 +147,21 @@ export async function ensureIosRuntime({
               if (slot?.claim) setClaimChild(slot.claim, claim.owner);
             } else {
               const captured = captureProcessIdentity(child.pid);
-              if (!captured.ok) throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
-              const identity = { pid: child.pid, processToken: captured.token };
-              setClaimChild(claim, identity);
-              if (slot?.claim) setClaimChild(slot.claim, identity);
+              if (captured.ok) {
+                const identity = { pid: child.pid, processToken: captured.token };
+                setClaimChild(claim, identity);
+                if (slot?.claim) setClaimChild(slot.claim, identity);
+              } else if (captured.code === 'NOT_FOUND') {
+                const pid = child.pid;
+                recordIdentityUnlessExited(
+                  child,
+                  (processToken) => {
+                    setClaimChild(claim, { pid, processToken });
+                    if (slot?.claim) setClaimChild(slot.claim, { pid, processToken });
+                  },
+                  (reason) => (recordFailure = reason),
+                );
+              } else throw new Error(`Cannot record the Xcode runtime installer: ${captured.reason}`);
             }
             child.stdout?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
             child.stderr?.on('data', (chunk) => reader.push(String(chunk).replace(/\r/g, '\n')));
@@ -163,7 +175,7 @@ export async function ensureIosRuntime({
       }
       signal?.throwIfAborted();
       return refuse(
-        `Xcode could not install iOS ${version}: ${(error instanceof Error ? error.message : String(error)).slice(-4000)}`,
+        `Xcode could not install iOS ${version}: ${recordFailure ? `Cannot record the Xcode runtime installer: ${recordFailure}. ` : ''}${(error instanceof Error ? error.message : String(error)).slice(-4000)}`,
         `Run \`${manual}\` on the simulator Mac for the full error. Xcode Settings > Components lists versions supported by its selected Xcode; update Xcode if the requested runtime is unsupported.`,
       );
     } finally {

@@ -14,6 +14,7 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, goneClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
+import { waitForPid } from './_pid-file.ts';
 
 let home: string;
 
@@ -172,15 +173,7 @@ test.skipIf(process.platform === 'win32')(
     refresh.installer.record(installer.pid);
     await once(installer, 'exit');
 
-    let grandchild = 0;
-    for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
-      try {
-        grandchild = Number(readFileSync(pidFile, 'utf-8'));
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    }
-    if (!grandchild) throw new Error('the installer never spawned its own child');
+    const grandchild = await waitForPid(pidFile, 4000);
 
     try {
       const claim = exclusiveClaimFile();

@@ -49,6 +49,7 @@ import {
   clearSourceCheckouts,
   rankDependencies,
   rankSourceDependencies,
+  wouldDelete,
   selectDependencies,
   SOURCE_RESTORE,
 } from './dependencies.ts';
@@ -552,28 +553,41 @@ async function dependenciesRung(context: RungContext): Promise<void> {
     };
     if (!context.act) {
       const unrestorable = await restoreProblem(dependency.candidate, restoreCache, context.operation);
-      if (unrestorable)
-        recordAction(
-          context,
-          {
-            rung: 5,
-            kind: 'delete-dependencies',
-            target: dependency.candidate.path,
-            workspace: dependency.workspace,
-            outcome: 'kept',
-            bytes: 0,
-            detail: unrestorable,
-          },
-          why,
-        );
-      else
-        await run({ ...context, why }, plan, {
-          restore: 'stim worktree warm',
-          bytes: async () => dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])),
-        });
+      const result: { status: 'kept' | 'would'; bytes: number; detail: string } = unrestorable
+        ? { status: 'kept', bytes: 0, detail: unrestorable }
+        : await wouldDelete(
+            dependency,
+            context.level,
+            wouldDetail(context),
+            context.operation,
+            context.measure ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path]))) : plan.bytes,
+          );
+      recordAction(
+        context,
+        {
+          rung: 5,
+          kind: 'delete-dependencies',
+          target: dependency.candidate.path,
+          workspace: dependency.workspace,
+          outcome: result.status,
+          bytes: result.bytes,
+          detail: result.detail,
+          ...(result.status === 'would' ? { restore: 'stim worktree warm' } : {}),
+        },
+        why,
+      );
       continue;
     }
-    const result = await clearDependency(dependency, idleMs, protectedRoot, worktrees, why, context.operation);
+    const result = await clearDependency(
+      dependency,
+      idleMs,
+      protectedRoot,
+      worktrees,
+      why,
+      context.operation,
+      true,
+      context.level,
+    );
     recordAction(
       context,
       {
@@ -731,6 +745,7 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         worktrees,
         context.operation,
         'the pressure idle threshold',
+        'critical',
       )
     : new Map();
   for (const dependency of due) {
@@ -743,13 +758,13 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
     };
     const result = context.act
       ? (results.get(dependency) ?? { status: 'kept' as const, bytes: 0, detail: 'it was not processed' })
-      : {
-          status: 'would' as const,
-          bytes: context.measure
-            ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])))
-            : plan.bytes,
-          detail: wouldDetail(context),
-        };
+      : await wouldDelete(
+          dependency,
+          'critical',
+          wouldDetail(context),
+          context.operation,
+          context.measure ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path]))) : plan.bytes,
+        );
     recordAction(
       context,
       {

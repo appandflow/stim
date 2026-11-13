@@ -2,6 +2,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { installRefusingLaunchctl } from './vitest.launchd-leftovers.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
 import { MACHINE_CLEANUP_TEST_GUARD_ENV } from './packages/stim-cli/src/stimd/passes/machine-cleanup-guard-env.ts';
 
@@ -31,6 +32,9 @@ process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());
 // inside the run's private TMPDIR, and Gradle's user home resolves there too.
 process.env[MACHINE_CLEANUP_TEST_GUARD_ENV] = realpathSync(tmpdir());
 process.env.GRADLE_USER_HOME = join(home, '.gradle');
+// A test never registers or removes a job in the developer's launchd domain: a `launchctl` that always fails comes
+// first on PATH, and a test of the launchd path puts its own stub before it.
+installRefusingLaunchctl(tmpdir());
 
 // Keep gh from reaching GitHub with the developer's credentials: with an empty
 // config dir and no token it exits 4 (signed out) without a network call.

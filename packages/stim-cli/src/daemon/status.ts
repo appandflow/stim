@@ -24,13 +24,13 @@ import { daemonMode, parseDaemonMode } from './mode.ts';
 export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus {
   const setting = daemonMode(env);
   let holder: ReturnType<typeof readClaimSet>['live'][number] | undefined;
-  // compat C30 until 2.1.0
+  // compat C32 until 2.1.0
   let older: ReturnType<typeof readClaimSet>['live'][number] | undefined;
   // compat end
   let unresolved: { path: string; reason: string } | undefined;
   try {
     const survey = readClaimSet(daemonClaimRoot());
-    // compat C30 until 2.1.0
+    // compat C32 until 2.1.0
     older = survey.live.some((entry) => entry.mode === 'shared')
       ? undefined
       : survey.live.find((entry) => entry.mode === 'exclusive');
@@ -51,7 +51,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     mode,
     ...(mode === setting ? {} : { setting }),
     running: holder ? { pid: holder.owner.pid, since: holder.startedAt } : null,
-    // compat C30 until 2.1.0
+    // compat C32 until 2.1.0
     ...(older
       ? { older: { pid: older.owner.pid, stop: legacyDaemonStop(older.owner.pid), verified: isStimDaemonClaim(older) } }
       : {}),
@@ -88,7 +88,7 @@ function clock(iso: string): string {
 
 export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
-  // compat C30 until 2.1.0
+  // compat C32 until 2.1.0
   if (status.older)
     return `Daemon: pid ${status.older.pid} from an older stim holds the daemon claim; it is not this stim's daemon; ${status.older.verified ? `the next command that starts stimd stops it, or run ${status.older.stop}` : `stimd does not stop it, so run ${status.older.stop}`}${claim}`;
   // compat end
@@ -151,7 +151,7 @@ export function daemonFindings(
   { now = Date.now(), serving = servingWorkspaces }: { now?: number; serving?: () => string[] } = {},
 ): Finding[] {
   const findings: Finding[] = [];
-  // compat C30 until 2.1.0
+  // compat C32 until 2.1.0
   if (status.older)
     findings.push({
       level: 'cost',

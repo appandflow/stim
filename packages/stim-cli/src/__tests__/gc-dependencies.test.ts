@@ -11,6 +11,7 @@ import {
   mkdirSync,
   mkdtempSync,
   chmodSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -165,7 +166,7 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
   return roots;
 }
 
-async function gcJson(pressure: 'high' | 'critical' = 'critical') {
+async function gcJson(pressure: 'normal' | 'high' | 'critical' = 'critical') {
   const stdout: string[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -290,6 +291,32 @@ test.skipIf(process.platform === 'win32')(
     }
     for (const name of ['repo', 'busy', 'pinned'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc keeps the dependencies of an idle worktree whose files were edited after the install, at critical too',
+  async () => {
+    const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    const modules = join(feature, 'node_modules');
+    const config = loadConfig();
+    if (!config) throw new Error('no config');
+    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
+    writeFileSync(join(modules, 'pkg', 'index.js'), 'patched by hand');
+    utimesSync(join(modules, 'pkg', 'index.js'), new Date(), new Date());
+
+    const { payload }: { payload: LevelPayload } = await gcJson('normal');
+    await quietly(() => runGc({ pressure: 'normal' }));
+
+    const kept = payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
+    expect(kept?.outcome).toBe('kept');
+    expect(kept?.detail).toContain('pkg/index.js');
+    expect(existsSync(join(modules, 'pkg', 'index.js'))).toBe(true);
+
+    await quietly(() => runGc({ pressure: 'critical' }));
+
+    expect(readFileSync(join(modules, 'pkg', 'index.js'), 'utf-8')).toBe('patched by hand');
   },
   60_000,
 );

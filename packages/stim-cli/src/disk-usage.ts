@@ -9,7 +9,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, recordIdentityUnlessExited } from '@stim-cli/core/process-identity';
 import {
   diskUsageCacheFile,
   diskUsageFailureFile,
@@ -69,7 +69,15 @@ function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
     if (child.pid === undefined) return;
     const captured = captureProcessIdentity(child.pid);
     if (!captured.ok) {
-      if (captured.code === 'NOT_FOUND') return;
+      if (captured.code === 'NOT_FOUND') {
+        const pid = child.pid;
+        recordIdentityUnlessExited(
+          child,
+          (processToken) => setClaimChild(claim, { pid, processToken }),
+          (reason) => debugLog.log('disk-walk-stopped', { reason }),
+        );
+        return;
+      }
       throw new Error(`Cannot record the disk usage walk: ${captured.reason}`);
     }
     setClaimChild(claim, { pid: child.pid, processToken: captured.token });

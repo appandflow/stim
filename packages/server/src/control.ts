@@ -7,7 +7,7 @@ import {
   setClaimChild,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, unlessChildExits } from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
 import { presenceKey, type PresenceHub } from './presence.ts';
@@ -604,14 +604,20 @@ function runQuietly(
     });
     child.on('close', finish);
     if (claim && child.pid !== undefined) {
-      try {
-        const identity = captureProcessIdentity(child.pid);
-        if (!identity.ok) throw new Error(`${label} child identity could not be established.`);
-        setClaimChild(claim, { pid: child.pid, processToken: identity.token });
-      } catch (error) {
+      const refuse = async (error: unknown) => {
         timedOut = true;
         clearTimeout(timer);
-        void terminate(child).then(() => reject(error));
+        await terminate(child);
+        reject(error);
+      };
+      const unavailable = new Error(`${label} child identity could not be established.`);
+      try {
+        const identity = captureProcessIdentity(child.pid);
+        if (identity.ok) setClaimChild(claim, { pid: child.pid, processToken: identity.token });
+        else if (identity.code === 'NOT_FOUND') unlessChildExits(child, () => void refuse(unavailable));
+        else throw unavailable;
+      } catch (error) {
+        void refuse(error);
       }
     }
   }).finally(() => {

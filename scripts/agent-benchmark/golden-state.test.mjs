@@ -1,5 +1,30 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertGoldenCleanup, matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
+import {
+  assertGoldenCleanup,
+  assertGoldenDaemonStopped,
+  matchesGoldenPreparation,
+  preparedAndroidEmulator,
+} from './golden-state.mjs';
+
+it.each(['run/stimd.json', 'run/stimd/exclusive/seed.claim', 'daemon/claim/shared/seed.claim'])(
+  'refuses to copy a golden home with %s even after its worktree was removed',
+  (entry) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-bench-golden-'));
+    try {
+      const record = join(home, entry);
+      mkdirSync(dirname(record), { recursive: true });
+      writeFileSync(record, '{}');
+      expect(() => assertGoldenDaemonStopped(home)).toThrow('still has daemon state');
+      rmSync(record);
+      expect(() => assertGoldenDaemonStopped(home)).not.toThrow();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
 
 const expected = {
   locale: 'C.UTF-8',
