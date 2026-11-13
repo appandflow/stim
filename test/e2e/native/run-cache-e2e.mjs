@@ -561,6 +561,11 @@ async function main() {
     for (const e of expected) {
       const stats = e.stats ?? dirStats(e.dir);
       if (!stats.exists || stats.files === 0) {
+        if (e.entries === undefined) {
+          c.ev(`${e.name}: nothing on disk at ${e.dir}, but the earlier checks populated it`);
+          missing.push(e);
+          continue;
+        }
         c.ev(`${e.name}: nothing on disk at ${e.dir}, so gc has nothing to report -- not counted against it`);
         continue;
       }
@@ -583,6 +588,7 @@ async function main() {
         `${missing.length} live cache(s) lack measured storage entries: ${missing.map((m) => m.dir).join(', ')}`,
       );
     }
+    assert(reported > 0, 'gc reported no populated cache directory');
     return c.pass(`gc reports measured storage for ${reported} populated cache and workspace output directories`);
   });
 
