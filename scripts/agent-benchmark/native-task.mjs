@@ -58,23 +58,23 @@ export function nativeTaskPrompt({
   ].join('\n\n');
 }
 
-export function nativeInteractionSeconds(commands, dispatchAt) {
+export function nativeInteractionSeconds(commands, { dispatchAt, runId, stateDirectory }) {
   const dispatch = Date.parse(dispatchAt);
+  const prefix = ['env', `AGENT_DEVICE_STATE_DIR=${stateDirectory}`, `AGENT_DEVICE_SESSION=${runId}`, 'agent-device'];
   let first = Infinity;
-  const incremented = new Set();
+  let incremented = false;
   for (const entry of commands) {
     if (entry.exitCode !== 0) continue;
     const words = literalShellArguments(topLevelShellCommand(entry.command));
-    if (!words) continue;
-    const command = words[0] === 'env' ? words.findIndex((word, index) => index > 0 && !word.includes('=')) : 0;
-    if (words[command] !== 'agent-device') continue;
-    const action = words[command + 1];
-    const session = words.find((word) => word.startsWith('AGENT_DEVICE_SESSION='));
+    if (!words || !prefix.every((word, index) => words[index] === word)) continue;
+    if (words.some((word) => /^--(?:session|state-dir)(?:=|$)/.test(word))) continue;
+    const action = words[prefix.length];
     const ended = Date.parse(entry.endedAt);
     if (!(ended >= dispatch)) continue;
-    if (['press', 'click', 'tap'].includes(action)) incremented.add(session);
-    if (!incremented.has(session) || !['press', 'click', 'tap', 'snapshot'].includes(action)) continue;
-    if (/\bCount: 1\b/.test(entry.output ?? '')) first = Math.min(first, ended);
+    if (action === 'open' || action === 'close') incremented = false;
+    if (['press', 'click', 'tap'].includes(action)) incremented = true;
+    if (!incremented || !['press', 'click', 'tap', 'snapshot'].includes(action)) continue;
+    if (/^(?!\s*- )[^\n]*\bCount: 1\b/m.test(entry.output ?? '')) first = Math.min(first, ended);
   }
   return first === Infinity ? null : (first - dispatch) / 1000;
 }

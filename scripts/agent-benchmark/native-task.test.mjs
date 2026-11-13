@@ -63,11 +63,16 @@ it('asks for an exact crash repair without naming the cause, revision marker or 
 });
 
 function interactionCommand(endedAt, output, exitCode = 0) {
-  return { command: 'env AGENT_DEVICE_SESSION=test agent-device press @e4 --settle', endedAt, output, exitCode };
+  return {
+    command: 'env AGENT_DEVICE_STATE_DIR=/tmp/bench AGENT_DEVICE_SESSION=test agent-device press @e4 --settle',
+    endedAt,
+    output,
+    exitCode,
+  };
 }
 
 it('measures the first successful interaction that displays Count: 1', () => {
-  const dispatch = '2026-11-13T15:00:00.000Z';
+  const run = { dispatchAt: '2026-11-13T15:00:00.000Z', runId: 'test', stateDirectory: '/tmp/bench' };
   const failed = interactionCommand('2026-11-13T15:00:10.000Z', 'Count: 1', 1);
   const click = interactionCommand('2026-11-13T15:00:12.300Z', '+ @e2 [text] "Count: 1"');
   const stale = interactionCommand('2026-11-13T14:59:59.000Z', 'Count: 1');
@@ -77,12 +82,23 @@ it('measures the first successful interaction that displays Count: 1', () => {
   };
   const batched = { ...click, command: `/bin/zsh -lc '${click.command} && agent-device screenshot /tmp/s.png'` };
   const wrapped = { ...click, command: `/bin/zsh -lc '${click.command}'` };
-  expect(nativeInteractionSeconds([failed, stale, screenshot, batched], dispatch)).toBeNull();
-  expect(nativeInteractionSeconds([failed, stale, screenshot, wrapped], dispatch)).toBe(12.3);
+  expect(nativeInteractionSeconds([failed, stale, screenshot, batched], run)).toBeNull();
+  expect(nativeInteractionSeconds([failed, stale, screenshot, wrapped], run)).toBe(12.3);
   const snapshot = {
     ...interactionCommand('2026-11-13T15:00:13.000Z', '@e2 [text] "Count: 1"'),
-    command: 'env AGENT_DEVICE_SESSION=test agent-device snapshot --force-full',
+    command: 'env AGENT_DEVICE_STATE_DIR=/tmp/bench AGENT_DEVICE_SESSION=test agent-device snapshot --force-full',
   };
-  expect(nativeInteractionSeconds([snapshot], dispatch)).toBeNull();
-  expect(nativeInteractionSeconds([{ ...click, output: 'Increment' }, snapshot], dispatch)).toBe(13);
+  expect(nativeInteractionSeconds([snapshot], run)).toBeNull();
+  const press = { ...click, output: 'Increment' };
+  const wrongState = { ...snapshot, command: snapshot.command.replace('/tmp/bench', '/tmp/other') };
+  const wrongSession = { ...snapshot, command: snapshot.command + ' --session other' };
+  expect(nativeInteractionSeconds([press, wrongState, wrongSession], run)).toBeNull();
+  const reopened = {
+    ...press,
+    command: press.command.replace('press @e4 --settle', 'open dev.example.app'),
+  };
+  expect(nativeInteractionSeconds([press, reopened, snapshot], run)).toBeNull();
+  const removed = { ...click, output: '- @e2 [text] "Count: 1"\n+ @e2 [text] "Count: 2"' };
+  expect(nativeInteractionSeconds([removed], run)).toBeNull();
+  expect(nativeInteractionSeconds([press, snapshot], run)).toBe(13);
 });

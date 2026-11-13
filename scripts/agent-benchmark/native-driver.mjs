@@ -597,7 +597,7 @@ function collect(runDir) {
     variant: meta.variant ?? 'standalone',
     arm: meta.arm,
     elapsedSeconds: (Date.parse(meta.finishedAt) - Date.parse(meta.dispatchAt)) / 1000,
-    interactionSeconds: nativeInteractionSeconds(evidence.commands, meta.dispatchAt),
+    interactionSeconds: nativeInteractionSeconds(evidence.commands, meta),
     usage,
     source,
     runnerResult: meta.runnerResult,
