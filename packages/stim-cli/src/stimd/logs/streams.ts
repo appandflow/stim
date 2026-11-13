@@ -5,7 +5,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { isJsonObject, readDevServerStop, type DevServerStopRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
+import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
@@ -20,13 +20,24 @@ import {
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { adbCommand, isLogCleanupError, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
-import { clearHistoryClaim, clearStreamClaim, pendingChildRemoveCommand, takeStreamClaim } from './claim.ts';
+import {
+  clearHistoryClaim,
+  clearStreamClaim,
+  pendingChildRemoveCommand,
+  streamOwnerGone,
+  takeStreamClaim,
+} from './claim.ts';
+import { deviceUnavailable, interruptedRecord, lastWrittenFor } from './interruption.ts';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
+import { readWebRecord } from '../../web/state.ts';
+import { loadConfig } from '../../workspace/config.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
 import { startIosLogStream } from './ios.ts';
 import {
   handedOverStream,
   markStreamHandedOver,
+  markStreamInterrupted,
   readCollectors,
   registerCollector,
   unregisterStream,
@@ -86,28 +97,34 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 }
 
 /**
- * Whether a successor stimd restarts a handed-over stream record found under `slotKey` of the workspace at canonical
- * `root`, or why it drops it. A record without a parseable `handedOverAt` counts as handed over at time 0, so any
- * recorded `stim stop` or idle stop drops it.
+ * Whether stimd restarts the stream record found under `slotKey` of the workspace at canonical `root`, or why it drops
+ * it. `lost` is true when capture stopped and will not come back, so the device log should say so. A handed-over
+ * record without a parseable `handedOverAt` counts as handed over at time 0, so any recorded `stim stop` or idle stop
+ * drops it; a record that was never handed over (its stimd died) is compared against its `startedAt` the same way.
  */
 export function resumeDecision(
   record: Record<string, unknown>,
   root: string,
   slotKey: string,
   devServerStop: DevServerStopRecord | null,
-): { spec: StreamSpec } | { reason: string } {
+): { spec: StreamSpec } | { reason: string; lost: boolean } {
   const spec = parseStreamSpec(record.spec);
-  if (!spec) return { reason: 'its record holds no stream spec' };
-  const handedOverAt = typeof record.handedOverAt === 'string' ? Date.parse(record.handedOverAt) : Number.NaN;
+  if (!spec) return { reason: 'its record holds no stream spec', lost: true };
+  const stamp = record.handover === true ? record.handedOverAt : record.startedAt;
+  const handedOverAt = typeof stamp === 'string' ? Date.parse(stamp) : Number.NaN;
   if (
     (devServerStop?.reason === 'requested' || devServerStop?.reason === 'idle') &&
     Date.parse(devServerStop.at) >= (Number.isNaN(handedOverAt) ? 0 : handedOverAt)
   )
-    return { reason: 'the workspace stopped after the handover' };
-  if (spec.physical) return { reason: 'a physical device console is not resumed' };
-  if (spec.root !== root) return { reason: `its spec names another workspace, ${spec.root}` };
+    return { reason: 'the workspace stopped after the handover', lost: false };
+  if (spec.physical) return { reason: 'a physical device console is not resumed', lost: true };
+  if (spec.root !== root)
+    return {
+      reason: `its spec names another workspace, ${spec.root}`,
+      lost: false,
+    };
   if (deviceSlotKey(spec.platform, spec.slot ?? 'default') !== slotKey)
-    return { reason: 'its spec names another slot' };
+    return { reason: 'its spec names another slot', lost: false };
   return { spec };
 }
 
@@ -135,7 +152,11 @@ export interface StreamTable {
     env?: Record<string, string>,
     through?: number,
     checkCoverage?: boolean,
-  ): Promise<{ revision: number; gone?: true; coverage?: 'pending' | 'covered' | 'failed' }>;
+  ): Promise<{
+    revision: number;
+    gone?: true;
+    coverage?: 'pending' | 'covered' | 'failed';
+  }>;
   running(): boolean;
   /** Whether a stream runs that a successor stimd cannot resume: a physical iPhone's console launches its app. */
   holdsRelaunch(): boolean;
@@ -162,6 +183,8 @@ type Stream = {
   slotKey: string;
   spec: StreamSpec;
   envHash: string;
+  env: Record<string, string>;
+  interruptedBy: string | null;
   aliases: Map<string, string>;
   claim: ClaimHandle;
   controller: AbortController;
@@ -173,7 +196,12 @@ type Stream = {
   signalling: Promise<void> | null;
   stopping: boolean;
   treePending: boolean;
-  lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
+  lastStop: {
+    pid: number | null;
+    identity: string;
+    signalled?: boolean;
+    error?: string;
+  } | null;
   pending: boolean;
   handover: boolean;
   initialQueryPending: boolean;
@@ -232,7 +260,9 @@ function signalChild(stream: Stream): Promise<void> {
         );
         lastStop.signalled = true;
       } else {
-        lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: true });
+        lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', {
+          group: true,
+        });
       }
     } catch (error) {
       lastStop.signalled = false;
@@ -366,6 +396,7 @@ function spawnChild(
 }
 
 const noop = () => {};
+const NO_LINE_LOOKBACK_MS = 5 * 60_000;
 class AndroidPidChanged extends Error {}
 
 function environmentHash(env: Record<string, string>): string {
@@ -403,6 +434,11 @@ const streamRecord = (streamId: string, spec: StreamSpec, runId: string | undefi
   ...(spec.physical ? {} : { spec, ...(runId ? { runId } : {}) }),
 });
 
+const stopStimdRemedy = () =>
+  process.platform === 'win32'
+    ? `Stopping this stimd (taskkill /PID ${process.pid} /F) is safe, and the next command starts a new one.`
+    : `Stopping this stimd (kill ${process.pid}) is safe, and the next command starts a new one.`;
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 export function createStreams(
   log: (message: string) => void,
   ownedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
@@ -412,7 +448,9 @@ export function createStreams(
   let writers: LogWriters | null = null;
   let writerFailure: Error | null = null;
   let writerRecovery: Promise<void> | null = null;
-  let ownedUnverified = false;
+  const unverified = new Set<string>();
+  const inflight = new Map<string, number>();
+  const restarted = new Set<string>();
   let ownedPending = 0;
   let closing = false;
   let closePromise: Promise<void> | null = null;
@@ -439,8 +477,12 @@ export function createStreams(
     )
       stream.controller.abort();
   };
-  const stop = async (stream: Stream): Promise<void> => {
+  const stop = async (stream: Stream, requested = true): Promise<void> => {
     stream.stopping = true;
+    if (requested) {
+      stream.handover = false;
+      stream.interruptedBy = null;
+    }
     const retry = stream.finalized;
     await abortAfterSignal(stream);
     if (
@@ -475,13 +517,29 @@ export function createStreams(
     // Node closes worker-owned process handles on worker exit: https://github.com/nodejs/node/issues/46569
     writers = createLogWriters(
       (error) => {
-        if (ownedRunning || ownedPending > 0) ownedUnverified = true;
         writerFailure = error;
         ownedRunning = true;
         log(`the logs worker failed: ${error.message}`);
-        for (const stream of new Set(streams.values())) {
+        const lost = [...new Set(streams.values())];
+        for (const stream of lost) {
+          if (!closing && !stream.spec.physical && !stream.stopping) {
+            stream.handover = true;
+            stream.interruptedBy = `the logs worker failed (${error.message})`;
+          }
           void abortAfterSignal(stream);
         }
+        if (closing) return;
+        for (const root of inflight.keys()) unverified.add(root);
+        try {
+          for (const root of Object.keys(loadConfig()?.projects ?? {})) {
+            try {
+              if (readWebRecord(root)?.chromeProcess) unverified.add(root);
+            } catch {}
+          }
+        } catch (failure) {
+          log(`the config cannot be read to find owned browsers: ${errorText(failure)}`);
+        }
+        recover(lost, error);
       },
       (streamId) => {
         const stream = [...streams.values()].find((entry) => entry.id === streamId);
@@ -767,6 +825,8 @@ export function createStreams(
       slotKey,
       spec: { ...input, root, slot },
       envHash,
+      env,
+      interruptedBy: null,
       aliases: new Map([[key, slotKey]]),
       claim,
       controller,
@@ -844,7 +904,7 @@ export function createStreams(
       await waitChild(stream);
       await sink.closed().catch((error: unknown) => log(`device log stream ${id} could not flush: ${String(error)}`));
       if ([...streams.values()].includes(stream)) {
-        if (stream.handover) markStreamHandedOver(root, id);
+        if (stream.handover) markStreamHandedOver(root, id, stream.interruptedBy ?? undefined);
         else unregisterStreamAll(root, id);
         if (!releaseClaim(claim)) throw new Error(`the device log claim at ${claim.root} changed during cleanup`);
         for (const alias of stream.aliases.keys()) if (streams.get(alias) === stream) streams.delete(alias);
@@ -926,7 +986,11 @@ export function createStreams(
         let child: ChildProcess;
         if (input.platform === 'android') {
           if (!input.serial || !options.pid) throw new Error('the Android log stream has no serial or app pid');
-          child = startAndroidLogcat({ serial: input.serial, pid: options.pid, spawnFn });
+          child = startAndroidLogcat({
+            serial: input.serial,
+            pid: options.pid,
+            spawnFn,
+          });
         } else if (!input.udid) throw new Error('the iOS log stream has no device id');
         else if (input.physical) {
           if (!input.bundleId) throw new Error('the iOS device console has no bundle id');
@@ -975,34 +1039,143 @@ export function createStreams(
     });
     return { streamId: id };
   };
-  const resumeIn = async (root: string, env: Record<string, string>): Promise<void> => {
-    const groups = new Map<string, { specs: StreamSpec[]; runId?: string }>();
+  const writeLost = async (
+    root: string,
+    slotKey: string,
+    streamId: string,
+    spec: StreamSpec | undefined,
+    platform: 'ios' | 'android',
+    runId: string | undefined,
+    record: Record<string, unknown>,
+  ): Promise<void> => {
+    const slot = slotKey.split(':')[1] ?? 'default';
+    const sink = await (
+      await getWriters()
+    ).open(
+      {
+        streamId,
+        slotKey,
+        root,
+        platform,
+        physical: true,
+        runId,
+        attribution: slot === 'default' ? {} : { slot, deviceId: spec?.udid ?? spec?.serial },
+      },
+      () => {},
+    );
+    sink.writer.write(record);
+    await sink.closed();
+  };
+  // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
+  const resumeIn = async (
+    root: string,
+    env: Record<string, string>,
+    envs: Map<string, Record<string, string>> = new Map(),
+    skip: Set<string> = new Set(),
+  ): Promise<void> => {
+    const groups = new Map<
+      string,
+      {
+        specs: StreamSpec[];
+        runId?: string;
+        reason: string | null;
+        startedAt: string | undefined;
+      }
+    >();
     const state = readWorkspaceState(root);
     const devServerStop = readDevServerStop(state);
+    const live = new Set([...streams.values()].map((stream) => stream.id));
+    const file = join(workspaceLogsDir(root), 'device.ndjson');
     for (const [slotKey, record] of Object.entries(state?.collectors ?? {})) {
-      if (!handedOverStream(record)) continue;
+      if (!isJsonObject(record) || record.kind !== 'stream' || typeof record.streamId !== 'string') continue;
+      const id = record.streamId;
+      if (live.has(id) || skip.has(id)) continue;
+      const handedOver = handedOverStream(record);
+      if (!handedOver && typeof record.interruptedAt === 'string') continue;
+      const crashed = !handedOver;
+      const reason =
+        typeof record.interruptedBy === 'string'
+          ? record.interruptedBy
+          : crashed
+            ? 'the stimd that captured it exited without stopping it'
+            : null;
+      if (crashed) {
+        const owner = streamOwnerGone(root, id);
+        if (!owner.gone) {
+          ownedLog(
+            'warn',
+            'device_log_stream_unverified',
+            `device log stream ${id} in ${root} was not resumed: ${owner.reason}`,
+          );
+          continue;
+        }
+      }
       const decision = resumeDecision(record, root, slotKey, devServerStop);
-      if ('reason' in decision) {
-        ownedLog(
-          'info',
-          'device_log_stream_dropped',
-          `device log stream ${record.streamId} in ${root}: ${decision.reason}`,
-        );
-        unregisterStream(root, slotKey, record.streamId);
+      const parsed = parseDeviceSlotKey(slotKey);
+      let refusal = 'reason' in decision ? decision : null;
+      if (!refusal && crashed && 'spec' in decision) {
+        const why = await deviceUnavailable(decision.spec);
+        if (why) refusal = { reason: why, lost: true };
+      }
+      if (refusal) {
+        ownedLog('info', 'device_log_stream_dropped', `device log stream ${id} in ${root}: ${refusal.reason}`);
+        if (refusal.lost && reason !== null && parsed) {
+          try {
+            await writeLost(
+              root,
+              slotKey,
+              id,
+              parseStreamSpec(record.spec) ?? undefined,
+              parsed.platform,
+              typeof record.runId === 'string' ? record.runId : undefined,
+              interruptedRecord({
+                platform: parsed.platform,
+                from: (await lastWrittenFor(file, id)).record,
+                until: Date.now(),
+                reason: `${reason}; it was not restarted because ${refusal.reason}`,
+                outcome: 'lost',
+              }),
+            );
+          } catch (error) {
+            ownedLog('warn', 'device_log_stream_dropped', `${id} in ${root}: ${String(error)}`);
+          }
+        }
+        if (handedOver) unregisterStream(root, slotKey, id);
+        else if (refusal.lost) markStreamInterrupted(root, id);
         continue;
       }
-      const { spec } = decision;
-      const group = groups.get(record.streamId) ?? {
+      if (!('spec' in decision)) continue;
+      const group = groups.get(id) ?? {
         specs: [],
+        reason,
+        startedAt: typeof record.startedAt === 'string' ? record.startedAt : undefined,
         ...(typeof record.runId === 'string' ? { runId: record.runId } : {}),
       };
-      group.specs.push(spec);
-      groups.set(record.streamId, group);
+      group.specs.push(decision.spec);
+      groups.set(id, group);
     }
-    for (const [id, { specs, runId }] of groups) {
+    for (const [id, { specs, runId, reason, startedAt }] of groups) {
+      const streamEnv = envs.get(id) ?? env;
       try {
+        const last = await lastWrittenFor(file, id);
+        const since =
+          last.line !== null ? last.line + 1 : Math.max(Date.parse(startedAt ?? ''), Date.now() - NO_LINE_LOOKBACK_MS);
         for (const [index, spec] of specs.entries())
-          await startLocked(spec, env, undefined, runId, index === 0 ? id : undefined);
+          await startLocked(spec, streamEnv, undefined, runId, index === 0 ? id : undefined);
+        const stream = [...streams.values()].find((entry) => entry.id === id);
+        if (stream) {
+          if (reason !== null)
+            stream.sink.writer.write(
+              interruptedRecord({
+                platform: stream.spec.platform,
+                from: last.record ?? (Number.isNaN(since) ? null : since),
+                until: Date.now(),
+                reason,
+                outcome: 'backfill',
+              }),
+            );
+          if (!Number.isNaN(since)) scheduleBackfill(stream, since, stream.controller.signal, streamEnv, 0);
+        }
         ownedLog('info', 'device_log_stream_resumed', `resumed device log stream ${id} in ${root}`);
       } catch (error) {
         ownedLog(
@@ -1013,11 +1186,77 @@ export function createStreams(
       }
     }
   };
+  const tracked = async <T>(root: string, work: () => Promise<T>): Promise<T> => {
+    ownedPending++;
+    inflight.set(root, (inflight.get(root) ?? 0) + 1);
+    try {
+      return await work();
+    } finally {
+      const left = (inflight.get(root) ?? 1) - 1;
+      if (left > 0) inflight.set(root, left);
+      else inflight.delete(root);
+      ownedPending--;
+    }
+  };
+  const syncRoot = (root: string): Promise<string | null> =>
+    tracked(root, async () => {
+      try {
+        const w = await getWriters();
+        await w.ownedSync(root);
+        if (w === writers && !writerFailure) unverified.delete(root);
+        return null;
+      } catch (error) {
+        return errorText(error);
+      }
+    });
+  function recover(lost: Stream[], error: Error): void {
+    if (!lost.length && !unverified.size) return;
+    void (async () => {
+      await Promise.allSettled(lost.map((stream) => stream.done));
+      const marked = lost.filter((stream) => stream.interruptedBy !== null);
+      const again = marked.filter((stream) => restarted.has(stream.id));
+      const first = marked.filter((stream) => !restarted.has(stream.id));
+      for (const stream of first) restarted.add(stream.id);
+      const envs = new Map(first.map((stream) => [stream.id, stream.env]));
+      for (const root of new Set(first.map((stream) => stream.root))) {
+        if (closing) return;
+        await serialize(root, () =>
+          resumeIn(root, first[0]?.env ?? {}, envs, new Set(again.map((stream) => stream.id))),
+        ).catch((failure: unknown) => log(`device log streams in ${root} were not restarted: ${String(failure)}`));
+      }
+      const stopped = [
+        ...again.map((stream) => ({
+          stream,
+          reason: `the logs worker failed again (${error.message}) after stimd restarted this stream; logging stopped here. The next stim ios|android in this workspace, or a stimd restart, starts it again`,
+        })),
+        ...lost
+          .filter((stream) => stream.spec.physical && !stream.stopping)
+          .map((stream) => ({
+            stream,
+            reason: `the logs worker failed (${error.message}); restarting a physical device console would launch the app again`,
+          })),
+      ];
+      for (const { stream, reason } of stopped) {
+        const platform = stream.spec.platform;
+        await writeLost(
+          stream.root,
+          stream.slotKey,
+          stream.id,
+          stream.spec,
+          platform,
+          undefined,
+          interruptedRecord({ platform, from: null, until: Date.now(), reason, outcome: 'lost' }),
+        ).catch((failure: unknown) => log(`could not record the interrupted stream: ${String(failure)}`));
+      }
+      for (const root of unverified) if (!closing) await syncRoot(root);
+    })().catch((failure: unknown) => log(`logs worker recovery failed: ${String(failure)}`));
+  }
   return {
     async ownedSync(root) {
+      if (root !== undefined) return syncRoot(root);
       ownedPending++;
       try {
-        await (await getWriters()).ownedSync(root);
+        await (await getWriters()).ownedSync();
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
@@ -1026,30 +1265,30 @@ export function createStreams(
       }
     },
     async ownedDrain(root) {
-      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
-      ownedPending++;
-      try {
-        await (await getWriters()).ownedDrain(root);
-        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
-        return null;
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      } finally {
-        ownedPending--;
-      }
+      const refusal = `the previous owned log worker exited before the browser output of ${root} could be verified. ${stopStimdRemedy()}`;
+      if (unverified.has(root)) return refusal;
+      return tracked(root, async () => {
+        try {
+          await (await getWriters()).ownedDrain(root);
+          return unverified.has(root) ? refusal : null;
+        } catch (error) {
+          return errorText(error);
+        }
+      });
     },
     async ownedObserveWeb(root, pid, token) {
-      ownedPending++;
-      try {
-        await (await getWriters()).ownedObserveWeb(root, pid, token);
-        return null;
-      } catch (error) {
-        return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
-      } finally {
-        ownedPending--;
-      }
+      return tracked(root, async () => {
+        try {
+          const w = await getWriters();
+          await w.ownedObserveWeb(root, pid, token);
+          if (w === writers && !writerFailure) unverified.delete(root);
+          return null;
+        } catch (error) {
+          return errorText(error) || 'the browser observer failed';
+        }
+      });
     },
-    ownedRunning: () => ownedRunning || ownedUnverified,
+    ownedRunning: () => ownedRunning || unverified.size > 0,
     async start(
       input: StreamSpec,
       env: Record<string, string>,
@@ -1157,7 +1396,10 @@ export function createStreams(
           : coverage?.status;
       };
       if (stream.revision > after || (checkCoverage && coverageStatus() !== 'pending'))
-        return { revision: stream.revision, ...(coverage ? { coverage: coverageStatus() } : {}) };
+        return {
+          revision: stream.revision,
+          ...(coverage ? { coverage: coverageStatus() } : {}),
+        };
       signal?.throwIfAborted();
       return new Promise((resolve, reject) => {
         const finish = (gone: boolean) => {
@@ -1205,11 +1447,11 @@ export function createStreams(
       closePromise ??= (async () => {
         await Promise.all(queues.values());
         if (options?.handover) for (const stream of streams.values()) stream.handover = !stream.spec.physical;
-        const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
+        const results = await Promise.allSettled([...new Set(streams.values())].map((stream) => stop(stream, false)));
         const recovery = await Promise.allSettled([writerRecovery]);
         const owned = await Promise.allSettled([writers?.ownedClose()]);
         const closed = await Promise.allSettled([writers?.close()]);
-        if (ownedUnverified)
+        if (unverified.size)
           throw new Error('the previous owned log worker exited before its output could be verified');
         const failure = results.find((result) => result.status === 'rejected');
         if (failure?.status === 'rejected') throw failure.reason;

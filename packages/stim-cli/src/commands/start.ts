@@ -927,18 +927,18 @@ export async function startDevServer(
               `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
             ),
           );
-          const healthy = await waitForMetro({
+          const found = await waitForMetro({
             root,
             port,
             seconds: waitSeconds,
             aborted: managedTunnel ? managedTunnelExited : undefined,
           });
-          if (!healthy) {
+          if (!found.metro) {
             if (managedTunnelExited()) return failExitedManagedTunnel();
             return fail({
               code: 'STIM_METRO_TIMEOUT',
               message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
-              lines: logTailLines(metroOutput),
+              lines: [lastCheckLine(found, port), ...logTailLines(metroOutput)],
               remedy: 'Run `stim stop` to halt it, then `stim start` again.',
             });
           }
@@ -990,7 +990,7 @@ export async function startDevServer(
         const request = metro.request ?? startMetro(publicOrigin);
         const refused = () => request.answer === null || request.answer?.op === 'error';
 
-        const healthy = await waitForMetro({
+        const found = await waitForMetro({
           root,
           port,
           seconds: waitSeconds,
@@ -1001,7 +1001,7 @@ export async function startDevServer(
         });
         request.announce(true);
 
-        if (!healthy) {
+        if (!found.metro) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
           const answer = request.answer;
           if (answer === null)
@@ -1012,11 +1012,15 @@ export async function startDevServer(
             });
           const exited = answer?.op === 'error' && answer.code === 'metro-exited';
           if (answer?.op === 'error' && !exited) return fail(metroRefusal(answer, port));
-          const lines = failureEvidence({
-            logFile: metroOutput,
-            logsDir,
-            sinceTs: request.since,
-          });
+          const lines = [
+            lastCheckLine(found, port),
+            `stimd: ${answer === undefined ? 'no answer yet' : `answered ${String(answer.state ?? answer.op)}`}`,
+            ...failureEvidence({
+              logFile: metroOutput,
+              logsDir,
+              sinceTs: request.since,
+            }),
+          ];
           const failure: StartRefusalArgs = exited
             ? {
                 code: 'STIM_SUPERVISOR_EXITED',
@@ -1330,22 +1334,24 @@ async function waitForMetro({
   seconds: number;
   aborted?: () => boolean;
   probe?: (port: number, root: string) => Promise<MetroResolution>;
-}): Promise<boolean> {
+}): Promise<MetroResolution> {
   return trace.spanAsync(
     'wait for metro',
     async () => {
       const deadline = Date.now() + seconds * 1000;
       while (Date.now() < deadline) {
         const resolution = await probe(port, root);
-        if (resolution.metro) return true;
-        if (aborted()) return false;
+        if (resolution.metro || aborted()) return resolution;
         await waitForStartup(POLL_MS);
       }
-      const last = await probe(port, root);
-      return Boolean(last.metro);
+      return probe(port, root);
     },
     { port },
   );
+}
+
+function lastCheckLine(found: MetroResolution, port: number): string {
+  return `last check: ${found.notOurs ?? (found.missing ? `nothing listens on port ${port}` : 'no answer')}`;
 }
 
 async function waitForExpoTunnel({

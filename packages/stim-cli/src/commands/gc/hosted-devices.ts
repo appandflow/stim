@@ -25,7 +25,12 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../../ownership-claim.ts';
-import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../../process-identity.ts';
+import {
+  captureProcessIdentity,
+  inspectProcessIdentity,
+  unlessChildExits,
+  type ProcessRecord,
+} from '../../process-identity.ts';
 import { getExecutor } from '../../exec.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { describeError } from './eas-sessions.ts';
@@ -189,8 +194,12 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle,
     });
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
     if (!captured?.ok || child.pid === undefined) {
-      notice = 'Hosted worker identity unavailable; no native request was sent.';
-      cancel();
+      const unavailable = () => {
+        notice = 'Hosted worker identity unavailable; no native request was sent.';
+        cancel();
+      };
+      if (captured?.ok === false && captured.code === 'NOT_FOUND') unlessChildExits(child, unavailable);
+      else unavailable();
       return;
     }
     identity = { pid: child.pid, processToken: captured.token };

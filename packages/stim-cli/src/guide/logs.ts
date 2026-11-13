@@ -248,6 +248,17 @@ THE RECORD
              On Android, check that adb shell date works and retry the launch.
              If local device logs cannot start, the app keeps running and its
              launch remains unverified.
+    collector_interrupted warns that capture of a simulator or emulator stream
+             stopped and stimd restarted it (or could not). interruptedFrom and
+             interruptedUntil bound the gap in ms; msg says why: stimd died, the
+             logs worker failed, or the device was no longer owned and booted.
+             The gap is then backfilled from the last written line: iOS from
+             the simulator's log store at info level and above, Android from
+             logcat's buffer for the app's current pid. Debug lines, evicted
+             lines and an earlier pid's lines are lost. A physical iPhone
+             console is never restarted (that would launch the app again), so
+             the record says its lines are lost. It is a warn, so
+             \`--errors\` does not list it.
     collector_backfill_dedup_limited warns that a busy overlap exceeded the
              bounded deduplication window; duplicate records may remain.
              Different native timestamp spellings or clock alignments can also

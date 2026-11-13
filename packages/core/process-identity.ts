@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { capture, check, decode } from 'unique-pid';
 
 export interface ProcessRecord {
@@ -16,6 +17,69 @@ export function captureProcessIdentity(pid: number): CapturedIdentity {
   const result = capture(pid);
   if (result.ok) return { ok: true, token: result.value };
   return { ok: false, reason: `${result.error.code} (${result.error.message})`, code: result.error.code };
+}
+
+export const EXITED_CHILD_GRACE_MS = 2000;
+
+type ObservableChild = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'once'>;
+
+/**
+ * A child that exited before its identity was read is a zombie, and capture reports `NOT_FOUND` for it. That code is
+ * not proof of exit: a live process misread as not found would run with no claim record. After a `NOT_FOUND`
+ * capture, this resolves true only once the child's own `exit` is seen, and false when it is not seen within `graceMs`.
+ */
+export function childExitedWithin(child: ObservableChild, graceMs: number = EXITED_CHILD_GRACE_MS): Promise<boolean> {
+  if (child.exitCode != null || child.signalCode != null) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), graceMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+/**
+ * Runs `onLive` when a child whose capture read `NOT_FOUND` has not been seen to exit; see {@link childExitedWithin}.
+ * A throwing `onLive` is logged, not raised, so it cannot become an unhandled rejection.
+ */
+export function unlessChildExits(child: ObservableChild, onLive: () => void, graceMs?: number): void {
+  void (async () => {
+    if (await childExitedWithin(child, graceMs)) return;
+    try {
+      onLive();
+    } catch (error) {
+      console.error(`stim: a child whose identity was not found could not be handled: ${String(error)}`);
+    }
+  })();
+}
+
+/**
+ * For a caller that must record a child's identity but read `NOT_FOUND`: when the child's own exit is not seen within
+ * the grace, a live process is capturable, so read it again and give the token to `record`. A child that still cannot
+ * be read, or whose record fails, is stopped through its handle, so nothing runs without a record, and `stopped` gets
+ * the reason.
+ */
+export function recordIdentityUnlessExited(
+  child: ObservableChild & Pick<ChildProcess, 'pid' | 'kill'>,
+  record: (token: string) => void,
+  stopped: (reason: string) => void,
+  graceMs?: number,
+): void {
+  unlessChildExits(
+    child,
+    () => {
+      const again = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      try {
+        if (!again?.ok) throw new Error(again?.reason ?? 'the process has no pid');
+        record(again.token);
+      } catch (error) {
+        stopped(error instanceof Error ? error.message : String(error));
+        child.kill('SIGKILL');
+      }
+    },
+    graceMs,
+  );
 }
 
 export function captureProcessToken(pid: number): string | null {

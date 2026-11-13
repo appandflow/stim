@@ -12,7 +12,7 @@ Stim 2.0 is a breaking release. Four mechanisms that carried older builds across
 the one-engine migration are gone, and each unsupported case ends in a refusal
 that names its remedy:
 
-- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C30 replaces it below.
+- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C32 replaces it below.
 - C23, the net thread's probe of port 7787 for a pre-1.43 stim-server.
 - C25, stimd stopping dev server supervisors and device log collectors of
   another engine build at an engine switch.
@@ -43,7 +43,7 @@ its workspaces stop: it stays until every workspace in the home is dormant,
 any 1.40 command starts it. Refusing it therefore cost up to three days after an
 upgrade (#5620).
 
-stimd takes over from it before it takes the shared claim (compat C30, ends
+stimd takes over from it before it takes the shared claim (compat C32, ends
 2.1.0), at every stimd start whatever `daemon.mode` says: `off` still starts stimd
 for Metro, the tunnel and device logs, and those need the claim. It acts only when
 the claim is exclusive, its `socket` is this home's pre-2.0 daemon socket, it has a

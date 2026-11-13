@@ -45,7 +45,11 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     if (expected !== undefined && holder.details.streamId !== expected)
       throw new Error(`The device log stream at ${path} changed.`);
     if (process.platform === 'win32' && holder.childDeclared) {
-      markClaimChildPending({ ...holder, root: path, label: 'device log stream' });
+      markClaimChildPending({
+        ...holder,
+        root: path,
+        label: 'device log stream',
+      });
       throw new Error(`The device log tree at ${path} cannot be verified stopped; ${pendingRemedy(holder.path)}.`);
     }
   }
@@ -138,9 +142,49 @@ export async function clearStreamClaim(
 export async function takeStreamClaim(root: string, streamId: string): Promise<ClaimHandle> {
   const path = claimPath(root, streamId);
   await recover(path);
-  const attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label: 'device log stream', details: { streamId } });
+  const attempt = tryAcquireClaim({
+    root: path,
+    mode: 'exclusive',
+    label: 'device log stream',
+    details: { streamId },
+  });
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired)
     throw new Error(`Another device log stream holds ${path}; stop that stream before replacing it.`);
   return attempt.acquired;
+}
+
+/**
+ * Whether the stimd that owned stream `streamId` is provably gone: its claim names the stream, is resolved, and every
+ * holder's owner identity reads gone or recycled. A live child it left behind does not change that.
+ */
+export function streamOwnerGone(root: string, streamId: string): { gone: true } | { gone: false; reason: string } {
+  const path = claimPath(root, streamId);
+  const survey = readClaimSet(path);
+  const issue = survey.unresolved[0];
+  if (issue)
+    return {
+      gone: false,
+      reason: `its claim at ${path} is unresolved. ${issue.pendingChild ? pendingRemedy(issue.path) : `Inspect the ownership at ${path}`}`,
+    };
+  const holders = [...survey.live, ...survey.dead].filter((holder) => holder.details.streamId === streamId);
+  if (!holders.length)
+    return {
+      gone: false,
+      reason: `no claim at ${path} names it, so its owner cannot be verified. Once no process writes this stream, \`stim stop\` in the workspace removes its record`,
+    };
+  for (const holder of holders) {
+    const owner = inspectProcessIdentity(holder.owner);
+    if (owner === 'same')
+      return {
+        gone: false,
+        reason: `its owner (pid ${holder.owner.pid}) is still running; stop that stimd to replace it`,
+      };
+    if (owner !== 'gone' && owner !== 'different')
+      return {
+        gone: false,
+        reason: `its owner (pid ${holder.owner.pid}) cannot be identified. Verify that process has stopped, then run ${claimRemoveCommand(holder.path)} and restart stimd`,
+      };
+  }
+  return { gone: true };
 }

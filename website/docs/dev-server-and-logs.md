@@ -38,6 +38,9 @@ For Expo and custom Metro commands, Stim looks for a Node pin from the app
 directory up to the repository or worktree root. The nearest `.nvmrc`,
 `.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
 When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+On Windows, the bare, Expo and Re.Pack dev servers run on the Node that runs
+Stim instead: a `node` shim on `PATH` would start Metro in a child process
+that Stim cannot identify as the dev server.
 
 ## How Stim picks the dev server
 
@@ -297,6 +300,8 @@ truncated by the runtime before capture cannot be restored.
 A run that builds or reuses an app and then fails before the app is running adds one
 `build` error record with event `run_failed`, the error code and the phase it failed
 in, so `stim logs --errors` lists the failure that `stim status` shows.
+
+When stimd dies or its logs worker fails, the device log gets one `collector_interrupted` warning with the gap and the reason, and Stim backfills the gap where the platform still holds those lines; `--errors` does not list it.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
