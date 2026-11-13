@@ -473,6 +473,13 @@ function countIdleTicks(idle: boolean, streamsRunning: boolean, previous: number
   return idle && !streamsRunning ? previous + 1 : 0;
 }
 
+/** Why stimd stays up for the runs that wait on it (`waits` of them) or for the net thread; else what `otherwise` says. */
+function aliveForWaiters(waits: number, netRunning: boolean, otherwise: () => string | null): string | null {
+  if (waits > 0) return 'a run waits for a build slot, a test slot or a device boot';
+  if (netRunning) return 'the net thread serves';
+  return otherwise();
+}
+
 function resolveForeground(): void {}
 
 async function waitForeground(done: Promise<void> | undefined, failure: () => unknown): Promise<void> {
@@ -1652,12 +1659,11 @@ async function runStimdInner(
         if (reclaimed.outcome === 'done') wakeOldest('boot');
       }
       const waiting = listWaiting();
-      alive =
-        waiters.build.length || waiters.boot.length || waiters.test.length || waiting.length || listTestWaiting().length
-          ? 'a run waits for a build slot, a test slot or a device boot'
-          : net.running()
-            ? 'the net thread serves'
-            : homeAlive(config, measured, hasActiveCommands(), cleanups.reason());
+      alive = aliveForWaiters(
+        waiters.build.length + waiters.boot.length + waiters.test.length + waiting.length + listTestWaiting().length,
+        net.running() !== null,
+        () => homeAlive(config, measured, hasActiveCommands(), cleanups.reason()),
+      );
       pending = alive
         ? null
         : maintaining
