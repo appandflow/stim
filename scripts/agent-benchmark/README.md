@@ -48,8 +48,10 @@ invocations, `EXPO_TOKEN`, `@latest`) from the recorded commands. The timed
 shell must resolve the pinned Expo CLI and have no Stim executable on PATH.
 The arm creates the assigned simulator or emulator and passes its device ID
 to the Expo CLI. Android uses the supplied AVD home so the watcher and
-cleanup can verify the registration. The proof uses the same agent-device
-commands as the other arms.
+cleanup can verify the registration. An Expo AVD may put its data in the run’s
+`$TMPDIR/avd` if the index points to that directory. On iOS, pass the assigned
+simulator ID to keep the pinned model and runtime across arms. The proof uses
+the same agent-device commands as the other arms.
 
 ## Task prompts
 

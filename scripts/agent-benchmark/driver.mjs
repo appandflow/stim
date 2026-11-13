@@ -66,6 +66,7 @@ import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
 import {
   androidApplicationLabelFromBadging,
+  iosDevicesFromSimctl,
   matchesExpectedAndroidEmulator,
   matchesExpectedIosSimulator,
 } from './watch-app-selection.mjs';
@@ -513,40 +514,60 @@ function deviceSnapshot(platform) {
   return platform === 'android' ? androidEmulatorSnapshot() : simulatorSnapshot();
 }
 
-function controlSimulatorForCleanup(runDir, preferredUdid, expectedName) {
+function controlSimulatorForCleanup(runDir, preferredUdid, expected) {
   const baselinePath = existsSync(join(runDir, 'devices-before.json'))
     ? join(runDir, 'devices-before.json')
     : join(runDir, 'simulators-before.json');
   const baseline = new Set(JSON.parse(readFileSync(baselinePath, 'utf8')));
   const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
-  const candidates = Object.values(data.devices)
-    .flat()
-    .filter((device) => device.isAvailable && !baseline.has(device.udid) && device.name === expectedName);
+  const candidates = iosDevicesFromSimctl(data).filter(
+    (device) => device.isAvailable && !baseline.has(device.udid) && matchesExpectedIosSimulator(device, expected),
+  );
   if (preferredUdid) {
     return candidates.find((device) => device.udid === preferredUdid) ?? null;
   }
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function controlAndroidForCleanup(runDir, preferredSerial, expectedName, recordedPath) {
+function controlAndroidForCleanup(runDir, preferredSerial, expectedName, recordedPath, privateDirectory) {
   const beforePath = join(runDir, 'avds-before.json');
   if (!existsSync(beforePath)) return null;
   const before = new Set(JSON.parse(readFileSync(beforePath, 'utf8')));
   if (before.has(expectedName)) return null;
   const baseline = new Set(JSON.parse(readFileSync(join(runDir, 'devices-before.json'), 'utf8')));
-  const liveCandidates = androidEmulatorSnapshot()
-    .filter((serial) => !baseline.has(serial))
-    .map((serial) => androidEmulatorDescription(serial, [runDir]))
-    .filter((device) => device.name === expectedName);
-  if (preferredSerial) {
-    const preferred = liveCandidates.find((device) => device.udid === preferredSerial);
-    if (preferred) return preferred;
+  const liveCandidates = androidEmulatorTransports()
+    .filter(({ serial }) => !baseline.has(serial))
+    .map(({ serial, transportState }) => {
+      const name = run('adb', ['-s', serial, 'emu', 'avd', 'name']).split(/\r?\n/)[0];
+      if (name !== expectedName) return null;
+      const device = androidAvdDescription(name, {
+        reportedPath: run('adb', ['-s', serial, 'emu', 'avd', 'path']),
+        allowedRoots: [runDir],
+        privateDirectory,
+      });
+      const runtimeIdentifier =
+        transportState === 'device'
+          ? `Android-${run('adb', ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'])}`
+          : device.runtimeIdentifier;
+      return Object.assign(device, { udid: serial, runtimeIdentifier });
+    })
+    .filter(Boolean);
+  if (liveCandidates.length > 1) throw new Error('multiple benchmark emulator transports remain');
+  if (liveCandidates.length === 1) {
+    const [device] = liveCandidates;
+    if (preferredSerial && device.udid !== preferredSerial) throw new Error('recorded emulator serial changed');
+    return device;
   }
-  if (liveCandidates.length === 1) return liveCandidates[0];
   if (recordedPath) {
-    return androidAvdDescription(expectedName, { reportedPath: dirname(recordedPath), allowedRoots: [runDir] });
+    return androidAvdDescription(expectedName, {
+      reportedPath: dirname(recordedPath),
+      allowedRoots: [runDir],
+      privateDirectory,
+    });
   }
-  return androidAvdSnapshot().includes(expectedName) ? androidAvdDescription(expectedName) : null;
+  return androidAvdSnapshot().includes(expectedName)
+    ? androidAvdDescription(expectedName, { allowedRoots: [runDir], privateDirectory })
+    : null;
 }
 
 function bootedSimulators() {
@@ -2317,35 +2338,43 @@ function cleanup(runDir) {
       }
     }
   } else if (meta.arm !== 'stim') {
-    const simulator =
-      meta.platform === 'android'
-        ? controlAndroidForCleanup(
-            runDir,
-            appAlive.simulator?.udid,
-            meta.expectedControlSimulator?.name,
-            appAlive.simulator?.configPath,
-          )
-        : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid, meta.expectedControlSimulator?.name);
+    const expected = meta.expectedControlSimulator ?? {};
+    let simulator;
+    try {
+      simulator =
+        meta.platform === 'android'
+          ? controlAndroidForCleanup(
+              runDir,
+              appAlive.simulator?.udid,
+              expected.name,
+              appAlive.simulator?.configPath,
+              meta.arm === 'expo-agent-cli' ? join(runDir, 'tmp', 'avd') : undefined,
+            )
+          : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid, expected);
+    } catch (error) {
+      actions.push(`failed: verify benchmark device for cleanup: ${error}`);
+    }
+    if (!simulator && appAlive.simulator?.udid) {
+      actions.push(`failed: could not verify recorded device ${appAlive.simulator.udid} for cleanup`);
+    }
     if (simulator) {
       const udid = simulator.udid;
       if (!appAlive.simulator?.udid) {
         actions.push(`inferred sole new benchmark simulator ${udid}`);
       }
       if (meta.platform === 'android') {
-        const expected = meta.expectedControlSimulator ?? {};
-        const cleanupExpected = simulator.deviceTypeIdentifier
-          ? expected
-          : { ...expected, deviceTypeIdentifier: undefined };
-        const matchesExpected = matchesExpectedAndroidEmulator(simulator, cleanupExpected);
+        const matchesExpected = matchesExpectedAndroidEmulator(simulator, expected);
         try {
           if (!matchesExpected) throw new Error('ownership revalidation failed');
           if (udid) {
             run('adb', ['-s', udid, 'emu', 'kill'], { timeout: 60_000 });
             actions.push(`shutdown ${udid}`);
             const deadline = Date.now() + 60_000;
-            while (Date.now() < deadline && androidEmulatorSnapshot().includes(udid)) {
+            const present = () => androidEmulatorTransports().some(({ serial }) => serial === udid);
+            while (Date.now() < deadline && present()) {
               Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
             }
+            if (present()) throw new Error(`emulator ${udid} is still registered with adb`);
           }
           run('avdmanager', ['delete', 'avd', '-n', simulator.name], {
             timeout: 60_000,
@@ -2360,7 +2389,7 @@ function cleanup(runDir) {
           run('xcrun', ['simctl', 'shutdown', udid], { timeout: 60_000 });
           actions.push(`shutdown ${udid}`);
         } catch {}
-        if (controlSimulatorForCleanup(runDir, udid, meta.expectedControlSimulator?.name)) {
+        if (controlSimulatorForCleanup(runDir, udid, expected)) {
           try {
             run('xcrun', ['simctl', 'delete', udid], { timeout: 60_000 });
             actions.push(`delete ${udid}`);
@@ -2368,7 +2397,7 @@ function cleanup(runDir) {
             actions.push(`failed: delete ${udid}: ${error}`);
           }
         } else {
-          actions.push(`skipped delete ${udid}: ownership revalidation failed`);
+          actions.push(`failed: delete ${udid}: ownership revalidation failed`);
         }
       }
     }

@@ -2,14 +2,20 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
-export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [] } = {}) {
+export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [], privateDirectory } = {}) {
   if (!/^[a-zA-Z0-9_.-]+$/.test(name) || name === '.' || name === '..') {
     throw new Error('Invalid benchmark AVD name');
   }
   const defaultHome = process.env.ANDROID_AVD_HOME ?? join(homedir(), '.android', 'avd');
+  const defaultDirectory = join(defaultHome, `${name}.avd`);
   const directory =
-    reportedPath === undefined ? join(defaultHome, `${name}.avd`) : reportedPath.trim().replace(/\r?\nOK$/, '');
-  if (!isAbsolute(directory) || /[\r\n]/.test(directory) || basename(directory) !== `${name}.avd`) {
+    reportedPath === undefined
+      ? existsSync(defaultDirectory)
+        ? defaultDirectory
+        : (privateDirectory ?? defaultDirectory)
+      : reportedPath.trim().replace(/\r?\nOK$/, '');
+  const isPrivate = directory === privateDirectory;
+  if (!isAbsolute(directory) || /[\r\n]/.test(directory) || (!isPrivate && basename(directory) !== `${name}.avd`)) {
     throw new Error('Unverified benchmark AVD path');
   }
   const configPath = join(directory, 'config.ini');
@@ -23,10 +29,14 @@ export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [] 
     const path = relative(realpathSync(root), canonicalConfig);
     return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
   });
-  if (!contained || basename(dirname(canonicalConfig)) !== `${name}.avd`) {
+  if (
+    !contained ||
+    (isPrivate ? canonicalConfig !== configPath : basename(dirname(canonicalConfig)) !== `${name}.avd`)
+  ) {
     throw new Error('Benchmark AVD path is outside its allowed roots');
   }
-  const indexPath = join(dirname(canonicalConfig), '..', `${name}.ini`);
+  const avdHome = isPrivate ? realpathSync(defaultHome) : dirname(dirname(canonicalConfig));
+  const indexPath = join(avdHome, `${name}.ini`);
   const indexedPath = existsSync(indexPath)
     ? readFileSync(indexPath, 'utf8')
         .match(/^path=(.+)$/m)?.[1]
@@ -49,7 +59,7 @@ export function benchmarkAvdDescription(name, { reportedPath, allowedRoots = [] 
     name,
     config,
     configPath: canonicalConfig,
-    avdHome: dirname(dirname(canonicalConfig)),
+    avdHome,
     deviceTypeIdentifier: config['hw.device.name'],
     runtimeIdentifier: `Android-${systemImage?.match(/android-(\d+)/)?.[1]}`,
     systemImage,
