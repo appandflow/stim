@@ -4277,6 +4277,7 @@ msgid "This workspace is no longer in the status."
 msgstr "This workspace is no longer in the status."
 
 #: src/lib/device-unavailable.ts
+#: src/lib/device-unavailable.ts
 msgid "This workspace is no longer on the machine."
 msgstr "This workspace is no longer on the machine."
 

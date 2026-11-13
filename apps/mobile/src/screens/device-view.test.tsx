@@ -10,6 +10,7 @@ import '@/design/unistyles';
 import { DeviceView } from './device-view';
 
 const mockBegin = jest.fn();
+const mockEnd = jest.fn();
 const mockRotate = jest.fn();
 const mockZoom = jest.fn();
 const mockTouch = jest.fn();
@@ -19,6 +20,7 @@ let mockAllowed = true;
 let mockPhysical = false;
 let mockHosted = false;
 let mockStopped = false;
+let mockPathMissing = false;
 const mockStream = jest.fn();
 let mockHostCapabilities = ['frames'];
 const mockSelectWindow = jest.fn();
@@ -72,6 +74,7 @@ jest.mock('@/hooks/machines', () => ({
     title: 'Duo fixture',
     env: {
       path: '/fixture',
+      pathMissing: mockPathMissing,
       ios: {
         udid: mockHosted ? '' : 'fixture',
         owned: !mockHosted,
@@ -118,7 +121,7 @@ jest.mock('@/hooks/device-control', () => ({
       ? { kind: 'on', session: 'c1', leaseSince: null, postures: ['folded', 'half-open', 'unfolded'] }
       : { kind: 'busy', message: 'Driven by another client' },
     begin: mockBegin,
-    end: jest.fn(),
+    end: mockEnd,
     rotate: mockRotate,
     touch: mockTouch,
     key: mockKey,
@@ -231,6 +234,7 @@ beforeEach(() => {
   mockPhysical = false;
   mockHosted = false;
   mockStopped = false;
+  mockPathMissing = false;
   mockStream.mockClear();
   mockArtwork = false;
   mockDeviceFrame = false;
@@ -585,3 +589,28 @@ it.each(['ios', 'android'] as const)(
     await screen.unmount();
   },
 );
+
+it('drops the live stream and Control when an open hosted workspace is confirmed missing', async () => {
+  mockHosted = true;
+  mockHostCapabilities = ['ios-hosted'];
+  const viewer = (
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>
+  );
+  const screen = await render(viewer);
+  expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: true });
+  expect(screen.getByLabelText('Control')).toBeTruthy();
+
+  mockPathMissing = true;
+  await screen.rerender(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: false });
+  expect(mockEnd).toHaveBeenCalledTimes(1);
+  expect(screen.queryByLabelText('Control')).toBeNull();
+  expect(screen.queryByLabelText('Running on mini')).toBeNull();
+  expect(screen.getByText('This workspace is no longer on the machine.')).toBeTruthy();
+});
