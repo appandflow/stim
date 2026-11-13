@@ -8,7 +8,7 @@ export interface CIContextOptions {
   /** Writes result, test and diagnostic files here; without it nothing is written. */
   artifactsDir?: string;
   home?: string;
-  buildCache?: string;
+  buildCacheDir?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
   onProgress?: StimOptions['onProgress'];
@@ -41,6 +41,13 @@ export function prepareCI<T extends CIContextOptions>(
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
     throw new Error('timeoutMs must be a positive integer.');
   }
+  // compat C33 until 2026-12-12
+  if ('buildCache' in options)
+    throw Object.assign(new Error('buildCache was renamed to buildCacheDir.'), {
+      code: 'STIM_BAD_ARG',
+      remedy: 'Pass the directory as buildCacheDir.',
+    });
+  // compat end
   if (
     process.env.GITHUB_ACTIONS === 'true' &&
     process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
@@ -52,7 +59,8 @@ export function prepareCI<T extends CIContextOptions>(
     options = {
       ...options,
       home: join(directory, 'home'),
-      buildCache: options.buildCache || (process.env.STIM_BUILD_CACHE ? undefined : join(directory, 'build-cache')),
+      buildCacheDir:
+        options.buildCacheDir || (process.env.STIM_BUILD_CACHE ? undefined : join(directory, 'build-cache')),
     };
   }
   const projectRoot = realpathSync(options.projectRoot);

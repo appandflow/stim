@@ -88,9 +88,9 @@ import {
   type VideoCodec,
 } from './protocol.ts';
 import { StimError } from 'stim';
-import { createStim } from 'stim/api-self';
-import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync } from 'stim/share-links';
+import { createLocalStim } from 'stim/internal/api-self';
+import { worktreePullRequests } from 'stim/internal/pull-requests';
+import { pauseShareLinkAsync } from 'stim/internal/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs } from './share-save.ts';
@@ -195,9 +195,10 @@ interface ServerHealth {
   /**
    * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
    * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
-   * running for the next server, which `resumes` says this one does.
+   * running for the next server, which `resumes` says this one does. `tests` counts the commands test clients run here;
+   * a server without it takes no `test` approval.
    */
-  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
+  busy: { builds: number; hostedSessions: number; hostedWork: number; tests: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -604,7 +605,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return null;
     }
   };
-  const approved = (): Registries => readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [] };
+  const approved = (): Registries =>
+    readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [], test: [] };
   const buildAllowed = (session: Pick<PairedDevice, 'id'>) =>
     approved().build.some((entry) => entry.id === session.id && entry.capabilities.includes('build'));
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
@@ -641,7 +643,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
       .then(async () => {
-        const stim = createStim({ projectRoot: cwd, env: options.env, admission: 'none' });
+        const stim = createLocalStim({ projectRoot: cwd, env: options.env, admission: 'none' });
         if (method === 'gc-history' || method === 'builds')
           return {
             records: queryMachineLogs({
@@ -856,7 +858,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const localAgents = new LocalAgentPresence({
     hub: presence,
     follow: (workspace, onRecord, signal) =>
-      createStim({ projectRoot: workspace, env: options.env, admission: 'none' }).followLogs(
+      createLocalStim({ projectRoot: workspace, env: options.env, admission: 'none' }).followLogs(
         { sources: ['agent'], tail: 0, signal },
         onRecord,
       ),
@@ -1082,7 +1084,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       watchServerDir();
       console.error('stim-server: the Stim home answers again; serving clients.');
     }
-    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost];
+    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost, ...registries.test];
     const registry = JSON.stringify(devices);
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
@@ -1917,12 +1919,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return refuse('home-unavailable');
       }
       if (!records) return refuse('unknown-secret');
-      if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
+      if (!records.device && !records.build && !records['device-host'] && !records.test) return refuse('unauthorized');
     } else {
       const registries = readApprovals();
       if (!registries) return refuse('home-unavailable');
       records = recordsForKey(publicKey, registries);
-      if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
+      if (!records.device && !records.build && !records['device-host'] && !records.test) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
     pendingPools.get(request.socket)?.settle(request.socket);
@@ -1978,6 +1980,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         builds: jobs.running(),
         hostedSessions: hostedDevices.active(),
         hostedWork: hostedDevices.working(),
+        tests: 0,
         resumes: true,
       },
       tailscale: healthTailscale(state),
@@ -2236,7 +2239,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (closing) return settle(startup);
     if (reason === null) {
       try {
-        homeId = await createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity({
+        homeId = await createLocalStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity({
           signal: startupAbort.signal,
         });
         if (closing) return settle(startup);

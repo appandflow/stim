@@ -1,7 +1,7 @@
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { setupJournalFile } from './paths.ts';
 
-export type SetupCapability = 'build' | 'device-host';
+export type SetupCapability = 'build' | 'device-host' | 'test';
 
 /**
  * A `stim setup` run's progress, named by the `journal` value derived from its ticket. It holds no secret, so it
@@ -23,7 +23,8 @@ export interface SetupJournal {
   exit?: number;
 }
 
-const capability = (value: unknown): value is SetupCapability => value === 'build' || value === 'device-host';
+const capability = (value: unknown): value is SetupCapability =>
+  value === 'build' || value === 'device-host' || value === 'test';
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const knownKeys = (value: Record<string, unknown>, keys: string[]) =>
   Object.keys(value).every((key) => keys.includes(key));

@@ -1,5 +1,12 @@
 import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
-import { daemonLine, daemonStatus, lastActionLine, unverifiedLines, waitingLines } from '../daemon/status.ts';
+import {
+  crashLines,
+  daemonLine,
+  daemonStatus,
+  lastActionLine,
+  unverifiedLines,
+  waitingLines,
+} from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -274,6 +281,7 @@ export function renderStatus(
   if (lastAction) out.push(chalk.dim(lastAction));
   out.push(...waitingLines(daemon, now));
   out.push(...unverifiedLines(daemon, now).map((line) => chalk.yellow(line)));
+  out.push(...crashLines(daemon).map((line) => chalk.yellow(line)));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 

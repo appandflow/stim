@@ -1994,7 +1994,16 @@ RULES
     too. unverified lists the children whose cleanup the running daemon could
     not verify and stays up for, { since, child, message, remedy }, absent when none;
     plain status prints a line for each and \`stim doctor\` reports each with
-    its remedy. Plain status prints the newest action as "Last daemon action" and every
+    its remedy. crashHold is { build, count, until, remedy }, present while stimd
+    refuses to start after three abnormal exits of one build within 10 minutes;
+    abnormalExits lists the abnormal exits of the last day, { at, build, pid,
+    reason, home? }, oldest first, home naming what to fix when the Stim home
+    caused it. Plain status prints both, and \`stim doctor\` reports the hold
+    with its remedy. A stimd that died with no clean exit (killed, out of memory,
+    crashed) is logged by the next stimd as stimd_predecessor_lost in
+    daemon.ndjson and counts, unless it died in an earlier system boot; a handover
+    whose successor never started is logged as successor_missing and the next
+    command starts a stimd at once. Plain status prints the newest action as "Last daemon action" and every
     workspace's stage line: running with its last activity, idle or dormant
     with the time in it, or stopped.
 

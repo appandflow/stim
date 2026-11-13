@@ -60,7 +60,7 @@ const entrypoints = [
   ['@stim-cli/transport', 'loadTransport', 'server'],
   ['@stim-cli/transport-tailscale', 'createTransport', 'server'],
   ['@stim-cli/transport-local', 'createTransport', 'server'],
-  ['stim/cache-manifest', 'readManifest'],
+  ['stim/cache-manifest', 'register'],
 ];
 
 for (const [specifier, exportName, context] of entrypoints) {

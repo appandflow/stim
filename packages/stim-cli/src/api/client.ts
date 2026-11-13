@@ -78,10 +78,11 @@ import { clientProjectRoot, StimError } from './facade.ts';
 import type {
   StimBuildOptions,
   StimBuildResult,
-  StimClient,
+  EngineClient,
+  EngineOptions,
+  EngineRunOptions,
   StimFailure,
   StimLogsOptions,
-  StimOptions,
   StimReadOptions,
   StimPlanOptions,
   StimDoctorOptions,
@@ -93,7 +94,6 @@ import type {
   StimGcMutationOptions,
   StimGcItemOptions,
   StimSettingWriteOptions,
-  StimRunOptions,
   StimRunResult,
   StimReloadOptions,
   StimReloadResult,
@@ -108,7 +108,7 @@ import type {
  * in this build. Resolves the operation's result, or rejects a plain `{code, message, remedy, details}`, so a caller
  * of another build can wrap it in its own `StimError`.
  */
-export async function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown> {
+export async function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown> {
   try {
     const client = createLocalStim(ctx);
     const op: unknown = name === 'projectRoot' ? undefined : Reflect.get(client, name);
@@ -144,8 +144,8 @@ function validGcItem(item: unknown): item is GcItem {
   return only();
 }
 
-export function createLocalStim(options: StimOptions): StimClient {
-  const projectRoot = clientProjectRoot(options);
+export function createLocalStim(options: EngineOptions): EngineClient {
+  const projectRoot = clientProjectRoot(options, ['buildCache', options.buildCache]);
   const base = options.env ?? process.env;
   const home = options.home ?? (base.STIM_HOME || join(userHome(base), '.stim'));
   const clientContext = {
@@ -627,13 +627,13 @@ export function createLocalStim(options: StimOptions): StimClient {
     build: (({ signal, ...request }: StimBuildOptions) =>
       lifecycle(begin('build', signal, true, request.platform), (operation) =>
         build(operation, request),
-      )) as StimClient['build'],
-    run: (({ signal, ...request }: StimRunOptions) =>
+      )) as EngineClient['build'],
+    run: (({ signal, ...request }: EngineRunOptions) =>
       lifecycle(
         begin('run', signal, true, request.platform),
         (operation) => run(operation, request),
         request,
-      )) as StimClient['run'],
+      )) as EngineClient['run'],
     stop: ({ signal, ...request } = {}) =>
       read(begin('stop', signal), async (operation) => {
         const root = findStartRoot(operation.projectRoot) ?? operation.projectRoot;
@@ -729,7 +729,7 @@ export async function holdCIStimd(
 }
 
 function operationContext(
-  client: StimOptions & { env: NodeJS.ProcessEnv; projectRoot: string },
+  client: EngineOptions & { env: NodeJS.ProcessEnv; projectRoot: string },
   home: string,
   output: StimContext['output'],
   signal: AbortSignal | undefined,
@@ -831,7 +831,7 @@ function cancelled(): StimError {
 async function lifecycle<T>(
   operation: Operation,
   work: (context: StimContext) => Promise<T>,
-  runOptions?: StimRunOptions,
+  runOptions?: EngineRunOptions,
 ): Promise<T> {
   try {
     return await read(operation, async (context, projectRefusal) => {
@@ -971,7 +971,7 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
   }
 }
 
-function validateRunOptions(options: StimRunOptions): void {
+function validateRunOptions(options: EngineRunOptions): void {
   const simulatorOnly = options.recordedBuild ? 'recordedBuild' : options.cleanAppState ? 'cleanAppState' : null;
   if (simulatorOnly && 'device' in options && options.device !== undefined)
     throw new StimError({
@@ -981,7 +981,7 @@ function validateRunOptions(options: StimRunOptions): void {
     });
 }
 
-async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+async function run(context: StimContext, options: EngineRunOptions): Promise<StimRunResult> {
   validateRunOptions(options);
   const root = context.projectRoot;
   switch (options.platform) {

@@ -572,7 +572,7 @@ test.skipIf(process.platform === 'win32')(
     });
     const client = createStim({ projectRoot: tmpHome, env: context.env });
     configure();
-    const healthy = await client.gc();
+    const healthy = await client.previewGarbage();
     expect(healthy.sections?.memory).toMatchObject([
       { pid: 1001, reclaimable: false, detail: expect.stringContaining('pressure') },
     ]);
@@ -600,11 +600,11 @@ test.skipIf(process.platform === 'win32')(
     const warningObservations = [];
     if (process.platform === 'darwin') {
       warning = true;
-      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
+      warningObservations.push((await client.previewGarbage()).sections?.memory[0]?.reclaimable);
       writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 60_000).toISOString() });
-      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
+      warningObservations.push((await client.previewGarbage()).sections?.memory[0]?.reclaimable);
       writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 11 * 60_000).toISOString() });
-      warningObservations.push((await client.gc()).sections?.memory[0]?.reclaimable);
+      warningObservations.push((await client.previewGarbage()).sections?.memory[0]?.reclaimable);
       rmSync(snapshotFile);
       warning = false;
     }
@@ -613,7 +613,7 @@ test.skipIf(process.platform === 'win32')(
     pressured = true;
     configure();
     writeSnapshot({ memory: 'critical', memoryWarningSince: null });
-    expect((await client.gc()).sections?.memory[0]?.reclaimable).toBe(true);
+    expect((await client.previewGarbage()).sections?.memory[0]?.reclaimable).toBe(true);
     pressureReads = 0;
     const lock = withAmbientContext(context, () => buildLockPath('ios', 'owned'));
     const birth = captureProcessIdentity(process.pid);

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { basename, join } from 'path';
 import type { Input } from '../fingerprint/key.ts';
-import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache/tiers';
+import { buildUploadTimeoutMs, type LocalBuildCache, type ProviderCallResult } from '@stim-cli/cache/tiers';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
@@ -190,7 +190,7 @@ export function filesystemBuildCapability({
   readAppId,
   resolve = resolveBuild,
   store = storeBuild,
-}: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
+}: FilesystemBuildCapabilityOptions = {}): LocalBuildCache {
   const stored = {
     ...(context === undefined ? {} : { context }),
     ...(root === undefined ? {} : { root }),

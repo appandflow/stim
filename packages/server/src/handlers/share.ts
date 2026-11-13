@@ -1,5 +1,5 @@
 import { type ShareRequest, type StartedShare, SHARE_EXPIRY } from '../share.ts';
-import { saveShareLinkAsync, pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { saveShareLinkAsync, pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/internal/share-links';
 import { shareLinkKey, isJsonObject, SHARE_TOKEN } from '@stim-cli/core/state';
 import { savedShareFor } from '../share-save.ts';
 import { SHARE_SLUG_PATTERN, RESERVED_SHARE_SLUGS, type RequestId } from '../protocol.ts';

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { runContract } from '../transport-kit.ts';
+import { runContract } from '../plugin-kit.ts';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../../../../test/fixtures/plugins/${name}`, import.meta.url));
 

@@ -11,6 +11,7 @@ import { releaseRunLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
+  crashLoop,
   daemonClaimRoot,
   isJsonObject,
   parseUnverifiedCleanups,
@@ -18,6 +19,8 @@ import {
   stimBuildId,
   readJsonObject,
   stimdClaimRoot,
+  readStimdBoots,
+  readSuccessorMissing,
   stimdRecordFile,
   stimdRunDir,
   stimdSocket,
@@ -182,6 +185,11 @@ let refusedBuild: string | null = null;
 let refusalSeq = 0;
 let beginMismatched = false;
 let successorMissed = false;
+let holdAnnounced = false;
+
+/** The crash loop that holds this build's stimd, null when none applies; a store engine is judged by its own rollback. */
+const currentCrashHold = () =>
+  ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
 let refusal: {
   version: string;
   pid: number | null;
@@ -972,8 +980,16 @@ export async function ensureStimd(
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
+    const hold = currentCrashHold();
     try {
-      launched = launchStimd(env, daemonMode(env), platform);
+      if (hold) {
+        if (!holdAnnounced) {
+          holdAnnounced = true;
+          const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+          console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
+        }
+        launched = { settled: Promise.resolve(), exited: () => true };
+      } else launched = launchStimd(env, daemonMode(env), platform);
     } catch (error) {
       if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
         throw error;
@@ -1210,8 +1226,11 @@ function track(
 async function admissionLost(token: string, wait: boolean): Promise<boolean> {
   const admission = admissions.get(token);
   if (!admission) return false;
-  if (!admission.lost && wait)
-    await Promise.race([admission.closed, new Promise((done) => setTimeout(done, LOSS_GRACE_MS).unref())]);
+  if (!admission.lost && wait) {
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([admission.closed, new Promise((done) => (timer = setTimeout(done, LOSS_GRACE_MS)))]);
+    clearTimeout(timer);
+  }
   return admission.lost;
 }
 
@@ -1263,6 +1282,19 @@ async function readmit(
     const refused = otherBuildRefusal();
     if (refused && refusedBuild !== stimdBuildId() && !stimdLive())
       return { error: Object.assign(new Error(refused.message), refused) };
+    const hold = stimdLive() ? null : currentCrashHold();
+    if (hold) {
+      const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+      return {
+        error: Object.assign(
+          new Error('stimd is held after repeated abnormal exits, so it cannot take this command.'),
+          {
+            code: 'STIM_DAEMON_UNAVAILABLE',
+            remedy: crashHoldRemedy(hold, false),
+          },
+        ),
+      };
+    }
     const fresh: Socket[] = [];
     let running: boolean;
     try {
@@ -1659,11 +1691,20 @@ function successorExpected(): boolean {
 async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   if (successorMissed) return false;
   const waitMs = within(refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS, limit);
+  let started = false;
   for (const deadline = Date.now() + waitMs; Date.now() < deadline && !limit?.signal?.aborted;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
       return true;
+    }
+    if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
+      started = true;
+      try {
+        launchStimd(process.env, daemonMode(process.env), process.platform);
+      } catch {
+        break;
+      }
     }
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }

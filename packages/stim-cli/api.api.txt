@@ -1,63 +1,67 @@
 // The stim API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
+[*] @internal declare const RUN_OP_VERSION: typeof RUN_OP_WIRE;
+[*] @internal declare function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown>;
 [*] declare class StimError extends Error {
-[*] declare class StimError extends Error { | constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
-[*] declare class StimError extends Error { | readonly code: string;
-[*] declare class StimError extends Error { | readonly details: unknown;
-[*] declare class StimError extends Error { | readonly remedy: string | null;
-[*] declare class StimError extends Error { | remedy?: string | null;
-[*] declare class StimError extends Error { | }, options?: ErrorOptions);
+[*] declare class StimError extends Error { @@1 constructor({ code, message, remedy, details }: Omit<StimFailure, "remedy"> & {
+[*] declare class StimError extends Error { @@1 readonly code: string;
+[*] declare class StimError extends Error { @@1 readonly details: unknown;
+[*] declare class StimError extends Error { @@1 readonly remedy: string | null;
+[*] declare class StimError extends Error { @@1p }, options?: ErrorOptions);
+[*] declare class StimError extends Error { @@2p remedy?: string | null;
 [*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
 [*] declare const GRADLE_DAEMONS_KIND;
 [*] declare const HOST_CAPABILITIES: readonly ["physical-ios", "physical-android", "macos-window", "macos-windows", "macos-window-select", "macos-window-control", "macos-keyboard-extended", "duo-frames", "native-xcode-build", "native-xcode-toolchain"];
+[*] declare const LOG_LEVELS: readonly ["debug", "info", "warn", "error", "fatal"];
+[*] declare const LOG_SOURCES: readonly ["metro", "client", "device", "build", "agent", "maintenance", "placement"];
 [*] declare const PLACEMENT_DECISIONS: readonly ["here", "offloaded", "fell-back"];
+[*] declare const RUN_OP_WIRE: 1;
+[*] declare const STIM_API_VERSION: 1;
 [*] declare const WATCHMAN_KIND;
 [*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
 [*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
 [*] declare function createStim(options: StimOptions): StimClient;
-[*] declare function holdCIStimd(env: NodeJS.ProcessEnv, projectRoot: string, ownedInstance: string | null, signal?: AbortSignal): Promise<() => void>;
 [*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: {
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | check?: OffloadCheck | null;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | confirmKey?: KeyConfirmer;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | fix: boolean;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | forget?: boolean;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | operation?: StimContext;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | tickets?: GeneratedTickets;
-[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { | version?: string;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p check?: OffloadCheck | null;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p confirmKey?: KeyConfirmer;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p fix: boolean;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p forget?: boolean;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p operation?: StimContext;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p tickets?: GeneratedTickets;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @@1p version?: string;
+[*] declare function inspectBuildMachines({ fix, forget, check, version, tickets, operation, confirmKey }: { @branch1 @@0p }, io?: BuildMachineIo, entries?: string[] | null): Promise<BuildMachinesInspection>;
 [*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: {
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | confirmKey?: KeyConfirmer;
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | fix: boolean;
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | forget?: boolean;
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | operation?: StimContext;
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | tickets?: GeneratedTickets;
-[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { | version?: string;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p confirmKey?: KeyConfirmer;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p fix: boolean;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p forget?: boolean;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p operation?: StimContext;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p tickets?: GeneratedTickets;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @@1p version?: string;
+[*] declare function inspectDeviceHostMachines({ fix, forget, version, tickets, operation, confirmKey }: { @branch1 @@0p }, io?: TailnetMachineIo, entries?: string[] | null): Promise<Inspection>;
 [*] declare function maintenanceStatus(env?: NodeJS.ProcessEnv): MaintenanceStatus;
-[*] declare function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown>;
 [*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): {
-[*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { | groups: TempLeftoverGroup[];
-[*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { | root: string;
+[*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @@1 groups: TempLeftoverGroup[];
+[*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @@1 root: string;
+[*] declare function tempLeftoverSection(report: TempLeftoverReport | null | undefined): { @branch1 @@0 } | null;
+[*] export RUN_OP_VERSION
+[*] export STIM_API_VERSION
 [*] export StimError
 [*] export createStim
-[*] export holdCIStimd
 [*] export runOp
 [*] export type StimBuildOptions
 [*] export type StimBuildResult
 [*] export type StimClient
-[*] export type StimDeviceToolOptions
 [*] export type StimDeviceUnlockOptions
 [*] export type StimDiagnostics
 [*] export type StimDiagnosticsOptions
 [*] export type StimDoctorOptions
 [*] export type StimDoctorRepairOptions
 [*] export type StimDoctorReport
-[*] export type StimGcItem
-[*] export type StimGcItemOptions
-[*] export type StimGcItemResult
 [*] export type StimGcMutationOptions
 [*] export type StimGcMutationResult
 [*] export type StimGcOptions
 [*] export type StimGcReport
 [*] export type StimLogsOptions
-[*] export type StimMachineAccessOptions
 [*] export type StimOptions
 [*] export type StimPlan
 [*] export type StimPlanOptions
@@ -82,1345 +86,1380 @@
 [*] export type StimWorktreeWarmOptions
 [*] export type StimWorktreeWarmResult
 [*] interface ActivityDriver {
-[*] interface ActivityDriver { | pid: number | null;
-[*] interface ActivityDriver { | since: string | null;
-[*] interface ActivityDriver { | tool: string;
+[*] interface ActivityDriver { @@1 pid: number | null;
+[*] interface ActivityDriver { @@1 since: string | null;
+[*] interface ActivityDriver { @@1 tool: string;
 [*] interface AgentDeviceUsage {
-[*] interface AgentDeviceUsage { | bytes: number | null;
-[*] interface AgentDeviceUsage { | bytes: number;
-[*] interface AgentDeviceUsage { | complete: boolean;
-[*] interface AgentDeviceUsage { | count: number;
-[*] interface AgentDeviceUsage { | dir: string;
-[*] interface AgentDeviceUsage { | entries: {
-[*] interface AgentDeviceUsage { | hosted: {
-[*] interface AgentDeviceUsage { | inUse: boolean;
-[*] interface AgentDeviceUsage { | inUseReason: "lease" | "lock" | "unreadable" | null;
-[*] interface AgentDeviceUsage { | largest: {
-[*] interface AgentDeviceUsage { | lastUsedAt: string | null;
-[*] interface AgentDeviceUsage { | logs: {
-[*] interface AgentDeviceUsage { | measuredAt: string;
-[*] interface AgentDeviceUsage { | name: string;
-[*] interface AgentDeviceUsage { | other: {
-[*] interface AgentDeviceUsage { | packageVersion: string | null;
-[*] interface AgentDeviceUsage { | platform: string;
-[*] interface AgentDeviceUsage { | platforms: {
-[*] interface AgentDeviceUsage { | present: boolean;
-[*] interface AgentDeviceUsage { | projectRoot: string | null;
-[*] interface AgentDeviceUsage { | runnerBuilds: {
-[*] interface AgentDeviceUsage { | sessions: number;
-[*] interface AgentDeviceUsage { | sessions: {
-[*] interface AgentDeviceUsage { | sharedBytes: number | null;
-[*] interface AgentDeviceUsage { | stateDir: {
-[*] interface AgentDeviceUsage { | version: 1;
-[*] interface AgentDeviceUsage { | workspaces: {
-[*] interface AgentDeviceUsage { | xcodeBuildVersion: string | null;
-[*] interface AgentDeviceUsage { | } | null;
-[*] interface AgentDeviceUsage { | }[];
+[*] interface AgentDeviceUsage { @@1 bytes: number;
+[*] interface AgentDeviceUsage { @@1 complete: boolean;
+[*] interface AgentDeviceUsage { @@1 hosted: {
+[*] interface AgentDeviceUsage { @@1 measuredAt: string;
+[*] interface AgentDeviceUsage { @@1 runnerBuilds: {
+[*] interface AgentDeviceUsage { @@1 stateDir: {
+[*] interface AgentDeviceUsage { @@1 version: 1;
+[*] interface AgentDeviceUsage { @@1 workspaces: {
+[*] interface AgentDeviceUsage { @@1 } | null;
+[*] interface AgentDeviceUsage { @@1 }[];
+[*] interface AgentDeviceUsage { @@2 bytes: number | null;
+[*] interface AgentDeviceUsage { @@2 dir: string;
+[*] interface AgentDeviceUsage { @@2 logs: {
+[*] interface AgentDeviceUsage { @@2 other: {
+[*] interface AgentDeviceUsage { @@2 platforms: {
+[*] interface AgentDeviceUsage { @@2 present: boolean;
+[*] interface AgentDeviceUsage { @@2 projectRoot: string | null;
+[*] interface AgentDeviceUsage { @@2 sessions: number;
+[*] interface AgentDeviceUsage { @@2 sessions: {
+[*] interface AgentDeviceUsage { @@2 sharedBytes: number | null;
+[*] interface AgentDeviceUsage { @@2 }[];
+[*] interface AgentDeviceUsage { @@3 bytes: number | null;
+[*] interface AgentDeviceUsage { @@3 count: number;
+[*] interface AgentDeviceUsage { @@3 dir: string;
+[*] interface AgentDeviceUsage { @@3 entries: {
+[*] interface AgentDeviceUsage { @@3 largest: {
+[*] interface AgentDeviceUsage { @@3 platform: string;
+[*] interface AgentDeviceUsage { @@3 }[];
+[*] interface AgentDeviceUsage { @@4 bytes: number | null;
+[*] interface AgentDeviceUsage { @@4 dir: string;
+[*] interface AgentDeviceUsage { @@4 inUse: boolean;
+[*] interface AgentDeviceUsage { @@4 inUseReason: "lease" | "lock" | "unreadable" | null;
+[*] interface AgentDeviceUsage { @@4 lastUsedAt: string | null;
+[*] interface AgentDeviceUsage { @@4 name: string;
+[*] interface AgentDeviceUsage { @@4 packageVersion: string | null;
+[*] interface AgentDeviceUsage { @@4 xcodeBuildVersion: string | null;
 [*] interface AndroidBuildFacts {
-[*] interface AndroidBuildFacts { | abi: string | null;
-[*] interface AndroidBuildFacts { | androidPackage: string | null;
-[*] interface AndroidBuildFacts { | apkPath: string;
-[*] interface AndroidBuildFacts { | buildMachine: string;
-[*] interface AndroidBuildFacts { | builtOn: string | null;
-[*] interface AndroidBuildFacts { | cacheHit: string | boolean;
-[*] interface AndroidBuildFacts { | cacheKey: string | null;
-[*] interface AndroidBuildFacts { | cacheSkipped: boolean;
-[*] interface AndroidBuildFacts { | ccache: CcacheActivity;
-[*] interface AndroidBuildFacts { | dir: string;
-[*] interface AndroidBuildFacts { | durationMs: number;
-[*] interface AndroidBuildFacts { | links: {
-[*] interface AndroidBuildFacts { | logs: {
-[*] interface AndroidBuildFacts { | variant: string;
-[*] interface AndroidBuildFacts { | workspace: string;
+[*] interface AndroidBuildFacts { @@1 abi: string | null;
+[*] interface AndroidBuildFacts { @@1 androidPackage: string | null;
+[*] interface AndroidBuildFacts { @@1 apkPath: string;
+[*] interface AndroidBuildFacts { @@1 buildMachine: string;
+[*] interface AndroidBuildFacts { @@1 builtOn: string | null;
+[*] interface AndroidBuildFacts { @@1 cacheHit: string | boolean;
+[*] interface AndroidBuildFacts { @@1 cacheKey: string | null;
+[*] interface AndroidBuildFacts { @@1 cacheSkipped: boolean;
+[*] interface AndroidBuildFacts { @@1 ccache: CcacheActivity;
+[*] interface AndroidBuildFacts { @@1 durationMs: number;
+[*] interface AndroidBuildFacts { @@1 links: {
+[*] interface AndroidBuildFacts { @@1 logs: {
+[*] interface AndroidBuildFacts { @@1 variant: string;
+[*] interface AndroidBuildFacts { @@2 dir: string;
+[*] interface AndroidBuildFacts { @@2 workspace: string;
 [*] interface AndroidFacts {
-[*] interface AndroidFacts { | agentDevice?: {
-[*] interface AndroidFacts { | appPath: string | null;
-[*] interface AndroidFacts { | avdName: string | null;
-[*] interface AndroidFacts { | buildMachine?: string;
-[*] interface AndroidFacts { | builtOn?: string;
-[*] interface AndroidFacts { | bundleId: string | null;
-[*] interface AndroidFacts { | cacheHit: CacheHitLevel;
-[*] interface AndroidFacts { | cacheKey: string | null;
-[*] interface AndroidFacts { | cacheSkipped: boolean;
-[*] interface AndroidFacts { | ccache: CcacheActivity;
-[*] interface AndroidFacts { | debugHttpHost: string | null;
-[*] interface AndroidFacts { | debugHttpHostNote: string | null;
-[*] interface AndroidFacts { | devClientUrl: string | null;
-[*] interface AndroidFacts { | devServer?: DevServerStart;
-[*] interface AndroidFacts { | deviceName: string | null;
-[*] interface AndroidFacts { | devicePlacement?: DevicePlacement;
-[*] interface AndroidFacts { | deviceProfile: string | null;
-[*] interface AndroidFacts { | durationMs: number | null;
-[*] interface AndroidFacts { | fingerprint: string | null;
-[*] interface AndroidFacts { | host?: HostedAndroidStatus;
-[*] interface AndroidFacts { | installSkipped: boolean;
-[*] interface AndroidFacts { | launched: LaunchStatus;
-[*] interface AndroidFacts { | lease?: RunLeaseFacts | null;
-[*] interface AndroidFacts { | logs: string | null;
-[*] interface AndroidFacts { | metroPort: number | null;
-[*] interface AndroidFacts { | ms: number;
-[*] interface AndroidFacts { | offloadFallback?: string;
-[*] interface AndroidFacts { | offloadedTo?: string;
-[*] interface AndroidFacts { | pid: number | null;
-[*] interface AndroidFacts { | platform: string;
-[*] interface AndroidFacts { | serial: string | null;
-[*] interface AndroidFacts { | slot?: string;
-[*] interface AndroidFacts { | stateDir: string;
-[*] interface AndroidFacts { | systemImage: string | null;
-[*] interface AndroidFacts { | variant: string | null;
-[*] interface AndroidFacts { | waitedForBuild: {
-[*] interface AndroidFacts { | } | null;
+[*] interface AndroidFacts { @@1 agentDevice?: {
+[*] interface AndroidFacts { @@1 appPath: string | null;
+[*] interface AndroidFacts { @@1 avdName: string | null;
+[*] interface AndroidFacts { @@1 buildMachine?: string;
+[*] interface AndroidFacts { @@1 builtOn?: string;
+[*] interface AndroidFacts { @@1 bundleId: string | null;
+[*] interface AndroidFacts { @@1 cacheHit: CacheHitLevel;
+[*] interface AndroidFacts { @@1 cacheKey: string | null;
+[*] interface AndroidFacts { @@1 cacheSkipped: boolean;
+[*] interface AndroidFacts { @@1 ccache: CcacheActivity;
+[*] interface AndroidFacts { @@1 debugHttpHost: string | null;
+[*] interface AndroidFacts { @@1 debugHttpHostNote: string | null;
+[*] interface AndroidFacts { @@1 devClientUrl: string | null;
+[*] interface AndroidFacts { @@1 devServer?: DevServerStart;
+[*] interface AndroidFacts { @@1 deviceName: string | null;
+[*] interface AndroidFacts { @@1 devicePlacement?: DevicePlacement;
+[*] interface AndroidFacts { @@1 deviceProfile: string | null;
+[*] interface AndroidFacts { @@1 durationMs: number | null;
+[*] interface AndroidFacts { @@1 fingerprint: string | null;
+[*] interface AndroidFacts { @@1 host?: HostedAndroidStatus;
+[*] interface AndroidFacts { @@1 installSkipped: boolean;
+[*] interface AndroidFacts { @@1 launched: LaunchStatus;
+[*] interface AndroidFacts { @@1 lease?: RunLeaseFacts | null;
+[*] interface AndroidFacts { @@1 logs: string | null;
+[*] interface AndroidFacts { @@1 metroPort: number | null;
+[*] interface AndroidFacts { @@1 offloadFallback?: string;
+[*] interface AndroidFacts { @@1 offloadedTo?: string;
+[*] interface AndroidFacts { @@1 platform: string;
+[*] interface AndroidFacts { @@1 serial: string | null;
+[*] interface AndroidFacts { @@1 slot?: string;
+[*] interface AndroidFacts { @@1 systemImage: string | null;
+[*] interface AndroidFacts { @@1 variant: string | null;
+[*] interface AndroidFacts { @@1 waitedForBuild: {
+[*] interface AndroidFacts { @@1 } | null;
+[*] interface AndroidFacts { @@2 ms: number;
+[*] interface AndroidFacts { @@2 pid: number | null;
+[*] interface AndroidFacts { @@2 stateDir: string;
 [*] interface BuildMachineDay {
-[*] interface BuildMachineDay { | fallbacks: number;
-[*] interface BuildMachineDay { | offloaded: number;
-[*] interface BuildMachineDay { | offloadedMs: number;
-[*] interface BuildMachineDay { | savedMs: number;
+[*] interface BuildMachineDay { @@1 fallbacks: number;
+[*] interface BuildMachineDay { @@1 offloaded: number;
+[*] interface BuildMachineDay { @@1 offloadedMs: number;
+[*] interface BuildMachineDay { @@1 savedMs: number;
 [*] interface BuildMachineReport {
-[*] interface BuildMachineReport { | capacity?: Record<string, unknown>;
-[*] interface BuildMachineReport { | deviceId?: string;
-[*] interface BuildMachineReport { | diagnosis?: RemoteDiagnosis;
-[*] interface BuildMachineReport { | dnsName?: string;
-[*] interface BuildMachineReport { | expiresAt?: string;
-[*] interface BuildMachineReport { | fingerprint?: string;
-[*] interface BuildMachineReport { | host?: NonNullable<HelloHost["app"]>;
-[*] interface BuildMachineReport { | machine: string;
-[*] interface BuildMachineReport { | notes?: OffloadProblem[];
-[*] interface BuildMachineReport { | offloadable?: boolean;
-[*] interface BuildMachineReport { | problems?: OffloadProblem[];
-[*] interface BuildMachineReport { | reasons?: string[];
-[*] interface BuildMachineReport { | requestedAt?: string;
-[*] interface BuildMachineReport { | state: "invalid" | "tailscale-off" | "not-on-tailnet" | "key-changed" | "key-unconfirmed" | "not-asked" | "pending" | "approved" | "revoked" | "lapsed" | "outdated" | "unreachable";
-[*] interface BuildMachineReport { | tailnet?: TailnetIdentity;
+[*] interface BuildMachineReport { @@1 capacity?: Record<string, unknown>;
+[*] interface BuildMachineReport { @@1 deviceId?: string;
+[*] interface BuildMachineReport { @@1 diagnosis?: RemoteDiagnosis;
+[*] interface BuildMachineReport { @@1 dnsName?: string;
+[*] interface BuildMachineReport { @@1 expiresAt?: string;
+[*] interface BuildMachineReport { @@1 fingerprint?: string;
+[*] interface BuildMachineReport { @@1 host?: NonNullable<HelloHost["app"]>;
+[*] interface BuildMachineReport { @@1 machine: string;
+[*] interface BuildMachineReport { @@1 notes?: OffloadProblem[];
+[*] interface BuildMachineReport { @@1 offloadable?: boolean;
+[*] interface BuildMachineReport { @@1 problems?: OffloadProblem[];
+[*] interface BuildMachineReport { @@1 reasons?: string[];
+[*] interface BuildMachineReport { @@1 requestedAt?: string;
+[*] interface BuildMachineReport { @@1 state: "invalid" | "tailscale-off" | "not-on-tailnet" | "key-changed" | "key-unconfirmed" | "not-asked" | "pending" | "approved" | "revoked" | "lapsed" | "outdated" | "unreachable";
+[*] interface BuildMachineReport { @@1 tailnet?: TailnetIdentity;
 [*] interface BuildMachineTotals {
-[*] interface BuildMachineTotals { | fallbacks: number;
-[*] interface BuildMachineTotals { | lastFallbackAt?: string;
-[*] interface BuildMachineTotals { | lastOffloadAt?: string;
-[*] interface BuildMachineTotals { | offloaded: number;
-[*] interface BuildMachineTotals { | offloadedMs: number;
-[*] interface BuildMachineTotals { | savedMs: number;
+[*] interface BuildMachineTotals { @@1 fallbacks: number;
+[*] interface BuildMachineTotals { @@1 lastFallbackAt?: string;
+[*] interface BuildMachineTotals { @@1 lastOffloadAt?: string;
+[*] interface BuildMachineTotals { @@1 offloaded: number;
+[*] interface BuildMachineTotals { @@1 offloadedMs: number;
+[*] interface BuildMachineTotals { @@1 savedMs: number;
 [*] interface BuildMachinesInspection {
-[*] interface BuildMachinesInspection { | findings: Finding[];
-[*] interface BuildMachinesInspection { | machines: BuildMachineReport[];
+[*] interface BuildMachinesInspection { @@1 findings: Finding[];
+[*] interface BuildMachinesInspection { @@1 machines: BuildMachineReport[];
 [*] interface BuildMissChange {
-[*] interface BuildMissChange { | category: BuildMissCategory;
-[*] interface BuildMissChange { | change: "added" | "removed" | "changed";
-[*] interface BuildMissChange { | source: string;
+[*] interface BuildMissChange { @@1 category: BuildMissCategory;
+[*] interface BuildMissChange { @@1 change: "added" | "removed" | "changed";
+[*] interface BuildMissChange { @@1 source: string;
 [*] interface BuildMissReason {
-[*] interface BuildMissReason { | baseline: {
-[*] interface BuildMissReason { | cacheKey?: string;
-[*] interface BuildMissReason { | changeCount: number;
-[*] interface BuildMissReason { | changes: BuildMissChange[];
-[*] interface BuildMissReason { | fingerprint: string;
-[*] interface BuildMissReason { | from: "workspace" | "project";
-[*] interface BuildMissReason { | kind: "changed" | "no-baseline" | "same-sources" | "cache-skipped" | "fingerprint-error" | "prebuild-pending";
-[*] interface BuildMissReason { | rekeyedBy: string[];
-[*] interface BuildMissReason { | summary: string;
-[*] interface BuildMissReason { | } | null;
+[*] interface BuildMissReason { @@1 baseline: {
+[*] interface BuildMissReason { @@1 changeCount: number;
+[*] interface BuildMissReason { @@1 changes: BuildMissChange[];
+[*] interface BuildMissReason { @@1 kind: "changed" | "no-baseline" | "same-sources" | "cache-skipped" | "fingerprint-error" | "prebuild-pending";
+[*] interface BuildMissReason { @@1 rekeyedBy: string[];
+[*] interface BuildMissReason { @@1 summary: string;
+[*] interface BuildMissReason { @@1 } | null;
+[*] interface BuildMissReason { @@2 cacheKey?: string;
+[*] interface BuildMissReason { @@2 fingerprint: string;
+[*] interface BuildMissReason { @@2 from: "workspace" | "project";
 [*] interface BuildPlanPayload {
-[*] interface BuildPlanPayload { | basis: number;
-[*] interface BuildPlanPayload { | buildPlacement?: {
-[*] interface BuildPlanPayload { | bundleId?: string;
-[*] interface BuildPlanPayload { | cacheHit: BuildCacheHit;
-[*] interface BuildPlanPayload { | cacheKey: string | null;
-[*] interface BuildPlanPayload { | cacheSkipped: boolean;
-[*] interface BuildPlanPayload { | code: string;
-[*] interface BuildPlanPayload { | expectedMs: number | null;
-[*] interface BuildPlanPayload { | fingerprint: string | null;
-[*] interface BuildPlanPayload { | message: string;
-[*] interface BuildPlanPayload { | missReason?: BuildMissReason;
-[*] interface BuildPlanPayload { | outcome: RunOutcomeKind | null;
-[*] interface BuildPlanPayload { | placement?: string;
-[*] interface BuildPlanPayload { | platform: StatsPlatform;
-[*] interface BuildPlanPayload { | prebuild: "none" | "generate" | "regenerate" | "refuse" | null;
-[*] interface BuildPlanPayload { | preference: string;
-[*] interface BuildPlanPayload { | provider: string | null;
-[*] interface BuildPlanPayload { | reason: string;
-[*] interface BuildPlanPayload { | refusal?: {
-[*] interface BuildPlanPayload { | remedy: string;
-[*] interface BuildPlanPayload { | slot?: string;
+[*] interface BuildPlanPayload { @@1 basis: number;
+[*] interface BuildPlanPayload { @@1 buildPlacement?: {
+[*] interface BuildPlanPayload { @@1 bundleId?: string;
+[*] interface BuildPlanPayload { @@1 cacheHit: BuildCacheHit;
+[*] interface BuildPlanPayload { @@1 cacheKey: string | null;
+[*] interface BuildPlanPayload { @@1 cacheSkipped: boolean;
+[*] interface BuildPlanPayload { @@1 expectedMs: number | null;
+[*] interface BuildPlanPayload { @@1 fingerprint: string | null;
+[*] interface BuildPlanPayload { @@1 missReason?: BuildMissReason;
+[*] interface BuildPlanPayload { @@1 outcome: RunOutcomeKind | null;
+[*] interface BuildPlanPayload { @@1 placement?: string;
+[*] interface BuildPlanPayload { @@1 platform: StatsPlatform;
+[*] interface BuildPlanPayload { @@1 prebuild: "none" | "generate" | "regenerate" | "refuse" | null;
+[*] interface BuildPlanPayload { @@1 provider: string | null;
+[*] interface BuildPlanPayload { @@1 refusal?: {
+[*] interface BuildPlanPayload { @@1 slot?: string;
+[*] interface BuildPlanPayload { @@2 code: string;
+[*] interface BuildPlanPayload { @@2 message: string;
+[*] interface BuildPlanPayload { @@2 preference: string;
+[*] interface BuildPlanPayload { @@2 reason: string;
+[*] interface BuildPlanPayload { @@2 remedy: string;
 [*] interface CcacheActivity {
-[*] interface CcacheActivity { | hitRatePercent: number | null;
-[*] interface CcacheActivity { | hits: number | null;
-[*] interface CcacheActivity { | misses: number | null;
-[*] interface CcacheActivity { | status: "reported" | "unavailable" | "not-run";
+[*] interface CcacheActivity { @@1 hitRatePercent: number | null;
+[*] interface CcacheActivity { @@1 hits: number | null;
+[*] interface CcacheActivity { @@1 misses: number | null;
+[*] interface CcacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
 [*] interface CollectorEntry {
-[*] interface CollectorEntry { | pid: number | null;
-[*] interface CollectorEntry { | platform: string;
-[*] interface CollectorEntry { | reason?: string;
-[*] interface CollectorEntry { | status: string;
+[*] interface CollectorEntry { @@1 pid: number | null;
+[*] interface CollectorEntry { @@1 platform: string;
+[*] interface CollectorEntry { @@1 reason?: string;
+[*] interface CollectorEntry { @@1 status: string;
 [*] interface CollectorsOutcome {
-[*] interface CollectorsOutcome { | entries: CollectorEntry[];
-[*] interface CollectorsOutcome { | status: string;
+[*] interface CollectorsOutcome { @@1 entries: CollectorEntry[];
+[*] interface CollectorsOutcome { @@1 status: string;
 [*] interface CompilationCacheActivity {
-[*] interface CompilationCacheActivity { | cacheableTasks: number | null;
-[*] interface CompilationCacheActivity { | hitRatePercent: number | null;
-[*] interface CompilationCacheActivity { | hits: number | null;
-[*] interface CompilationCacheActivity { | status: "reported" | "unavailable" | "not-run";
-[*] interface CompilationCacheActivity { | swiftTargetsWithoutExplicitModules?: number;
+[*] interface CompilationCacheActivity { @@1 cacheableTasks: number | null;
+[*] interface CompilationCacheActivity { @@1 hitRatePercent: number | null;
+[*] interface CompilationCacheActivity { @@1 hits: number | null;
+[*] interface CompilationCacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
+[*] interface CompilationCacheActivity { @@1 swiftTargetsWithoutExplicitModules?: number;
 [*] interface DaemonLadderAction {
-[*] interface DaemonLadderAction { | bytes: number;
-[*] interface DaemonLadderAction { | detail: string;
-[*] interface DaemonLadderAction { | kind: string;
-[*] interface DaemonLadderAction { | outcome: "done" | "kept" | "failed" | "would";
-[*] interface DaemonLadderAction { | restore?: string;
-[*] interface DaemonLadderAction { | rung: number;
-[*] interface DaemonLadderAction { | setting?: string;
-[*] interface DaemonLadderAction { | target: string;
-[*] interface DaemonLadderAction { | workspace?: string;
+[*] interface DaemonLadderAction { @@1 bytes: number;
+[*] interface DaemonLadderAction { @@1 detail: string;
+[*] interface DaemonLadderAction { @@1 kind: string;
+[*] interface DaemonLadderAction { @@1 outcome: "done" | "kept" | "failed" | "would";
+[*] interface DaemonLadderAction { @@1 restore?: string;
+[*] interface DaemonLadderAction { @@1 rung: number;
+[*] interface DaemonLadderAction { @@1 setting?: string;
+[*] interface DaemonLadderAction { @@1 target: string;
+[*] interface DaemonLadderAction { @@1 workspace?: string;
 [*] interface DaemonPressure {
-[*] interface DaemonPressure { | disk: PressureLevel;
-[*] interface DaemonPressure { | level: PressureLevel;
-[*] interface DaemonPressure { | memory: PressureLevel;
-[*] interface DaemonPressure { | memoryWarningSince: string | null;
-[*] interface DaemonPressure { | reasons: string[];
+[*] interface DaemonPressure { @@1 disk: PressureLevel;
+[*] interface DaemonPressure { @@1 level: PressureLevel;
+[*] interface DaemonPressure { @@1 memory: PressureLevel;
+[*] interface DaemonPressure { @@1 memoryWarningSince: string | null;
+[*] interface DaemonPressure { @@1 reasons: string[];
 [*] interface DaemonStatus {
-[*] interface DaemonStatus { | claim?: {
-[*] interface DaemonStatus { | intervalMs: number | null;
-[*] interface DaemonStatus { | lastTickAt: string | null;
-[*] interface DaemonStatus { | mode: DaemonMode;
-[*] interface DaemonStatus { | older?: {
-[*] interface DaemonStatus { | pid: number;
-[*] interface DaemonStatus { | pressure?: DaemonPressure;
-[*] interface DaemonStatus { | recent?: DaemonRecentAction[];
-[*] interface DaemonStatus { | removeCommand: string;
-[*] interface DaemonStatus { | running: {
-[*] interface DaemonStatus { | setting?: DaemonMode;
-[*] interface DaemonStatus { | since: string;
-[*] interface DaemonStatus { | stop: string;
-[*] interface DaemonStatus { | testWaiting?: DaemonTestWaiter[];
-[*] interface DaemonStatus { | unresolved: string;
-[*] interface DaemonStatus { | unverified?: UnverifiedCleanup[];
-[*] interface DaemonStatus { | verified: boolean;
-[*] interface DaemonStatus { | waiting?: DaemonWaiter[];
-[*] interface DaemonStatus { | } | null;
+[*] interface DaemonStatus { @@1 abnormalExits?: {
+[*] interface DaemonStatus { @@1 claim?: {
+[*] interface DaemonStatus { @@1 crashHold?: {
+[*] interface DaemonStatus { @@1 intervalMs: number | null;
+[*] interface DaemonStatus { @@1 lastTickAt: string | null;
+[*] interface DaemonStatus { @@1 mode: DaemonMode;
+[*] interface DaemonStatus { @@1 older?: {
+[*] interface DaemonStatus { @@1 pressure?: DaemonPressure;
+[*] interface DaemonStatus { @@1 recent?: DaemonRecentAction[];
+[*] interface DaemonStatus { @@1 running: {
+[*] interface DaemonStatus { @@1 setting?: DaemonMode;
+[*] interface DaemonStatus { @@1 testWaiting?: DaemonTestWaiter[];
+[*] interface DaemonStatus { @@1 unverified?: UnverifiedCleanup[];
+[*] interface DaemonStatus { @@1 waiting?: DaemonWaiter[];
+[*] interface DaemonStatus { @@1 } | null;
+[*] interface DaemonStatus { @@1 }[];
+[*] interface DaemonStatus { @@2 at: string;
+[*] interface DaemonStatus { @@2 build: string;
+[*] interface DaemonStatus { @@2 cause: "engine" | "home" | "unknown";
+[*] interface DaemonStatus { @@2 count: number;
+[*] interface DaemonStatus { @@2 home?: string;
+[*] interface DaemonStatus { @@2 pid: number;
+[*] interface DaemonStatus { @@2 reason: string;
+[*] interface DaemonStatus { @@2 remedy: string;
+[*] interface DaemonStatus { @@2 removeCommand: string;
+[*] interface DaemonStatus { @@2 since: string;
+[*] interface DaemonStatus { @@2 stop: string;
+[*] interface DaemonStatus { @@2 unresolved: string;
+[*] interface DaemonStatus { @@2 until: string;
+[*] interface DaemonStatus { @@2 verified: boolean;
 [*] interface DaemonTestWaiter {
-[*] interface DaemonTestWaiter { | label: string;
-[*] interface DaemonTestWaiter { | position: number;
-[*] interface DaemonTestWaiter { | since: string;
-[*] interface DaemonTestWaiter { | workspace: string | null;
+[*] interface DaemonTestWaiter { @@1 label: string;
+[*] interface DaemonTestWaiter { @@1 position: number;
+[*] interface DaemonTestWaiter { @@1 since: string;
+[*] interface DaemonTestWaiter { @@1 workspace: string | null;
 [*] interface DaemonWaiter {
-[*] interface DaemonWaiter { | label: string;
-[*] interface DaemonWaiter { | platform?: string;
-[*] interface DaemonWaiter { | position: number;
-[*] interface DaemonWaiter { | resource: "build" | "boot";
-[*] interface DaemonWaiter { | since: string;
-[*] interface DaemonWaiter { | workspace: string | null;
+[*] interface DaemonWaiter { @@1 label: string;
+[*] interface DaemonWaiter { @@1 platform?: string;
+[*] interface DaemonWaiter { @@1 position: number;
+[*] interface DaemonWaiter { @@1 resource: "build" | "boot";
+[*] interface DaemonWaiter { @@1 since: string;
+[*] interface DaemonWaiter { @@1 workspace: string | null;
 [*] interface DevServerStart {
-[*] interface DevServerStart { | reason: "not running" | "stopped (idle)";
-[*] interface DevServerStart { | started: true;
+[*] interface DevServerStart { @@1 reason: "not running" | "stopped (idle)";
+[*] interface DevServerStart { @@1 started: true;
 [*] interface DeviceActivity {
-[*] interface DeviceActivity { | basis: string[];
-[*] interface DeviceActivity { | driver?: ActivityDriver;
-[*] interface DeviceActivity { | lastActivityAt?: string;
-[*] interface DeviceActivity { | recent?: Partial<Record<ActivityRecencyBasis, string>>;
-[*] interface DeviceActivity { | state: ActivityState;
-[*] interface DeviceActivity { | unknown?: string[];
+[*] interface DeviceActivity { @@1 basis: string[];
+[*] interface DeviceActivity { @@1 driver?: ActivityDriver;
+[*] interface DeviceActivity { @@1 lastActivityAt?: string;
+[*] interface DeviceActivity { @@1 recent?: Partial<Record<ActivityRecencyBasis, string>>;
+[*] interface DeviceActivity { @@1 state: ActivityState;
+[*] interface DeviceActivity { @@1 unknown?: string[];
 [*] interface DeviceOutcome {
-[*] interface DeviceOutcome { | [key: string]: DeviceOutcomeEntry | null | undefined;
-[*] interface DeviceOutcome { | android: DeviceOutcomeEntry | null;
-[*] interface DeviceOutcome { | ios: DeviceOutcomeEntry | null;
-[*] interface DeviceOutcome { | remote?: DeviceOutcomeEntry | null;
-[*] interface DeviceOutcome { | web?: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 [key: string]: DeviceOutcomeEntry | null | undefined;
+[*] interface DeviceOutcome { @@1 android: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 ios: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 remote?: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 web?: DeviceOutcomeEntry | null;
 [*] interface DeviceOutcomeEntry {
-[*] interface DeviceOutcomeEntry { | kind?: string | null;
-[*] interface DeviceOutcomeEntry { | label?: string;
-[*] interface DeviceOutcomeEntry { | reason?: string;
-[*] interface DeviceOutcomeEntry { | remedy?: string;
-[*] interface DeviceOutcomeEntry { | status: string;
-[*] interface DeviceOutcomeEntry { | until?: string;
+[*] interface DeviceOutcomeEntry { @@1 kind?: string | null;
+[*] interface DeviceOutcomeEntry { @@1 label?: string;
+[*] interface DeviceOutcomeEntry { @@1 reason?: string;
+[*] interface DeviceOutcomeEntry { @@1 remedy?: string;
+[*] interface DeviceOutcomeEntry { @@1 status: string;
+[*] interface DeviceOutcomeEntry { @@1 until?: string;
 [*] interface DevicePlacement {
-[*] interface DevicePlacement { | decision: "local" | "hosted" | "waited-locally" | "eas";
-[*] interface DevicePlacement { | machine?: string;
-[*] interface DevicePlacement { | reason: string;
+[*] interface DevicePlacement { @@1 decision: "local" | "hosted" | "waited-locally" | "eas";
+[*] interface DevicePlacement { @@1 machine?: string;
+[*] interface DevicePlacement { @@1 reason: string;
 [*] interface DiscoveredCheckout {
-[*] interface DiscoveredCheckout { | from: string;
-[*] interface DiscoveredCheckout { | origin: DiscoveryOrigin;
-[*] interface DiscoveredCheckout { | path: string;
+[*] interface DiscoveredCheckout { @@1 from: string;
+[*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
+[*] interface DiscoveredCheckout { @@1 path: string;
 [*] interface DoctorReport {
-[*] interface DoctorReport { | daemon: DaemonStatus & {
-[*] interface DoctorReport { | deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
-[*] interface DoctorReport { | findings: Finding[];
-[*] interface DoctorReport { | logPath: string;
-[*] interface DoctorReport { | maintenance: ReturnType<typeof maintenanceStatus> & {
-[*] interface DoctorReport { | platform: DoctorPlatform | null;
-[*] interface DoctorReport { | pressure: DaemonPressure | null;
-[*] interface DoctorReport { | priority?: number;
-[*] interface DoctorReport { | project: string;
-[*] interface DoctorReport { | remoteMachines: Array<BuildMachinesInspection["machines"][number] & {
-[*] interface DoctorReport { | stim: StimVersionReport;
-[*] interface DoctorReport { | toolchain: ToolchainReport | null;
+[*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
+[*] interface DoctorReport { @@1 @internal maintenance: ReturnType<typeof maintenanceStatus> & {
+[*] interface DoctorReport { @@1 deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
+[*] interface DoctorReport { @@1 findings: Finding[];
+[*] interface DoctorReport { @@1 platform: DoctorPlatform | null;
+[*] interface DoctorReport { @@1 pressure: DaemonPressure | null;
+[*] interface DoctorReport { @@1 project: string;
+[*] interface DoctorReport { @@1 remoteMachines: Array<BuildMachinesInspection["machines"][number] & {
+[*] interface DoctorReport { @@1 stim: StimVersionReport;
+[*] interface DoctorReport { @@1 toolchain: ToolchainReport | null;
+[*] interface DoctorReport { @@2 logPath: string;
+[*] interface DoctorReport { @@2 priority?: number;
 [*] interface Endpoint {
-[*] interface Endpoint { | host: string;
-[*] interface Endpoint { | servername: string;
-[*] interface Endpoint { | url: string;
+[*] interface Endpoint { @@1 host: string;
+[*] interface Endpoint { @@1 servername: string;
+[*] interface Endpoint { @@1 url: string;
 [*] interface Finding {
-[*] interface Finding { | code?: string;
-[*] interface Finding { | detail: string;
-[*] interface Finding { | fix: string | null;
-[*] interface Finding { | level: "cost" | "note";
-[*] interface Finding { | title: string;
+[*] interface Finding { @@1 code?: string;
+[*] interface Finding { @@1 detail: string;
+[*] interface Finding { @@1 fix: string | null;
+[*] interface Finding { @@1 level: "cost" | "note";
+[*] interface Finding { @@1 title: string;
 [*] interface GcInventory {
-[*] interface GcInventory { | devices: InventoryDevice[];
-[*] interface GcInventory { | notices: string[];
-[*] interface GcInventory { | runtimes: InventoryRuntime[];
-[*] interface GcInventory { | systemImages: InventorySystemImage[];
+[*] interface GcInventory { @@1 devices: InventoryDevice[];
+[*] interface GcInventory { @@1 notices: string[];
+[*] interface GcInventory { @@1 runtimes: InventoryRuntime[];
+[*] interface GcInventory { @@1 systemImages: InventorySystemImage[];
 [*] interface GcJsonLock {
-[*] interface GcJsonLock { | key: string | null;
-[*] interface GcJsonLock { | path: string;
-[*] interface GcJsonLock { | pid: number | null;
-[*] interface GcJsonLock { | platform: string;
-[*] interface GcJsonLock { | projectRoot: string | null;
+[*] interface GcJsonLock { @@1 @internal path: string;
+[*] interface GcJsonLock { @@1 @internal pid: number | null;
+[*] interface GcJsonLock { @@1 key: string | null;
+[*] interface GcJsonLock { @@1 platform: string;
+[*] interface GcJsonLock { @@1 projectRoot: string | null;
 [*] interface GcJsonSections {
-[*] interface GcJsonSections { | agentDevice: AgentDeviceUsage | null;
-[*] interface GcJsonSections { | buildState: WorktreeBuildState | null;
-[*] interface GcJsonSections { | buildsInProgress: GcJsonLock[];
-[*] interface GcJsonSections { | bytes: number | null;
-[*] interface GcJsonSections { | bytes: number;
-[*] interface GcJsonSections { | caches: {
-[*] interface GcJsonSections { | command: string;
-[*] interface GcJsonSections { | containsHead: boolean;
-[*] interface GcJsonSections { | deadProjects: {
-[*] interface GcJsonSections { | deleteBytes: number;
-[*] interface GcJsonSections { | detail: string | null;
-[*] interface GcJsonSections { | detail: string;
-[*] interface GcJsonSections { | deviceName: string | null;
-[*] interface GcJsonSections { | deviceSweepNotices: {
-[*] interface GcJsonSections { | dir: string;
-[*] interface GcJsonSections { | directory: string | null;
-[*] interface GcJsonSections { | easSessionSweepNotices: {
-[*] interface GcJsonSections { | eligibleAt: string | null;
-[*] interface GcJsonSections { | emptySkipped: string | null;
-[*] interface GcJsonSections { | expiredDeviceLeases: {
-[*] interface GcJsonSections { | expiresAt: string | null;
-[*] interface GcJsonSections { | file: string;
-[*] interface GcJsonSections { | finishedDevices: {
-[*] interface GcJsonSections { | gradleVersions: GradleVersionSweep | null;
-[*] interface GcJsonSections { | holder: string | null;
-[*] interface GcJsonSections { | hostedAppStorage: HostedAppStorage[];
-[*] interface GcJsonSections { | id: string;
-[*] interface GcJsonSections { | idleDays: number | null;
-[*] interface GcJsonSections { | idleDays: number;
-[*] interface GcJsonSections { | inTreeDirs: string[];
-[*] interface GcJsonSections { | index: number | null;
-[*] interface GcJsonSections { | invalidProjects: {
-[*] interface GcJsonSections { | keptDeviceLeases: {
-[*] interface GcJsonSections { | kind: "disk-usage" | "pull-request" | "git-merge";
-[*] interface GcJsonSections { | kind: "ios" | "android" | "web";
-[*] interface GcJsonSections { | kind: "ios" | "android";
-[*] interface GcJsonSections { | kind: "lock" | "slot";
-[*] interface GcJsonSections { | label: string;
-[*] interface GcJsonSections { | linkedWorktrees: {
-[*] interface GcJsonSections { | machineCaches: MachineCacheReport | null;
-[*] interface GcJsonSections { | memory: MemoryProcess[];
-[*] interface GcJsonSections { | memoryNotices: {
-[*] interface GcJsonSections { | mergedInto: string | null;
-[*] interface GcJsonSections { | message: string;
-[*] interface GcJsonSections { | name: string;
-[*] interface GcJsonSections { | note: string | null;
-[*] interface GcJsonSections { | number: number;
-[*] interface GcJsonSections { | orphanedDevices: {
-[*] interface GcJsonSections { | orphanedEasSessions: {
-[*] interface GcJsonSections { | orphanedPorts: {
-[*] interface GcJsonSections { | orphanedWorkspaces: {
-[*] interface GcJsonSections { | otherHomes: OtherHome[];
-[*] interface GcJsonSections { | ownedDeviceDisk: OwnedDeviceDisk[];
-[*] interface GcJsonSections { | parkedEmulators: ParkedAvdReport[];
-[*] interface GcJsonSections { | parkedHostedDevices: ParkedHostedDeviceReport[];
-[*] interface GcJsonSections { | parkedSimulators: ParkedSimReport[];
-[*] interface GcJsonSections { | path: string;
-[*] interface GcJsonSections { | pid: number | null;
-[*] interface GcJsonSections { | platform: "ios" | "android";
-[*] interface GcJsonSections { | platform: string;
-[*] interface GcJsonSections { | port: number;
-[*] interface GcJsonSections { | project: string;
-[*] interface GcJsonSections { | projectRoot: string | null;
-[*] interface GcJsonSections { | projectScope: string;
-[*] interface GcJsonSections { | pullRequest: {
-[*] interface GcJsonSections { | pullRequestUnknown: string | null;
-[*] interface GcJsonSections { | reason: RecordingKeptCode | null;
-[*] interface GcJsonSections { | reason: WorkspaceKeptCode | null;
-[*] interface GcJsonSections { | reason: WorkspaceLogsKeptCode | null;
-[*] interface GcJsonSections { | reason: WorktreeSkipCode | null;
-[*] interface GcJsonSections { | reason: string;
-[*] interface GcJsonSections { | recordings: {
-[*] interface GcJsonSections { | remedy: string;
-[*] interface GcJsonSections { | repository: string;
-[*] interface GcJsonSections { | scopedEmpty: {
-[*] interface GcJsonSections { | simulatorLaunchdFolders: {
-[*] interface GcJsonSections { | skipped: {
-[*] interface GcJsonSections { | slot: string | null;
-[*] interface GcJsonSections { | source: "registered" | "detected" | null;
-[*] interface GcJsonSections { | staleBuildLocks: GcJsonLock[];
-[*] interface GcJsonSections { | staleBuildSlots: {
-[*] interface GcJsonSections { | staleDeviceRecords: {
-[*] interface GcJsonSections { | staleDevices: {
-[*] interface GcJsonSections { | staleEasLedgerEntries: {
-[*] interface GcJsonSections { | staleLedgerEntries: {
-[*] interface GcJsonSections { | staleStatusCaches: {
-[*] interface GcJsonSections { | state: "open" | "merged" | "closed";
-[*] interface GcJsonSections { | status: string;
-[*] interface GcJsonSections { | swiftpmCache: SwiftpmCacheUsage | null;
-[*] interface GcJsonSections { | tempLeftovers: ReturnType<typeof tempLeftoverSection>;
-[*] interface GcJsonSections { | trash: TrashReport | null;
-[*] interface GcJsonSections { | trimBytes: number;
-[*] interface GcJsonSections { | udid: string;
-[*] interface GcJsonSections { | unlistedWorktreeDirectories: {
-[*] interface GcJsonSections { | unresolvedBuildClaims: {
-[*] interface GcJsonSections { | unverifiedDevices: {
-[*] interface GcJsonSections { | url: string;
-[*] interface GcJsonSections { | watchmanRoots: WatchmanRoot[];
-[*] interface GcJsonSections { | willClear: boolean;
-[*] interface GcJsonSections { | willDelete: boolean;
-[*] interface GcJsonSections { | willEmpty: boolean;
-[*] interface GcJsonSections { | willRemove: boolean;
-[*] interface GcJsonSections { | willTrim: boolean;
-[*] interface GcJsonSections { | withWorkspace: boolean;
-[*] interface GcJsonSections { | workspaceBuildOutputs: {
-[*] interface GcJsonSections { | workspaceLogs: {
-[*] interface GcJsonSections { | workspaceRoot: string;
-[*] interface GcJsonSections { | } | null;
-[*] interface GcJsonSections { | }[];
+[*] interface GcJsonSections { @@1 agentDevice: AgentDeviceUsage | null;
+[*] interface GcJsonSections { @@1 buildsInProgress: GcJsonLock[];
+[*] interface GcJsonSections { @@1 caches: {
+[*] interface GcJsonSections { @@1 deadProjects: {
+[*] interface GcJsonSections { @@1 deviceSweepNotices: {
+[*] interface GcJsonSections { @@1 easSessionSweepNotices: {
+[*] interface GcJsonSections { @@1 expiredDeviceLeases: {
+[*] interface GcJsonSections { @@1 finishedDevices: {
+[*] interface GcJsonSections { @@1 gradleVersions: GradleVersionSweep | null;
+[*] interface GcJsonSections { @@1 hostedAppStorage: HostedAppStorage[];
+[*] interface GcJsonSections { @@1 invalidProjects: {
+[*] interface GcJsonSections { @@1 keptDeviceLeases: {
+[*] interface GcJsonSections { @@1 linkedWorktrees: {
+[*] interface GcJsonSections { @@1 machineCaches: MachineCacheReport | null;
+[*] interface GcJsonSections { @@1 memory: MemoryProcess[];
+[*] interface GcJsonSections { @@1 memoryNotices: {
+[*] interface GcJsonSections { @@1 orphanedDevices: {
+[*] interface GcJsonSections { @@1 orphanedEasSessions: {
+[*] interface GcJsonSections { @@1 orphanedPorts: {
+[*] interface GcJsonSections { @@1 orphanedWorkspaces: {
+[*] interface GcJsonSections { @@1 otherHomes: OtherHome[];
+[*] interface GcJsonSections { @@1 ownedDeviceDisk: OwnedDeviceDisk[];
+[*] interface GcJsonSections { @@1 parkedEmulators: ParkedAvdReport[];
+[*] interface GcJsonSections { @@1 parkedHostedDevices: ParkedHostedDeviceReport[];
+[*] interface GcJsonSections { @@1 parkedSimulators: ParkedSimReport[];
+[*] interface GcJsonSections { @@1 recordings: {
+[*] interface GcJsonSections { @@1 simulatorLaunchdFolders: {
+[*] interface GcJsonSections { @@1 skipped: {
+[*] interface GcJsonSections { @@1 staleBuildLocks: GcJsonLock[];
+[*] interface GcJsonSections { @@1 staleBuildSlots: {
+[*] interface GcJsonSections { @@1 staleDeviceRecords: {
+[*] interface GcJsonSections { @@1 staleDevices: {
+[*] interface GcJsonSections { @@1 staleEasLedgerEntries: {
+[*] interface GcJsonSections { @@1 staleLedgerEntries: {
+[*] interface GcJsonSections { @@1 staleStatusCaches: {
+[*] interface GcJsonSections { @@1 swiftpmCache: SwiftpmCacheUsage | null;
+[*] interface GcJsonSections { @@1 tempLeftovers: ReturnType<typeof tempLeftoverSection>;
+[*] interface GcJsonSections { @@1 trash: TrashReport | null;
+[*] interface GcJsonSections { @@1 unlistedWorktreeDirectories: {
+[*] interface GcJsonSections { @@1 unresolvedBuildClaims: {
+[*] interface GcJsonSections { @@1 unverifiedDevices: {
+[*] interface GcJsonSections { @@1 watchmanRoots: WatchmanRoot[];
+[*] interface GcJsonSections { @@1 workspaceBuildOutputs: {
+[*] interface GcJsonSections { @@1 workspaceLogs: {
+[*] interface GcJsonSections { @@1 }[];
+[*] interface GcJsonSections { @@2 buildState: WorktreeBuildState | null;
+[*] interface GcJsonSections { @@2 bytes: number | null;
+[*] interface GcJsonSections { @@2 bytes: number;
+[*] interface GcJsonSections { @@2 command: string;
+[*] interface GcJsonSections { @@2 deleteBytes: number;
+[*] interface GcJsonSections { @@2 detail: string | null;
+[*] interface GcJsonSections { @@2 detail: string;
+[*] interface GcJsonSections { @@2 deviceName: string | null;
+[*] interface GcJsonSections { @@2 dir: string;
+[*] interface GcJsonSections { @@2 directory: string | null;
+[*] interface GcJsonSections { @@2 eligibleAt: string | null;
+[*] interface GcJsonSections { @@2 emptySkipped: string | null;
+[*] interface GcJsonSections { @@2 expiresAt: string | null;
+[*] interface GcJsonSections { @@2 file: string;
+[*] interface GcJsonSections { @@2 holder: string | null;
+[*] interface GcJsonSections { @@2 id: string;
+[*] interface GcJsonSections { @@2 idleDays: number | null;
+[*] interface GcJsonSections { @@2 idleDays: number;
+[*] interface GcJsonSections { @@2 inTreeDirs: string[];
+[*] interface GcJsonSections { @@2 index: number | null;
+[*] interface GcJsonSections { @@2 kind: "disk-usage" | "pull-request" | "git-merge";
+[*] interface GcJsonSections { @@2 kind: "ios" | "android" | "web";
+[*] interface GcJsonSections { @@2 kind: "ios" | "android";
+[*] interface GcJsonSections { @@2 kind: "lock" | "slot";
+[*] interface GcJsonSections { @@2 label: string;
+[*] interface GcJsonSections { @@2 mergedInto: string | null;
+[*] interface GcJsonSections { @@2 message: string;
+[*] interface GcJsonSections { @@2 name: string;
+[*] interface GcJsonSections { @@2 note: string | null;
+[*] interface GcJsonSections { @@2 path: string;
+[*] interface GcJsonSections { @@2 pid: number | null;
+[*] interface GcJsonSections { @@2 platform: "ios" | "android";
+[*] interface GcJsonSections { @@2 platform: string;
+[*] interface GcJsonSections { @@2 port: number;
+[*] interface GcJsonSections { @@2 project: string;
+[*] interface GcJsonSections { @@2 projectRoot: string | null;
+[*] interface GcJsonSections { @@2 projectScope: string;
+[*] interface GcJsonSections { @@2 pullRequest: {
+[*] interface GcJsonSections { @@2 pullRequestUnknown: string | null;
+[*] interface GcJsonSections { @@2 reason: RecordingKeptCode | null;
+[*] interface GcJsonSections { @@2 reason: WorkspaceKeptCode | null;
+[*] interface GcJsonSections { @@2 reason: WorkspaceLogsKeptCode | null;
+[*] interface GcJsonSections { @@2 reason: WorktreeSkipCode | null;
+[*] interface GcJsonSections { @@2 reason: string;
+[*] interface GcJsonSections { @@2 remedy: string;
+[*] interface GcJsonSections { @@2 repository: string;
+[*] interface GcJsonSections { @@2 scopedEmpty: {
+[*] interface GcJsonSections { @@2 slot: string | null;
+[*] interface GcJsonSections { @@2 source: "registered" | "detected" | null;
+[*] interface GcJsonSections { @@2 status: string;
+[*] interface GcJsonSections { @@2 trimBytes: number;
+[*] interface GcJsonSections { @@2 udid: string;
+[*] interface GcJsonSections { @@2 willClear: boolean;
+[*] interface GcJsonSections { @@2 willDelete: boolean;
+[*] interface GcJsonSections { @@2 willEmpty: boolean;
+[*] interface GcJsonSections { @@2 willRemove: boolean;
+[*] interface GcJsonSections { @@2 willTrim: boolean;
+[*] interface GcJsonSections { @@2 withWorkspace: boolean;
+[*] interface GcJsonSections { @@2 workspaceRoot: string;
+[*] interface GcJsonSections { @@2 } | null;
+[*] interface GcJsonSections { @@3 containsHead: boolean;
+[*] interface GcJsonSections { @@3 emptySkipped: string | null;
+[*] interface GcJsonSections { @@3 number: number;
+[*] interface GcJsonSections { @@3 state: "open" | "merged" | "closed";
+[*] interface GcJsonSections { @@3 url: string;
+[*] interface GcJsonSections { @@3 willEmpty: boolean;
 [*] interface GcOptions {
-[*] interface GcOptions { | dryRun?: boolean;
-[*] interface GcOptions { | json?: boolean;
-[*] interface GcOptions { | measureBuildState?: boolean;
-[*] interface GcOptions { | pressure?: PressureLevel;
+[*] interface GcOptions { @@1 dryRun?: boolean;
+[*] interface GcOptions { @@1 json?: boolean;
+[*] interface GcOptions { @@1 measureBuildState?: boolean;
+[*] interface GcOptions { @@1 pressure?: PressureLevel;
 [*] interface GcRefusal {
-[*] interface GcRefusal { | code: string;
-[*] interface GcRefusal { | message: string;
-[*] interface GcRefusal { | remedy: string;
+[*] interface GcRefusal { @@1 code: string;
+[*] interface GcRefusal { @@1 message: string;
+[*] interface GcRefusal { @@1 remedy: string;
 [*] interface GcResult {
-[*] interface GcResult { | bytes: number | null;
-[*] interface GcResult { | detail: string | null;
-[*] interface GcResult { | id: string | null;
-[*] interface GcResult { | kind: GcResultKind;
-[*] interface GcResult { | label: string;
-[*] interface GcResult { | status: GcResultStatus;
+[*] interface GcResult { @@1 bytes: number | null;
+[*] interface GcResult { @@1 detail: string | null;
+[*] interface GcResult { @@1 id: string | null;
+[*] interface GcResult { @@1 kind: GcResultKind;
+[*] interface GcResult { @@1 label: string;
+[*] interface GcResult { @@1 status: GcResultStatus;
 [*] interface GcRunPayload {
-[*] interface GcRunPayload { | actionable: boolean;
-[*] interface GcRunPayload { | actions: LevelRunAction[];
-[*] interface GcRunPayload { | blocked: string[];
-[*] interface GcRunPayload { | discovered: LevelRun["discovered"];
-[*] interface GcRunPayload { | failures: number | null;
-[*] interface GcRunPayload { | inventory?: GcInventory | null;
-[*] interface GcRunPayload { | level: PressureLevel;
-[*] interface GcRunPayload { | mode: "dry-run" | "delete";
-[*] interface GcRunPayload { | outside: LevelRun["outside"];
-[*] interface GcRunPayload { | pressure: DaemonPressure;
-[*] interface GcRunPayload { | results: GcResult[];
-[*] interface GcRunPayload { | sections?: GcJsonSections;
+[*] interface GcRunPayload { @@1 actionable: boolean;
+[*] interface GcRunPayload { @@1 actions: LevelRunAction[];
+[*] interface GcRunPayload { @@1 blocked: string[];
+[*] interface GcRunPayload { @@1 discovered: LevelRun["discovered"];
+[*] interface GcRunPayload { @@1 failures: number | null;
+[*] interface GcRunPayload { @@1 inventory?: GcInventory | null;
+[*] interface GcRunPayload { @@1 level: PressureLevel;
+[*] interface GcRunPayload { @@1 mode: "dry-run" | "delete";
+[*] interface GcRunPayload { @@1 outside: LevelRun["outside"];
+[*] interface GcRunPayload { @@1 pressure: DaemonPressure;
+[*] interface GcRunPayload { @@1 results: GcResult[];
+[*] interface GcRunPayload { @@1 sections?: GcJsonSections;
 [*] interface GradleVersionEntry {
-[*] interface GradleVersionEntry { | bytes: number | null;
-[*] interface GradleVersionEntry { | detail: string | null;
-[*] interface GradleVersionEntry { | dirs: string[];
-[*] interface GradleVersionEntry { | lastModifiedAt: string | null;
-[*] interface GradleVersionEntry { | reason: GradleVersionKeptCode | null;
-[*] interface GradleVersionEntry { | version: string;
-[*] interface GradleVersionEntry { | willDelete: boolean;
+[*] interface GradleVersionEntry { @@1 bytes: number | null;
+[*] interface GradleVersionEntry { @@1 detail: string | null;
+[*] interface GradleVersionEntry { @@1 dirs: string[];
+[*] interface GradleVersionEntry { @@1 lastModifiedAt: string | null;
+[*] interface GradleVersionEntry { @@1 reason: GradleVersionKeptCode | null;
+[*] interface GradleVersionEntry { @@1 version: string;
+[*] interface GradleVersionEntry { @@1 willDelete: boolean;
 [*] interface GradleVersionSweep {
-[*] interface GradleVersionSweep { | blocked: {
-[*] interface GradleVersionSweep { | detail: string;
-[*] interface GradleVersionSweep { | gradleRunning: string | null;
-[*] interface GradleVersionSweep { | gradleRunningPids: number[];
-[*] interface GradleVersionSweep { | home: string;
-[*] interface GradleVersionSweep { | leftovers: string[];
-[*] interface GradleVersionSweep { | olderThanDays: number | null;
-[*] interface GradleVersionSweep { | reason: GradleSweepBlock;
-[*] interface GradleVersionSweep { | versions: GradleVersionEntry[];
-[*] interface GradleVersionSweep { | } | null;
+[*] interface GradleVersionSweep { @@1 blocked: {
+[*] interface GradleVersionSweep { @@1 gradleRunning: string | null;
+[*] interface GradleVersionSweep { @@1 gradleRunningPids: number[];
+[*] interface GradleVersionSweep { @@1 home: string;
+[*] interface GradleVersionSweep { @@1 leftovers: string[];
+[*] interface GradleVersionSweep { @@1 olderThanDays: number | null;
+[*] interface GradleVersionSweep { @@1 versions: GradleVersionEntry[];
+[*] interface GradleVersionSweep { @@1 } | null;
+[*] interface GradleVersionSweep { @@2 detail: string;
+[*] interface GradleVersionSweep { @@2 reason: GradleSweepBlock;
 [*] interface HelloHost {
-[*] interface HelloHost { | accessibility: boolean;
-[*] interface HelloHost { | app: {
-[*] interface HelloHost { | capabilities: HostCapability[];
-[*] interface HelloHost { | name: string;
-[*] interface HelloHost { | owner: "desktop" | "service" | "cli";
-[*] interface HelloHost { | screenRecording: boolean;
-[*] interface HelloHost { | } | null;
+[*] interface HelloHost { @@1 app: {
+[*] interface HelloHost { @@1 capabilities: HostCapability[];
+[*] interface HelloHost { @@1 owner: "desktop" | "service" | "cli";
+[*] interface HelloHost { @@1 } | null;
+[*] interface HelloHost { @@2 accessibility: boolean;
+[*] interface HelloHost { @@2 name: string;
+[*] interface HelloHost { @@2 screenRecording: boolean;
 [*] interface HostedAgentIssuedGrant {
-[*] interface HostedAgentIssuedGrant { | driver: string;
-[*] interface HostedAgentIssuedGrant { | lease?: HostedAgentLease;
-[*] interface HostedAgentIssuedGrant { | path: string;
-[*] interface HostedAgentIssuedGrant { | scope: string;
-[*] interface HostedAgentIssuedGrant { | token: string;
+[*] interface HostedAgentIssuedGrant { @@1 driver: string;
+[*] interface HostedAgentIssuedGrant { @@1 lease?: HostedAgentLease;
+[*] interface HostedAgentIssuedGrant { @@1 path: string;
+[*] interface HostedAgentIssuedGrant { @@1 scope: string;
+[*] interface HostedAgentIssuedGrant { @@1 token: string;
 [*] interface HostedAgentLease {
-[*] interface HostedAgentLease { | backend?: "ios-instance" | "android-instance";
-[*] interface HostedAgentLease { | clientId: string;
-[*] interface HostedAgentLease { | deviceKey: string;
-[*] interface HostedAgentLease { | runId: string;
-[*] interface HostedAgentLease { | tenant: string;
+[*] interface HostedAgentLease { @@1 backend?: "ios-instance" | "android-instance";
+[*] interface HostedAgentLease { @@1 clientId: string;
+[*] interface HostedAgentLease { @@1 deviceKey: string;
+[*] interface HostedAgentLease { @@1 runId: string;
+[*] interface HostedAgentLease { @@1 tenant: string;
 [*] interface HostedAndroidChoice {
-[*] interface HostedAndroidChoice { | architecture: "arm64-v8a" | "x86_64";
-[*] interface HostedAndroidChoice { | deviceProfile: string;
-[*] interface HostedAndroidChoice { | systemImage: string;
+[*] interface HostedAndroidChoice { @@1 architecture: "arm64-v8a" | "x86_64";
+[*] interface HostedAndroidChoice { @@1 deviceProfile: string;
+[*] interface HostedAndroidChoice { @@1 systemImage: string;
 [*] interface HostedAndroidDevice extends HostedAndroidChoice {
-[*] interface HostedAndroidDevice extends HostedAndroidChoice { | avdName: string;
-[*] interface HostedAndroidDevice extends HostedAndroidChoice { | consolePort: number;
-[*] interface HostedAndroidDevice extends HostedAndroidChoice { | serial: string;
+[*] interface HostedAndroidDevice extends HostedAndroidChoice { @@1 avdName: string;
+[*] interface HostedAndroidDevice extends HostedAndroidChoice { @@1 consolePort: number;
+[*] interface HostedAndroidDevice extends HostedAndroidChoice { @@1 serial: string;
 [*] interface HostedAppStorage {
-[*] interface HostedAppStorage { | appsBytes: number | null;
-[*] interface HostedAppStorage { | blobsBytes: number | null;
-[*] interface HostedAppStorage { | client: string;
-[*] interface HostedAppStorage { | detail: string;
-[*] interface HostedAppStorage { | path: string;
-[*] interface HostedAppStorage { | platform: HostedDeviceSession["platform"];
-[*] interface HostedAppStorage { | session: string;
-[*] interface HostedAppStorage { | state: HostedDeviceSession["state"];
-[*] interface HostedAppStorage { | willDelete: false;
+[*] interface HostedAppStorage { @@1 appsBytes: number | null;
+[*] interface HostedAppStorage { @@1 blobsBytes: number | null;
+[*] interface HostedAppStorage { @@1 client: string;
+[*] interface HostedAppStorage { @@1 detail: string;
+[*] interface HostedAppStorage { @@1 path: string;
+[*] interface HostedAppStorage { @@1 platform: HostedDeviceSession["platform"];
+[*] interface HostedAppStorage { @@1 session: string;
+[*] interface HostedAppStorage { @@1 state: HostedDeviceSession["state"];
+[*] interface HostedAppStorage { @@1 willDelete: false;
 [*] interface HostedDeviceOfferRequest extends HostedDeviceSelectors {
-[*] interface HostedDeviceOfferRequest extends HostedDeviceSelectors { | platform: HostedDevicePlatform;
+[*] interface HostedDeviceOfferRequest extends HostedDeviceSelectors { @@1 platform: HostedDevicePlatform;
 [*] interface HostedDeviceRequest extends HostedDeviceOfferRequest {
-[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { | attempt: string;
-[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { | slot: string;
-[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { | workspace: string;
+[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { @@1 attempt: string;
+[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { @@1 slot: string;
+[*] interface HostedDeviceRequest extends HostedDeviceOfferRequest { @@1 workspace: string;
 [*] interface HostedDeviceSelectors {
-[*] interface HostedDeviceSelectors { | deviceProfile?: string;
-[*] interface HostedDeviceSelectors { | deviceType?: string;
-[*] interface HostedDeviceSelectors { | runtime?: string;
-[*] interface HostedDeviceSelectors { | systemImage?: string;
+[*] interface HostedDeviceSelectors { @@1 deviceProfile?: string;
+[*] interface HostedDeviceSelectors { @@1 deviceType?: string;
+[*] interface HostedDeviceSelectors { @@1 runtime?: string;
+[*] interface HostedDeviceSelectors { @@1 systemImage?: string;
 [*] interface HostedDeviceSession extends HostedDeviceRequest {
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | agent?: HostedAgentGrant;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | appAttempt?: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | appSlot?: number;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | at: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | client: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | clientAbsentMs?: number;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | clientMetroPort?: number;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | consolePort?: number;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | createdAt: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | device: HostedDevice | null;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | id: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | idleStop?: {
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | metroPort?: number;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | notice?: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | parked?: {
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | reason: string;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | reverses?: Record<string, number>;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | state: HostedDevicePhase;
-[*] interface HostedDeviceSession extends HostedDeviceRequest { | stoppedAt?: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 agent?: HostedAgentGrant;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 appAttempt?: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 appSlot?: number;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 client: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 clientAbsentMs?: number;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 clientMetroPort?: number;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 consolePort?: number;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 createdAt: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 device: HostedDevice | null;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 id: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 idleStop?: {
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 metroPort?: number;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 notice?: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 parked?: {
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 reverses?: Record<string, number>;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 state: HostedDevicePhase;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@1 stoppedAt?: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@2 at: string;
+[*] interface HostedDeviceSession extends HostedDeviceRequest { @@2 reason: string;
 [*] interface HostedIosChoice {
-[*] interface HostedIosChoice { | architecture: "arm64" | "x86_64";
-[*] interface HostedIosChoice { | deviceType: string;
-[*] interface HostedIosChoice { | deviceTypeId: string;
-[*] interface HostedIosChoice { | runtime: string;
-[*] interface HostedIosChoice { | runtimeId: string;
+[*] interface HostedIosChoice { @@1 architecture: "arm64" | "x86_64";
+[*] interface HostedIosChoice { @@1 deviceType: string;
+[*] interface HostedIosChoice { @@1 deviceTypeId: string;
+[*] interface HostedIosChoice { @@1 runtime: string;
+[*] interface HostedIosChoice { @@1 runtimeId: string;
 [*] interface HostedIosDevice extends HostedIosChoice {
-[*] interface HostedIosDevice extends HostedIosChoice { | name: string;
-[*] interface HostedIosDevice extends HostedIosChoice { | udid: string;
+[*] interface HostedIosDevice extends HostedIosChoice { @@1 name: string;
+[*] interface HostedIosDevice extends HostedIosChoice { @@1 udid: string;
 [*] interface HostedMacosChoice {
-[*] interface HostedMacosChoice { | architecture: "arm64" | "x86_64";
-[*] interface HostedMacosChoice { | macosVersion: string;
+[*] interface HostedMacosChoice { @@1 architecture: "arm64" | "x86_64";
+[*] interface HostedMacosChoice { @@1 macosVersion: string;
 [*] interface HostedMacosDevice extends HostedMacosChoice {
-[*] interface HostedMacosDevice extends HostedMacosChoice { | appSlot: number;
+[*] interface HostedMacosDevice extends HostedMacosChoice { @@1 appSlot: number;
 [*] interface Inspection {
-[*] interface Inspection { | findings: Finding[];
-[*] interface Inspection { | machines: MachineReport[];
+[*] interface Inspection { @@1 findings: Finding[];
+[*] interface Inspection { @@1 machines: MachineReport[];
 [*] interface InventoryDevice {
-[*] interface InventoryDevice { | bytes: number | null;
-[*] interface InventoryDevice { | directory: string | null;
-[*] interface InventoryDevice { | id: string;
-[*] interface InventoryDevice { | kind: "ios" | "android";
-[*] interface InventoryDevice { | lastUsedAt: string | null;
-[*] interface InventoryDevice { | model: string | null;
-[*] interface InventoryDevice { | name: string;
-[*] interface InventoryDevice { | owner: InventoryOwner;
-[*] interface InventoryDevice { | project: string | null;
-[*] interface InventoryDevice { | runtime: string | null;
-[*] interface InventoryDevice { | slot: string | null;
-[*] interface InventoryDevice { | state: string | null;
+[*] interface InventoryDevice { @@1 bytes: number | null;
+[*] interface InventoryDevice { @@1 directory: string | null;
+[*] interface InventoryDevice { @@1 id: string;
+[*] interface InventoryDevice { @@1 kind: "ios" | "android";
+[*] interface InventoryDevice { @@1 lastUsedAt: string | null;
+[*] interface InventoryDevice { @@1 model: string | null;
+[*] interface InventoryDevice { @@1 name: string;
+[*] interface InventoryDevice { @@1 owner: InventoryOwner;
+[*] interface InventoryDevice { @@1 project: string | null;
+[*] interface InventoryDevice { @@1 runtime: string | null;
+[*] interface InventoryDevice { @@1 slot: string | null;
+[*] interface InventoryDevice { @@1 state: string | null;
 [*] interface InventoryRuntime {
-[*] interface InventoryRuntime { | build: string | null;
-[*] interface InventoryRuntime { | bytes: number | null;
-[*] interface InventoryRuntime { | command: string | null;
-[*] interface InventoryRuntime { | deviceCount: number;
-[*] interface InventoryRuntime { | identifier: string;
-[*] interface InventoryRuntime { | lastUsedAt: string | null;
-[*] interface InventoryRuntime { | runtimeIdentifier: string | null;
-[*] interface InventoryRuntime { | version: string | null;
+[*] interface InventoryRuntime { @@1 build: string | null;
+[*] interface InventoryRuntime { @@1 bytes: number | null;
+[*] interface InventoryRuntime { @@1 command: string | null;
+[*] interface InventoryRuntime { @@1 deviceCount: number;
+[*] interface InventoryRuntime { @@1 identifier: string;
+[*] interface InventoryRuntime { @@1 lastUsedAt: string | null;
+[*] interface InventoryRuntime { @@1 runtimeIdentifier: string | null;
+[*] interface InventoryRuntime { @@1 version: string | null;
 [*] interface InventorySystemImage {
-[*] interface InventorySystemImage { | avdCount: number;
-[*] interface InventorySystemImage { | command: string;
-[*] interface InventorySystemImage { | directory: string;
-[*] interface InventorySystemImage { | package: string;
-[*] interface InventorySystemImage { | stimInstalled: boolean;
+[*] interface InventorySystemImage { @@1 avdCount: number;
+[*] interface InventorySystemImage { @@1 command: string;
+[*] interface InventorySystemImage { @@1 directory: string;
+[*] interface InventorySystemImage { @@1 package: string;
+[*] interface InventorySystemImage { @@1 stimInstalled: boolean;
 [*] interface IosBuildFacts {
-[*] interface IosBuildFacts { | appPath: string;
-[*] interface IosBuildFacts { | arch: "arm64" | "x86_64" | null;
-[*] interface IosBuildFacts { | buildMachine: string;
-[*] interface IosBuildFacts { | builtOn: string | null;
-[*] interface IosBuildFacts { | bundleId: string | null;
-[*] interface IosBuildFacts { | cacheHit: string | boolean;
-[*] interface IosBuildFacts { | cacheKey: string | null;
-[*] interface IosBuildFacts { | cacheSkipped: boolean;
-[*] interface IosBuildFacts { | compilationCache: CompilationCacheActivity;
-[*] interface IosBuildFacts { | configuration: string;
-[*] interface IosBuildFacts { | dir: string;
-[*] interface IosBuildFacts { | durationMs: number;
-[*] interface IosBuildFacts { | links: {
-[*] interface IosBuildFacts { | logs: {
-[*] interface IosBuildFacts { | scheme: string | null;
-[*] interface IosBuildFacts { | workspace: string;
+[*] interface IosBuildFacts { @@1 appPath: string;
+[*] interface IosBuildFacts { @@1 arch: "arm64" | "x86_64" | null;
+[*] interface IosBuildFacts { @@1 buildMachine: string;
+[*] interface IosBuildFacts { @@1 builtOn: string | null;
+[*] interface IosBuildFacts { @@1 bundleId: string | null;
+[*] interface IosBuildFacts { @@1 cacheHit: string | boolean;
+[*] interface IosBuildFacts { @@1 cacheKey: string | null;
+[*] interface IosBuildFacts { @@1 cacheSkipped: boolean;
+[*] interface IosBuildFacts { @@1 compilationCache: CompilationCacheActivity;
+[*] interface IosBuildFacts { @@1 configuration: string;
+[*] interface IosBuildFacts { @@1 durationMs: number;
+[*] interface IosBuildFacts { @@1 links: {
+[*] interface IosBuildFacts { @@1 logs: {
+[*] interface IosBuildFacts { @@1 scheme: string | null;
+[*] interface IosBuildFacts { @@2 dir: string;
+[*] interface IosBuildFacts { @@2 workspace: string;
 [*] interface IosFacts {
-[*] interface IosFacts { | agentDevice?: {
-[*] interface IosFacts { | appPath?: string | null;
-[*] interface IosFacts { | buildMachine?: string;
-[*] interface IosFacts { | builtOn?: string;
-[*] interface IosFacts { | bundleId?: string | null;
-[*] interface IosFacts { | cacheHit: CacheHitLevel;
-[*] interface IosFacts { | cacheKey?: string | null;
-[*] interface IosFacts { | cacheSkipped: boolean;
-[*] interface IosFacts { | compilationCache: CompilationCacheActivity;
-[*] interface IosFacts { | configuration: string | null;
-[*] interface IosFacts { | devServer?: DevServerStart;
-[*] interface IosFacts { | deviceName: string | null;
-[*] interface IosFacts { | devicePlacement?: DevicePlacement;
-[*] interface IosFacts { | deviceType: string | null;
-[*] interface IosFacts { | durationMs?: number;
-[*] interface IosFacts { | fingerprint?: string | null;
-[*] interface IosFacts { | host?: HostedIosStatus;
-[*] interface IosFacts { | installSkipped: boolean;
-[*] interface IosFacts { | launched: LaunchStatus;
-[*] interface IosFacts { | lease?: RunLeaseFacts | null;
-[*] interface IosFacts { | logs: LogsInfo;
-[*] interface IosFacts { | metroPort?: number | null;
-[*] interface IosFacts { | ms: number;
-[*] interface IosFacts { | offloadFallback?: string;
-[*] interface IosFacts { | offloadedTo?: string;
-[*] interface IosFacts { | pid: number | null;
-[*] interface IosFacts { | platform: string;
-[*] interface IosFacts { | runtime: string | null;
-[*] interface IosFacts { | scheme?: string;
-[*] interface IosFacts { | slot?: string;
-[*] interface IosFacts { | stateDir: string;
-[*] interface IosFacts { | udid: string | null;
-[*] interface IosFacts { | waitedForBuild: {
-[*] interface IosFacts { | webPreviewUrl?: string | null;
-[*] interface IosFacts { | } | null;
+[*] interface IosFacts { @@1 agentDevice?: {
+[*] interface IosFacts { @@1 appPath?: string | null;
+[*] interface IosFacts { @@1 buildMachine?: string;
+[*] interface IosFacts { @@1 builtOn?: string;
+[*] interface IosFacts { @@1 bundleId?: string | null;
+[*] interface IosFacts { @@1 cacheHit: CacheHitLevel;
+[*] interface IosFacts { @@1 cacheKey?: string | null;
+[*] interface IosFacts { @@1 cacheSkipped: boolean;
+[*] interface IosFacts { @@1 compilationCache: CompilationCacheActivity;
+[*] interface IosFacts { @@1 configuration: string | null;
+[*] interface IosFacts { @@1 devServer?: DevServerStart;
+[*] interface IosFacts { @@1 deviceName: string | null;
+[*] interface IosFacts { @@1 devicePlacement?: DevicePlacement;
+[*] interface IosFacts { @@1 deviceType: string | null;
+[*] interface IosFacts { @@1 durationMs?: number;
+[*] interface IosFacts { @@1 fingerprint?: string | null;
+[*] interface IosFacts { @@1 host?: HostedIosStatus;
+[*] interface IosFacts { @@1 installSkipped: boolean;
+[*] interface IosFacts { @@1 launched: LaunchStatus;
+[*] interface IosFacts { @@1 lease?: RunLeaseFacts | null;
+[*] interface IosFacts { @@1 logs: LogsInfo;
+[*] interface IosFacts { @@1 metroPort?: number | null;
+[*] interface IosFacts { @@1 offloadFallback?: string;
+[*] interface IosFacts { @@1 offloadedTo?: string;
+[*] interface IosFacts { @@1 platform: string;
+[*] interface IosFacts { @@1 runtime: string | null;
+[*] interface IosFacts { @@1 scheme?: string;
+[*] interface IosFacts { @@1 slot?: string;
+[*] interface IosFacts { @@1 udid: string | null;
+[*] interface IosFacts { @@1 waitedForBuild: {
+[*] interface IosFacts { @@1 webPreviewUrl?: string | null;
+[*] interface IosFacts { @@1 } | null;
+[*] interface IosFacts { @@2 ms: number;
+[*] interface IosFacts { @@2 pid: number | null;
+[*] interface IosFacts { @@2 stateDir: string;
 [*] interface LevelRun {
-[*] interface LevelRun { | actions: LevelRunAction[];
-[*] interface LevelRun { | blocked: string[];
-[*] interface LevelRun { | bytes: number;
-[*] interface LevelRun { | dir: string;
-[*] interface LevelRun { | discovered: (DiscoveredCheckout & {
-[*] interface LevelRun { | from: string;
-[*] interface LevelRun { | kept?: string;
-[*] interface LevelRun { | level: PressureLevel;
-[*] interface LevelRun { | name: string;
-[*] interface LevelRun { | outside: {
-[*] interface LevelRun { | path: string;
-[*] interface LevelRun { | pressure: DaemonPressure;
-[*] interface LevelRun { | usage: {
-[*] interface LevelRun { | })[];
-[*] interface LevelRun { | }[];
+[*] interface LevelRun { @@1 actions: LevelRunAction[];
+[*] interface LevelRun { @@1 blocked: string[];
+[*] interface LevelRun { @@1 discovered: (DiscoveredCheckout & {
+[*] interface LevelRun { @@1 level: PressureLevel;
+[*] interface LevelRun { @@1 outside: {
+[*] interface LevelRun { @@1 pressure: DaemonPressure;
+[*] interface LevelRun { @@1 usage: {
+[*] interface LevelRun { @@1 })[];
+[*] interface LevelRun { @@1 }[];
+[*] interface LevelRun { @@2 actions: LevelRunAction[];
+[*] interface LevelRun { @@2 bytes: number;
+[*] interface LevelRun { @@2 dir: string;
+[*] interface LevelRun { @@2 from: string;
+[*] interface LevelRun { @@2 kept?: string;
+[*] interface LevelRun { @@2 name: string;
+[*] interface LevelRun { @@2 path: string;
 [*] interface LevelRunAction {
-[*] interface LevelRunAction { | bytes: number;
-[*] interface LevelRunAction { | detail: string;
-[*] interface LevelRunAction { | kind: string;
-[*] interface LevelRunAction { | outcome: "would" | "done" | "kept" | "failed";
-[*] interface LevelRunAction { | reason: string;
-[*] interface LevelRunAction { | restore?: string;
-[*] interface LevelRunAction { | rung: number | null;
-[*] interface LevelRunAction { | target: string;
-[*] interface LevelRunAction { | workspace?: string;
+[*] interface LevelRunAction { @@1 bytes: number;
+[*] interface LevelRunAction { @@1 detail: string;
+[*] interface LevelRunAction { @@1 kind: string;
+[*] interface LevelRunAction { @@1 outcome: "would" | "done" | "kept" | "failed";
+[*] interface LevelRunAction { @@1 reason: string;
+[*] interface LevelRunAction { @@1 restore?: string;
+[*] interface LevelRunAction { @@1 rung: number | null;
+[*] interface LevelRunAction { @@1 target: string;
+[*] interface LevelRunAction { @@1 workspace?: string;
 [*] interface LogsInfo {
-[*] interface LogsInfo { | dir?: string;
+[*] interface LogsInfo { @@1 dir?: string;
 [*] interface MachineCacheReport {
-[*] interface MachineCacheReport { | agentDeviceVersion: string | null;
-[*] interface MachineCacheReport { | bytes: number | null;
-[*] interface MachineCacheReport { | checked: boolean;
-[*] interface MachineCacheReport { | complete: boolean;
-[*] interface MachineCacheReport { | current: boolean | null;
-[*] interface MachineCacheReport { | deviceSupport: {
-[*] interface MachineCacheReport { | dirs: SizedDir[];
-[*] interface MachineCacheReport { | entries: SizedDir[];
-[*] interface MachineCacheReport { | entries: number;
-[*] interface MachineCacheReport { | gradle: {
-[*] interface MachineCacheReport { | groups: {
-[*] interface MachineCacheReport { | home: string;
-[*] interface MachineCacheReport { | inUse: number;
-[*] interface MachineCacheReport { | measuredAt: string;
-[*] interface MachineCacheReport { | modules: (SizedDir & {
-[*] interface MachineCacheReport { | notices: string[];
-[*] interface MachineCacheReport { | oldestUseAt: string | null;
-[*] interface MachineCacheReport { | orphanedDerivedData: (OwnSizedDir & {
-[*] interface MachineCacheReport { | packageVersion: string | null;
-[*] interface MachineCacheReport { | projects: string[];
-[*] interface MachineCacheReport { | remedy: string | null;
-[*] interface MachineCacheReport { | remedy: string;
-[*] interface MachineCacheReport { | runnerBuilds: {
-[*] interface MachineCacheReport { | runtimes: (SimRuntimeUsage & {
-[*] interface MachineCacheReport { | simRuntimes: {
-[*] interface MachineCacheReport { | transforms: (OwnSizedDir & {
-[*] interface MachineCacheReport { | unreadableProjects: string[];
-[*] interface MachineCacheReport { | unusedVersions: {
-[*] interface MachineCacheReport { | usedVersions: {
-[*] interface MachineCacheReport { | version: string;
-[*] interface MachineCacheReport { | workspacePath: string;
-[*] interface MachineCacheReport { | xcodeBuildVersion: string | null;
-[*] interface MachineCacheReport { | }) | null;
-[*] interface MachineCacheReport { | })[];
-[*] interface MachineCacheReport { | }[];
+[*] interface MachineCacheReport { @@1 complete: boolean;
+[*] interface MachineCacheReport { @@1 deviceSupport: {
+[*] interface MachineCacheReport { @@1 gradle: {
+[*] interface MachineCacheReport { @@1 measuredAt: string;
+[*] interface MachineCacheReport { @@1 notices: string[];
+[*] interface MachineCacheReport { @@1 orphanedDerivedData: (OwnSizedDir & {
+[*] interface MachineCacheReport { @@1 runnerBuilds: {
+[*] interface MachineCacheReport { @@1 simRuntimes: {
+[*] interface MachineCacheReport { @@1 })[];
+[*] interface MachineCacheReport { @@2 agentDeviceVersion: string | null;
+[*] interface MachineCacheReport { @@2 checked: boolean;
+[*] interface MachineCacheReport { @@2 entries: SizedDir[];
+[*] interface MachineCacheReport { @@2 groups: {
+[*] interface MachineCacheReport { @@2 home: string;
+[*] interface MachineCacheReport { @@2 modules: (SizedDir & {
+[*] interface MachineCacheReport { @@2 remedy: string;
+[*] interface MachineCacheReport { @@2 runtimes: (SimRuntimeUsage & {
+[*] interface MachineCacheReport { @@2 unreadableProjects: string[];
+[*] interface MachineCacheReport { @@2 unusedVersions: {
+[*] interface MachineCacheReport { @@2 usedVersions: {
+[*] interface MachineCacheReport { @@2 workspacePath: string;
+[*] interface MachineCacheReport { @@2 xcodeBuildVersion: string | null;
+[*] interface MachineCacheReport { @@2 }) | null;
+[*] interface MachineCacheReport { @@2 })[];
+[*] interface MachineCacheReport { @@2 }[];
+[*] interface MachineCacheReport { @@3 bytes: number | null;
+[*] interface MachineCacheReport { @@3 current: boolean | null;
+[*] interface MachineCacheReport { @@3 dirs: SizedDir[];
+[*] interface MachineCacheReport { @@3 entries: number;
+[*] interface MachineCacheReport { @@3 inUse: number;
+[*] interface MachineCacheReport { @@3 oldestUseAt: string | null;
+[*] interface MachineCacheReport { @@3 packageVersion: string | null;
+[*] interface MachineCacheReport { @@3 projects: string[];
+[*] interface MachineCacheReport { @@3 remedy: string | null;
+[*] interface MachineCacheReport { @@3 remedy: string;
+[*] interface MachineCacheReport { @@3 transforms: (OwnSizedDir & {
+[*] interface MachineCacheReport { @@3 version: string;
+[*] interface MachineCacheReport { @@3 xcodeBuildVersion: string | null;
+[*] interface MachineCacheReport { @@3 }) | null;
+[*] interface MachineCacheReport { @@4 remedy: string;
 [*] interface MachineCredential {
-[*] interface MachineCredential { | address: string;
-[*] interface MachineCredential { | deviceId?: string;
-[*] interface MachineCredential { | expiresAt?: string;
-[*] interface MachineCredential { | machine: string;
-[*] interface MachineCredential { | requestedAt: string;
-[*] interface MachineCredential { | serverKey?: string;
-[*] interface MachineCredential { | state: "pending" | "approved";
-[*] interface MachineCredential { | tailnet?: TailnetIdentity;
-[*] interface MachineCredential { | ticket?: string;
-[*] interface MachineCredential { | transport: "tailscale" | "local";
+[*] interface MachineCredential { @@1 address: string;
+[*] interface MachineCredential { @@1 deviceId?: string;
+[*] interface MachineCredential { @@1 expiresAt?: string;
+[*] interface MachineCredential { @@1 machine: string;
+[*] interface MachineCredential { @@1 requestedAt: string;
+[*] interface MachineCredential { @@1 serverKey?: string;
+[*] interface MachineCredential { @@1 state: "pending" | "approved";
+[*] interface MachineCredential { @@1 tailnet?: TailnetIdentity;
+[*] interface MachineCredential { @@1 ticket?: string;
+[*] interface MachineCredential { @@1 transport: "tailscale" | "local";
 [*] interface MachineReport {
-[*] interface MachineReport { | deviceId?: string;
-[*] interface MachineReport { | diagnosis?: RemoteDiagnosis;
-[*] interface MachineReport { | dnsName?: string;
-[*] interface MachineReport { | expiresAt?: string;
-[*] interface MachineReport { | fingerprint?: string;
-[*] interface MachineReport { | host?: NonNullable<HelloHost["app"]>;
-[*] interface MachineReport { | machine: string;
-[*] interface MachineReport { | requestedAt?: string;
-[*] interface MachineReport { | state: "invalid" | "tailscale-off" | "not-on-tailnet" | "key-changed" | "key-unconfirmed" | "not-asked" | "pending" | "approved" | "revoked" | "lapsed" | "outdated" | "unreachable" | "credentials-unavailable" | "busy";
+[*] interface MachineReport { @@1 deviceId?: string;
+[*] interface MachineReport { @@1 diagnosis?: RemoteDiagnosis;
+[*] interface MachineReport { @@1 dnsName?: string;
+[*] interface MachineReport { @@1 expiresAt?: string;
+[*] interface MachineReport { @@1 fingerprint?: string;
+[*] interface MachineReport { @@1 host?: NonNullable<HelloHost["app"]>;
+[*] interface MachineReport { @@1 machine: string;
+[*] interface MachineReport { @@1 requestedAt?: string;
+[*] interface MachineReport { @@1 state: "invalid" | "tailscale-off" | "not-on-tailnet" | "key-changed" | "key-unconfirmed" | "not-asked" | "pending" | "approved" | "revoked" | "lapsed" | "outdated" | "unreachable" | "credentials-unavailable" | "busy";
 [*] interface MacosBuild {
-[*] interface MacosBuild { | buildMachine?: string;
-[*] interface MacosBuild { | builtOn?: string;
-[*] interface MacosBuild { | cacheHit?: boolean;
-[*] interface MacosBuild { | cacheKey?: string;
-[*] interface MacosBuild { | cacheSource?: "local" | "provider" | "peer";
-[*] interface MacosBuild { | durationMs?: number;
-[*] interface MacosBuild { | error?: string;
-[*] interface MacosBuild { | errorCode?: string;
-[*] interface MacosBuild { | fingerprint?: string;
-[*] interface MacosBuild { | finishedAt?: string;
-[*] interface MacosBuild { | offloadFallback?: string;
-[*] interface MacosBuild { | offloadedTo?: string;
-[*] interface MacosBuild { | startedAt: string;
-[*] interface MacosBuild { | state: "running" | "ok" | "failed";
+[*] interface MacosBuild { @@1 buildMachine?: string;
+[*] interface MacosBuild { @@1 builtOn?: string;
+[*] interface MacosBuild { @@1 cacheHit?: boolean;
+[*] interface MacosBuild { @@1 cacheKey?: string;
+[*] interface MacosBuild { @@1 cacheSource?: "local" | "provider" | "peer";
+[*] interface MacosBuild { @@1 durationMs?: number;
+[*] interface MacosBuild { @@1 error?: string;
+[*] interface MacosBuild { @@1 errorCode?: string;
+[*] interface MacosBuild { @@1 fingerprint?: string;
+[*] interface MacosBuild { @@1 finishedAt?: string;
+[*] interface MacosBuild { @@1 offloadFallback?: string;
+[*] interface MacosBuild { @@1 offloadedTo?: string;
+[*] interface MacosBuild { @@1 startedAt: string;
+[*] interface MacosBuild { @@1 state: "running" | "ok" | "failed";
 [*] interface MacosBuildFacts {
-[*] interface MacosBuildFacts { | build: MacosBuild;
-[*] interface MacosBuildFacts { | bundle: string;
-[*] interface MacosBuildFacts { | bundleId: string;
-[*] interface MacosBuildFacts { | dir: string;
-[*] interface MacosBuildFacts { | executable: string;
-[*] interface MacosBuildFacts { | links: {
-[*] interface MacosBuildFacts { | logs: {
-[*] interface MacosBuildFacts { | product: string;
-[*] interface MacosBuildFacts { | workspace: string;
+[*] interface MacosBuildFacts { @@1 build: MacosBuild;
+[*] interface MacosBuildFacts { @@1 bundle: string;
+[*] interface MacosBuildFacts { @@1 bundleId: string;
+[*] interface MacosBuildFacts { @@1 executable: string;
+[*] interface MacosBuildFacts { @@1 links: {
+[*] interface MacosBuildFacts { @@1 logs: {
+[*] interface MacosBuildFacts { @@1 product: string;
+[*] interface MacosBuildFacts { @@2 dir: string;
+[*] interface MacosBuildFacts { @@2 workspace: string;
 [*] interface MacosBuildPlanPayload {
-[*] interface MacosBuildPlanPayload { | basis: number;
-[*] interface MacosBuildPlanPayload { | buildMachine: string;
-[*] interface MacosBuildPlanPayload { | cacheHit: boolean;
-[*] interface MacosBuildPlanPayload { | cacheKey: string | null;
-[*] interface MacosBuildPlanPayload { | cacheSkipped: boolean;
-[*] interface MacosBuildPlanPayload { | expectedMs: null;
-[*] interface MacosBuildPlanPayload { | fingerprint: string | null;
-[*] interface MacosBuildPlanPayload { | outcome: null;
-[*] interface MacosBuildPlanPayload { | platform: "macos";
-[*] interface MacosBuildPlanPayload { | prebuild: null;
-[*] interface MacosBuildPlanPayload { | product: string;
-[*] interface MacosBuildPlanPayload { | provider: null;
+[*] interface MacosBuildPlanPayload { @@1 basis: number;
+[*] interface MacosBuildPlanPayload { @@1 buildMachine: string;
+[*] interface MacosBuildPlanPayload { @@1 cacheHit: boolean;
+[*] interface MacosBuildPlanPayload { @@1 cacheKey: string | null;
+[*] interface MacosBuildPlanPayload { @@1 cacheSkipped: boolean;
+[*] interface MacosBuildPlanPayload { @@1 expectedMs: null;
+[*] interface MacosBuildPlanPayload { @@1 fingerprint: string | null;
+[*] interface MacosBuildPlanPayload { @@1 outcome: null;
+[*] interface MacosBuildPlanPayload { @@1 platform: "macos";
+[*] interface MacosBuildPlanPayload { @@1 prebuild: null;
+[*] interface MacosBuildPlanPayload { @@1 product: string;
+[*] interface MacosBuildPlanPayload { @@1 provider: null;
 [*] interface MaintenanceAction {
-[*] interface MaintenanceAction { | bytes: number;
-[*] interface MaintenanceAction { | check?: "worktree" | "sweep" | "disk" | "idle";
-[*] interface MaintenanceAction { | dir?: string;
-[*] interface MaintenanceAction { | kind: MaintenanceActionKind;
-[*] interface MaintenanceAction { | level?: 2 | 3;
-[*] interface MaintenanceAction { | olderThanDays?: number;
-[*] interface MaintenanceAction { | overBytes?: number;
-[*] interface MaintenanceAction { | reason: string;
-[*] interface MaintenanceAction { | target: string;
-[*] interface MaintenanceAction { | workspace?: string;
+[*] interface MaintenanceAction { @@1 bytes: number;
+[*] interface MaintenanceAction { @@1 check?: "worktree" | "sweep" | "disk" | "idle";
+[*] interface MaintenanceAction { @@1 dir?: string;
+[*] interface MaintenanceAction { @@1 kind: MaintenanceActionKind;
+[*] interface MaintenanceAction { @@1 level?: 2 | 3;
+[*] interface MaintenanceAction { @@1 olderThanDays?: number;
+[*] interface MaintenanceAction { @@1 overBytes?: number;
+[*] interface MaintenanceAction { @@1 reason: string;
+[*] interface MaintenanceAction { @@1 target: string;
+[*] interface MaintenanceAction { @@1 workspace?: string;
 [*] interface MaintenancePass {
-[*] interface MaintenancePass { | actions: number;
-[*] interface MaintenancePass { | blocked: string[];
-[*] interface MaintenancePass { | durationMs: number;
-[*] interface MaintenancePass { | freedBytes: number;
-[*] interface MaintenancePass { | mode: "report" | "on";
-[*] interface MaintenancePass { | startedAt: number;
-[*] interface MaintenancePass { | stopped: 0;
-[*] interface MaintenancePass { | trigger: string;
+[*] interface MaintenancePass { @@1 actions: number;
+[*] interface MaintenancePass { @@1 blocked: string[];
+[*] interface MaintenancePass { @@1 durationMs: number;
+[*] interface MaintenancePass { @@1 freedBytes: number;
+[*] interface MaintenancePass { @@1 mode: "report" | "on";
+[*] interface MaintenancePass { @@1 startedAt: number;
+[*] interface MaintenancePass { @@1 stopped: 0;
+[*] interface MaintenancePass { @@1 trigger: string;
 [*] interface MaintenancePressure {
-[*] interface MaintenancePressure { | availableBytes: number | null;
-[*] interface MaintenancePressure { | culprits?: MemoryCulprit[];
-[*] interface MaintenancePressure { | disk: {
-[*] interface MaintenancePressure { | diskLevel?: DiskPressureLevel;
-[*] interface MaintenancePressure { | freeMb: number;
-[*] interface MaintenancePressure { | level: "normal" | "warning" | "critical" | null;
-[*] interface MaintenancePressure { | memory: {
-[*] interface MaintenancePressure { | pressured: boolean;
-[*] interface MaintenancePressure { | volume: string;
-[*] interface MaintenancePressure { | warningSince: number | null;
-[*] interface MaintenancePressure { | }[];
+[*] interface MaintenancePressure { @@1 disk: {
+[*] interface MaintenancePressure { @@1 diskLevel?: DiskPressureLevel;
+[*] interface MaintenancePressure { @@1 memory: {
+[*] interface MaintenancePressure { @@1 warningSince: number | null;
+[*] interface MaintenancePressure { @@1 }[];
+[*] interface MaintenancePressure { @@2 availableBytes: number | null;
+[*] interface MaintenancePressure { @@2 culprits?: MemoryCulprit[];
+[*] interface MaintenancePressure { @@2 freeMb: number;
+[*] interface MaintenancePressure { @@2 level: "normal" | "warning" | "critical" | null;
+[*] interface MaintenancePressure { @@2 pressured: boolean;
+[*] interface MaintenancePressure { @@2 volume: string;
 [*] interface MaintenanceRecord extends NdjsonRecord {
-[*] interface MaintenanceRecord extends NdjsonRecord { | event: "maintenance_pass" | "maintenance_action" | "maintenance_skip" | "maintenance_failure" | "maintenance_check";
-[*] interface MaintenanceRecord extends NdjsonRecord { | level: "debug" | "info" | "warn" | "error";
-[*] interface MaintenanceRecord extends NdjsonRecord { | mode: "report" | "on";
-[*] interface MaintenanceRecord extends NdjsonRecord { | msg: string;
-[*] interface MaintenanceRecord extends NdjsonRecord { | pass: string;
-[*] interface MaintenanceRecord extends NdjsonRecord { | src: "maintenance";
-[*] interface MaintenanceRecord extends NdjsonRecord { | trigger: string;
-[*] interface MaintenanceRecord extends NdjsonRecord { | ts: number;
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 event: "maintenance_pass" | "maintenance_action" | "maintenance_skip" | "maintenance_failure" | "maintenance_check";
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 level: "debug" | "info" | "warn" | "error";
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 mode: "report" | "on";
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 msg: string;
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 pass: string;
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 src: "maintenance";
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 trigger: string;
+[*] interface MaintenanceRecord extends NdjsonRecord { @@1 ts: number;
 [*] interface MaintenanceSize {
-[*] interface MaintenanceSize { | blocked?: string;
-[*] interface MaintenanceSize { | bytes: number;
-[*] interface MaintenanceSize { | category: "workspace-outputs" | "build-cache" | "metro-cache" | "compilation-cache" | "ccache" | "owned-devices" | "other";
-[*] interface MaintenanceSize { | dir: string;
-[*] interface MaintenanceSize { | idleDays?: number | null;
-[*] interface MaintenanceSize { | measuredAt: number;
-[*] interface MaintenanceSize { | name: string;
-[*] interface MaintenanceSize { | workspace?: string;
+[*] interface MaintenanceSize { @@1 blocked?: string;
+[*] interface MaintenanceSize { @@1 bytes: number;
+[*] interface MaintenanceSize { @@1 category: "workspace-outputs" | "build-cache" | "metro-cache" | "compilation-cache" | "ccache" | "owned-devices" | "other";
+[*] interface MaintenanceSize { @@1 dir: string;
+[*] interface MaintenanceSize { @@1 idleDays?: number | null;
+[*] interface MaintenanceSize { @@1 measuredAt: number;
+[*] interface MaintenanceSize { @@1 name: string;
+[*] interface MaintenanceSize { @@1 workspace?: string;
 [*] interface MaintenanceStatus {
-[*] interface MaintenanceStatus { | check: MaintenanceCheck;
-[*] interface MaintenanceStatus { | claim?: {
-[*] interface MaintenanceStatus { | deferred?: {
-[*] interface MaintenanceStatus { | invalid?: string;
-[*] interface MaintenanceStatus { | lastChecks: {
-[*] interface MaintenanceStatus { | lastPass: MaintenancePass | null;
-[*] interface MaintenanceStatus { | mode: MaintenanceMode;
-[*] interface MaintenanceStatus { | plan: MaintenanceAction[];
-[*] interface MaintenanceStatus { | pressure: MaintenancePressure | null;
-[*] interface MaintenanceStatus { | pressure: number | null;
-[*] interface MaintenanceStatus { | recent: MaintenanceRecord[];
-[*] interface MaintenanceStatus { | removeCommand: string;
-[*] interface MaintenanceStatus { | running: {
-[*] interface MaintenanceStatus { | since: number;
-[*] interface MaintenanceStatus { | size: number | null;
-[*] interface MaintenanceStatus { | sizes: MaintenanceSize[];
-[*] interface MaintenanceStatus { | startedAt: string;
-[*] interface MaintenanceStatus { | sweep: number | null;
-[*] interface MaintenanceStatus { | trigger: string;
-[*] interface MaintenanceStatus { | unresolved: string;
-[*] interface MaintenanceStatus { | worktree: number | null;
-[*] interface MaintenanceStatus { | } | null;
-[*] interface MaintenanceStatus { | }[];
+[*] interface MaintenanceStatus { @@1 claim?: {
+[*] interface MaintenanceStatus { @@1 deferred?: {
+[*] interface MaintenanceStatus { @@1 invalid?: string;
+[*] interface MaintenanceStatus { @@1 lastChecks: {
+[*] interface MaintenanceStatus { @@1 lastPass: MaintenancePass | null;
+[*] interface MaintenanceStatus { @@1 mode: MaintenanceMode;
+[*] interface MaintenanceStatus { @@1 plan: MaintenanceAction[];
+[*] interface MaintenanceStatus { @@1 pressure: MaintenancePressure | null;
+[*] interface MaintenanceStatus { @@1 recent: MaintenanceRecord[];
+[*] interface MaintenanceStatus { @@1 running: {
+[*] interface MaintenanceStatus { @@1 sizes: MaintenanceSize[];
+[*] interface MaintenanceStatus { @@1 } | null;
+[*] interface MaintenanceStatus { @@1 }[];
+[*] interface MaintenanceStatus { @@2 check: MaintenanceCheck;
+[*] interface MaintenanceStatus { @@2 pressure: number | null;
+[*] interface MaintenanceStatus { @@2 removeCommand: string;
+[*] interface MaintenanceStatus { @@2 since: number;
+[*] interface MaintenanceStatus { @@2 size: number | null;
+[*] interface MaintenanceStatus { @@2 startedAt: string;
+[*] interface MaintenanceStatus { @@2 sweep: number | null;
+[*] interface MaintenanceStatus { @@2 trigger: string;
+[*] interface MaintenanceStatus { @@2 unresolved: string;
+[*] interface MaintenanceStatus { @@2 worktree: number | null;
 [*] interface MemoryCulprit {
-[*] interface MemoryCulprit { | bytes: number;
-[*] interface MemoryCulprit { | command: string | null;
-[*] interface MemoryCulprit { | name: string;
-[*] interface MemoryCulprit { | note: string | null;
-[*] interface MemoryCulprit { | pid: number;
+[*] interface MemoryCulprit { @@1 bytes: number;
+[*] interface MemoryCulprit { @@1 command: string | null;
+[*] interface MemoryCulprit { @@1 name: string;
+[*] interface MemoryCulprit { @@1 note: string | null;
+[*] interface MemoryCulprit { @@1 pid: number;
 [*] interface MemoryProcess {
-[*] interface MemoryProcess { | bytes: number;
-[*] interface MemoryProcess { | cacheKind: MemoryCacheKind;
-[*] interface MemoryProcess { | detail: string | null;
-[*] interface MemoryProcess { | gradleHome: string | null;
-[*] interface MemoryProcess { | kind: "watchman" | "gradleDaemon" | "kotlinDaemon";
-[*] interface MemoryProcess { | measure: "footprint" | "rss";
-[*] interface MemoryProcess { | offloadClient: string | null;
-[*] interface MemoryProcess { | pid: number;
-[*] interface MemoryProcess { | reason: MemoryKeptCode | null;
-[*] interface MemoryProcess { | reclaimable: boolean;
-[*] interface MemoryProcess { | startedAt: string | null;
-[*] interface MemoryProcess { | state: "idle" | "busy" | "unknown";
-[*] interface MemoryProcess { | version: string | null;
+[*] interface MemoryProcess { @@1 bytes: number;
+[*] interface MemoryProcess { @@1 cacheKind: MemoryCacheKind;
+[*] interface MemoryProcess { @@1 detail: string | null;
+[*] interface MemoryProcess { @@1 gradleHome: string | null;
+[*] interface MemoryProcess { @@1 kind: "watchman" | "gradleDaemon" | "kotlinDaemon";
+[*] interface MemoryProcess { @@1 measure: "footprint" | "rss";
+[*] interface MemoryProcess { @@1 offloadClient: string | null;
+[*] interface MemoryProcess { @@1 pid: number;
+[*] interface MemoryProcess { @@1 reason: MemoryKeptCode | null;
+[*] interface MemoryProcess { @@1 reclaimable: boolean;
+[*] interface MemoryProcess { @@1 startedAt: string | null;
+[*] interface MemoryProcess { @@1 state: "idle" | "busy" | "unknown";
+[*] interface MemoryProcess { @@1 version: string | null;
 [*] interface MetroOutcome {
-[*] interface MetroOutcome { | pid?: number | null;
-[*] interface MetroOutcome { | port?: number | null;
-[*] interface MetroOutcome { | reason?: string;
-[*] interface MetroOutcome { | status: string;
+[*] interface MetroOutcome { @@1 pid?: number | null;
+[*] interface MetroOutcome { @@1 port?: number | null;
+[*] interface MetroOutcome { @@1 reason?: string;
+[*] interface MetroOutcome { @@1 status: string;
 [*] interface NativeRunOptions {
-[*] interface NativeRunOptions { | buildCache?: boolean;
-[*] interface NativeRunOptions { | device?: string | boolean;
-[*] interface NativeRunOptions { | easProfile?: string;
-[*] interface NativeRunOptions { | metroCheck?: boolean;
-[*] interface NativeRunOptions { | remote?: string;
-[*] interface NativeRunOptions { | remoteBuild?: string;
-[*] interface NativeRunOptions { | slot?: string;
-[*] interface NativeRunOptions { | wait?: string | boolean;
+[*] interface NativeRunOptions { @@1 buildCache?: boolean;
+[*] interface NativeRunOptions { @@1 device?: string | boolean;
+[*] interface NativeRunOptions { @@1 easProfile?: string;
+[*] interface NativeRunOptions { @@1 metroCheck?: boolean;
+[*] interface NativeRunOptions { @@1 remote?: string;
+[*] interface NativeRunOptions { @@1 remoteBuild?: string;
+[*] interface NativeRunOptions { @@1 slot?: string;
+[*] interface NativeRunOptions { @@1 wait?: string | boolean;
 [*] interface NdjsonRecord {
-[*] interface NdjsonRecord { | [key: string]: unknown;
-[*] interface NdjsonRecord { | context?: string[];
-[*] interface NdjsonRecord { | level?: string;
-[*] interface NdjsonRecord { | msg?: string;
-[*] interface NdjsonRecord { | src?: string;
-[*] interface NdjsonRecord { | ts?: number;
+[*] interface NdjsonRecord { @@1 [key: string]: unknown;
+[*] interface NdjsonRecord { @@1 context?: string[];
+[*] interface NdjsonRecord { @@1 level?: string;
+[*] interface NdjsonRecord { @@1 msg?: string;
+[*] interface NdjsonRecord { @@1 src?: string;
+[*] interface NdjsonRecord { @@1 ts?: number;
 [*] interface OffloadProblem {
-[*] interface OffloadProblem { | code: "unreachable" | "checkout" | "arch" | "xcode" | "macos-sdk" | "simulator-sdk" | "cocoapods" | "bundler" | "runtime" | "jdk" | "android-sdk" | "ndk" | "build-tools" | "compile-sdk" | "disk" | "busy" | "platform" | "exact";
-[*] interface OffloadProblem { | commands?: string[];
-[*] interface OffloadProblem { | followsFrom?: OffloadProblem["code"];
-[*] interface OffloadProblem { | lead?: string;
-[*] interface OffloadProblem { | reason: string;
+[*] interface OffloadProblem { @@1 code: "unreachable" | "checkout" | "arch" | "xcode" | "macos-sdk" | "simulator-sdk" | "cocoapods" | "bundler" | "runtime" | "jdk" | "android-sdk" | "ndk" | "build-tools" | "compile-sdk" | "disk" | "busy" | "platform" | "exact";
+[*] interface OffloadProblem { @@1 commands?: string[];
+[*] interface OffloadProblem { @@1 followsFrom?: OffloadProblem["code"];
+[*] interface OffloadProblem { @@1 lead?: string;
+[*] interface OffloadProblem { @@1 reason: string;
 [*] interface OffloadSummary {
-[*] interface OffloadSummary { | fellBack: number;
-[*] interface OffloadSummary { | here: number;
-[*] interface OffloadSummary { | machines: Record<string, {
-[*] interface OffloadSummary { | offloaded: number;
-[*] interface OffloadSummary { | placements: StatsPlacement[];
-[*] interface OffloadSummary { | today: BuildMachineDay;
-[*] interface OffloadSummary { | today: {
-[*] interface OffloadSummary { | total: BuildMachineTotals;
+[*] interface OffloadSummary { @@1 machines: Record<string, {
+[*] interface OffloadSummary { @@1 placements: StatsPlacement[];
+[*] interface OffloadSummary { @@1 today: {
+[*] interface OffloadSummary { @@2 fellBack: number;
+[*] interface OffloadSummary { @@2 here: number;
+[*] interface OffloadSummary { @@2 offloaded: number;
+[*] interface OffloadSummary { @@2 today: BuildMachineDay;
+[*] interface OffloadSummary { @@2 total: BuildMachineTotals;
 [*] interface OtherHome {
-[*] interface OtherHome { | bytes: number | null;
-[*] interface OtherHome { | createdAt: string;
-[*] interface OtherHome { | devices: OtherHomeDevice[];
-[*] interface OtherHome { | forgettable: boolean;
-[*] interface OtherHome { | lastSeenAt: string;
-[*] interface OtherHome { | path: string;
-[*] interface OtherHome { | privateBytes: number | null;
-[*] interface OtherHome { | state: "present" | "gone" | "unverified";
-[*] interface OtherHome { | teardown: string[];
-[*] interface OtherHome { | workspaces: number;
+[*] interface OtherHome { @@1 bytes: number | null;
+[*] interface OtherHome { @@1 createdAt: string;
+[*] interface OtherHome { @@1 devices: OtherHomeDevice[];
+[*] interface OtherHome { @@1 forgettable: boolean;
+[*] interface OtherHome { @@1 lastSeenAt: string;
+[*] interface OtherHome { @@1 path: string;
+[*] interface OtherHome { @@1 privateBytes: number | null;
+[*] interface OtherHome { @@1 state: "present" | "gone" | "unverified";
+[*] interface OtherHome { @@1 teardown: string[];
+[*] interface OtherHome { @@1 workspaces: number;
 [*] interface OtherHomeDevice {
-[*] interface OtherHomeDevice { | command: string | null;
-[*] interface OtherHomeDevice { | id: string;
-[*] interface OtherHomeDevice { | kind: "ios" | "android";
-[*] interface OtherHomeDevice { | name: string | null;
-[*] interface OtherHomeDevice { | present: boolean | null;
+[*] interface OtherHomeDevice { @@1 command: string | null;
+[*] interface OtherHomeDevice { @@1 id: string;
+[*] interface OtherHomeDevice { @@1 kind: "ios" | "android";
+[*] interface OtherHomeDevice { @@1 name: string | null;
+[*] interface OtherHomeDevice { @@1 present: boolean | null;
 [*] interface OwnSizedDir extends SizedDir {
-[*] interface OwnSizedDir extends SizedDir { | privateBytes: number | null;
+[*] interface OwnSizedDir extends SizedDir { @@1 privateBytes: number | null;
 [*] interface OwnedDeviceDisk {
-[*] interface OwnedDeviceDisk { | bytes: number;
-[*] interface OwnedDeviceDisk { | count: number;
-[*] interface OwnedDeviceDisk { | kind: "ios" | "android";
-[*] interface OwnedDeviceDisk { | unmeasured: number;
+[*] interface OwnedDeviceDisk { @@1 bytes: number;
+[*] interface OwnedDeviceDisk { @@1 count: number;
+[*] interface OwnedDeviceDisk { @@1 kind: "ios" | "android";
+[*] interface OwnedDeviceDisk { @@1 unmeasured: number;
 [*] interface ParkedAvdReport {
-[*] interface ParkedAvdReport { | app: string | null;
-[*] interface ParkedAvdReport { | bytes: number | null;
-[*] interface ParkedAvdReport { | deviceProfile: string | null;
-[*] interface ParkedAvdReport { | listed: boolean | null;
-[*] interface ParkedAvdReport { | name: string;
-[*] interface ParkedAvdReport { | parkedAt: string;
-[*] interface ParkedAvdReport { | systemImage: string;
+[*] interface ParkedAvdReport { @@1 app: string | null;
+[*] interface ParkedAvdReport { @@1 bytes: number | null;
+[*] interface ParkedAvdReport { @@1 deviceProfile: string | null;
+[*] interface ParkedAvdReport { @@1 listed: boolean | null;
+[*] interface ParkedAvdReport { @@1 name: string;
+[*] interface ParkedAvdReport { @@1 parkedAt: string;
+[*] interface ParkedAvdReport { @@1 systemImage: string;
 [*] interface ParkedHostedDeviceReport {
-[*] interface ParkedHostedDeviceReport { | client: string;
-[*] interface ParkedHostedDeviceReport { | id: string | null;
-[*] interface ParkedHostedDeviceReport { | listed: boolean | null;
-[*] interface ParkedHostedDeviceReport { | name: string | null;
-[*] interface ParkedHostedDeviceReport { | parkedAt: string;
-[*] interface ParkedHostedDeviceReport { | platform: "ios" | "android";
-[*] interface ParkedHostedDeviceReport { | session: string;
+[*] interface ParkedHostedDeviceReport { @@1 client: string;
+[*] interface ParkedHostedDeviceReport { @@1 id: string | null;
+[*] interface ParkedHostedDeviceReport { @@1 listed: boolean | null;
+[*] interface ParkedHostedDeviceReport { @@1 name: string | null;
+[*] interface ParkedHostedDeviceReport { @@1 parkedAt: string;
+[*] interface ParkedHostedDeviceReport { @@1 platform: "ios" | "android";
+[*] interface ParkedHostedDeviceReport { @@1 session: string;
 [*] interface ParkedSimReport {
-[*] interface ParkedSimReport { | app: string | null;
-[*] interface ParkedSimReport { | bytes: number | null;
-[*] interface ParkedSimReport { | listed: boolean | null;
-[*] interface ParkedSimReport { | model: string | null;
-[*] interface ParkedSimReport { | name: string;
-[*] interface ParkedSimReport { | parkedAt: string;
-[*] interface ParkedSimReport { | runtime: string | null;
-[*] interface ParkedSimReport { | udid: string;
+[*] interface ParkedSimReport { @@1 app: string | null;
+[*] interface ParkedSimReport { @@1 bytes: number | null;
+[*] interface ParkedSimReport { @@1 listed: boolean | null;
+[*] interface ParkedSimReport { @@1 model: string | null;
+[*] interface ParkedSimReport { @@1 name: string;
+[*] interface ParkedSimReport { @@1 parkedAt: string;
+[*] interface ParkedSimReport { @@1 runtime: string | null;
+[*] interface ParkedSimReport { @@1 udid: string;
 [*] interface PeerStartup {
-[*] interface PeerStartup { | cause?: "home-unreadable" | "start-failed";
-[*] interface PeerStartup { | state: "pending" | "degraded";
+[*] interface PeerStartup { @@1 cause?: "home-unreadable" | "start-failed";
+[*] interface PeerStartup { @@1 state: "pending" | "degraded";
 [*] interface PermissionReadBack {
-[*] interface PermissionReadBack { | granted: boolean;
-[*] interface PermissionReadBack { | name: string;
+[*] interface PermissionReadBack { @@1 granted: boolean;
+[*] interface PermissionReadBack { @@1 name: string;
 [*] interface PortOutcome {
-[*] interface PortOutcome { | port?: number | null;
-[*] interface PortOutcome { | reason?: string;
-[*] interface PortOutcome { | status: string;
+[*] interface PortOutcome { @@1 port?: number | null;
+[*] interface PortOutcome { @@1 reason?: string;
+[*] interface PortOutcome { @@1 status: string;
 [*] interface ReleasedLease {
-[*] interface ReleasedLease { | deviceName: string | null;
-[*] interface ReleasedLease { | expiresAt: string;
-[*] interface ReleasedLease { | id: string;
-[*] interface ReleasedLease { | platform: LeasePlatform;
+[*] interface ReleasedLease { @@1 deviceName: string | null;
+[*] interface ReleasedLease { @@1 expiresAt: string;
+[*] interface ReleasedLease { @@1 id: string;
+[*] interface ReleasedLease { @@1 platform: LeasePlatform;
 [*] interface ReloadFacts {
-[*] interface ReloadFacts { | appId: string | null;
-[*] interface ReloadFacts { | deviceId: string;
-[*] interface ReloadFacts { | deviceName: string;
-[*] interface ReloadFacts { | metroPort: number | null;
-[*] interface ReloadFacts { | platform: ReloadPlatform;
-[*] interface ReloadFacts { | reverseRestored: string[];
-[*] interface ReloadFacts { | strategy: "metro-websocket" | "metro-broadcast" | "cdp";
-[*] interface ReloadFacts { | targets: number | null;
+[*] interface ReloadFacts { @@1 appId: string | null;
+[*] interface ReloadFacts { @@1 deviceId: string;
+[*] interface ReloadFacts { @@1 deviceName: string;
+[*] interface ReloadFacts { @@1 metroPort: number | null;
+[*] interface ReloadFacts { @@1 platform: ReloadPlatform;
+[*] interface ReloadFacts { @@1 reverseRestored: string[];
+[*] interface ReloadFacts { @@1 strategy: "metro-websocket" | "metro-broadcast" | "cdp";
+[*] interface ReloadFacts { @@1 targets: number | null;
 [*] interface RemoteDiagnosis {
-[*] interface RemoteDiagnosis { | code: string;
-[*] interface RemoteDiagnosis { | layer: "tailscale" | "peer" | "route" | "server" | "compat";
-[*] interface RemoteDiagnosis { | message: string;
-[*] interface RemoteDiagnosis { | remedy: string;
-[*] interface RemoteDiagnosis { | title: string;
+[*] interface RemoteDiagnosis { @@1 code: string;
+[*] interface RemoteDiagnosis { @@1 layer: "tailscale" | "peer" | "route" | "server" | "compat";
+[*] interface RemoteDiagnosis { @@1 message: string;
+[*] interface RemoteDiagnosis { @@1 remedy: string;
+[*] interface RemoteDiagnosis { @@1 title: string;
 [*] interface RemoteListing {
-[*] interface RemoteListing { | build: BuildReport | null;
-[*] interface RemoteListing { | deviceHost: HostReport | null;
-[*] interface RemoteListing { | findings: Finding[];
-[*] interface RemoteListing { | machine: string;
-[*] interface RemoteListing { | machines: {
-[*] interface RemoteListing { | priority: number;
-[*] interface RemoteListing { | reachability: Reachability;
-[*] interface RemoteListing { | revoke: string[];
-[*] interface RemoteListing { | serverKeyFingerprint: string | null;
-[*] interface RemoteListing { | }[];
+[*] interface RemoteListing { @@1 findings: Finding[];
+[*] interface RemoteListing { @@1 machines: {
+[*] interface RemoteListing { @@1 }[];
+[*] interface RemoteListing { @@2 build: BuildReport | null;
+[*] interface RemoteListing { @@2 deviceHost: HostReport | null;
+[*] interface RemoteListing { @@2 machine: string;
+[*] interface RemoteListing { @@2 priority: number;
+[*] interface RemoteListing { @@2 reachability: Reachability;
+[*] interface RemoteListing { @@2 revoke: string[];
+[*] interface RemoteListing { @@2 serverKeyFingerprint: string | null;
+[*] interface RunExtras {
+[*] interface RunExtras { @@1 cleanAppState?: boolean;
+[*] interface RunExtras { @@1 recordedBuild?: boolean;
+[*] interface RunExtras { @@1 signal?: AbortSignal;
 [*] interface RunLeaseFacts {
-[*] interface RunLeaseFacts { | expiresAt: string;
-[*] interface RunLeaseFacts { | kind: string;
+[*] interface RunLeaseFacts { @@1 expiresAt: string;
+[*] interface RunLeaseFacts { @@1 kind: string;
 [*] interface SettingEntry {
-[*] interface SettingEntry { | defaultReason?: string;
-[*] interface SettingEntry { | env?: {
-[*] interface SettingEntry { | key: string;
-[*] interface SettingEntry { | layers: Partial<Record<SettingScope, unknown>>;
-[*] interface SettingEntry { | name: string;
-[*] interface SettingEntry { | origin: SettingScope | "env" | "default" | null;
-[*] interface SettingEntry { | sensitive?: true;
-[*] interface SettingEntry { | value: string;
-[*] interface SettingEntry { | value: unknown;
+[*] interface SettingEntry { @@1 defaultReason?: string;
+[*] interface SettingEntry { @@1 env?: {
+[*] interface SettingEntry { @@1 key: string;
+[*] interface SettingEntry { @@1 layers: Partial<Record<SettingScope, unknown>>;
+[*] interface SettingEntry { @@1 origin: SettingScope | "env" | "default" | null;
+[*] interface SettingEntry { @@1 sensitive?: true;
+[*] interface SettingEntry { @@1 value: unknown;
+[*] interface SettingEntry { @@2 name: string;
+[*] interface SettingEntry { @@2 value: string;
 [*] interface SettingWriteResult {
-[*] interface SettingWriteResult { | changed: boolean;
-[*] interface SettingWriteResult { | file: string;
-[*] interface SettingWriteResult { | key: string;
-[*] interface SettingWriteResult { | recordingsDeleted?: string[];
-[*] interface SettingWriteResult { | scope: SettingScope;
-[*] interface SettingWriteResult { | setting: SettingEntry;
+[*] interface SettingWriteResult { @@1 changed: boolean;
+[*] interface SettingWriteResult { @@1 file: string;
+[*] interface SettingWriteResult { @@1 key: string;
+[*] interface SettingWriteResult { @@1 recordingsDeleted?: string[];
+[*] interface SettingWriteResult { @@1 scope: SettingScope;
+[*] interface SettingWriteResult { @@1 setting: SettingEntry;
 [*] interface SimRuntimeUsage {
-[*] interface SimRuntimeUsage { | build: string | null;
-[*] interface SimRuntimeUsage { | bytes: number | null;
-[*] interface SimRuntimeUsage { | deletable: boolean;
-[*] interface SimRuntimeUsage { | devices: number;
-[*] interface SimRuntimeUsage { | identifier: string;
-[*] interface SimRuntimeUsage { | lastUsedAt: string | null;
-[*] interface SimRuntimeUsage { | runtimeIdentifier: string;
-[*] interface SimRuntimeUsage { | version: string | null;
+[*] interface SimRuntimeUsage { @@1 build: string | null;
+[*] interface SimRuntimeUsage { @@1 bytes: number | null;
+[*] interface SimRuntimeUsage { @@1 deletable: boolean;
+[*] interface SimRuntimeUsage { @@1 devices: number;
+[*] interface SimRuntimeUsage { @@1 identifier: string;
+[*] interface SimRuntimeUsage { @@1 lastUsedAt: string | null;
+[*] interface SimRuntimeUsage { @@1 runtimeIdentifier: string;
+[*] interface SimRuntimeUsage { @@1 version: string | null;
 [*] interface SizedDir {
-[*] interface SizedDir { | bytes: number | null;
-[*] interface SizedDir { | dir: string;
+[*] interface SizedDir { @@1 bytes: number | null;
+[*] interface SizedDir { @@1 dir: string;
 [*] interface StartFacts {
-[*] interface StartFacts { | agentDevice?: {
-[*] interface StartFacts { | alreadyRunning: boolean;
-[*] interface StartFacts { | logsDir: string;
-[*] interface StartFacts { | mode: string | null;
-[*] interface StartFacts { | port: number;
-[*] interface StartFacts { | stateDir: string;
-[*] interface StartFacts { | supervisorPid: number | null;
+[*] interface StartFacts { @@1 agentDevice?: {
+[*] interface StartFacts { @@1 alreadyRunning: boolean;
+[*] interface StartFacts { @@1 logsDir: string;
+[*] interface StartFacts { @@1 mode: string | null;
+[*] interface StartFacts { @@1 port: number;
+[*] interface StartFacts { @@1 supervisorPid: number | null;
+[*] interface StartFacts { @@2 stateDir: string;
 [*] interface StatsBucket {
-[*] interface StatsBucket { | coldCleanupMs?: number;
-[*] interface StatsBucket { | coldRunMs: number;
-[*] interface StatsBucket { | coldRuns: number;
-[*] interface StatsBucket { | failed: number;
-[*] interface StatsBucket { | firstRunAt: string;
-[*] interface StatsBucket { | hitCleanupMs?: number;
-[*] interface StatsBucket { | hitRunMs: number;
-[*] interface StatsBucket { | hitRuns: number;
-[*] interface StatsBucket { | hits: number;
-[*] interface StatsBucket { | lastColdBuildMs?: number;
-[*] interface StatsBucket { | lastOffloadHost?: string;
-[*] interface StatsBucket { | lastPodsMs?: number;
-[*] interface StatsBucket { | lastRunAt: string;
-[*] interface StatsBucket { | misses: number;
-[*] interface StatsBucket { | offloadedCleanupMs?: number;
-[*] interface StatsBucket { | offloadedRunMs?: number;
-[*] interface StatsBucket { | offloadedRuns?: number;
-[*] interface StatsBucket { | runs: number;
-[*] interface StatsBucket { | timeSavedMs: number;
+[*] interface StatsBucket { @@1 coldCleanupMs?: number;
+[*] interface StatsBucket { @@1 coldRunMs: number;
+[*] interface StatsBucket { @@1 coldRuns: number;
+[*] interface StatsBucket { @@1 failed: number;
+[*] interface StatsBucket { @@1 firstRunAt: string;
+[*] interface StatsBucket { @@1 hitCleanupMs?: number;
+[*] interface StatsBucket { @@1 hitRunMs: number;
+[*] interface StatsBucket { @@1 hitRuns: number;
+[*] interface StatsBucket { @@1 hits: number;
+[*] interface StatsBucket { @@1 lastColdBuildMs?: number;
+[*] interface StatsBucket { @@1 lastOffloadHost?: string;
+[*] interface StatsBucket { @@1 lastPodsMs?: number;
+[*] interface StatsBucket { @@1 lastRunAt: string;
+[*] interface StatsBucket { @@1 misses: number;
+[*] interface StatsBucket { @@1 offloadedCleanupMs?: number;
+[*] interface StatsBucket { @@1 offloadedRunMs?: number;
+[*] interface StatsBucket { @@1 offloadedRuns?: number;
+[*] interface StatsBucket { @@1 runs: number;
+[*] interface StatsBucket { @@1 timeSavedMs: number;
 [*] interface StatsCapacityRefusal {
-[*] interface StatsCapacityRefusal { | at: string;
-[*] interface StatsCapacityRefusal { | kind: "device";
-[*] interface StatsCapacityRefusal { | max: number;
-[*] interface StatsCapacityRefusal { | platform: StatsPlatform;
-[*] interface StatsCapacityRefusal { | workspace: string;
+[*] interface StatsCapacityRefusal { @@1 at: string;
+[*] interface StatsCapacityRefusal { @@1 kind: "device";
+[*] interface StatsCapacityRefusal { @@1 max: number;
+[*] interface StatsCapacityRefusal { @@1 platform: StatsPlatform;
+[*] interface StatsCapacityRefusal { @@1 workspace: string;
 [*] interface StatsCapacityWait {
-[*] interface StatsCapacityWait { | at: string;
-[*] interface StatsCapacityWait { | kind: "device-wait";
-[*] interface StatsCapacityWait { | max: number;
-[*] interface StatsCapacityWait { | ms: number;
-[*] interface StatsCapacityWait { | platform: StatsPlatform;
-[*] interface StatsCapacityWait { | reclaimed?: number;
-[*] interface StatsCapacityWait { | workspace: string;
+[*] interface StatsCapacityWait { @@1 at: string;
+[*] interface StatsCapacityWait { @@1 kind: "device-wait";
+[*] interface StatsCapacityWait { @@1 max: number;
+[*] interface StatsCapacityWait { @@1 ms: number;
+[*] interface StatsCapacityWait { @@1 platform: StatsPlatform;
+[*] interface StatsCapacityWait { @@1 reclaimed?: number;
+[*] interface StatsCapacityWait { @@1 workspace: string;
 [*] interface StatsPlacement {
-[*] interface StatsPlacement { | at: string;
-[*] interface StatsPlacement { | buildMs?: number;
-[*] interface StatsPlacement { | decision: PlacementDecision;
-[*] interface StatsPlacement { | deviceSlotWaitMs?: number;
-[*] interface StatsPlacement { | failed?: true;
-[*] interface StatsPlacement { | localEstimateMs?: number;
-[*] interface StatsPlacement { | machine?: string;
-[*] interface StatsPlacement { | platform: StatsPlatform;
-[*] interface StatsPlacement { | project: string;
-[*] interface StatsPlacement { | reason: string;
-[*] interface StatsPlacement { | slotWaitMs?: number;
+[*] interface StatsPlacement { @@1 at: string;
+[*] interface StatsPlacement { @@1 buildMs?: number;
+[*] interface StatsPlacement { @@1 decision: PlacementDecision;
+[*] interface StatsPlacement { @@1 deviceSlotWaitMs?: number;
+[*] interface StatsPlacement { @@1 failed?: true;
+[*] interface StatsPlacement { @@1 localEstimateMs?: number;
+[*] interface StatsPlacement { @@1 machine?: string;
+[*] interface StatsPlacement { @@1 platform: StatsPlatform;
+[*] interface StatsPlacement { @@1 project: string;
+[*] interface StatsPlacement { @@1 reason: string;
+[*] interface StatsPlacement { @@1 slotWaitMs?: number;
 [*] interface StimClient {
-[*] interface StimClient { | build(options: StimBuildOptions): Promise<StimBuildResult>;
-[*] interface StimClient { | build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
-[*] interface StimClient { | collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
-[*] interface StimClient { | deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
-[*] interface StimClient { | deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
-[*] interface StimClient { | diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
-[*] interface StimClient { | doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
-[*] interface StimClient { | exitCode: 0 | 1;
-[*] interface StimClient { | followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void, onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>): Promise<() => void>;
-[*] interface StimClient { | gc(options?: StimGcOptions): Promise<StimGcReport>;
-[*] interface StimClient { | identity(options?: StimReadOptions): Promise<string>;
-[*] interface StimClient { | logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
-[*] interface StimClient { | plan(options: StimPlanOptions): Promise<StimPlan>;
-[*] interface StimClient { | platform: P;
-[*] interface StimClient { | readonly projectRoot: string;
-[*] interface StimClient { | reload(options?: StimReloadOptions): Promise<StimReloadResult>;
-[*] interface StimClient { | remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
-[*] interface StimClient { | removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
-[*] interface StimClient { | repairDoctor(options?: StimDoctorRepairOptions): Promise<{
-[*] interface StimClient { | report: StimDoctorReport;
-[*] interface StimClient { | requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
-[*] interface StimClient { | run(options: StimRunOptions): Promise<StimRunResult>;
-[*] interface StimClient { | run<P extends StimPlatform>(options: StimRunOptions & {
-[*] interface StimClient { | setSetting(key: string, value: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
-[*] interface StimClient { | settings(options?: StimReadOptions): Promise<StimSettings>;
-[*] interface StimClient { | start(options?: StimStartOptions): Promise<StimStartResult>;
-[*] interface StimClient { | stats(options?: StimReadOptions): Promise<StimStats>;
-[*] interface StimClient { | stop(options?: StimStopOptions): Promise<StimStopResult>;
-[*] interface StimClient { | unlockDevice(options?: StimDeviceUnlockOptions): Promise<ReleasedLease[]>;
-[*] interface StimClient { | unsetSetting(key: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
-[*] interface StimClient { | warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
-[*] interface StimClient { | }): Promise<Extract<StimBuildResult, {
-[*] interface StimClient { | }): Promise<Extract<StimRunResult, {
+[*] interface StimClient { @@1 @internal deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
+[*] interface StimClient { @@1 @internal deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
+[*] interface StimClient { @@1 @internal identity(options?: StimReadOptions): Promise<string>;
+[*] interface StimClient { @@1 @internal requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
+[*] interface StimClient { @@1 build(options: StimBuildOptions): Promise<StimBuildResult>;
+[*] interface StimClient { @@1 build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
+[*] interface StimClient { @@1 collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
+[*] interface StimClient { @@1 diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
+[*] interface StimClient { @@1 doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
+[*] interface StimClient { @@1 followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void, onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>): Promise<() => void>;
+[*] interface StimClient { @@1 logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
+[*] interface StimClient { @@1 plan(options: StimPlanOptions): Promise<StimPlan>;
+[*] interface StimClient { @@1 previewGarbage(options?: StimGcOptions): Promise<StimGcReport>;
+[*] interface StimClient { @@1 readonly projectRoot: string;
+[*] interface StimClient { @@1 reload(options?: StimReloadOptions): Promise<StimReloadResult>;
+[*] interface StimClient { @@1 remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
+[*] interface StimClient { @@1 removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
+[*] interface StimClient { @@1 repairDoctor(options?: StimDoctorRepairOptions): Promise<{
+[*] interface StimClient { @@1 run(options: StimRunOptions): Promise<StimRunResult>;
+[*] interface StimClient { @@1 run<P extends StimPlatform>(options: StimRunOptions & {
+[*] interface StimClient { @@1 setSetting(key: string, value: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
+[*] interface StimClient { @@1 settings(options?: StimReadOptions): Promise<StimSettings>;
+[*] interface StimClient { @@1 start(options?: StimStartOptions): Promise<StimStartResult>;
+[*] interface StimClient { @@1 stats(options?: StimReadOptions): Promise<StimStats>;
+[*] interface StimClient { @@1 stop(options?: StimStopOptions): Promise<StimStopResult>;
+[*] interface StimClient { @@1 unlockDevice(options?: StimDeviceUnlockOptions): Promise<ReleasedLease[]>;
+[*] interface StimClient { @@1 unsetSetting(key: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
+[*] interface StimClient { @@1 warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
+[*] interface StimClient { @@1p }): Promise<Extract<StimBuildResult, {
+[*] interface StimClient { @@1p }): Promise<Extract<StimRunResult, {
+[*] interface StimClient { @@2 exitCode: 0 | 1;
+[*] interface StimClient { @@2 platform: P;
+[*] interface StimClient { @@2 report: StimDoctorReport;
+[*] interface StimClient { @@2p platform: P;
 [*] interface StimContext {
-[*] interface StimContext { | buildCache: string | null;
-[*] interface StimContext { | cwd: string;
-[*] interface StimContext { | env: NodeJS.ProcessEnv;
-[*] interface StimContext { | home: string;
-[*] interface StimContext { | output: StimOutput;
-[*] interface StimContext { | projectRoot: string;
-[*] interface StimContext { | runId: string;
-[*] interface StimContext { | signal: AbortSignal;
+[*] interface StimContext { @@1 buildCache: string | null;
+[*] interface StimContext { @@1 cwd: string;
+[*] interface StimContext { @@1 env: NodeJS.ProcessEnv;
+[*] interface StimContext { @@1 home: string;
+[*] interface StimContext { @@1 output: StimOutput;
+[*] interface StimContext { @@1 projectRoot: string;
+[*] interface StimContext { @@1 runId: string;
+[*] interface StimContext { @@1 signal: AbortSignal;
 [*] interface StimDeviceToolOptions extends StimReadOptions {
-[*] interface StimDeviceToolOptions extends StimReadOptions { | beforeTool?: (workspace: string) => void;
-[*] interface StimDeviceToolOptions extends StimReadOptions { | request: DeviceToolRequest;
-[*] interface StimDeviceToolOptions extends StimReadOptions { | slot?: string;
+[*] interface StimDeviceToolOptions extends StimReadOptions { @@1 beforeTool?: (workspace: string) => void;
+[*] interface StimDeviceToolOptions extends StimReadOptions { @@1 request: DeviceToolRequest;
+[*] interface StimDeviceToolOptions extends StimReadOptions { @@1 slot?: string;
 [*] interface StimDeviceUnlockOptions extends StimReadOptions {
-[*] interface StimDeviceUnlockOptions extends StimReadOptions { | beforeUnlock?: (workspace: string) => void;
-[*] interface StimDeviceUnlockOptions extends StimReadOptions { | platform?: "ios" | "android";
-[*] interface StimDeviceUnlockOptions extends StimReadOptions { | slot?: string;
+[*] interface StimDeviceUnlockOptions extends StimReadOptions { @@1 beforeUnlock?: (workspace: string) => void;
+[*] interface StimDeviceUnlockOptions extends StimReadOptions { @@1 platform?: "ios" | "android";
+[*] interface StimDeviceUnlockOptions extends StimReadOptions { @@1 slot?: string;
 [*] interface StimDiagnostics {
-[*] interface StimDiagnostics { | directory: string;
-[*] interface StimDiagnostics { | records: NdjsonRecord[];
+[*] interface StimDiagnostics { @@1 directory: string;
+[*] interface StimDiagnostics { @@1 records: NdjsonRecord[];
 [*] interface StimDiagnosticsOptions {
-[*] interface StimDiagnosticsOptions { | errors?: boolean;
-[*] interface StimDiagnosticsOptions { | signal?: AbortSignal;
-[*] interface StimDiagnosticsOptions { | tail?: number;
+[*] interface StimDiagnosticsOptions { @@1 errorsOnly?: boolean;
+[*] interface StimDiagnosticsOptions { @@1 signal?: AbortSignal;
+[*] interface StimDiagnosticsOptions { @@1 tail?: number;
 [*] interface StimDoctorOptions extends StimReadOptions {
-[*] interface StimDoctorOptions extends StimReadOptions { | platform?: "ios" | "android";
-[*] interface StimDoctorOptions extends StimReadOptions { | record?: boolean;
+[*] interface StimDoctorOptions extends StimReadOptions { @@1 platform?: "ios" | "android";
+[*] interface StimDoctorOptions extends StimReadOptions { @@1 record?: boolean;
 [*] interface StimDoctorRepairOptions extends Omit<StimDoctorOptions, "record"> {
-[*] interface StimDoctorRepairOptions extends Omit<StimDoctorOptions, "record"> { | beforeRepair?: (workspace: string) => void;
+[*] interface StimDoctorRepairOptions extends Omit<StimDoctorOptions, "record"> { @@1 beforeRepair?: (workspace: string) => void;
 [*] interface StimFailure {
-[*] interface StimFailure { | code: string;
-[*] interface StimFailure { | details?: unknown;
-[*] interface StimFailure { | message: string;
-[*] interface StimFailure { | remedy: string | null;
+[*] interface StimFailure { @@1 code: string;
+[*] interface StimFailure { @@1 details?: unknown;
+[*] interface StimFailure { @@1 message: string;
+[*] interface StimFailure { @@1 remedy: string | null;
 [*] interface StimGcItemOptions extends StimReadOptions {
-[*] interface StimGcItemOptions extends StimReadOptions { | item: StimGcItem;
+[*] interface StimGcItemOptions extends StimReadOptions { @@1 item: StimGcItem;
 [*] interface StimGcItemResult {
-[*] interface StimGcItemResult { | exitCode: 0 | 1;
-[*] interface StimGcItemResult { | results: GcResult[];
+[*] interface StimGcItemResult { @@1 exitCode: 0 | 1;
+[*] interface StimGcItemResult { @@1 results: GcResult[];
 [*] interface StimGcMutationResult {
-[*] interface StimGcMutationResult { | exitCode: 0 | 1;
-[*] interface StimGcMutationResult { | report: StimGcReport;
+[*] interface StimGcMutationResult { @@1 exitCode: 0 | 1;
+[*] interface StimGcMutationResult { @@1 report: StimGcReport;
 [*] interface StimInstallation {
-[*] interface StimInstallation { | path: string;
-[*] interface StimInstallation { | realPath: string;
-[*] interface StimInstallation { | version: string | null;
+[*] interface StimInstallation { @@1 path: string;
+[*] interface StimInstallation { @@1 realPath: string;
+[*] interface StimInstallation { @@1 version: string | null;
 [*] interface StimLogsOptions {
-[*] interface StimLogsOptions { | errorsOnly?: boolean;
-[*] interface StimLogsOptions { | grep?: string;
-[*] interface StimLogsOptions { | minLevel?: string;
-[*] interface StimLogsOptions { | signal?: AbortSignal;
-[*] interface StimLogsOptions { | since?: string;
-[*] interface StimLogsOptions { | slot?: string;
-[*] interface StimLogsOptions { | sources?: string[];
-[*] interface StimLogsOptions { | tail?: number;
+[*] interface StimLogsOptions { @@1 errorsOnly?: boolean;
+[*] interface StimLogsOptions { @@1 grep?: string;
+[*] interface StimLogsOptions { @@1 minLevel?: LogLevel;
+[*] interface StimLogsOptions { @@1 signal?: AbortSignal;
+[*] interface StimLogsOptions { @@1 since?: string;
+[*] interface StimLogsOptions { @@1 slot?: string;
+[*] interface StimLogsOptions { @@1 sources?: LogSource[];
+[*] interface StimLogsOptions { @@1 tail?: number;
 [*] interface StimMachineAccessOptions extends StimReadOptions {
-[*] interface StimMachineAccessOptions extends StimReadOptions { | ticket?: string;
+[*] interface StimMachineAccessOptions extends StimReadOptions { @@1 ticket?: string;
 [*] interface StimOptions {
-[*] interface StimOptions { | admission?: "command" | "none";
-[*] interface StimOptions { | buildCache?: string;
-[*] interface StimOptions { | env?: NodeJS.ProcessEnv;
-[*] interface StimOptions { | home?: string;
-[*] interface StimOptions { | onProgress?: (event: StimProgress) => void;
-[*] interface StimOptions { | projectRoot: string;
+[*] interface StimOptions { @@1 @internal admission?: "command" | "none";
+[*] interface StimOptions { @@1 buildCacheDir?: string;
+[*] interface StimOptions { @@1 env?: NodeJS.ProcessEnv;
+[*] interface StimOptions { @@1 home?: string;
+[*] interface StimOptions { @@1 onProgress?: (event: StimProgress) => void;
+[*] interface StimOptions { @@1 projectRoot: string;
 [*] interface StimProgress {
-[*] interface StimProgress { | message: string;
-[*] interface StimProgress { | stream: "stdout" | "stderr";
+[*] interface StimProgress { @@1 message: string;
+[*] interface StimProgress { @@1 stream: "stdout" | "stderr";
 [*] interface StimReadOptions {
-[*] interface StimReadOptions { | signal?: AbortSignal;
+[*] interface StimReadOptions { @@1 signal?: AbortSignal;
 [*] interface StimReloadOptions {
-[*] interface StimReloadOptions { | beforeReload?: (workspace: string) => void;
-[*] interface StimReloadOptions { | platform?: ReloadPlatform;
-[*] interface StimReloadOptions { | signal?: AbortSignal;
+[*] interface StimReloadOptions { @@1 beforeReload?: (workspace: string) => void;
+[*] interface StimReloadOptions { @@1 platform?: ReloadPlatform;
+[*] interface StimReloadOptions { @@1 signal?: AbortSignal;
 [*] interface StimSettingWriteOptions extends StimReadOptions {
-[*] interface StimSettingWriteOptions extends StimReadOptions { | beforeWrite?: (workspace: string | null) => void;
-[*] interface StimSettingWriteOptions extends StimReadOptions { | scope?: SettingScope;
+[*] interface StimSettingWriteOptions extends StimReadOptions { @@1 beforeWrite?: (workspace: string | null) => void;
+[*] interface StimSettingWriteOptions extends StimReadOptions { @@1 scope?: SettingScope;
 [*] interface StimStartOptions {
-[*] interface StimStartOptions { | beforeStart?: (workspace: string) => void;
-[*] interface StimStartOptions { | remote?: boolean;
-[*] interface StimStartOptions { | resetCache?: boolean;
-[*] interface StimStartOptions { | signal?: AbortSignal;
-[*] interface StimStartOptions { | waitSeconds?: number;
+[*] interface StimStartOptions { @@1 beforeStart?: (workspace: string) => void;
+[*] interface StimStartOptions { @@1 remote?: boolean;
+[*] interface StimStartOptions { @@1 resetCache?: boolean;
+[*] interface StimStartOptions { @@1 signal?: AbortSignal;
+[*] interface StimStartOptions { @@1 waitSeconds?: number;
 [*] interface StimStopOptions {
-[*] interface StimStopOptions { | beforeStop?: (workspace: string) => void;
-[*] interface StimStopOptions { | signal?: AbortSignal;
-[*] interface StimStopOptions { | slot?: string;
+[*] interface StimStopOptions { @@1 beforeStop?: (workspace: string) => void;
+[*] interface StimStopOptions { @@1 signal?: AbortSignal;
+[*] interface StimStopOptions { @@1 slot?: string;
 [*] interface StimVersionReport {
-[*] interface StimVersionReport { | highestVersion: string | null;
-[*] interface StimVersionReport { | installations: StimInstallation[];
-[*] interface StimVersionReport { | resolved: StimInstallation | null;
-[*] interface StimVersionReport { | resolvedIsOlder: boolean;
-[*] interface StimVersionReport { | runningPath: string | null;
-[*] interface StimVersionReport { | runningVersion: string;
-[*] interface StimVersionReport { | versions: string[];
+[*] interface StimVersionReport { @@1 highestVersion: string | null;
+[*] interface StimVersionReport { @@1 installations: StimInstallation[];
+[*] interface StimVersionReport { @@1 resolved: StimInstallation | null;
+[*] interface StimVersionReport { @@1 resolvedIsOlder: boolean;
+[*] interface StimVersionReport { @@1 runningPath: string | null;
+[*] interface StimVersionReport { @@1 runningVersion: string;
+[*] interface StimVersionReport { @@1 versions: string[];
 [*] interface StimWorktreeRemoveOptions extends StimReadOptions {
-[*] interface StimWorktreeRemoveOptions extends StimReadOptions { | beforeRemove?: (workspace: string) => void;
-[*] interface StimWorktreeRemoveOptions extends StimReadOptions { | force?: boolean;
-[*] interface StimWorktreeRemoveOptions extends StimReadOptions { | target?: string;
+[*] interface StimWorktreeRemoveOptions extends StimReadOptions { @@1 beforeRemove?: (workspace: string) => void;
+[*] interface StimWorktreeRemoveOptions extends StimReadOptions { @@1 force?: boolean;
+[*] interface StimWorktreeRemoveOptions extends StimReadOptions { @@1 target?: string;
 [*] interface StimWorktreeRemoveResult {
-[*] interface StimWorktreeRemoveResult { | exitCode: 0 | 1;
-[*] interface StimWorktreeRemoveResult { | removed: boolean;
+[*] interface StimWorktreeRemoveResult { @@1 exitCode: 0 | 1;
+[*] interface StimWorktreeRemoveResult { @@1 removed: boolean;
 [*] interface StimWorktreeWarmOptions extends StimReadOptions {
-[*] interface StimWorktreeWarmOptions extends StimReadOptions { | beforeWarm?: (workspace: string) => void;
+[*] interface StimWorktreeWarmOptions extends StimReadOptions { @@1 beforeWarm?: (workspace: string) => void;
 [*] interface StimWorktreeWarmResult {
-[*] interface StimWorktreeWarmResult { | exitCode: 0 | 1;
+[*] interface StimWorktreeWarmResult { @@1 exitCode: 0 | 1;
 [*] interface StopOutcomes {
-[*] interface StopOutcomes { | collectors: CollectorsOutcome;
-[*] interface StopOutcomes { | device: DeviceOutcome;
-[*] interface StopOutcomes { | macos?: {
-[*] interface StopOutcomes { | metro: MetroOutcome;
-[*] interface StopOutcomes { | metroTunnel: TunnelOutcome;
-[*] interface StopOutcomes { | port: PortOutcome;
-[*] interface StopOutcomes { | reason?: string;
-[*] interface StopOutcomes { | releasedLeases: ReleasedLease[];
-[*] interface StopOutcomes { | status: string;
-[*] interface StopOutcomes { | supervisor: SupervisorOutcome;
+[*] interface StopOutcomes { @@1 collectors: CollectorsOutcome;
+[*] interface StopOutcomes { @@1 device: DeviceOutcome;
+[*] interface StopOutcomes { @@1 macos?: {
+[*] interface StopOutcomes { @@1 metro: MetroOutcome;
+[*] interface StopOutcomes { @@1 metroTunnel: TunnelOutcome;
+[*] interface StopOutcomes { @@1 port: PortOutcome;
+[*] interface StopOutcomes { @@1 releasedLeases: ReleasedLease[];
+[*] interface StopOutcomes { @@1 supervisor: SupervisorOutcome;
+[*] interface StopOutcomes { @@2 reason?: string;
+[*] interface StopOutcomes { @@2 status: string;
 [*] interface StopResult {
-[*] interface StopResult { | ok: boolean;
-[*] interface StopResult { | outcomes: StopOutcomes;
-[*] interface StopResult { | summary: string;
+[*] interface StopResult { @@1 ok: boolean;
+[*] interface StopResult { @@1 outcomes: StopOutcomes;
+[*] interface StopResult { @@1 summary: string;
 [*] interface SupervisorOutcome {
-[*] interface SupervisorOutcome { | mode?: string | null;
-[*] interface SupervisorOutcome { | pid?: number;
-[*] interface SupervisorOutcome { | port?: number | null;
-[*] interface SupervisorOutcome { | reason?: string;
-[*] interface SupervisorOutcome { | status: string;
+[*] interface SupervisorOutcome { @@1 mode?: string | null;
+[*] interface SupervisorOutcome { @@1 pid?: number;
+[*] interface SupervisorOutcome { @@1 port?: number | null;
+[*] interface SupervisorOutcome { @@1 reason?: string;
+[*] interface SupervisorOutcome { @@1 status: string;
 [*] interface SwiftpmCacheUsage {
-[*] interface SwiftpmCacheUsage { | bytes: number | null;
-[*] interface SwiftpmCacheUsage { | complete: boolean;
-[*] interface SwiftpmCacheUsage { | dir: string;
-[*] interface SwiftpmCacheUsage { | measuredAt: string;
-[*] interface SwiftpmCacheUsage { | present: boolean;
-[*] interface SwiftpmCacheUsage { | version: 1;
+[*] interface SwiftpmCacheUsage { @@1 bytes: number | null;
+[*] interface SwiftpmCacheUsage { @@1 complete: boolean;
+[*] interface SwiftpmCacheUsage { @@1 dir: string;
+[*] interface SwiftpmCacheUsage { @@1 measuredAt: string;
+[*] interface SwiftpmCacheUsage { @@1 present: boolean;
+[*] interface SwiftpmCacheUsage { @@1 version: 1;
 [*] interface TailnetIdentity {
-[*] interface TailnetIdentity { | id?: string;
-[*] interface TailnetIdentity { | name: string;
-[*] interface TailnetIdentity { | suffix?: string;
+[*] interface TailnetIdentity { @@1 id?: string;
+[*] interface TailnetIdentity { @@1 name: string;
+[*] interface TailnetIdentity { @@1 suffix?: string;
 [*] interface TailnetMachineIo {
-[*] interface TailnetMachineIo { | hello: (endpoint: Endpoint, auth: MachineAuth) => Promise<HelloReply>;
-[*] interface TailnetMachineIo { | ping?: (address: string) => Promise<boolean>;
-[*] interface TailnetMachineIo { | rawStatus?: () => unknown;
-[*] interface TailnetMachineIo { | startup?: (endpoint: Endpoint) => Promise<PeerStartup | null>;
-[*] interface TailnetMachineIo { | status: () => unknown;
+[*] interface TailnetMachineIo { @@1 hello: (endpoint: Endpoint, auth: MachineAuth) => Promise<HelloReply>;
+[*] interface TailnetMachineIo { @@1 ping?: (address: string) => Promise<boolean>;
+[*] interface TailnetMachineIo { @@1 rawStatus?: () => unknown;
+[*] interface TailnetMachineIo { @@1 startup?: (endpoint: Endpoint) => Promise<PeerStartup | null>;
+[*] interface TailnetMachineIo { @@1 status: () => unknown;
 [*] interface TempLeftover {
-[*] interface TempLeftover { | bytes: number;
-[*] interface TempLeftover { | kept: string | null;
-[*] interface TempLeftover { | kind: TempLeftoverKind;
-[*] interface TempLeftover { | path: string;
-[*] interface TempLeftover { | willDelete: boolean;
+[*] interface TempLeftover { @@1 bytes: number;
+[*] interface TempLeftover { @@1 kept: string | null;
+[*] interface TempLeftover { @@1 kind: TempLeftoverKind;
+[*] interface TempLeftover { @@1 path: string;
+[*] interface TempLeftover { @@1 willDelete: boolean;
 [*] interface TempLeftoverGroup {
-[*] interface TempLeftoverGroup { | bytes: number;
-[*] interface TempLeftoverGroup { | count: number;
-[*] interface TempLeftoverGroup { | deleteBytes: number;
-[*] interface TempLeftoverGroup { | deleteCount: number;
-[*] interface TempLeftoverGroup { | kept: {
-[*] interface TempLeftoverGroup { | kind: TempLeftoverKind;
-[*] interface TempLeftoverGroup { | reason: string;
-[*] interface TempLeftoverGroup { | remedy: string;
-[*] interface TempLeftoverGroup { | }[];
+[*] interface TempLeftoverGroup { @@1 bytes: number;
+[*] interface TempLeftoverGroup { @@1 count: number;
+[*] interface TempLeftoverGroup { @@1 deleteBytes: number;
+[*] interface TempLeftoverGroup { @@1 deleteCount: number;
+[*] interface TempLeftoverGroup { @@1 kept: {
+[*] interface TempLeftoverGroup { @@1 kind: TempLeftoverKind;
+[*] interface TempLeftoverGroup { @@1 remedy: string;
+[*] interface TempLeftoverGroup { @@1 }[];
+[*] interface TempLeftoverGroup { @@2 count: number;
+[*] interface TempLeftoverGroup { @@2 reason: string;
 [*] interface TempLeftoverReport {
-[*] interface TempLeftoverReport { | entries: TempLeftover[];
-[*] interface TempLeftoverReport { | recheck?: (staged: string, original: string, kind: DeletableKind) => Promise<string | null>;
-[*] interface TempLeftoverReport { | root: string;
+[*] interface TempLeftoverReport { @@1 entries: TempLeftover[];
+[*] interface TempLeftoverReport { @@1 recheck?: (staged: string, original: string, kind: DeletableKind) => Promise<string | null>;
+[*] interface TempLeftoverReport { @@1 root: string;
 [*] interface ToolResult {
-[*] interface ToolResult { | action?: string;
-[*] interface ToolResult { | appId?: string | null;
-[*] interface ToolResult { | data: boolean;
-[*] interface ToolResult { | deviceId: string;
-[*] interface ToolResult { | deviceName: string;
-[*] interface ToolResult { | enabled?: boolean;
-[*] interface ToolResult { | latitude?: number;
-[*] interface ToolResult { | longitude?: number;
-[*] interface ToolResult { | permissions: PermissionReadBack[];
-[*] interface ToolResult { | platform: ToolPlatform;
-[*] interface ToolResult { | readBack: {
-[*] interface ToolResult { | service?: string;
-[*] interface ToolResult { | skipped?: string[];
-[*] interface ToolResult { | slot: string;
-[*] interface ToolResult { | tool: ToolRequest["tool"];
-[*] interface ToolResult { | wifi: boolean;
-[*] interface ToolResult { | } | null;
-[*] interface ToolResult { | } | {
+[*] interface ToolResult { @@1 action?: string;
+[*] interface ToolResult { @@1 appId?: string | null;
+[*] interface ToolResult { @@1 deviceId: string;
+[*] interface ToolResult { @@1 deviceName: string;
+[*] interface ToolResult { @@1 enabled?: boolean;
+[*] interface ToolResult { @@1 latitude?: number;
+[*] interface ToolResult { @@1 longitude?: number;
+[*] interface ToolResult { @@1 platform: ToolPlatform;
+[*] interface ToolResult { @@1 readBack: {
+[*] interface ToolResult { @@1 service?: string;
+[*] interface ToolResult { @@1 skipped?: string[];
+[*] interface ToolResult { @@1 slot: string;
+[*] interface ToolResult { @@1 tool: ToolRequest["tool"];
+[*] interface ToolResult { @@1 } | null;
+[*] interface ToolResult { @@1 } | {
+[*] interface ToolResult { @@2 data: boolean;
+[*] interface ToolResult { @@2 permissions: PermissionReadBack[];
+[*] interface ToolResult { @@2 wifi: boolean;
 [*] interface ToolchainEntry {
-[*] interface ToolchainEntry { | from?: string;
-[*] interface ToolchainEntry { | name: string;
-[*] interface ToolchainEntry { | source: "environment" | "discovered" | "missing";
-[*] interface ToolchainEntry { | value: string | null;
+[*] interface ToolchainEntry { @@1 from?: string;
+[*] interface ToolchainEntry { @@1 name: string;
+[*] interface ToolchainEntry { @@1 source: "environment" | "discovered" | "missing";
+[*] interface ToolchainEntry { @@1 value: string | null;
 [*] interface ToolchainReport {
-[*] interface ToolchainReport { | bin: string | null;
-[*] interface ToolchainReport { | entries: ToolchainEntry[];
-[*] interface ToolchainReport { | label: string;
-[*] interface ToolchainReport { | match: "exact" | "major" | null;
-[*] interface ToolchainReport { | pin: string;
-[*] interface ToolchainReport { | projectNode: {
-[*] interface ToolchainReport { | services?: Array<{
-[*] interface ToolchainReport { | spec: string;
-[*] interface ToolchainReport { | version: string | null;
-[*] interface ToolchainReport { | } | null;
+[*] interface ToolchainReport { @@1 entries: ToolchainEntry[];
+[*] interface ToolchainReport { @@1 projectNode: {
+[*] interface ToolchainReport { @@1 services?: Array<{
+[*] interface ToolchainReport { @@1 } | null;
+[*] interface ToolchainReport { @@2 bin: string | null;
+[*] interface ToolchainReport { @@2 entries: ToolchainEntry[];
+[*] interface ToolchainReport { @@2 label: string;
+[*] interface ToolchainReport { @@2 match: "exact" | "major" | null;
+[*] interface ToolchainReport { @@2 pin: string;
+[*] interface ToolchainReport { @@2 spec: string;
+[*] interface ToolchainReport { @@2 version: string | null;
 [*] interface TrashEntry {
-[*] interface TrashEntry { | bytes: number | null;
-[*] interface TrashEntry { | kept: string | null;
-[*] interface TrashEntry { | path: string;
-[*] interface TrashEntry { | removedAt: string | null;
-[*] interface TrashEntry { | willDelete: boolean;
-[*] interface TrashEntry { | worktree: string | null;
+[*] interface TrashEntry { @@1 bytes: number | null;
+[*] interface TrashEntry { @@1 kept: string | null;
+[*] interface TrashEntry { @@1 path: string;
+[*] interface TrashEntry { @@1 removedAt: string | null;
+[*] interface TrashEntry { @@1 willDelete: boolean;
+[*] interface TrashEntry { @@1 worktree: string | null;
 [*] interface TrashReport {
-[*] interface TrashReport { | entries: TrashEntry[];
-[*] interface TrashReport { | root: string;
+[*] interface TrashReport { @@1 entries: TrashEntry[];
+[*] interface TrashReport { @@1 root: string;
 [*] interface TunnelOutcome {
-[*] interface TunnelOutcome { | provider?: string;
-[*] interface TunnelOutcome { | reason?: string;
-[*] interface TunnelOutcome { | status: string;
+[*] interface TunnelOutcome { @@1 provider?: string;
+[*] interface TunnelOutcome { @@1 reason?: string;
+[*] interface TunnelOutcome { @@1 status: string;
 [*] interface UnverifiedCleanup {
-[*] interface UnverifiedCleanup { | child: number;
-[*] interface UnverifiedCleanup { | message: string;
-[*] interface UnverifiedCleanup { | remedy: string;
-[*] interface UnverifiedCleanup { | since: string;
+[*] interface UnverifiedCleanup { @@1 child: number;
+[*] interface UnverifiedCleanup { @@1 message: string;
+[*] interface UnverifiedCleanup { @@1 remedy: string;
+[*] interface UnverifiedCleanup { @@1 since: string;
 [*] interface WatchmanRoot {
-[*] interface WatchmanRoot { | detail: string | null;
-[*] interface WatchmanRoot { | path: string;
-[*] interface WatchmanRoot { | removable: boolean;
-[*] interface WatchmanRoot { | stale: WatchmanRootStale | null;
-[*] interface WatchmanRoot { | subscriptions: number | null;
-[*] interface WatchmanRoot { | triggers: number | null;
+[*] interface WatchmanRoot { @@1 detail: string | null;
+[*] interface WatchmanRoot { @@1 path: string;
+[*] interface WatchmanRoot { @@1 removable: boolean;
+[*] interface WatchmanRoot { @@1 stale: WatchmanRootStale | null;
+[*] interface WatchmanRoot { @@1 subscriptions: number | null;
+[*] interface WatchmanRoot { @@1 triggers: number | null;
 [*] interface WebBrowserState {
-[*] interface WebBrowserState { | activity?: DeviceActivity;
-[*] interface WebBrowserState { | browser: "chrome";
-[*] interface WebBrowserState { | cdpEndpoint: string | null;
-[*] interface WebBrowserState { | headless: boolean;
-[*] interface WebBrowserState { | page?: WebPageState | null;
-[*] interface WebBrowserState { | pid: number | null;
-[*] interface WebBrowserState { | profile: string;
-[*] interface WebBrowserState { | running: boolean;
-[*] interface WebBrowserState { | supervisorPid: number | null;
-[*] interface WebBrowserState { | targetId: string | null;
-[*] interface WebBrowserState { | url: string;
-[*] interface WebBrowserState { | version: string | null;
-[*] interface WebBrowserState { | viewport: WebViewport;
+[*] interface WebBrowserState { @@1 activity?: DeviceActivity;
+[*] interface WebBrowserState { @@1 browser: "chrome";
+[*] interface WebBrowserState { @@1 cdpEndpoint: string | null;
+[*] interface WebBrowserState { @@1 headless: boolean;
+[*] interface WebBrowserState { @@1 page?: WebPageState | null;
+[*] interface WebBrowserState { @@1 pid: number | null;
+[*] interface WebBrowserState { @@1 profile: string;
+[*] interface WebBrowserState { @@1 running: boolean;
+[*] interface WebBrowserState { @@1 supervisorPid: number | null;
+[*] interface WebBrowserState { @@1 targetId: string | null;
+[*] interface WebBrowserState { @@1 url: string;
+[*] interface WebBrowserState { @@1 version: string | null;
+[*] interface WebBrowserState { @@1 viewport: WebViewport;
 [*] interface WebFacts extends WebBrowserState {
-[*] interface WebFacts extends WebBrowserState { | dir: string;
-[*] interface WebFacts extends WebBrowserState { | durationMs: number;
-[*] interface WebFacts extends WebBrowserState { | launched: WebLaunched;
-[*] interface WebFacts extends WebBrowserState { | logs: {
-[*] interface WebFacts extends WebBrowserState { | metroPort: number | null;
-[*] interface WebFacts extends WebBrowserState { | platform: "web";
-[*] interface WebFacts extends WebBrowserState { | reused: boolean;
+[*] interface WebFacts extends WebBrowserState { @@1 durationMs: number;
+[*] interface WebFacts extends WebBrowserState { @@1 launched: WebLaunched;
+[*] interface WebFacts extends WebBrowserState { @@1 logs: {
+[*] interface WebFacts extends WebBrowserState { @@1 metroPort: number | null;
+[*] interface WebFacts extends WebBrowserState { @@1 platform: "web";
+[*] interface WebFacts extends WebBrowserState { @@1 reused: boolean;
+[*] interface WebFacts extends WebBrowserState { @@2 dir: string;
 [*] interface WebPageState {
-[*] interface WebPageState { | error?: string;
-[*] interface WebPageState { | route?: string;
-[*] interface WebPageState { | state: (typeof WEB_PAGE_STATES)[number];
-[*] interface WebPageState { | url: string;
+[*] interface WebPageState { @@1 error?: string;
+[*] interface WebPageState { @@1 route?: string;
+[*] interface WebPageState { @@1 state: (typeof WEB_PAGE_STATES)[number];
+[*] interface WebPageState { @@1 url: string;
 [*] interface WorktreeBuildState {
-[*] interface WorktreeBuildState { | bytes: number | null;
-[*] interface WorktreeBuildState { | dirs: {
-[*] interface WorktreeBuildState { | path: string;
-[*] interface WorktreeBuildState { | privateBytes: number | null;
-[*] interface WorktreeBuildState { | reportOnly?: true;
-[*] interface WorktreeBuildState { | }[];
+[*] interface WorktreeBuildState { @@1 bytes: number | null;
+[*] interface WorktreeBuildState { @@1 dirs: {
+[*] interface WorktreeBuildState { @@1 }[];
+[*] interface WorktreeBuildState { @@2 bytes: number | null;
+[*] interface WorktreeBuildState { @@2 path: string;
+[*] interface WorktreeBuildState { @@2 privateBytes: number | null;
+[*] interface WorktreeBuildState { @@2 reportOnly?: true;
 [*] type Access = "build" | "device-host";
 [*] type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
 [*] type ActivityState = "driven" | "active" | "idle" | "unknown";
 [*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, {
-[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "android";
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "android";
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform"> & {
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@1 easProfile?: string;
 [*] type ArchiveKind = "logs" | "recordings" | "agentActions";
 [*] type BuildCacheHit = "local" | "remote" | false;
 [*] type BuildMachineCredential = MachineCredential;
@@ -1430,166 +1469,273 @@
 [*] type CacheHitLevel = "local" | "remote" | false;
 [*] type DaemonMode = "on" | "report" | "off";
 [*] type DaemonRecentAction = DaemonLadderAction & {
-[*] type DaemonRecentAction = DaemonLadderAction & { | at: string;
+[*] type DaemonRecentAction = DaemonLadderAction & { @@1 at: string;
 [*] type DeletableKind = Exclude<TempLeftoverKind, "jest">;
 [*] type DeviceToolRequest = {
-[*] type DeviceToolRequest = { | platform: "ios" | "android";
-[*] type DeviceToolRequest = { | set: string;
-[*] type DeviceToolRequest = { | tool: "location";
+[*] type DeviceToolRequest = { @@1 platform: "ios" | "android";
+[*] type DeviceToolRequest = { @@1 set: string;
+[*] type DeviceToolRequest = { @@1 tool: "location";
+[*] type DeviceToolRequest = { @branch1 @@0 } | {
+[*] type DeviceToolRequest = { @branch1 @@1 clear: true;
+[*] type DeviceToolRequest = { @branch1 @@1 platform: "ios" | "android";
+[*] type DeviceToolRequest = { @branch1 @@1 tool: "location";
+[*] type DeviceToolRequest = { @branch2 @@0 } | {
+[*] type DeviceToolRequest = { @branch2 @@1 action: "grant" | "revoke" | "reset";
+[*] type DeviceToolRequest = { @branch2 @@1 platform: "ios" | "android";
+[*] type DeviceToolRequest = { @branch2 @@1 service: string;
+[*] type DeviceToolRequest = { @branch2 @@1 tool: "permission";
+[*] type DeviceToolRequest = { @branch3 @@0 } | {
+[*] type DeviceToolRequest = { @branch3 @@1 payload: string;
+[*] type DeviceToolRequest = { @branch3 @@1 platform: "ios";
+[*] type DeviceToolRequest = { @branch3 @@1 tool: "push";
+[*] type DeviceToolRequest = { @branch4 @@0 } | {
+[*] type DeviceToolRequest = { @branch4 @@1 platform: "android";
+[*] type DeviceToolRequest = { @branch4 @@1 state: "on" | "off";
+[*] type DeviceToolRequest = { @branch4 @@1 tool: "network";
 [*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & {
+[*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & { @@1 buildCache?: string;
 [*] type GcItem = {
-[*] type GcItem = { | dir: string;
-[*] type GcItem = { | kind: "cache";
+[*] type GcItem = { @@1 dir: string;
+[*] type GcItem = { @@1 kind: "cache";
+[*] type GcItem = { @branch1 @@0 } | {
+[*] type GcItem = { @branch1 @@1 kind: "workspace-outputs";
+[*] type GcItem = { @branch2 @@0 } | {
+[*] type GcItem = { @branch2 @@1 id: string;
+[*] type GcItem = { @branch2 @@1 kind: "archive";
+[*] type GcItem = { @branch2 @@1 part?: ArchiveKind;
+[*] type GcItem = { @branch3 @@0 } | {
+[*] type GcItem = { @branch3 @@1 kind: "watchman";
+[*] type GcItem = { @branch4 @@0 } | {
+[*] type GcItem = { @branch4 @@1 kind: "gradle-daemons";
 [*] type GcPayload = GcRunPayload | GcRefusal;
 [*] type GcReadOptions = Pick<GcOptions, "pressure" | "measureBuildState">;
 [*] type GcResultKind = "archive" | "device" | "parkedDevice" | "parkedHostedDevice" | "idleDevice" | "deviceRecord" | "workspaceOutputs" | "worktreeDependencies" | "recording" | "workspaceDirectory" | "project" | "buildLock" | "buildSlot" | "deviceLease" | "easSession" | "worktree" | "cache" | "statusCache" | "tempLeftover" | "trash" | "watchmanRoot" | "watchman" | "gradleDaemon" | "gradleVersion" | "kotlinDaemon" | "devServer" | "workspaceLogs" | "ledgerEntry" | "easLedgerEntry" | "homeEntry" | "runtime" | "toolCache";
 [*] type GcResultStatus = "done" | "kept" | "failed";
 [*] type GeneratedTickets = Map<string, {
-[*] type GeneratedTickets = Map<string, { | expiresAt: string;
-[*] type GeneratedTickets = Map<string, { | ticket: string;
+[*] type GeneratedTickets = Map<string, { @@1 expiresAt: string;
+[*] type GeneratedTickets = Map<string, { @@1 ticket: string;
 [*] type GradleSweepBlock = "machine-global" | "no-registry" | "unsafe-layout" | "listing-failed" | "unreadable-project" | "gradle-running" | "processes-unknown";
 [*] type GradleVersionKeptCode = GradleSweepBlock | "pinned" | "not-a-directory" | "walk-failed" | "too-many-entries" | "recently-modified";
 [*] type HelloReply = {
-[*] type HelloReply = { | app?: unknown;
-[*] type HelloReply = { | capabilities: string[];
-[*] type HelloReply = { | device: {
-[*] type HelloReply = { | host?: {
-[*] type HelloReply = { | id: string;
-[*] type HelloReply = { | name: string;
-[*] type HelloReply = { | name?: unknown;
-[*] type HelloReply = { | peer?: unknown;
-[*] type HelloReply = { | result: {
-[*] type HelloReply = { | server?: {
-[*] type HelloReply = { | serverKey: string;
-[*] type HelloReply = { | stim?: unknown;
+[*] type HelloReply = { @@1 result: {
+[*] type HelloReply = { @@1 serverKey: string;
+[*] type HelloReply = { @@2 capabilities: string[];
+[*] type HelloReply = { @@2 device: {
+[*] type HelloReply = { @@2 host?: {
+[*] type HelloReply = { @@2 peer?: unknown;
+[*] type HelloReply = { @@2 server?: {
+[*] type HelloReply = { @@3 app?: unknown;
+[*] type HelloReply = { @@3 id: string;
+[*] type HelloReply = { @@3 name: string;
+[*] type HelloReply = { @@3 name?: unknown;
+[*] type HelloReply = { @@3 stim?: unknown;
+[*] type HelloReply = { @branch1 @@0 } | {
+[*] type HelloReply = { @branch1 @@1 error: {
+[*] type HelloReply = { @branch1 @@2 code: string;
+[*] type HelloReply = { @branch1 @@2 message: string;
+[*] type HelloReply = { @branch2 @@0 } | {
+[*] type HelloReply = { @branch2 @@1 failed: string;
+[*] type HelloReply = { @branch2 @@1 transport?: Transport;
 [*] type HostCapability = (typeof HOST_CAPABILITIES)[number];
 [*] type HostReport = Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number];
 [*] type HostedAgentAccess = {
-[*] type HostedAgentAccess = { | driver: "none";
-[*] type HostedAgentAccess = { | setting: "hosting.agentDriver";
+[*] type HostedAgentAccess = { @@1 driver: "none";
+[*] type HostedAgentAccess = { @@1 setting: "hosting.agentDriver";
+[*] type HostedAgentAccess = { @branch1 @@0 } | {
+[*] type HostedAgentAccess = { @branch1 @@1 command: string;
+[*] type HostedAgentAccess = { @branch1 @@1 driver: string;
+[*] type HostedAgentAccess = { @branch1 @@1 remoteConfig: string;
 [*] type HostedAgentGrant = {
-[*] type HostedAgentGrant = { | driver: "none";
+[*] type HostedAgentGrant = { @@1 driver: "none";
+[*] type HostedAgentGrant = { @branch1 @@0 } | HostedAgentIssuedGrant;
 [*] type HostedAndroidStatus = {
-[*] type HostedAndroidStatus = { | agent: HostedAgentAccess;
-[*] type HostedAndroidStatus = { | api: number;
-[*] type HostedAndroidStatus = { | device: {
-[*] type HostedAndroidStatus = { | machine: string;
-[*] type HostedAndroidStatus = { | name: string;
-[*] type HostedAndroidStatus = { | reason?: string;
-[*] type HostedAndroidStatus = { | selected: string;
-[*] type HostedAndroidStatus = { | session: string;
-[*] type HostedAndroidStatus = { | state?: string;
-[*] type HostedAndroidStatus = { | systemImage: string;
-[*] type HostedAndroidStatus = { | } | null;
+[*] type HostedAndroidStatus = { @@1 agent: HostedAgentAccess;
+[*] type HostedAndroidStatus = { @@1 device: {
+[*] type HostedAndroidStatus = { @@1 machine: string;
+[*] type HostedAndroidStatus = { @@1 reason?: string;
+[*] type HostedAndroidStatus = { @@1 selected: string;
+[*] type HostedAndroidStatus = { @@1 session: string;
+[*] type HostedAndroidStatus = { @@1 state?: string;
+[*] type HostedAndroidStatus = { @@1 } | null;
+[*] type HostedAndroidStatus = { @@2 api: number;
+[*] type HostedAndroidStatus = { @@2 name: string;
+[*] type HostedAndroidStatus = { @@2 systemImage: string;
 [*] type HostedDevice = HostedIosDevice | HostedAndroidDevice | HostedMacosDevice;
 [*] type HostedDevicePhase = "preparing" | "ready" | "stopping" | "stopped" | "unknown";
 [*] type HostedDevicePlatform = "ios" | "android" | "macos";
 [*] type HostedIosStatus = {
-[*] type HostedIosStatus = { | agent: HostedAgentAccess;
-[*] type HostedIosStatus = { | device: {
-[*] type HostedIosStatus = { | machine: string;
-[*] type HostedIosStatus = { | name: string;
-[*] type HostedIosStatus = { | reason?: string;
-[*] type HostedIosStatus = { | runtime: string;
-[*] type HostedIosStatus = { | selected: string;
-[*] type HostedIosStatus = { | session: string;
-[*] type HostedIosStatus = { | state?: string;
-[*] type HostedIosStatus = { | } | null;
+[*] type HostedIosStatus = { @@1 agent: HostedAgentAccess;
+[*] type HostedIosStatus = { @@1 device: {
+[*] type HostedIosStatus = { @@1 machine: string;
+[*] type HostedIosStatus = { @@1 reason?: string;
+[*] type HostedIosStatus = { @@1 selected: string;
+[*] type HostedIosStatus = { @@1 session: string;
+[*] type HostedIosStatus = { @@1 state?: string;
+[*] type HostedIosStatus = { @@1 } | null;
+[*] type HostedIosStatus = { @@2 name: string;
+[*] type HostedIosStatus = { @@2 runtime: string;
 [*] type InventoryOwner = "workspace" | "parked" | "orphaned" | "otherStimHome" | "user";
 [*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, {
-[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "ios";
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "ios";
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform"> & {
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@1 easProfile?: string;
 [*] type KeyConfirmer = (machine: string, serverKey: string) => Promise<boolean>;
 [*] type LaunchStatus = boolean | "unverified" | "bundling";
 [*] type LeasePlatform = "ios" | "android";
+[*] type LogLevel = (typeof LOG_LEVELS)[number];
+[*] type LogSource = (typeof LOG_SOURCES)[number];
 [*] type MachineAuth = {
-[*] type MachineAuth = { | access: Access;
-[*] type MachineAuth = { | serverKey: string;
+[*] type MachineAuth = { @@1 access: Access;
+[*] type MachineAuth = { @@1 serverKey: string;
+[*] type MachineAuth = { @branch1 @@0 } | {
+[*] type MachineAuth = { @branch1 @@1 access: Access;
+[*] type MachineAuth = { @branch1 @@1 name: string;
+[*] type MachineAuth = { @branch1 @@1 onServerKey?: (serverKey: string) => void | Promise<void>;
+[*] type MachineAuth = { @branch1 @@1 ticket: string;
 [*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, {
-[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { | platform: "macos";
+[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "macos";
+[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform">;
 [*] type MaintenanceActionKind = "would-clear-outputs" | "would-trim-cache" | "would-empty-cache" | "would-shutdown-device" | "would-stop-workspace" | "would-remove-worktree" | "would-remove-orphan" | "would-unregister-cache" | "would-delete-parked-device" | "would-delete-devices" | "would-clear-build-dirs" | "would-delete-dependencies" | "would-stop-gradle-daemons" | "would-stop-watchman" | "would-delete-gradle-version" | "would-delete-temp-leftovers" | "would-delete-trash" | "would-delete-status-caches" | "would-delete-process-locks" | "would-delete-device-lease" | "would-delete-expired-archives" | "would-dormant-stage" | "would-prune-project" | "would-delete-orphaned-devices" | "would-forget-stale-records" | "would-trim-workspace-logs" | "would-delete-recordings" | "would-delete-hosted-devices" | "would-delete-eas-sessions" | "would-delete-archives" | "would-delete-runtime" | "would-delete-unavailable-sim";
 [*] type MaintenanceCheck = "pressure" | "size" | "worktree" | "sweep" | "idle";
 [*] type MaintenanceMode = "off" | "report" | "on";
 [*] type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 [*] type MemoryKeptCode = "in-use" | "busy" | "unknown" | "build-running" | "stim-server";
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{
-[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ | capacity: Record<string, unknown> | null;
-[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ | notes?: OffloadProblem[];
-[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ | problems: OffloadProblem[];
+[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 capacity: Record<string, unknown> | null;
+[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 notes?: OffloadProblem[];
+[*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 problems: OffloadProblem[];
 [*] type PermissionAction = "grant" | "revoke" | "reset";
 [*] type PlacementDecision = (typeof PLACEMENT_DECISIONS)[number];
 [*] type PlatformBuildOptions = {
-[*] type PlatformBuildOptions = { | arch?: "arm64" | "x86_64" | "all";
-[*] type PlatformBuildOptions = { | buildCache?: boolean;
-[*] type PlatformBuildOptions = { | configuration?: string;
-[*] type PlatformBuildOptions = { | platform: "ios";
-[*] type PlatformBuildOptions = { | remoteBuild?: string;
-[*] type PlatformBuildOptions = { | scheme?: string;
+[*] type PlatformBuildOptions = { @@1 arch?: "arm64" | "x86_64" | "all";
+[*] type PlatformBuildOptions = { @@1 buildCache?: boolean;
+[*] type PlatformBuildOptions = { @@1 configuration?: string;
+[*] type PlatformBuildOptions = { @@1 platform: "ios";
+[*] type PlatformBuildOptions = { @@1 remoteBuild?: string;
+[*] type PlatformBuildOptions = { @@1 scheme?: string;
+[*] type PlatformBuildOptions = { @branch1 @@0 } | {
+[*] type PlatformBuildOptions = { @branch1 @@1 abi?: "arm64-v8a" | "armeabi-v7a" | "x86" | "x86_64" | "all";
+[*] type PlatformBuildOptions = { @branch1 @@1 buildCache?: boolean;
+[*] type PlatformBuildOptions = { @branch1 @@1 platform: "android";
+[*] type PlatformBuildOptions = { @branch1 @@1 remoteBuild?: string;
+[*] type PlatformBuildOptions = { @branch1 @@1 variant?: string;
+[*] type PlatformBuildOptions = { @branch2 @@0 } | {
+[*] type PlatformBuildOptions = { @branch2 @@1 platform: "macos";
+[*] type PlatformBuildOptions = { @branch2 @@1 remoteBuild?: string;
 [*] type PlatformRunOptions = (NativeRunOptions & {
-[*] type PlatformRunOptions = (NativeRunOptions & { | configuration?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { | deviceType?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { | platform: "ios";
-[*] type PlatformRunOptions = (NativeRunOptions & { | runtime?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { | scheme?: string;
-[*] type PlatformRunOptions = (NativeRunOptions & { | simulatorApp?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 configuration?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 deviceType?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 platform: "ios";
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 runtime?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 scheme?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 simulatorApp?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0 }) | (NativeRunOptions & {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 deviceProfile?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 platform: "android";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 systemImage?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 variant?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0 }) | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 platform: "macos";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remote?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remoteBuild?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@0 } | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@1 headed?: boolean;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@1 platform: "web";
 [*] type PressureLevel = "normal" | "high" | "critical";
 [*] type Reachability = "key-changed" | "reachable" | "unreachable" | "unknown";
 [*] type RecordingKeptCode = "unresolved" | "retained" | "recently-recorded";
 [*] type ReloadPlatform = WorkspaceLaunchPlatform | "web";
 [*] type RunOutcomeKind = "hit" | "cold";
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @@1 wait?: unknown;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@0 } ? Omit<Options, "wait"> & {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
 [*] type SettingScope = "machine" | "workspace" | "repo" | "committed";
 [*] type SettingsPayload = {
-[*] type SettingsPayload = { | file: string;
-[*] type SettingsPayload = { | files: Partial<Record<SettingScope, string>>;
-[*] type SettingsPayload = { | key: string;
-[*] type SettingsPayload = { | project: string | null;
-[*] type SettingsPayload = { | replacement?: string;
-[*] type SettingsPayload = { | scope: SettingScope;
-[*] type SettingsPayload = { | settings: SettingEntry[];
-[*] type SettingsPayload = { | unknown: Array<{
-[*] type SettingsPayload = { | value: unknown;
+[*] type SettingsPayload = { @@1 files: Partial<Record<SettingScope, string>>;
+[*] type SettingsPayload = { @@1 project: string | null;
+[*] type SettingsPayload = { @@1 settings: SettingEntry[];
+[*] type SettingsPayload = { @@1 unknown: Array<{
+[*] type SettingsPayload = { @@2 file: string;
+[*] type SettingsPayload = { @@2 key: string;
+[*] type SettingsPayload = { @@2 replacement?: string;
+[*] type SettingsPayload = { @@2 scope: SettingScope;
+[*] type SettingsPayload = { @@2 value: unknown;
 [*] type StatsBuckets = {
-[*] type StatsBuckets = { | android: StatsBucket | null;
-[*] type StatsBuckets = { | ios: StatsBucket | null;
+[*] type StatsBuckets = { @@1 android: StatsBucket | null;
+[*] type StatsBuckets = { @@1 ios: StatsBucket | null;
 [*] type StatsPlatform = "ios" | "android";
 [*] type StatsReport = {
-[*] type StatsReport = { | agentDevice: AgentDeviceUsage | null;
-[*] type StatsReport = { | capacityRefusals?: StatsCapacityRefusal[];
-[*] type StatsReport = { | capacityWaits?: StatsCapacityWait[];
-[*] type StatsReport = { | key: string;
-[*] type StatsReport = { | machine: StatsBuckets;
-[*] type StatsReport = { | offload: OffloadSummary;
-[*] type StatsReport = { | project: ({
-[*] type StatsReport = { | swiftpmCache: SwiftpmCacheUsage | null;
-[*] type StatsReport = { | version: number;
-[*] type StatsReport = { | } & StatsBuckets) | null;
+[*] type StatsReport = { @@1 agentDevice: AgentDeviceUsage | null;
+[*] type StatsReport = { @@1 capacityRefusals?: StatsCapacityRefusal[];
+[*] type StatsReport = { @@1 capacityWaits?: StatsCapacityWait[];
+[*] type StatsReport = { @@1 machine: StatsBuckets;
+[*] type StatsReport = { @@1 offload: OffloadSummary;
+[*] type StatsReport = { @@1 project: ({
+[*] type StatsReport = { @@1 swiftpmCache: SwiftpmCacheUsage | null;
+[*] type StatsReport = { @@1 version: number;
+[*] type StatsReport = { @@1 } & StatsBuckets) | null;
+[*] type StatsReport = { @@2 key: string;
 [*] type StimBuildOptions = ((IosBuildOptions & {
-[*] type StimBuildOptions = ((IosBuildOptions & { | platform: "ios";
+[*] type StimBuildOptions = ((IosBuildOptions & { @@1 platform: "ios";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0 }) | (AndroidBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1 platform: "android";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0 }) | (MacosBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1 platform: "macos";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0 })) & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@1 signal?: AbortSignal;
 [*] type StimBuildResult = {
-[*] type StimBuildResult = { | facts: IosBuildFacts;
-[*] type StimBuildResult = { | platform: "ios";
+[*] type StimBuildResult = { @@1 facts: IosBuildFacts;
+[*] type StimBuildResult = { @@1 platform: "ios";
+[*] type StimBuildResult = { @branch1 @@0 } | {
+[*] type StimBuildResult = { @branch1 @@1 facts: AndroidBuildFacts;
+[*] type StimBuildResult = { @branch1 @@1 platform: "android";
+[*] type StimBuildResult = { @branch2 @@0 } | {
+[*] type StimBuildResult = { @branch2 @@1 facts: MacosBuildFacts;
+[*] type StimBuildResult = { @branch2 @@1 platform: "macos";
 [*] type StimDoctorReport = DoctorReport;
 [*] type StimGcItem = GcItem;
 [*] type StimGcMutationOptions = Omit<StimGcOptions, "measureBuildState">;
 [*] type StimGcOptions = GcReadOptions & StimReadOptions;
 [*] type StimGcReport = Exclude<GcPayload, {
-[*] type StimGcReport = Exclude<GcPayload, { | code: string;
+[*] type StimGcReport = Exclude<GcPayload, { @@1 code: string;
 [*] type StimOutput = (stream: "stdout" | "stderr", text: string) => void;
 [*] type StimPlan = BuildPlanPayload | MacosBuildPlanPayload;
 [*] type StimPlanOptions = ({
-[*] type StimPlanOptions = ({ | platform: "ios" | "android";
-[*] type StimPlanOptions = ({ | slot?: string;
+[*] type StimPlanOptions = ({ @@1 platform: "ios" | "android";
+[*] type StimPlanOptions = ({ @@1 slot?: string;
+[*] type StimPlanOptions = ({ @branch1 @@0 } | {
+[*] type StimPlanOptions = ({ @branch1 @@1 platform: "macos";
+[*] type StimPlanOptions = ({ @branch2 @@0 }) & StimReadOptions;
 [*] type StimPlatform = "ios" | "android" | "macos" | "web";
 [*] type StimReloadResult = ReloadFacts;
 [*] type StimRemoteMachines = RemoteListing;
-[*] type StimRunOptions = PlatformRunOptions & {
-[*] type StimRunOptions = PlatformRunOptions & { | cleanAppState?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { | recordedBuild?: boolean;
-[*] type StimRunOptions = PlatformRunOptions & { | signal?: AbortSignal;
+[*] type StimRunOptions = RunSelectors & RunExtras;
 [*] type StimRunResult = {
-[*] type StimRunResult = { | facts: IosFacts;
-[*] type StimRunResult = { | platform: "ios";
+[*] type StimRunResult = { @@1 facts: IosFacts;
+[*] type StimRunResult = { @@1 platform: "ios";
+[*] type StimRunResult = { @branch1 @@0 } | {
+[*] type StimRunResult = { @branch1 @@1 facts: AndroidFacts;
+[*] type StimRunResult = { @branch1 @@1 platform: "android";
+[*] type StimRunResult = { @branch2 @@0 } | {
+[*] type StimRunResult = { @branch2 @@1 facts: {
+[*] type StimRunResult = { @branch2 @@1 platform: "macos";
+[*] type StimRunResult = { @branch2 @@2 build: MacosBuild;
+[*] type StimRunResult = { @branch2 @@2 bundle: string;
+[*] type StimRunResult = { @branch2 @@2 bundleId: string;
+[*] type StimRunResult = { @branch2 @@2 executable: string;
+[*] type StimRunResult = { @branch2 @@2 launched: LaunchStatus;
+[*] type StimRunResult = { @branch2 @@2 logs: {
+[*] type StimRunResult = { @branch2 @@2 pid: number | null;
+[*] type StimRunResult = { @branch2 @@2 product: string;
+[*] type StimRunResult = { @branch2 @@3 dir: string;
+[*] type StimRunResult = { @branch3 @@0 } | {
+[*] type StimRunResult = { @branch3 @@1 facts: WebFacts;
+[*] type StimRunResult = { @branch3 @@1 platform: "web";
 [*] type StimSettingWriteResult = SettingWriteResult;
 [*] type StimSettings = SettingsPayload;
 [*] type StimStartResult = StartFacts;
@@ -1598,13 +1744,40 @@
 [*] type TempLeftoverKind = "stim" | "xctrace" | "swiftpm" | "jest";
 [*] type ToolPlatform = "ios" | "android";
 [*] type ToolRequest = {
-[*] type ToolRequest = { | latitude: number;
-[*] type ToolRequest = { | longitude: number;
-[*] type ToolRequest = { | platform: ToolPlatform;
-[*] type ToolRequest = { | tool: "location";
+[*] type ToolRequest = { @@1 latitude: number;
+[*] type ToolRequest = { @@1 longitude: number;
+[*] type ToolRequest = { @@1 platform: ToolPlatform;
+[*] type ToolRequest = { @@1 tool: "location";
+[*] type ToolRequest = { @branch1 @@0 } | {
+[*] type ToolRequest = { @branch1 @@1 clear: true;
+[*] type ToolRequest = { @branch1 @@1 platform: ToolPlatform;
+[*] type ToolRequest = { @branch1 @@1 tool: "location";
+[*] type ToolRequest = { @branch2 @@0 } | {
+[*] type ToolRequest = { @branch2 @@1 action: PermissionAction;
+[*] type ToolRequest = { @branch2 @@1 platform: ToolPlatform;
+[*] type ToolRequest = { @branch2 @@1 service: string;
+[*] type ToolRequest = { @branch2 @@1 tool: "permission";
+[*] type ToolRequest = { @branch3 @@0 } | {
+[*] type ToolRequest = { @branch3 @@1 payload: string;
+[*] type ToolRequest = { @branch3 @@1 platform: "ios";
+[*] type ToolRequest = { @branch3 @@1 tool: "push";
+[*] type ToolRequest = { @branch4 @@0 } | {
+[*] type ToolRequest = { @branch4 @@1 enabled: boolean;
+[*] type ToolRequest = { @branch4 @@1 platform: "android";
+[*] type ToolRequest = { @branch4 @@1 tool: "network";
 [*] type Transport = {
-[*] type Transport = { | kind: "http";
-[*] type Transport = { | status: number;
+[*] type Transport = { @@1 kind: "http";
+[*] type Transport = { @@1 status: number;
+[*] type Transport = { @branch1 @@0 } | {
+[*] type Transport = { @branch1 @@1 kind: "refused";
+[*] type Transport = { @branch2 @@0 } | {
+[*] type Transport = { @branch2 @@1 kind: "silent";
+[*] type Transport = { @branch3 @@0 } | {
+[*] type Transport = { @branch3 @@1 kind: "tls";
+[*] type Transport = { @branch3 @@1 message: string;
+[*] type Transport = { @branch4 @@0 } | {
+[*] type Transport = { @branch4 @@1 kind: "other";
+[*] type Transport = { @branch4 @@1 message: string;
 [*] type WatchmanRootStale = "missing" | "pruned-worktree";
 [*] type WebLaunched = true | "bundling" | "unverified";
 [*] type WebViewport = (typeof WEB_VIEWPORTS)[number];
@@ -1612,85 +1785,3 @@
 [*] type WorkspaceLaunchPlatform = "ios" | "android";
 [*] type WorkspaceLogsKeptCode = "unresolved" | "in-use" | "collector";
 [*] type WorktreeSkipCode = "not-a-worktree" | "bare-repository" | "source-checkout-unknown" | "source-checkout" | "not-registered" | "locked" | "pinned" | "nested-worktree" | "in-use" | "status-unreadable" | "dirty" | "unpushed-unchecked" | "unpushed" | "submodules" | "not-merged" | "merge-unknown" | "last-use-unknown" | "recently-used" | "activity-unknown" | "recent-activity";
-[*] } | HostedAgentIssuedGrant;
-[*] } | null;
-[*] } | {
-[*] } | { | abi?: "arm64-v8a" | "armeabi-v7a" | "x86" | "x86_64" | "all";
-[*] } | { | access: Access;
-[*] } | { | action: "grant" | "revoke" | "reset";
-[*] } | { | action: PermissionAction;
-[*] } | { | build: MacosBuild;
-[*] } | { | buildCache?: boolean;
-[*] } | { | bundle: string;
-[*] } | { | bundleId: string;
-[*] } | { | clear: true;
-[*] } | { | code: string;
-[*] } | { | command: string;
-[*] } | { | dir: string;
-[*] } | { | driver: string;
-[*] } | { | enabled: boolean;
-[*] } | { | error: {
-[*] } | { | executable: string;
-[*] } | { | facts: AndroidBuildFacts;
-[*] } | { | facts: AndroidFacts;
-[*] } | { | facts: MacosBuildFacts;
-[*] } | { | facts: WebFacts;
-[*] } | { | facts: {
-[*] } | { | failed: string;
-[*] } | { | headed?: boolean;
-[*] } | { | id: string;
-[*] } | { | kind: "archive";
-[*] } | { | kind: "gradle-daemons";
-[*] } | { | kind: "other";
-[*] } | { | kind: "refused";
-[*] } | { | kind: "silent";
-[*] } | { | kind: "tls";
-[*] } | { | kind: "watchman";
-[*] } | { | kind: "workspace-outputs";
-[*] } | { | launched: boolean | "unverified";
-[*] } | { | logs: {
-[*] } | { | message: string;
-[*] } | { | name: string;
-[*] } | { | onServerKey?: (serverKey: string) => void | Promise<void>;
-[*] } | { | part?: ArchiveKind;
-[*] } | { | payload: string;
-[*] } | { | pid: number | null;
-[*] } | { | platform: "android";
-[*] } | { | platform: "ios" | "android";
-[*] } | { | platform: "ios";
-[*] } | { | platform: "macos";
-[*] } | { | platform: "web";
-[*] } | { | platform: ToolPlatform;
-[*] } | { | product: string;
-[*] } | { | remoteBuild?: string;
-[*] } | { | remoteConfig: string;
-[*] } | { | service: string;
-[*] } | { | state: "on" | "off";
-[*] } | { | ticket: string;
-[*] } | { | tool: "location";
-[*] } | { | tool: "network";
-[*] } | { | tool: "permission";
-[*] } | { | tool: "push";
-[*] } | { | transport?: Transport;
-[*] } | { | variant?: string;
-[*] }) & StimReadOptions;
-[*] }) | (AndroidBuildOptions & {
-[*] }) | (AndroidBuildOptions & { | platform: "android";
-[*] }) | (MacosBuildOptions & {
-[*] }) | (MacosBuildOptions & { | platform: "macos";
-[*] }) | (NativeRunOptions & {
-[*] }) | (NativeRunOptions & { | deviceProfile?: string;
-[*] }) | (NativeRunOptions & { | platform: "android";
-[*] }) | (NativeRunOptions & { | systemImage?: string;
-[*] }) | (NativeRunOptions & { | variant?: string;
-[*] }) | {
-[*] }) | { | platform: "macos";
-[*] }) | { | remote?: string;
-[*] }) | { | remoteBuild?: string;
-[*] })) & {
-[*] })) & { | signal?: AbortSignal;
-[*] }, io?: BuildMachineIo, entries?: string[] | null): Promise<BuildMachinesInspection>;
-[*] }, io?: TailnetMachineIo, entries?: string[] | null): Promise<Inspection>;
-[*] }>, "platform"> & {
-[*] }>, "platform"> & { | easProfile?: string;
-[*] }>, "platform">;

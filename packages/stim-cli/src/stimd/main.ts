@@ -8,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -25,11 +26,13 @@ import {
   daemonDir,
   daemonNdjsonFile,
   daemonSnapshotFile,
+  crashLoop,
   isJsonObject,
   readJsonObject,
   stimdClaimRoot,
   stimdRecordFile,
   stimdRunDir,
+  stimdSuccessorMissingFile,
   stimdSocket,
   stimBuildId,
   macosAppState,
@@ -37,10 +40,12 @@ import {
   readLiveShareLinks,
   shareRouteClaimRoot,
   readDaemonSnapshot,
+  readStimdBoots,
   readMaintenanceState,
   readHostedSessions,
   readHostedAppMetadata,
   type HostedDeviceSession,
+  type CrashLoop,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -124,9 +129,18 @@ import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
-import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from './crash-hold.ts';
+import {
+  classifyFailure,
+  crashHoldRemedy,
+  errorText,
+  stackText,
+  holdCrashLoop,
+  recordAbnormalBoot,
+  recordLostPredecessors,
+  updateBoot,
+} from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine, requireCurrentEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 import {
   ATTACHED_ARG,
@@ -153,6 +167,8 @@ const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
+const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
+const SECOND_SIGNAL_GRACE_MS = 5000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -167,8 +183,29 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   test: { wait: 'test.wait', waiting: 'test.waiting', released: 'test.released', changed: 'test.changed' },
 };
 
-/** Marks this stimd's boot abnormal in its home claim, which then outlives it; set while `runStimd` holds that claim. */
-let markAbnormal: (() => void) | null = null;
+let launchedByLaunchd = false;
+
+function launcherKind(attached: boolean, service: boolean, desktop: boolean): string {
+  if (attached) return 'attached';
+  if (desktop) return 'desktop';
+  if (service) return 'service';
+  if (launchedByLaunchd) return 'launchd';
+  return process.env.INVOCATION_ID ? 'systemd' : 'direct';
+}
+
+/** The `runId` of the last record in the daemon log, which the previous stimd wrote; null without one. */
+function previousRunId(file: string): string | null {
+  try {
+    const text = readFileSync(file, 'utf8').trimEnd();
+    const runId: unknown = JSON.parse(text.slice(text.lastIndexOf('\n') + 1)).runId;
+    return typeof runId === 'string' ? runId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Records this stimd's boot as abnormal and keeps its home claim; set while `runStimd` holds that claim. */
+let markAbnormal: ((reason: string, cause?: unknown, kind?: 'engine' | 'unknown') => void) | null = null;
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
@@ -221,10 +258,20 @@ async function listen(path: string, server: Server): Promise<void> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const owner = lstatSync(dir);
   if (!owner.isDirectory() || (process.getuid && owner.uid !== process.getuid()))
-    throw new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`);
+    throw Object.assign(
+      new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`),
+      {
+        code: 'socket-refused',
+        remedy: 'Remove that directory or fix its owner, then run the command again.',
+      },
+    );
   chmodSync(dir, 0o700);
   if (existsSync(path)) {
-    if (await answers(path)) throw new Error(`another process answers on ${path}`);
+    if (await answers(path))
+      throw Object.assign(new Error(`another process answers on ${path}`), {
+        code: 'socket-refused',
+        remedy: 'Stop the process that answers on that socket, then run the command again.',
+      });
     rmSync(path, { force: true });
   }
   await new Promise<void>((done, fail) => {
@@ -342,10 +389,16 @@ function installedNow(): { build: string; version: string } | null {
   return { build: installed, version: typeof version === 'string' ? version : installed };
 }
 
-function markDaemonFailure(level: Level, attached: boolean, mark: (() => void) | null): void {
+function markDaemonFailure(
+  level: Level,
+  attached: boolean,
+  mark: ((reason: string, cause?: unknown) => void) | null,
+  why: string,
+  cause?: unknown,
+): void {
   if (level !== 'error') return;
-  if (attached) process.exitCode = 1;
-  else mark?.();
+  process.exitCode = 1;
+  if (!attached) mark?.(why, cause);
 }
 
 function refreshRetention(retention: ReturnType<typeof followEngine>): string | null {
@@ -396,7 +449,7 @@ function handleForegroundError(
   ending: string | null,
   attached: boolean,
   end: (why: string, level: Level) => void,
-  shutdown: (why: string, level: Level) => void,
+  shutdown: (why: string, level: Level, cause?: unknown) => void,
 ): unknown {
   if (endingForeground(ending, attached, error)) {
     end('foreground cleanup could not be verified', 'error');
@@ -405,6 +458,7 @@ function handleForegroundError(
   shutdown(
     `the tick failed, so each supervisor's own idle timer takes over: ${error instanceof Error ? error.message : String(error)}`,
     'error',
+    error,
   );
   return isUnverifiedCleanup(error) ? error : undefined;
 }
@@ -597,6 +651,65 @@ interface RunStimdOptions {
 }
 
 /**
+ * What a boot does when its build crash-loops: with a store engine and three boots the build caused, the engine goes
+ * back (`rolled-back`, and the previous build's stimd is launched); otherwise it prints and logs why it stops.
+ */
+async function runCrashHold(
+  loop: CrashLoop,
+  {
+    store,
+    version,
+    startMode,
+    serve,
+    service,
+    checkedAt,
+    log,
+  }: {
+    store: StoreEngine | null;
+    version: string;
+    startMode: DaemonMode;
+    serve: ServeOptions | null;
+    service: boolean;
+    checkedAt: number;
+    log: (level: Level, event: string, msg: string) => unknown;
+  },
+): Promise<'rolled-back' | { checkedAt: number }> {
+  const held = store && loop.engineCaused ? await holdCrashLoop(store, version, getConfigDir()) : null;
+  if (store && held && ('rolledBack' in held || 'moved' in held)) {
+    const current = readRecords(store.root).current;
+    log('error', 'engine_rolled_back', `${version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`);
+    if (current)
+      launchStimd(
+        process.env,
+        startMode,
+        process.platform,
+        join(store.root, current.dir, 'dist', 'cli.mjs'),
+        serveArgs(serve, service),
+      );
+    return 'rolled-back';
+  }
+  const message =
+    held && 'staged' in held
+      ? `engine ${version} crashes; going back to the previous build waits for other homes' stimds to drain`
+      : held && 'stop' in held
+        ? held.stop
+        : crashHoldRemedy(loop, store !== null);
+  console.error(`stimd: ${message}`);
+  log('error', 'engine_crash_hold', message);
+  let checked = checkedAt;
+  if (
+    store &&
+    autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, service) &&
+    updateDue(checked, Date.now(), ASKED_MS)
+  ) {
+    const line = await checkForUpdate(store, 'crash hold').catch((error: unknown) => String(error));
+    log('info', 'engine_update_check', `crash hold: ${line}`);
+    checked = Date.now();
+  }
+  return { checkedAt: checked };
+}
+
+/**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
  * shared, which a stim-daemon from Stim 1.40 to 1.42 holding it exclusively refuses; serves the CLI socket,
  * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
@@ -653,23 +766,20 @@ async function runStimdInner(
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
-  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+  const previousRun = previousRunId(daemonNdjsonFile());
+  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES, reportFailures: true });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
   const path = stimdSocket();
   const bootAt = Date.now();
   const leftover = readClaimSet(stimdClaimRoot()).dead;
-  const boots: Boot[] = keptBoots(
-    [...leftover.flatMap((holder) => parseBoots(holder.details.boots)), { at: bootAt, build }],
-    bootAt,
-  );
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
   const details = {
     socket: path,
     mode: startMode,
     build,
     version: identity.version,
-    boots,
+    bootAt,
     updateCheckedAt,
     ...attachedReply(attached !== undefined),
   };
@@ -691,68 +801,77 @@ async function runStimdInner(
   let startupClaim: ClaimHandle | null = null;
   let startupFollower: ReturnType<typeof followEngine> = null;
   let startupRetention: ReturnType<typeof followEngine> = null;
+  const thisBoot = { at: bootAt, pid: process.pid, build };
+  const keepClaim = () => {
+    keepOwn = true;
+    try {
+      if (own) own = updateClaimDetails(own, { ...details, kept: true }) ?? own;
+    } catch (error) {
+      log('warn', 'stimd_claim_keep_failed', errorText(error));
+    }
+  };
+  // @ref LLP 0021#every-abnormal-boot-has-a-cause -- a refusal is no crash, and a death with no evidence blames no build
+  const recordBoot = (
+    reason: string,
+    cause?: unknown,
+    kind: 'engine' | 'unknown' = 'engine',
+  ): 'recorded' | 'refusal' => {
+    const failure = classifyFailure(cause);
+    if (failure.kind === 'refusal') {
+      log('warn', 'startup_refused', reason);
+      return 'refusal';
+    }
+    const home = failure.kind === 'home' ? failure.remedy : undefined;
+    if (!recordAbnormalBoot(thisBoot, reason, home ? 'home' : kind, home))
+      log('warn', 'stimd_boots_failed', 'the boot could not be recorded in the boots file');
+    return 'recorded';
+  };
   startup.cleanup = async (error) => {
     startupRetention?.release();
     startupFollower?.release();
-    if (isUnverifiedCleanup(error)) keepOwn = true;
+    if (isUnverifiedCleanup(error)) keepClaim();
     else {
+      if (attached === undefined) recordBoot(`startup failed: ${errorText(error)}`, error);
       releaseClaim(startupClaim);
       releaseClaim(own);
     }
     markAbnormal = null;
     await writer.close();
   };
-  markAbnormal = () => {
-    if (!own || keepOwn) return;
-    keepOwn = true;
-    const marked = boots.map((boot) =>
-      boot.at === bootAt && boot.build === build ? { ...boot, abnormal: true } : boot,
-    );
-    own = updateClaimDetails(own, { ...details, boots: marked }) ?? own;
+  let refused = false;
+  markAbnormal = (reason, cause, kind) => {
+    if (!own || keepOwn || refused) return;
+    refused = recordBoot(reason, cause, kind) === 'refusal';
+    keepClaim();
   };
-  const store = lifetime.detachedOnly(ownStoreEngine);
-  if (store && crashLooping(boots, build)) {
-    const held = await holdCrashLoop(store, identity.version, getConfigDir());
-    if ('rolledBack' in held || 'moved' in held) {
-      const current = readRecords(store.root).current;
-      log(
-        'error',
-        'engine_rolled_back',
-        `${identity.version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`,
-      );
+  rmSync(stimdSuccessorMissingFile(), { force: true });
+  recordLostPredecessors(leftover, log);
+  const history = readStimdBoots();
+  const loop = crashLoop(history, build, bootAt);
+  if (loop && attached === undefined) {
+    const held = await runCrashHold(loop, {
+      store: lifetime.detachedOnly(ownStoreEngine),
+      version: identity.version,
+      startMode,
+      serve: serve ?? null,
+      service,
+      checkedAt: updateCheckedAt,
+      log,
+    });
+    markAbnormal = null;
+    if (held === 'rolled-back') {
       releaseClaim(own);
-      markAbnormal = null;
-      if (current)
-        launchStimd(
-          process.env,
-          startMode,
-          process.platform,
-          join(store.root, current.dir, 'dist', 'cli.mjs'),
-          serveArgs(serve ?? null, service),
-        );
       writer.close();
       return false;
     }
-    const message =
-      'staged' in held
-        ? `engine ${identity.version} crashes; going back to the previous build waits for other homes' stimds to drain`
-        : held.stop;
-    console.error(`stimd: ${message}`);
-    log('error', 'engine_crash_hold', message);
-    let checked = updateCheckedAt;
-    if (
-      autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, service) &&
-      updateDue(checked, Date.now(), ASKED_MS)
-    ) {
-      const line = await checkForUpdate(store, 'crash hold').catch((error: unknown) => String(error));
-      log('info', 'engine_update_check', `crash hold: ${line}`);
-      checked = Date.now();
-    }
-    own = updateClaimDetails(own, { ...details, updateCheckedAt: checked }) ?? own;
-    markAbnormal = null;
-    process.exitCode = 1;
+    own = updateClaimDetails(own, { ...details, kept: true, updateCheckedAt: held.checkedAt }) ?? own;
     writer.close();
     return true;
+  }
+  try {
+    updateBoot(bootAt, process.pid, () => thisBoot);
+  } catch (error) {
+    log('warn', 'stimd_boots_failed', error instanceof Error ? error.message : String(error));
   }
   startup.signal.throwIfAborted();
   // compat C32 until 2.1.0
@@ -971,7 +1090,8 @@ async function runStimdInner(
   const enginePinned = (): boolean => pinned() || logs.holdsRelaunch();
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
-    keepOwn = true;
+    if (attached === undefined) recordBoot(why, error);
+    keepClaim();
     keepDaemon = true;
     (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
     if (attached) requestEnd(why, 'error');
@@ -1021,8 +1141,7 @@ async function runStimdInner(
       !enginePinned() &&
       !net.running()?.shareOnly
     ) {
-      relaunchDone = relaunch(updatedInPlace, spawnEntry('cli'));
-      void relaunchDone.catch(() => {});
+      relaunchDone = relaunch(updatedInPlace, spawnEntry('cli')).catch(relaunchFailed);
     }
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
@@ -1035,8 +1154,7 @@ async function runStimdInner(
     }
     if (!next || switchedTo || closing) return;
     if (!enginePinned()) {
-      relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs'));
-      void relaunchDone.catch(() => {});
+      relaunchDone = relaunch(next, join(follower.engine.root, next.build, 'dist', 'cli.mjs')).catch(relaunchFailed);
     } else if (!heldSwitch) {
       heldSwitch = true;
       log(
@@ -1045,6 +1163,13 @@ async function runStimdInner(
         `the engine switched to ${next.version} under pinned work; relaunching after it`,
       );
     }
+  };
+  const relaunchFailed = (error: unknown): void => {
+    log(
+      'error',
+      'relaunch_failed',
+      `the handover failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     switchedTo = next;
@@ -1057,13 +1182,32 @@ async function runStimdInner(
     handingOver = true;
     shutdown(why);
     await shutdownDone;
-    if (keepOwn) return;
-    launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service));
-    for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
+    // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
+    const missing = (reason: string) => {
+      log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
+      try {
+        writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
+      } catch {}
+    };
+    if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
+    try {
+      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service));
+    } catch (error) {
+      return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const launchedAt = Date.now();
+    for (const deadline = launchedAt + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
-      if (record?.build === next.build && record.pid !== process.pid) return;
+      if (record?.build === next.build && record.pid !== process.pid) {
+        log('info', 'successor_bound', `the stimd of ${next.version} bound after ${Date.now() - launchedAt}ms`, {
+          pid: record.pid,
+          ms: Date.now() - launchedAt,
+        });
+        return;
+      }
       await new Promise((done) => setTimeout(done, 20));
     }
+    missing(`it did not bind within ${SUCCESSOR_BIND_MS / 1000} s`);
   };
   const server = createServer((socket) => {
     open.add(socket);
@@ -1390,7 +1534,7 @@ async function runStimdInner(
       const error = attachedCleanupError(initial, backgroundFailure, results);
       if (error) {
         if (isUnverifiedCleanup(error)) {
-          keepOwn = true;
+          keepClaim();
           keepDaemon = true;
         }
         shutdown('attached cleanup could not be verified', 'error');
@@ -1446,12 +1590,28 @@ async function runStimdInner(
     threads.abort('measure');
     attachedEnding = finishAttached();
   };
-  const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
-  const shutdown = (why: string, level: Level = 'info') => {
+  let signalledTwice = false;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (attached) return lifetime.signal(signal, requestEnd);
+    if (!closing) return shutdown(signal);
+    if (signalledTwice) return;
+    signalledTwice = true;
+    log(
+      'warn',
+      'daemon_signal_during_shutdown',
+      `${signal} while shutting down; exiting in 5 s if it has not finished`,
+    );
+    setTimeout(() => {
+      log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
+      markAbnormal?.(`forced exit after a second ${signal}`, undefined, 'unknown');
+      process.exit(1);
+    }, SECOND_SIGNAL_GRACE_MS).unref();
+  };
+  const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
     foregroundAbort.abort();
-    markDaemonFailure(level, attached !== undefined, markAbnormal);
+    markDaemonFailure(level, attached !== undefined, markAbnormal, why, cause);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('passes');
     threads.abort('measure');
@@ -1463,7 +1623,7 @@ async function runStimdInner(
     for (const socket of open) socket.end().unref();
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
-    for (const signal of SIGNALS) process.off(signal, onSignal);
+    if (attached) for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
     shutdownDone = Promise.allSettled([
       waitForeground(foregroundDone, () => foregroundFailure),
@@ -1480,14 +1640,22 @@ async function runStimdInner(
           ...cleanups.errors(),
         ].some(isUnverifiedCleanup);
         if (unverified) {
-          keepOwn = true;
+          keepClaim();
           keepDaemon = true;
         }
         await threads.close();
         return undefined;
       })
-      .catch(() => {})
+      .catch((error: unknown) =>
+        log('error', 'daemon_shutdown_cleanup_failed', `shutdown cleanup failed: ${errorText(error)}`),
+      )
       .then(() => {
+        if (keepOwn || keepDaemon)
+          log(
+            'warn',
+            'daemon_claims_kept',
+            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
+          );
         follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
@@ -1497,19 +1665,22 @@ async function runStimdInner(
       });
     writerDone = shutdownDone
       .then(() => attachedEnding)
-      .catch(() => {})
+      .catch((error: unknown) =>
+        log('error', 'attached_ending_failed', `ending the attached stimd failed: ${errorText(error)}`),
+      )
       .then(async () => {
+        await relaunchDone;
         await writer.close();
         return undefined;
       });
   };
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
-    shutdown('daemon startup failed', lifetime.failLevel);
+    shutdown(`daemon startup failed: ${errorText(error)}`, lifetime.failLevel, error);
     await shutdownDone;
     await writerDone;
   };
-  for (const signal of SIGNALS) process.once(signal, onSignal);
+  for (const signal of attached ? SIGNALS : DETACHED_SIGNALS) process.on(signal, onSignal);
   try {
     await listen(path, server);
     bound = true;
@@ -1522,7 +1693,11 @@ async function runStimdInner(
       version: identity.version,
     });
   } catch (error) {
-    shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, lifetime.failLevel);
+    shutdown(
+      `cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      lifetime.failLevel,
+      error,
+    );
     throw lifetime.listenFailed(error);
   }
   openMetroChildren((error) => {
@@ -1552,7 +1727,14 @@ async function runStimdInner(
     'info',
     'daemon_started',
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
-    { build, version: identity.version },
+    {
+      build,
+      version: identity.version,
+      pid: process.pid,
+      ppid: process.ppid,
+      launcher: launcherKind(attached !== undefined, service, desktopKey !== undefined),
+      previousRunId: previousRun,
+    },
   );
   let emptyTicks = 0;
   let interval = tickMs;
@@ -1768,6 +1950,7 @@ async function runStimdInner(
     await shutdownDone;
     await relaunchDone;
     await writerDone;
+    for (const signal of DETACHED_SIGNALS) process.off(signal, onSignal);
     clearInterval(homeWatch);
     clearTimeout(attachedWatchdog);
   }
@@ -1869,6 +2052,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   const serve = serviceArguments(argv);
   if (relaunchWithLogFile(['__stimd', ...argv])) return;
   const label = process.env[LAUNCHD_LABEL_ENV];
+  launchedByLaunchd = label !== undefined;
   delete process.env[LAUNCHD_LABEL_ENV];
   if (label) {
     removeExitedJobs(label);
@@ -1876,13 +2060,27 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     delete process.env.XPC_SERVICE_NAME;
   }
   const at = argv.indexOf('--mode');
-  process.once('uncaughtException', (error) => {
-    markAbnormal?.();
-    console.error(error);
+  process.once('uncaughtException', (error, origin) => {
+    try {
+      markAbnormal?.(`uncaught exception: ${errorText(error)}`, error);
+    } catch {}
+    try {
+      console.error(error);
+    } catch {}
+    try {
+      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({
+        src: 'stimd',
+        level: 'error',
+        event: 'daemon_exited',
+        msg: `exiting: ${origin}: ${stackText(error)}`,
+      });
+      writer.close();
+    } catch {}
     process.exit(1);
   });
   process.once('exit', (code) => {
-    if (code !== 0) markAbnormal?.();
+    if (code !== 0) markAbnormal?.(`exit code ${code}`);
   });
   try {
     const served = await runStimd({
@@ -1902,7 +2100,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
         : error instanceof Error
           ? (error.stack ?? error.message)
           : String(error);
-    markAbnormal?.();
+    markAbnormal?.(message, error);
     try {
       const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });

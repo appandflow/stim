@@ -12,7 +12,7 @@ import {
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { realpathSync, lstatSync } from 'node:fs';
 import { StimError, type StimPlanOptions } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 import { SLOT_NAME } from '../control.ts';
 import { decodeSecret, secretValues } from '@stim-cli/core/noise-session';
 import { type DesktopSetup, startDesktopSetup, type DesktopSetupAnswer } from '../desktop-setup.ts';
@@ -107,7 +107,7 @@ function writeDesktopSetting(ctx: ConnectionContext, id: RequestId, params: unkn
   }, ctx.actionLimits.timeoutMs);
   const task = Promise.resolve()
     .then(async () => {
-      const client = createStim({
+      const client = createLocalStim({
         admission: 'none',
         projectRoot: cwd,
         env: ctx.options.env,
@@ -363,7 +363,7 @@ export function desktopMethod(
       id,
       'stim doctor',
       async (signal) => ({
-        ...(await createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).doctor({
+        ...(await createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).doctor({
           signal,
           platform,
           record: true,
@@ -406,6 +406,13 @@ function subscribeDesktopSetup(ctx: ConnectionContext, id: RequestId, params: un
     new Set(params.capabilities).size !== params.capabilities.length
   )
     return ctx.error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+  // @ref LLP 0020#test-approval -- only a terminal shows the test approval wording
+  if (params.capabilities.includes('test'))
+    return ctx.error(
+      id,
+      'bad-request',
+      'Stim Desktop does not approve test access. Run the setup command with --test in a terminal on this machine.',
+    );
   const capabilities = params.capabilities.filter(
     (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
   );
@@ -488,7 +495,7 @@ function readDesktopSettings(ctx: ConnectionContext, id: RequestId, method: stri
   }
   const cwd = resolvePath(params.cwd);
   ctx.inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-    createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
+    createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
   );
 }
 

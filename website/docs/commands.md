@@ -136,7 +136,9 @@ line with its mode, whether it runs and when it last ticked, its last action
 log with the last pass. It reports a daemon that stopped ticking, a stim-daemon from before Stim 2.0 that
 holds the daemon claim, with its pid and stop command, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
-the child, and that stopping that stimd is safe and ends the wait, a daemon claim it cannot
+the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
+three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
+day, a daemon claim it cannot
 resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
 
@@ -711,13 +713,13 @@ never runs the app's code.
 
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
-runs the same `./exact.mjs ios --no-install` in a checkout folder named like
-this app's, with `EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
+runs the same `./exact.mjs ios --no-install` in the app's directory, with
+`EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
 this Mac installs the `.app` on its owned simulator. Nothing is cached. The
 values of the settings `app.json` `env` declares travel with the build: this
 shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
 `app.json` declares native modules, an `exact2` checkout with local changes and
-an app folder name that is not a plain ASCII file name build here. See
+repository-root apps whose folder name is not a plain ASCII file name build here. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
 what the worker needs; `stim doctor` reports what each machine in
 `remote.machines` lacks.
@@ -1799,12 +1801,13 @@ Plain `status` prints a `Daemon` line for the
 last ticked, and the pressure level with its reasons. A `Last daemon action`
 line follows once a daemon of this home has acted, then a line for each run
 waiting for a build slot or a device boot, and one for each child whose cleanup
-the running daemon could not verify, with its remedy. Each workspace prints a
+the running daemon could not verify, with its remedy, and a line for the crash
+hold and for each of the last abnormal stimd exits. Each workspace prints a
 `stage:` line with where the daemon's idle model has it: `running` with its last
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting`, `unverified` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 
@@ -3092,6 +3095,21 @@ and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
 free disk stays under it. Run `stim guide errors
 STIM_LOW_DISK` for the remedies.
 
+### JSON stability within 2.x
+
+Within Stim 2.x, a `--json` payload, a `logs --json` record and a programmatic
+API result only gain fields and enum values: a field keeps its name, type and
+meaning, and no value of an enum disappears. Ignore fields and values you do not
+know. These parts carry no compatibility and can change in any release:
+
+- in `status --json` and `doctor --json`: the `maintenance` and `daemon`
+  objects; in `status --json` also the per-workspace
+  `idleStage`, `dormantStage`, `sourceDependenciesCleared` and `idleShutdown`
+  records, `tutorial`, `gitChip` and `agentDevice.stateDir`;
+- file paths and process ids that describe Stim's own state, such as a device
+  lease's `path` and `parsed`, a build's `waitingOn.path`, and the `path` and
+  `pid` of `gc --json` lock entries.
+
 ### Archives and gc
 
 `stim gc` deletes archives past their retention limits at every level. At
@@ -3105,8 +3123,10 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 ## stim setup
 
 A person on the worker machine runs `stim setup` to set it up and approve
-build and/or device-host access for the machine holding one setup ticket, until
-one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
+build, device-host or test access (`--build`, `--device-host`, `--test`) for
+the machine holding one setup ticket, until one expiry. Test access lets that
+machine run any command it sends, as this user, with no sandbox; see
+[test approval](./remote-machines.md#test-approval). The requesting machine makes the ticket: Stim Desktop's Add Machine
 flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
 prints it on a machine without Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve without a terminal. Agents never run setup

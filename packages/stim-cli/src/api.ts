@@ -1,8 +1,15 @@
-import { clientProjectRoot, facadeClient, StimError } from './api/facade.ts';
+import { clientProjectRoot, engineOptions, facadeClient, StimError } from './api/facade.ts';
 import type { RunOp } from './api/engine-route.ts';
-import type { StimClient, StimFailure, StimOptions } from './api/types.ts';
+import { RUN_OP_WIRE } from './api/run-op-version.ts';
+import type { EngineClient, EngineOptions, StimClient, StimFailure, StimOptions } from './api/types.ts';
 
 export { StimError };
+
+/** @internal The integer of what `runOp` receives from another Stim build, which that build checks; see `runOp`. */
+export const RUN_OP_VERSION: typeof RUN_OP_WIRE = RUN_OP_WIRE;
+
+/** The integer of the `stim` API. It goes up only when an export is removed, renamed or changes meaning. */
+export const STIM_API_VERSION = 1 as const;
 export type {
   StimBuildOptions,
   StimBuildResult,
@@ -12,15 +19,10 @@ export type {
   StimDoctorOptions,
   StimDoctorRepairOptions,
   StimDeviceUnlockOptions,
-  StimDeviceToolOptions,
   StimDoctorReport,
-  StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
   StimGcMutationResult,
-  StimGcItem,
-  StimGcItemOptions,
-  StimGcItemResult,
   StimGcReport,
   StimOptions,
   StimPlatform,
@@ -57,10 +59,10 @@ export type {
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
-  const projectRoot = clientProjectRoot(options);
+  const projectRoot = clientProjectRoot(options, ['buildCacheDir', options.buildCacheDir]);
   const env = { ...(options.env ?? process.env) };
-  const ctx: StimOptions = { ...options, projectRoot, env };
-  let local: Promise<StimClient> | undefined;
+  const ctx: EngineOptions = { ...engineOptions(options), projectRoot, env };
+  let local: Promise<EngineClient> | undefined;
   const runLocal = async (name: string, args: unknown[]): Promise<unknown> => {
     local ??= import('./api/client.ts').then(({ createLocalStim }) => createLocalStim(ctx));
     const client = await local;
@@ -95,20 +97,11 @@ function isPlainFailure(value: unknown): value is StimFailure {
 }
 
 /**
- * F3's per-op entry: runs the operation `name` of a client made from `ctx` (the options of `createStim`) with `args`,
- * in this build. Resolves the operation's result, or rejects a plain `{code, message, remedy, details}`, so a caller
- * of another build can wrap it in its own `StimError`.
+ * @internal Not part of the `stim` API: the entry another Stim build imports from this build's `dist/api.mjs` to
+ * route an operation here, so it stays exported under this name. Runs the operation `name` of a client made from `ctx`
+ * (the options of `createStim`) with `args`, in this build. Resolves the operation's result, or rejects a plain
+ * `{code, message, remedy, details}`, so a caller of another build can wrap it in its own `StimError`.
  */
-export async function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown> {
+export async function runOp(name: string, args: unknown[], ctx: EngineOptions): Promise<unknown> {
   return (await import('./api/client.ts')).runOp(name, args, ctx);
-}
-
-/** Pins an existing daemon for the duration of a CI job. */
-export async function holdCIStimd(
-  env: NodeJS.ProcessEnv,
-  projectRoot: string,
-  ownedInstance: string | null,
-  signal?: AbortSignal,
-): Promise<() => void> {
-  return (await import('./api/client.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
 }

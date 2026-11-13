@@ -245,6 +245,7 @@ function credentials(state: 'approved' | 'pending' = 'approved', serverKey = FAK
 }
 
 beforeEach(() => {
+  vi.stubEnv('AGENT_DEVICE_SESSION', undefined);
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-macos-')));
   process.env.STIM_HOME = join(dir, 'home');
   mkdirSync(process.env.STIM_HOME);
@@ -284,6 +285,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   resetExecutor();
   rmSync(dir, { recursive: true, force: true });
@@ -417,10 +419,11 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(record?.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
     expect(macosAppState(readMacosRecord(root))?.state).toBe('running');
     const config = agentRemoteConfig(root);
+    const session = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
     expect(record?.host?.agent).toEqual({
       driver: 'agent-device',
       remoteConfig: config,
-      command: `agent-device <command> --remote-config ${config}`,
+      command: `agent-device <command> --remote-config ${config} --session ${session}`,
     });
     expect(statSync(config).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({
@@ -452,14 +455,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         expect(existsSync(config)).toBe(true);
         expect(host.methods).not.toContain('device-host.stop');
         calls.push(commandArgs);
-        return JSON.stringify({ success: true, data: { connected: true, session: 'default', remoteConfig: config } });
+        if (commandArgs[0] === 'connection' && !commandArgs.includes('--session')) {
+          throw new Error('A leased remote connection needs its session named');
+        }
+        return JSON.stringify({ success: true, data: { connected: true, session, remoteConfig: config } });
       },
     });
     await stopMacosApp(root);
     expect(calls).toEqual([
-      ['connection', 'status', '--json'],
-      ['close', '--remote-config', config, '--session', 'default', '--json'],
-      ['disconnect', '--session', 'default', '--json'],
+      ['connection', 'status', '--session', session, '--json'],
+      ['close', '--remote-config', config, '--session', session, '--json'],
+      ['disconnect', '--session', session, '--json'],
     ]);
     expect(host.methods).toContain('device-host.stop');
     expect(existsSync(config)).toBe(false);
@@ -477,12 +483,70 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     'canonical config',
     'missing config',
   ];
+  test.each(['custom', 'wrong config', 'wrong session', 'same name'])(
+    'stop checks an explicit session without selecting another workspace: %s',
+    async (scenario) => {
+      host.grant = GRANT;
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const config = agentRemoteConfig(root);
+      const standard = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
+      const session = scenario === 'same name' ? standard : "--agent's desktop ";
+      const flags = session === standard ? ['--session', standard] : [`--session=${session}`];
+      const otherConfig = join(dir, 'other-config.json');
+      writeFileSync(otherConfig, '{}');
+      vi.stubEnv('AGENT_DEVICE_SESSION', session);
+      const calls: string[][] = [];
+      setExecutor({
+        ...getExecutor(),
+        findExecutable: () => '/fake/agent-device',
+        runFile: (_file: string, args: string[]) => {
+          calls.push(args);
+          const name = args.find((arg) => arg.startsWith('--session='))?.slice('--session='.length) ?? standard;
+          if (args[0] === 'disconnect' && scenario === 'custom')
+            throw new Error('should not leak secret-from-agent-device');
+          return JSON.stringify({
+            success: true,
+            data: {
+              connected: name === session,
+              session: scenario === 'wrong session' ? standard : name,
+              remoteConfig: scenario === 'wrong config' ? otherConfig : config,
+            },
+          });
+        },
+      });
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await stopMacosApp(root);
+      const owned = scenario === 'custom' || scenario === 'same name';
+      expect(calls).toEqual([
+        ['connection', 'status', '--session', standard, '--json'],
+        ...(session === standard ? [] : [['connection', 'status', ...flags, '--json']]),
+        ...(owned
+          ? [
+              ['close', '--remote-config', config, ...flags, '--json'],
+              ['disconnect', ...flags, '--json'],
+            ]
+          : []),
+      ]);
+      const output = stderr.mock.calls.map(([line]) => line).join('');
+      expect(output).toMatch(
+        scenario === 'custom'
+          ? "agent-device disconnect --session='--agent'\\''s desktop '"
+          : owned
+            ? `closed agent-device connection for ${standard}`
+            : /^$/,
+      );
+      expect(output).not.toContain('secret-from-agent-device');
+      expect(host.methods).toContain('device-host.stop');
+    },
+  );
+
   test.each(hostedAgentConnectionCleanupScenarios)(
     'stop cleans up only its own agent connection, best effort: %s',
     async (scenario) => {
       host.grant = GRANT;
       await runMacos(testContext(), root, () => {}, 'mini');
       const config = agentRemoteConfig(root);
+      const session = `stim-default-macos-${sha256(Buffer.from(root)).slice(0, 8)}`;
       const otherConfig = join(dir, 'other-config.json');
       if (scenario === 'canonical config') symlinkSync(config, otherConfig);
       else writeFileSync(otherConfig, '{}');
@@ -513,7 +577,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
             success: true,
             data: {
               connected: scenario !== 'disconnected',
-              session: 'named-session',
+              session,
               remoteConfig: ['different config', 'canonical config'].includes(scenario) ? otherConfig : config,
             },
           });
@@ -523,14 +587,14 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       try {
         await stopMacosApp(root);
         expect(calls).toEqual(
-          scenario === 'unavailable'
+          scenario === 'unavailable' || scenario === 'missing config'
             ? []
             : [
-                ['connection', 'status', '--json'],
+                ['connection', 'status', '--session', session, '--json'],
                 ...(cleansUp
                   ? [
-                      ['close', '--remote-config', config, '--session', 'named-session', '--json'],
-                      ['disconnect', '--session', 'named-session', '--json'],
+                      ['close', '--remote-config', config, '--session', session, '--json'],
+                      ['disconnect', '--session', session, '--json'],
                     ]
                   : []),
               ],
@@ -538,9 +602,9 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         expect(stderr).toHaveBeenCalledTimes(cleansUp ? 1 : 0);
         expect(stderr.mock.calls.map(([line]) => line).join('')).toMatch(
           closeFails
-            ? /could not clean up agent-device connection for named-session: agent-device close failed/
+            ? new RegExp(`agent-device disconnect --session '${session}'`)
             : cleansUp
-              ? /closed agent-device connection for named-session/
+              ? new RegExp(`closed agent-device connection for ${session}`)
               : /^$/,
         );
         expect(host.methods).toContain('device-host.stop');

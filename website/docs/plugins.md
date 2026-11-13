@@ -19,6 +19,10 @@ A Stim plugin is a package that implements one or more plugin kinds:
 cache provider with the `cache.provider` setting; transports and agent drivers
 are built-in only for now.
 
+Only the `cache-provider` contract is stable in 2.x. The `transport` and
+`agent-driver` kinds are experimental: their contracts and integers may change
+in a minor release.
+
 ## Write a plugin
 
 Declare each kind and the integer its contract speaks in `package.json`, and
@@ -36,6 +40,17 @@ import only types from `stim/plugin`:
 ```ts
 import type { Transport, TransportInput } from 'stim/plugin';
 ```
+
+The module exports, per kind:
+
+| Kind             | Exports                                                                       | Type                  |
+| ---------------- | ----------------------------------------------------------------------------- | --------------------- |
+| `cache-provider` | `createCacheProvider({ projectRoot, options, env })` and `apiVersion`         | `CacheProviderModule` |
+| `transport`      | `id` and `createTransport({ env, options })`                                  | `TransportModule`     |
+| `agent-driver`   | `id` and `createAgentDriver(input)`, optionally `client` and `recover(input)` | `AgentDriverModule`   |
+
+Stim checks the kind integer in `package.json`, not `apiVersion`, before it
+imports the module.
 
 A runtime `import 'stim'` fails `stim plugin test`: a plugin runs without the
 engine on its import path. Add `stim` as a development dependency for the

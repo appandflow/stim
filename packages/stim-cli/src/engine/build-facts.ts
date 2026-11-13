@@ -1,6 +1,6 @@
 export type CacheHitLevel = 'local' | 'remote' | false;
 
-type LaunchStatus = boolean | 'unverified' | 'bundling';
+export type LaunchStatus = boolean | 'unverified' | 'bundling';
 
 export interface WaitedForBuild {
   pid?: number | null;

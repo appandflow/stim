@@ -46,4 +46,20 @@ describe('createNdjsonWriter', () => {
     expect(stats.dropped).toBe(1);
     expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['fine']);
   });
+
+  test('with reportFailures a failing log logs what it dropped when it recovers', () => {
+    const file = join(dir, 'daemon.ndjson');
+    mkdirSync(file);
+    {
+      const w = createNdjsonWriter(file, { reportFailures: true });
+      expect(w.write({ msg: 'lost 1' })).toBe(false);
+      expect(w.write({ msg: 'lost 2' })).toBe(false);
+      rmSync(file, { recursive: true });
+      expect(w.write({ msg: 'back' })).toBe(true);
+      w.close();
+    }
+    const records = parseNdjsonText(readFileSync(file, 'utf-8'));
+    expect(records.map((r) => r.event ?? r.msg)).toEqual(['back', 'log_writer_dropped']);
+    expect(records[1]).toMatchObject({ dropped: 2 });
+  });
 });

@@ -552,7 +552,7 @@ export async function returning(
   port: number,
   keyPair: NoiseKeyPair,
   peer?: string,
-  access?: 'build' | 'device-host',
+  access?: 'build' | 'device-host' | 'test',
 ): Promise<Client> {
   const client = await connect(port, peer, { keyPair });
   const reply = await client.request('hello', { client: CLIENT, ...(access ? { access } : {}) });

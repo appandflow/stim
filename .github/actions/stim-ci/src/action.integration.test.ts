@@ -31,6 +31,7 @@ vi.mock('@actions/core', () => ({
   getInput: (name: string) => github.inputs[name] ?? '',
   setOutput: github.output,
   warning: github.warning,
+  error: () => {},
   summary: {
     addHeading() {
       return this;

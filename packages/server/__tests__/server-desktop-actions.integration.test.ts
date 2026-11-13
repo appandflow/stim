@@ -24,7 +24,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { readWorkspaceState, isJsonObject, loadConfig } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { readAudit } from '../src/actions.ts';
@@ -577,8 +577,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
         ...original(options),
         start: async (request) => {
           const signal = request?.signal;
@@ -667,8 +667,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const firstClaim = claims[0];
     assert(firstClaim);
     await start({ requestLimits: { connection: 4 } });
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       start: (request) =>
         original(options).start({
@@ -1182,8 +1182,8 @@ describe.skipIf(process.platform === 'win32')('Desktop web output', () => {
         durationMs: 1,
       },
     };
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       run: vi.fn<stim.StimClient['run']>().mockResolvedValue(result),
     }));
@@ -1224,8 +1224,8 @@ describe.skipIf(process.platform === 'win32')('Desktop platform build result', (
         links: { workspace: 'https://stim.appandflow.com/open' },
       },
     };
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       build: vi.fn<stim.StimClient['build']>().mockImplementation(async (request) => {
         expect(request).toMatchObject({
@@ -1386,8 +1386,8 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
         ...original(options),
         [kind]: async (request: stim.StimRunOptions | stim.StimBuildOptions): Promise<never> => {
           const signal = request.signal;
@@ -1562,8 +1562,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
         release = resolve;
       });
       let signal: AbortSignal | undefined;
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
         ...original(options),
         warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
           signal = request.signal;
@@ -1625,8 +1625,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     const ready = new Promise<void>((resolve) => {
       admitted = resolve;
     });
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
       const client = original(options);
       return {
         ...client,
@@ -1683,8 +1683,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
         const signal = request.signal;
@@ -1831,8 +1831,8 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
       const admitted = new Promise<void>((resolve) => {
         observed = resolve;
       });
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
         const client = original(options);
         return {
           ...client,
@@ -2246,10 +2246,10 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
-      requestMachineAccess: async ({ signal }: stim.StimMachineAccessOptions = {}) => {
+      requestMachineAccess: async ({ signal }: stimSelf.StimMachineAccessOptions = {}) => {
         assert(signal);
         await new Promise<void>((resolve) => {
           if (signal.aborted) resolve();

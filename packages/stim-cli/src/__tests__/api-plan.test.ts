@@ -31,8 +31,8 @@ test('concurrent plan clients isolate cache homes without changing caller contex
   const root = join(scratch, 'app');
   mkdirSync(root);
   writeNativeXcodeProject(root);
-  const first = { home: join(scratch, 'first'), buildCache: join(scratch, 'first-cache') };
-  const second = { home: join(scratch, 'second'), buildCache: join(scratch, 'second-cache') };
+  const first = { home: join(scratch, 'first'), buildCacheDir: join(scratch, 'first-cache') };
+  const second = { home: join(scratch, 'second'), buildCacheDir: join(scratch, 'second-cache') };
   setExecutor(
     makeExecutor({
       runFile: () => {
@@ -58,7 +58,7 @@ test('concurrent plan clients isolate cache homes without changing caller contex
   const [one, two] = await Promise.all([firstClient.plan({ platform: 'ios' }), secondClient.plan({ platform: 'ios' })]);
   assert(one.cacheKey);
   expect(one).toEqual(two);
-  const artifact = join(entryDir('ios', one.cacheKey, first.buildCache), 'Fixture.app');
+  const artifact = join(entryDir('ios', one.cacheKey, first.buildCacheDir), 'Fixture.app');
   mkdirSync(artifact, { recursive: true });
   writeFileSync(join(artifact, 'Fixture'), 'fixture artifact');
   const [hit, miss] = await Promise.all([
@@ -199,7 +199,7 @@ test.each(['caller', 'timeout'] as const)(
           name: 'fixture',
           provider: {
             builds: {
-              store: () => null,
+              store: async () => null,
               resolve: async ({ destinationDir, signal }) => {
                 downloading = destinationDir;
                 signal.addEventListener('abort', stopped, { once: true });
@@ -323,7 +323,7 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
         name: 'fixture',
         provider: {
           builds: {
-            store: () => null,
+            store: async () => null,
             resolve: ({ destinationDir }) => {
               downloading = destinationDir;
               entered();
@@ -382,7 +382,7 @@ test.each([
     name: 'fixture',
     provider: {
       builds: {
-        store: () => null,
+        store: async () => null,
         resolve: ({ destinationDir }) => {
           downloading = destinationDir;
           entered();

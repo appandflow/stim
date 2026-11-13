@@ -398,8 +398,7 @@ Projects can supply a module through `cache.provider` using the
 [`stim/plugin` cache contract](https://github.com/appandflow/stim/tree/main/packages/cache),
 or use a configured Expo `buildCacheProvider`, such as `eas`.
 Cache providers declare `"stimPlugin": { "kinds": { "cache-provider": 1 } }`
-in package.json; Stim checks it before importing the module. A provider's
-`metro` capability is ignored; Metro uses its local filesystem store.
+in package.json; Stim checks it before importing the module.
 Custom Expo provider modules run in isolated workers with the workspace environment.
 Inspection and lookup have 30-second request budgets; upload has a 60-second
 budget, followed by verified worker cleanup. Plugin output appears in build logs.

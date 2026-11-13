@@ -140,13 +140,25 @@ preparation, `git status --short` may show only the draft
    runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
    and a workspace build first.
 
+   For a new major (`.github/next-version` names it, and the candidate
+   version commit deletes that file), point the settings schema at it in the
+   same commit: `SETTINGS_SCHEMA_URL` in
+   `packages/core/state/settings-schema.ts` and the `$schema` example in
+   `website/docs/settings.md` become `https://unpkg.com/stim@<major>/dist/settings.schema.json`.
+   The URL resolves only once that stable version is published, and the
+   website deploys from `main`, so make this change in the version commit and
+   not before.
+
    Workspace links stay at `workspace:*` during a bump, including Stim's
-   development dependencies. Stim bundles the `@stim-cli/*` code and ships no
+   development dependencies, except peer dependencies, which stay at
+   `workspace:^` so `@stim-cli/cache-s3` accepts any later `stim` of the same
+   major. Stim bundles the `@stim-cli/*` code and ships no
    runtime dependency on those packages. pnpm substitutes remaining workspace
    ranges when packing; no `workspace:` range may reach a published tarball
    (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
-   lockstep, every internal range exactly `workspace:*` -- without changing
+   lockstep, every internal range exactly `workspace:*` and every peer range
+   exactly `workspace:^` -- without changing
    anything.
 
    Confirm the published packages moved:
@@ -185,7 +197,8 @@ preparation, `git status --short` may show only the draft
 3. **Verify each npm tarball** ships only what should ship, that each one
    carries its own README, and that Stim has no `@stim-cli/*` runtime
    dependencies. Any remaining inter-package dependencies name the exact
-   release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
+   release version, with no `^` or `~`, except peer dependencies, which name
+   `^` and the release version. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
@@ -366,7 +379,8 @@ preparation, `git status --short` may show only the draft
 
    The workflow packs the package tarballs with pnpm, checks
    that every packed `stim` and `@stim-cli/*` dependency is exactly the tag
-   version (no `workspace:`, `^` or `~`), skips an exact package version
+   version (no `workspace:`, `^` or `~`) and every such peer dependency is `^`
+   and the tag version, skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
