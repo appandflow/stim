@@ -38,6 +38,9 @@ For Expo and custom Metro commands, Stim looks for a Node pin from the app
 directory up to the repository or worktree root. The nearest `.nvmrc`,
 `.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
 When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+On Windows, the bare, Expo and Re.Pack dev servers run on the Node that runs
+Stim instead: a `node` shim on `PATH` would start Metro in a child process
+that Stim cannot identify as the dev server.
 
 ## How Stim picks the dev server
 

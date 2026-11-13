@@ -33,7 +33,7 @@ import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
-import { prepareNpmInstallCarry } from '../fingerprint/index-store.ts';
+import { prepareInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
@@ -91,6 +91,7 @@ import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
+import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -449,8 +450,8 @@ export async function warmWorktreeTarget(opts: {
             const failures: unknown[] = [];
             const nativeDir = checkNativeDir(root, generatedFrom, releases, failures, operation);
             // Warming a repository with several apps from its root cannot establish which app's patch inputs apply.
-            const recordNpmInstall = workspace
-              ? prepareNpmInstallCarry(join(root, relative(target, workspace)), workspace)
+            const recordInstall = workspace
+              ? prepareInstallCarry(join(root, relative(target, workspace)), workspace)
               : null;
             let result: Awaited<ReturnType<typeof cloneIgnoredEntries>>;
             try {
@@ -499,6 +500,11 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               await relocateCarriedPods(root, target, result.copied, out);
+              recordDependencyInstall(
+                result.copied
+                  .filter((rel) => basename(rel) === 'node_modules' || basename(rel) === 'Pods')
+                  .map((rel) => join(target, rel)),
+              );
               const stale = reportCarriedStateHealth(
                 root,
                 target,
@@ -506,7 +512,7 @@ export async function warmWorktreeTarget(opts: {
                 iosConfigurationSetting(settings) ?? 'Debug',
                 out,
               );
-              recordNpmInstall?.(
+              recordInstall?.(
                 result.copied
                   .map((rel) => join(target, rel))
                   .filter((path) => !stale.some(({ dir }) => path === join(target, dir, 'node_modules'))),

@@ -2142,10 +2142,13 @@ THE BUILD CACHE HAS THREE LEVELS
   On Windows, use a double-quoted literal path without environment expansion.
 
   On the first build after this change, older build-cache entries miss. If a
-  generated Expo native directory has an old prebuild record, use the same Stim
-  version in the project and globally, preserve any changes, then move or remove
-  that generated ios/ or android/ directory and retry. Stim generates it again.
-  Tracked native directories are not removed. Builds in one Stim home share the
+  generated Expo native directory has a prebuild record from an earlier Stim
+  (including Stim 1.40's), Stim runs expo prebuild over it once and records the
+  result; it deletes nothing. A record this Stim cannot read, written by a newer
+  Stim or damaged, refuses with STIM_PREBUILD_FAILED: preserve any changes, move
+  the directory aside to a name that does not exist yet (for example mv ios
+  ios-2026-11-12) and retry. A tracked native directory is
+  never regenerated. Builds in one Stim home share the
   workspace native-run lock; separate Stim homes do not share that lock.
 
   An approved build worker receives the keyed environment values for install,
@@ -2539,7 +2542,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cache trimmed to the entries a workspace, parked device or build still
        uses, the fingerprint index and memo emptied, and every other cache
        Stim registered emptied whole (ccache, the macOS artifact cache and the
-       React Native and Android caches; \`guide cleanup\` lists them)
+       React Native and Android caches; \`guide cleanup\` lists them), except
+       report-only caches, caches inside a workspace, caches Stim does not own,
+       caches outside a scoped STIM_HOME and one a build holds
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)

@@ -61,7 +61,7 @@ methods after the commands they run: `collectGarbage()` runs `stim gc`, which
 deletes since #5514. A method named `gc` that never deletes reads as that
 command.
 
-Until 2026-12-12 (`scripts/compat-budget.json` row C30), each old name refuses
+Until 2026-12-12 (`scripts/compat-budget.json` row C33), each old name refuses
 with `STIM_BAD_ARG` and names the new one; passing old and new together
 refuses too.
 

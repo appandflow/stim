@@ -66,6 +66,7 @@ import { serverNetworkFindings } from '../diagnostics/server-network.ts';
 import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
+import { findStaleHomeJobs, removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
 import {
@@ -473,6 +474,9 @@ async function repairDoctorProject(
       exitCode = 1;
     } else if (installed.installed) note(phaseLine('image', `installed ${image.pkg}`));
   }
+  if (source.host === 'darwin')
+    for (const { label, home } of await removeStaleHomeJobs())
+      note(phaseLine('launchd', `removed ${label}: ${home} no longer exists`));
   const nestedToFix = await inspectNestedWorktrees(root);
   signal?.throwIfAborted();
   const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
@@ -719,6 +723,14 @@ async function assembleDoctorReport(
       entries: serviceToolchainEntries(installed, homedir()),
     }));
   }
+  const staleJobs = host === 'darwin' ? await findStaleHomeJobs(Date.now() + 3000) : [];
+  if (staleJobs.length)
+    findings.push({
+      level: 'note',
+      title: 'launchd holds stimd jobs of Stim homes that no longer exist',
+      detail: `${staleJobs.length} stopped ${staleJobs.length === 1 ? 'job names a' : 'jobs name'} Stim home${staleJobs.length === 1 ? '' : 's'} that ${staleJobs.length === 1 ? 'is' : 'are'} gone, such as ${staleJobs[0]?.label} (${staleJobs[0]?.home}). They stay registered until the login session ends.`,
+      fix: 'Run `stim doctor --fix` to remove them; it never touches a running job or one whose home exists.',
+    });
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
@@ -771,7 +783,7 @@ export function doctorOp(
       fix: {
         flags: '--fix',
         description:
-          'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; in a terminal, after asking about each step and its cost, bring the source checkout to a state worktrees can clone (reinstall a stale or missing dependency tree, run pod install --clean-install and, for a conflict with a gitignored Podfile.lock, pod update of only the named pods, and run the prebuild Stim has no current record of, without compiling); ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+          'repair the sandbox allowance when the report names it, remove stopped stimd launchd jobs whose Stim home no longer exists (macOS), and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; in a terminal, after asking about each step and its cost, bring the source checkout to a state worktrees can clone (reinstall a stale or missing dependency tree, run pod install --clean-install and, for a conflict with a gitignored Podfile.lock, pod update of only the named pods, and run the prebuild Stim has no current record of, without compiling); ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
       },
     },
     run: async ({ options: opts, version }) => {

@@ -41,7 +41,7 @@ export function prepareCI<T extends CIContextOptions>(
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
     throw new Error('timeoutMs must be a positive integer.');
   }
-  // compat C30 until 2026-12-12
+  // compat C33 until 2026-12-12
   if ('buildCache' in options)
     throw new Error('buildCache was renamed to buildCacheDir; pass the directory as buildCacheDir.');
   // compat end

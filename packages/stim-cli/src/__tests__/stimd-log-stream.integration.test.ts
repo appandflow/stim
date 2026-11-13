@@ -14,6 +14,7 @@ import { delimiter, join } from 'node:path';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
+import { waitForPid } from './_pid-file.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
@@ -159,8 +160,7 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
       const waiting = streams
         .wait(root, 'ios', 'default', streamId, Date.now() - 1000, 0, 5000, controller.signal, env)
         .catch(() => {});
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = await waitForPid(pidFile);
       controller.abort();
       await waiting;
       await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/));
@@ -464,8 +464,7 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = await waitForPid(pidFile);
       const processToken = captureProcessToken(pid);
       if (processToken) child = { pid, processToken };
       await vi.waitFor(() => {
@@ -535,8 +534,12 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
 import { existsSync, readFileSync } from 'node:fs';
 const streams = createStreams(console.error);
 await streams.start({ root: ${JSON.stringify(root)}, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' }, process.env);
-while (!existsSync(${JSON.stringify(pidFile)})) await new Promise(r => setTimeout(r, 10));
-console.log(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim());
+let pid = 0;
+while (!(pid > 0)) {
+  pid = existsSync(${JSON.stringify(pidFile)}) ? Number(readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim()) : 0;
+  if (!(pid > 0)) await new Promise(r => setTimeout(r, 10));
+}
+console.log(pid);
 process.exit(0);`;
     const ownerScript = join(home, 'owner.mjs');
     writeFileSync(ownerScript, script);
@@ -568,8 +571,7 @@ process.exit(0);`;
         env,
       );
       expect(() => process.kill(oldPid, 0)).toThrow(/ESRCH/);
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const newPid = Number(readFileSync(pidFile, 'utf8'));
+      const newPid = await waitForPid(pidFile);
       const newToken = captureProcessToken(newPid);
       if (newToken) children.push({ pid: newPid, processToken: newToken });
       expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
@@ -628,10 +630,8 @@ process.exit(0);`;
         { ...env, STIM_RUN_ID: 'two', STIM_TRACE: '/two' },
       );
       expect(second.streamId).toBe(first.streamId);
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pids = readFileSync(pidFile, 'utf8').trim().split('\n').map(Number);
-      expect(pids).toHaveLength(1);
-      const pid = pids[0]!;
+      const pid = await waitForPid(pidFile);
+      expect(readFileSync(pidFile, 'utf8').trim().split('\n')).toHaveLength(1);
       const token = captureProcessToken(pid);
       if (token) child = { pid, processToken: token };
       await vi.waitFor(() => {
@@ -678,8 +678,7 @@ process.exit(0);`;
     try {
       const spec = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
       const { streamId } = await streams.start(spec, env);
-      await vi.waitFor(() => expect(existsSync(readyFile)).toBe(true));
-      const pid = Number(readFileSync(readyFile, 'utf8'));
+      const pid = await waitForPid(readyFile);
       const token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       child = { pid, processToken: token };

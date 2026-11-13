@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import * as identities from '@stim-cli/core/process-identity';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 
@@ -140,3 +141,38 @@ test.skipIf(!POSIX)(
   },
   30_000,
 );
+
+describe.skipIf(!POSIX)('a background rm whose identity read NOT_FOUND but was not seen to exit', () => {
+  test.each([
+    { name: 'is recorded by a second read', unreadable: false },
+    { name: 'stays pending when it cannot be read again', unreadable: true },
+  ])('$name', async ({ unreadable }) => {
+    const repo = repoWithIgnoredTrees();
+    const trash = await moveIgnoredTreesToTrash(repo);
+    if (!trash) throw new Error('nothing was moved to the trash');
+    const real = getExecutor();
+    let live: ReturnType<typeof real.spawn> | undefined;
+    setExecutor({
+      ...real,
+      spawn() {
+        live = real.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true });
+        return live;
+      },
+    });
+    const capture = identities.captureProcessIdentity;
+    let reads = 0;
+    vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) =>
+      reads++ === 0 || unreadable ? { ok: false, reason: 'NOT_FOUND (forced)', code: 'NOT_FOUND' } : capture(pid),
+    );
+    try {
+      const disposed = disposeTrash(trash);
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(await disposed).toBe('background');
+      const [claim] = readClaimSet(join(trash.dir, 'claims')).live;
+      expect(claim?.childDeclared).toBe(true);
+      expect(claim?.child?.pid).toBe(unreadable ? undefined : live?.pid);
+    } finally {
+      if (live?.pid) process.kill(live.pid, 'SIGKILL');
+    }
+  });
+});

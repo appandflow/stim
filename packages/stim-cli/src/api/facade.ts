@@ -56,7 +56,7 @@ export function clientProjectRoot(
   return projectRoot;
 }
 
-// compat C30 until 2026-12-12
+// compat C33 until 2026-12-12
 function renamed(old: string, next: string, remedy: string): StimError {
   return new StimError({
     code: 'STIM_BAD_ARG',
@@ -68,7 +68,7 @@ function renamed(old: string, next: string, remedy: string): StimError {
 
 /** The options of `createStim` under the names an engine of any build reads. */
 export function engineOptions({ buildCacheDir, ...options }: StimOptions): EngineOptions {
-  // compat C30 until 2026-12-12
+  // compat C33 until 2026-12-12
   if ('buildCache' in options) throw renamed('buildCache', 'buildCacheDir', 'Pass the directory as buildCacheDir.');
   // compat end
   return buildCacheDir === undefined ? options : { ...options, buildCache: buildCacheDir };
@@ -76,7 +76,7 @@ export function engineOptions({ buildCacheDir, ...options }: StimOptions): Engin
 
 function engineRunOptions(options: StimRunOptions): EngineRunOptions {
   if (typeof options !== 'object' || options === null) return options;
-  // compat C30 until 2026-12-12
+  // compat C33 until 2026-12-12
   if ('wait' in options)
     throw renamed('wait', 'waitSeconds', 'Pass waitSeconds as a number of seconds, or false to not wait.');
   // compat end
@@ -94,7 +94,7 @@ function engineRunOptions(options: StimRunOptions): EngineRunOptions {
 
 function engineDiagnosticsOptions(options?: StimDiagnosticsOptions): EngineDiagnosticsOptions | undefined {
   if (typeof options !== 'object' || options === null) return options;
-  // compat C30 until 2026-12-12
+  // compat C33 until 2026-12-12
   if ('errors' in options) throw renamed('errors', 'errorsOnly', 'Pass errorsOnly with the same boolean.');
   // compat end
   if (!('errorsOnly' in options)) return options;
@@ -155,7 +155,7 @@ export function facadeClient(
     logs: op('logs'),
     followLogs: op('followLogs'),
   };
-  // compat C30 until 2026-12-12
+  // compat C33 until 2026-12-12
   return Object.assign(client, {
     gc: () => Promise.reject(renamed('gc()', 'previewGarbage()', 'Call previewGarbage() with the same options.')),
   });
