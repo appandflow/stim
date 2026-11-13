@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 
 /** The Rust target an Exact iOS simulator build compiles for; Exact's own setup does not install it. */
 export const EXACT_SIM_TARGET = 'aarch64-apple-ios-sim';
@@ -24,9 +25,8 @@ export interface ExactPins {
 }
 
 /**
- * What an offloaded Exact build carries besides the synced checkout: the app directory's name (Exact names its
- * generated crates after it), the pins, and the value of each setting `app.json` declares that this Mac's environment
- * or `.env.local` sets.
+ * What an offloaded Exact build carries besides the synced checkout: the checkout directory's name for apps at the
+ * Git root (Exact names its generated crates after it), the pins, and each declared setting's value.
  */
 export interface ExactOffload extends ExactPins {
   name: string;
@@ -128,9 +128,15 @@ export function exactOffloadPlan(root: string, env: NodeJS.ProcessEnv): ExactOff
   const changes = git(exact2Dir, ['status', '--porcelain', '--untracked-files=no']);
   if (changes === null || changes !== '')
     return { unsupported: `the exact2 checkout at ${exact2Dir} has local changes a build machine would not have` };
-  const name = basename(realpathSync(root));
-  if (!APP_NAME.test(name))
-    return { unsupported: `the app directory name ${JSON.stringify(name)} is not a plain ASCII file name` };
+  const canonicalRoot = realpathSync(root);
+  let name = basename(canonicalRoot);
+  if (!APP_NAME.test(name)) {
+    const top = repoRoot(canonicalRoot);
+    if (!top || realpathSync(top) === canonicalRoot)
+      return { unsupported: `the app directory name ${JSON.stringify(name)} is not a plain ASCII file name` };
+    // The worker reads this required field only when the project is at the Git root.
+    name = 'app';
+  }
   const files: string[] = [];
   for (const file of ['.env.local', '.env']) {
     try {
