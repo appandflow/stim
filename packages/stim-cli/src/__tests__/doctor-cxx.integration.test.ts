@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { stimdBootsFile } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { createStim } from '../api.ts';
 import { doctorOp } from '../commands/doctor.ts';
@@ -156,17 +157,26 @@ test.skipIf(process.platform === 'win32')(
     );
     const path = cache('android/app', null);
     writeFileSync(join(home, 'config.json'), '{ "projects": ');
+    const boots = stimdBootsFile();
+    mkdirSync(dirname(boots), { recursive: true });
+    writeFileSync(
+      boots,
+      JSON.stringify({ format: 1, boots: [{ at: Date.now(), build: 'b', pid: 1, abnormal: true, cause: 'engine' }] }),
+    );
     const doctor = doctorOp(() => analyzeStimVersions('1.2.3', '/tools/stim-cli', []));
     const cwd = process.cwd();
     const log = console.log;
     const error = console.error;
+    const notes: string[] = [];
     console.log = () => {};
-    console.error = () => {};
+    console.error = (...args: unknown[]) => void notes.push(args.join(' '));
     process.chdir(root);
     try {
       await expect(
         runCli(doctor, ['--json', '--fix', '--platform', 'android'], { version: '1.2.3' }),
       ).rejects.toMatchObject({ code: 'STIM_CONFIG_CORRUPT' });
+      expect(existsSync(boots)).toBe(true);
+      expect(notes.join('\n')).not.toContain('crash hold cleared');
     } finally {
       process.chdir(cwd);
       console.log = log;

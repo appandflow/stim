@@ -185,6 +185,10 @@ let refusalSeq = 0;
 let beginMismatched = false;
 let successorMissed = false;
 let holdAnnounced = false;
+
+/** The crash loop that holds this build's stimd, null when none applies; a store engine is judged by its own rollback. */
+const currentCrashHold = () =>
+  ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
 let refusal: {
   version: string;
   pid: number | null;
@@ -949,7 +953,7 @@ export async function ensureStimd(
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
-    const hold = ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
+    const hold = currentCrashHold();
     try {
       if (hold) {
         if (!holdAnnounced) {
@@ -1242,8 +1246,7 @@ async function readmit(
     const refused = otherBuildRefusal();
     if (refused && refusedBuild !== stimdBuildId() && !stimdLive())
       return { error: Object.assign(new Error(refused.message), refused) };
-    const hold =
-      !stimdLive() && ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
+    const hold = stimdLive() ? null : currentCrashHold();
     if (hold) {
       const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
       return {
@@ -1659,7 +1662,7 @@ async function successorBound(limit?: ResumeLimit): Promise<boolean> {
       refusal = null;
       return true;
     }
-    if (!started && !stimdLive() && readSuccessorMissing()) {
+    if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
       started = true;
       try {
         launchStimd(process.env, daemonMode(process.env), process.platform);

@@ -808,10 +808,10 @@ export function doctorOp(
           return;
         }
         if (failed) process.exitCode = 1;
-        if (clearCrashHold()) console.error('stimd crash hold cleared; the next command starts stimd again.');
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
+      if (opts.fix && clearCrashHold()) console.error('stimd crash hold cleared; the next command starts stimd again.');
       const { findings, stim, toolchain, maintenance, daemon } = report;
       const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [
