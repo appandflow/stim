@@ -18,12 +18,22 @@ export function planChecks(files, base, platform, exists = () => true) {
   const shared =
     /(?:^|\/)(?:package\.json|[jt]sconfig[^/]*\.json|[^/]*\.config\.[^/]+|[Ff]ixtures\/|[^/]*-fixture[s]?\.[^/]+$)/;
   const broad = !base || code.some((file) => !scoped.test(file) || shared.test(file) || !exists(file));
-  const testFiles = code.filter(isUnitTestFile);
+  const testFiles = [
+    ...new Set(
+      code.flatMap((file) => {
+        if (isUnitTestFile(file)) return [file];
+        if (!file.startsWith('scripts/') || !file.endsWith('.mjs')) return [];
+        const test = file.replace(/\.mjs$/, '.test.mjs');
+        return isUnitTestFile(test) && exists(test) ? [test] : [];
+      }),
+    ),
+  ];
   const rootSource = code.some(
     (file) => !isUnitTestFile(file) && /^(?:packages\/|scripts\/|\.github\/actions\/stim-ci\/|website\/)/.test(file),
   );
-  const mobile = broad || touches('packages/core/') || touches('apps/mobile/');
-  const demo = broad || touches('packages/core/') || touches('apps/demo-server/');
+  const appChecks = broad || touches('packages/core/') || touches('scripts/ratchet') || touches('scripts/oxlint/');
+  const mobile = appChecks || touches('apps/mobile/');
+  const demo = appChecks || touches('apps/demo-server/') || code.includes('apps/mobile/mock-server/payloads.mjs');
 
   if (broad || rootSource || testFiles.length) pnpm('run', 'lint');
   if (broad || rootSource || testFiles.length || mobile || demo) pnpm('run', 'build');
@@ -37,12 +47,14 @@ export function planChecks(files, base, platform, exists = () => true) {
   ]) {
     const direct = testFiles.filter((file) => file.includes('.integration.test.') === integration);
     if (broad) pnpm('run', stage);
-    else if (rootSource) pnpm('run', stage, '--changed', base, '--passWithNoTests');
-    else if (direct.length) pnpm('run', stage, ...direct.map((file) => `./${file}`));
+    else {
+      if (rootSource) pnpm('run', stage, '--changed', base, '--passWithNoTests');
+      if (direct.length) pnpm('run', stage, ...direct.map((file) => `./${file}`));
+    }
   }
   if (broad || touches('scripts/agent-benchmark/')) pnpm('run', 'test:bench');
   if (mobile) {
-    for (const script of ['format:check', 'lint', 'typecheck', 'intl:check', 'test']) {
+    for (const script of ['format:check', 'lint', 'typecheck', 'test']) {
       pnpm('--filter', 'stim-mobile', 'run', script);
     }
   }

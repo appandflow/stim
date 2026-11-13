@@ -29,3 +29,17 @@ test('a shared core change checks consumers outside the root Vitest suite', () =
   expect(commands).toContain('pnpm --filter stim-mobile run test');
   expect(commands).toContain('pnpm --filter stim-demo-server test');
 });
+
+test('includes a regression that invokes the changed script as a subprocess', () => {
+  const file = 'scripts/ci-unit-test-files.mjs';
+  expect(plan([file], 'base', (path) => [file, 'scripts/ci-unit-test-files.test.mjs'].includes(path))).toContain(
+    'pnpm run test:unit ./scripts/ci-unit-test-files.test.mjs',
+  );
+});
+
+test('a shared mobile fixture checks both consumers without rewriting locale files', () => {
+  const commands = plan(['apps/mobile/mock-server/payloads.mjs']);
+  expect(commands).toContain('pnpm --filter stim-demo-server test');
+  expect(commands).toContain('pnpm --filter stim-mobile run test');
+  expect(commands).not.toContain('pnpm --filter stim-mobile run intl:check');
+});
