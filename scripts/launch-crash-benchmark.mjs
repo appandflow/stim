@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   commandWithReportedStatus,
+  literalShellArguments,
   shellCommandSegments,
   stimCommandSegments,
   sameLiteralShellCommand,
@@ -92,9 +93,15 @@ function runtimeErrorSnapshot(command, previous, expected, token) {
   );
 }
 
-function successfulLaunch(command, arm, platform) {
+function successfulLaunch(command, arm, platform, device) {
   if (!successful(command)) return false;
   const value = shellCommand(command.command);
+  if (
+    arm === 'expo-agent-cli' &&
+    expoAgentCliLaunch(completedStepCommand(command, arm), command.output, platform, device)
+  ) {
+    return true;
+  }
   if (!/\|\s*tee\b/.test(value)) return launchCommand(completedStepCommand(command, arm), arm, platform);
   if (!launchCommand(command.command, arm, platform)) return false;
   const prefix = value.match(
@@ -138,6 +145,30 @@ function shellCommand(command) {
   );
 }
 
+function expoAgentCliArguments(command) {
+  const [bin, subcommand, ...args] = literalShellArguments(shellCommand(command)) ?? [];
+  if (bin !== 'expo-agent-cli' && !/^\/[\w/.-]+\/expo-agent-cli\/bin\/expo-agent-cli$/.test(bin ?? '')) return null;
+  if (args.some((arg) => /^(?:-h|-v|--help|--version)$/.test(arg))) return null;
+  return { subcommand, args };
+}
+
+function expoAgentCliLaunch(command, output, platform, device) {
+  const invocation = expoAgentCliArguments(command);
+  if (!invocation || !device) return false;
+  const { subcommand, args } = invocation;
+  if (!['dev', 'dev:run'].includes(subcommand)) return false;
+  if (args.some((arg) => /^(?:--(?:plan|no-open|eas|go|web))(?:=|$)/.test(arg))) return false;
+  const deviceFlags = args.filter((arg) => /^--device(?:=|$)/.test(arg));
+  if (deviceFlags.length !== 1 || args[args.indexOf(deviceFlags[0]) + 1] !== device) return false;
+  const opened = platform === 'ios' ? 'iOS simulator' : 'Android device';
+  if (!String(output ?? '').includes(`Opened the app on the ${opened}`)) return false;
+  return (
+    args.includes('--local') &&
+    args.includes(`--${platform}`) &&
+    !args.includes(platform === 'ios' ? '--android' : '--ios')
+  );
+}
+
 function launchCommand(command, arm, platform) {
   command = shellCommand(command);
   if (/(?:^|\s)["']?(?:--help|--version|-h|-v)["']?(?=\s|$|[;&|])/.test(command)) return false;
@@ -165,6 +196,10 @@ function errorCaptureCommand(command, arm, platform) {
       stimCommandSegments(command, 'stim logs --errors').length > 0 ||
       shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment))
     );
+  if (arm === 'expo-agent-cli') {
+    const invocation = expoAgentCliArguments(command);
+    if (['dev:logs', 'runtime:errors'].includes(invocation?.subcommand)) return true;
+  }
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
@@ -452,7 +487,7 @@ export function launchCrashDiagnosis(
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
   const initialLaunchIndex = ordered.findIndex(
     (command, index) =>
-      successfulLaunch(command, arm, platform) ||
+      successfulLaunch(command, arm, platform, setup.device) ||
       successfulAgentDeviceLaunch(command, agentDeviceLaunch) ||
       (arm === 'control' && platform === 'android' && confirmedAndroidLaunchLog(command, ordered.slice(0, index))),
   );

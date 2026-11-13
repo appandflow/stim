@@ -11,6 +11,65 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.each([
+    ['ios', 'A1B2C3D4-ABCD-ABCD-ABCD-0123456789AB', 'dev:logs'],
+    ['android', 'emulator-5554', 'runtime:errors'],
+  ])('accepts Expo agent CLI crash evidence from the assigned %s device', (platform, device, logVerb) => {
+    const token = launchCrashToken('expo-agent-cli-crash');
+    const launch = {
+      id: 'launch',
+      command: `expo-agent-cli dev --${platform} --local --dev-client --device ${device} --detach --wait-ready`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:01Z',
+      endedAt: '2026-09-04T12:00:10Z',
+      output: `Opened the app on the ${platform === 'ios' ? 'iOS simulator' : 'Android device'}.`,
+    };
+    const logs = {
+      id: 'logs',
+      command: `/Volumes/bench/expo-agent-cli/bin/expo-agent-cli ${logVerb} --json`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:15Z',
+      output: `Error: ${token}\nRootLayout (app/_layout.tsx:27:18)`,
+    };
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'expo-agent-cli', platform, setup: { device } };
+    expect(launchCrashDiagnosis([launch, logs], options)).toMatchObject({ valid: true, commandId: 'logs' });
+    expect(
+      launchCrashDiagnosis([{ ...launch, command: launch.command.replace('dev ', 'dev:run ') }, logs], options),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+    expect(launchCrashDiagnosis([{ ...launch, output: 'Bundler ready' }, logs], options)).toMatchObject({
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+    for (const command of [
+      `${launch.command} --plan`,
+      `${launch.command} --no-open`,
+      `${launch.command} --eas`,
+      `${launch.command} --help`,
+      launch.command.replace(device, 'other-device'),
+      `printf '%s' '${launch.command}'`,
+      `${launch.command}; true`,
+    ]) {
+      expect(launchCrashDiagnosis([{ ...launch, command }, logs], options)).toMatchObject({
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
+    }
+    expect(launchCrashDiagnosis([launch, { ...logs, output: 'No runtime errors' }], options)).toMatchObject({
+      reason: 'launch-crash-error-capture-missing',
+    });
+    const read = {
+      ...launch,
+      id: 'read',
+      command: 'cat app/_layout.tsx',
+      startedAt: launch.endedAt,
+      endedAt: logs.startedAt,
+      output: '',
+    };
+    expect(launchCrashDiagnosis([launch, read, logs], options)).toMatchObject({
+      reason: 'launch-crash-pre-capture-command-not-allowed',
+      commandId: 'read',
+    });
+  });
+
   it.each(['ios', 'android'])(
     'accepts literal temp-dir prefixes while retaining crash evidence gates on %s',
     (platform) => {

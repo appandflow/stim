@@ -129,7 +129,7 @@ export function shellCommandSegments(command) {
   return segments;
 }
 
-function literalShellArguments(command) {
+export function literalShellArguments(command) {
   const words = [];
   let word = '';
   let started = false;

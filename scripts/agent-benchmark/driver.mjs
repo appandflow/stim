@@ -2099,6 +2099,7 @@ function collect(runDir) {
           agentDeviceLaunch: agentDeviceCaptureCommands(meta, appAlive),
           setup: {
             worktree,
+            device: appAlive.simulator?.udid,
             avdConfig: appAlive.simulator?.configPath ?? meta.expectedControlAvdConfig,
           },
         })
