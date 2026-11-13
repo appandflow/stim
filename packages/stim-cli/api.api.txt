@@ -290,6 +290,7 @@
 [*] interface DaemonStatus { @@1 intervalMs: number | null;
 [*] interface DaemonStatus { @@1 lastTickAt: string | null;
 [*] interface DaemonStatus { @@1 mode: DaemonMode;
+[*] interface DaemonStatus { @@1 older?: {
 [*] interface DaemonStatus { @@1 pressure?: DaemonPressure;
 [*] interface DaemonStatus { @@1 recent?: DaemonRecentAction[];
 [*] interface DaemonStatus { @@1 running: {
@@ -309,8 +310,10 @@
 [*] interface DaemonStatus { @@2 remedy: string;
 [*] interface DaemonStatus { @@2 removeCommand: string;
 [*] interface DaemonStatus { @@2 since: string;
+[*] interface DaemonStatus { @@2 stop: string;
 [*] interface DaemonStatus { @@2 unresolved: string;
 [*] interface DaemonStatus { @@2 until: string;
+[*] interface DaemonStatus { @@2 verified: boolean;
 [*] interface DaemonTestWaiter {
 [*] interface DaemonTestWaiter { @@1 label: string;
 [*] interface DaemonTestWaiter { @@1 position: number;

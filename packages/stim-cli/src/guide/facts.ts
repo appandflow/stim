@@ -1968,12 +1968,16 @@ RULES
 
   What is using CPU and memory now is the top-level machine section:
 
-  daemon { mode, setting?, running: { pid, since } | null, lastTickAt, intervalMs,
+  daemon { mode, setting?, running: { pid, since } | null, older?: { pid, stop, verified }, lastTickAt, intervalMs,
            claim?, pressure?, waiting?, recent? }
     mode is on, report or off: the running daemon's mode, which it keeps from
     the command that started it, else daemon.mode as resolved here. setting is that resolved daemon.mode when it differs from the
     running daemon's. running comes from a live claim at
-    $STIM_HOME/daemon/claim. lastTickAt and
+    $STIM_HOME/daemon/claim. older is a stim-daemon from before Stim 2.0 that
+    holds that claim exclusively, with its pid and the command that stops it;
+    verified is true when its claim has the record that daemon writes, which
+    the next stimd start stops. It is not the running daemon, so running is
+    null and the old daemon's tick and pressure are not reported. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null
     before a first tick. A last tick older than three intervals while it runs

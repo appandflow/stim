@@ -133,7 +133,8 @@ what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
 `pressure`. Doctor also prints the [`stim-daemon`](./settings.md#stim-daemon)
 line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
-log with the last pass. It reports a daemon that stopped ticking, a daemon
+log with the last pass. It reports a daemon that stopped ticking, a stim-daemon from before Stim 2.0 that
+holds the daemon claim, with its pid and stop command, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
 the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
 three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
