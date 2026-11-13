@@ -65,7 +65,7 @@ export default defineConfig({
       groups: [
         {
           name: 'server',
-          test: (id) => /[\\/]packages[\\/]server[\\/]/.test(id) && !id.endsWith('/service-runner.ts'),
+          test: (id) => /[\\/]packages[\\/]server[\\/]/.test(id) && !/[\\/]service-runner\.ts$/.test(id),
         },
         { name: 'transport-tailscale', test: /[\\/]packages[\\/]transport-tailscale[\\/]/ },
         // rolldown 1.2.5 emits undeclared named exports for a JSON module grouped into a shared chunk (rolldown/rolldown#10020, #11392), so the manifest stays out of the group.
