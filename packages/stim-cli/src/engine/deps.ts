@@ -494,14 +494,17 @@ export async function runCaptured(
 
   let result: Awaited<ReturnType<typeof waitForChild>>;
   let drainTimeout: NodeJS.Timeout | undefined;
-  const outputClosed = Promise.withResolvers<void>();
-  child.once('close', outputClosed.resolve);
+  let closeOutput: (() => void) | undefined;
+  const outputClosed = new Promise<void>((done) => {
+    closeOutput = done;
+    child.once('close', done);
+  });
   try {
     result = await waitForChild(child);
     if (!result.error && [child.stdout, child.stderr].some((stream) => stream?.readableEnded === false)) {
       // Node reports exit before stdio closes, and a descendant can keep the inherited pipes open.
       await Promise.race([
-        outputClosed.promise,
+        outputClosed,
         new Promise<void>((done) => {
           drainTimeout = setDrainTimeout(done, OUTPUT_DRAIN_MS);
         }),
@@ -509,7 +512,7 @@ export async function runCaptured(
     }
   } finally {
     clearDrainTimeout(drainTimeout);
-    child.off('close', outputClosed.resolve);
+    if (closeOutput) child.off('close', closeOutput);
     child.stdout?.off('data', readOut);
     child.stderr?.off('data', readErr);
     stopHeartbeat();
