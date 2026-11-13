@@ -21,7 +21,7 @@ import "timers";
 import { spawn } from "node:child_process";
 import fs, { cpSync, existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
-import { dirname, join, resolve as resolve$1 } from "node:path";
+import { basename, dirname, join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
 import https from "node:https";
 import * as stream$2 from "stream";
@@ -97628,7 +97628,10 @@ async function execute(file, args, cwd, stdout) {
 	try {
 		return await new Promise((done, reject) => {
 			child.once("error", reject);
-			child.once("close", (code, signal) => done(code ?? (signal === "SIGINT" ? 130 : 143)));
+			child.once("close", (code, signal) => {
+				if (code !== 0) error(`${[basename(file), ...args.slice(0, 4).map((arg) => basename(arg))].join(" ")} exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+				done(code ?? (signal === "SIGINT" ? 130 : 143));
+			});
 		});
 	} finally {
 		process.off("SIGINT", interrupt);
@@ -97797,6 +97800,7 @@ async function runAction() {
 	let result = null;
 	if (options.artifacts) try {
 		result = currentResult(resultPath, options, started);
+		if (!result && code !== 0) error(`The run exited with code ${code} and wrote no ${resultPath}.`);
 	} catch (error) {
 		warning(String(error));
 		return code || 1;

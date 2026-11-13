@@ -13,7 +13,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
 import { diagnosticArtifactFiles } from 'stim/ci/artifacts';
@@ -120,7 +120,13 @@ async function execute(file: string, args: string[], cwd: string, stdout?: Buffe
   try {
     return await new Promise<number>((done, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => done(code ?? (signal === 'SIGINT' ? 130 : 143)));
+      child.once('close', (code, signal) => {
+        if (code !== 0)
+          core.error(
+            `${[basename(file), ...args.slice(0, 4).map((arg) => basename(arg))].join(' ')} exited with ${signal ? `signal ${signal}` : `code ${code}`}`,
+          );
+        done(code ?? (signal === 'SIGINT' ? 130 : 143));
+      });
     });
   } finally {
     process.off('SIGINT', interrupt);
@@ -285,6 +291,7 @@ export async function runAction(): Promise<number> {
   if (options.artifacts) {
     try {
       result = currentResult(resultPath, options, started);
+      if (!result && code !== 0) core.error(`The run exited with code ${code} and wrote no ${resultPath}.`);
     } catch (error) {
       core.warning(String(error));
       return code || 1;
