@@ -127,7 +127,7 @@ describe('benchmark Android emulator selection', () => {
     ).toMatchObject({ error: 'control-emulator-mismatch' });
   });
 
-  it('takes the one new emulator the Expo agent CLI names itself, but not a wrong image, a pre-existing AVD or two', () => {
+  it('requires a new Expo emulator with the assigned name, image and runtime', () => {
     const options = {
       arm: 'expo-agent-cli',
       baseline: new Set(),
@@ -135,7 +135,10 @@ describe('benchmark Android emulator selection', () => {
       expectedStim: {},
       preexistingNames: new Set(['my-daily-avd']),
     };
-    const managed = { ...androidDevice, name: 'expo-managed-device' };
+    const managed = androidDevice;
+    expect(selectAndroidCandidate([{ ...managed, name: 'expo-managed-device' }], options)).toMatchObject({
+      error: 'expo-agent-cli-emulator-mismatch',
+    });
     expect(selectAndroidCandidate([managed], options)).toEqual({ candidate: managed });
     expect(
       selectAndroidCandidate([{ ...managed, systemImage: 'system-images;android-35;google_apis;arm64-v8a' }], options),
@@ -158,12 +161,15 @@ describe('benchmark Android emulator selection', () => {
     const options = { arm: 'expo-agent-cli', baseline: new Set(['old']), expectedControl: pinned };
     const fresh = {
       udid: 'new',
-      name: 'tool-made',
+      name: pinned.name,
       isAvailable: true,
       deviceTypeIdentifier: 'type',
       runtimeIdentifier: 'rt',
     };
     expect(selectIosCandidate([fresh], options)).toEqual({ candidate: fresh });
+    expect(selectIosCandidate([{ ...fresh, name: 'tool-made' }], options)).toMatchObject({
+      error: 'expo-agent-cli-simulator-mismatch',
+    });
     expect(selectIosCandidate([{ ...fresh, runtimeIdentifier: 'other' }], options)).toMatchObject({
       error: 'expo-agent-cli-simulator-mismatch',
     });

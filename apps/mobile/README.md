@@ -106,7 +106,9 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   the list to a grid of every running simulator and emulator on every paired
   machine, with its latest frame, model, workspace name and machine, by project
   and workspace name and, inside a workspace, iOS, Android, Web and then physical
-  devices, by slot. A tile shows the latest frame, then the platform logo and
+  devices, by slot. When the paired machine confirms a workspace folder is
+  missing, that workspace's devices are excluded from the grid. A tile shows
+  the latest frame, then the platform logo and
   model with the OS or emulator beside it (the line shrinks, then truncates, before it wraps), then one colored state that
   wraps instead of truncating, then the workspace and its project, then the
   workspace's agent session on one line, which opens its Claude link when it has one. The state is

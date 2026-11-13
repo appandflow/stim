@@ -91,6 +91,7 @@ import {
   orderDevices,
   platformName,
   runningBuild,
+  visibleDevices,
 } from '@/lib/workspaces';
 import type { ActionName, DevicePlatform, Platform, EnvironmentState, MachineUsageState } from '@/protocol/types';
 
@@ -508,7 +509,8 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                 ? apps.some(
                     (app) => app.devServer !== false && livePlatforms(app).some((platform) => platform !== 'macos'),
                   )
-                : env.devServer !== false &&
+                : !env.pathMissing &&
+                  env.devServer !== false &&
                   (!env.macos || livePlatforms(env).some((platform) => platform !== 'macos'))) ? (
                 <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled={actions.pending !== null} onPress={reload}>
                   {t`Reload`}
@@ -620,7 +622,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     );
   }
 
-  const all = orderDevices(devicesOf(env));
+  const all = orderDevices(visibleDevices(env));
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
   const stage = workspaceStage(env, now);
@@ -672,6 +674,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
               {env.macos ? (
                 <MacosBuildCard
                   app={env.macos}
+                  pathMissing={env.pathMissing}
                   onPress={() =>
                     router.push({ pathname: '/mac/[id]/logs', params: { id: macId, path, source: 'build' } })
                   }
@@ -808,7 +811,7 @@ function WorktreeContent({
       return { ...line, key, project, spoken: project ? `${line.spoken}, ${project}` : line.spoken };
     }
     const build = entry.env.macos!.build;
-    const state = macosBuildLabel(entry.env.macos!);
+    const state = macosBuildLabel(entry.env.macos!, entry.env.pathMissing);
     return {
       platform: 'macos',
       key,

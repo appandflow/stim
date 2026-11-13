@@ -65,6 +65,7 @@ function devices() {
       const avd = benchmarkAvdDescription(name, {
         reportedPath: adb('-s', serial, 'emu', 'avd', 'path'),
         allowedRoots: [dirname(baselinePath)],
+        privateDirectory: arm === 'expo-agent-cli' ? join(dirname(baselinePath), 'tmp', 'avd') : undefined,
       });
       return {
         ...avd,

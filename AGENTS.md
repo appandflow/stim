@@ -40,8 +40,6 @@ word; the document itself approves nothing.
 The repository is a pnpm workspace. Published packages live under `packages/`.
 The packages are ESM-only. They require Node.js 22.12.0 or later. Repository
 development requires Node.js 22.18.0 or later because tsdown uses that floor.
-`pnpm run lint` also needs `python3` for `scripts/ref-check`, until that
-checker is ported to Node.
 
 ```bash
 pnpm install

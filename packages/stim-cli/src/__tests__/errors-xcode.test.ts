@@ -93,6 +93,32 @@ describe('real transcripts', () => {
 });
 
 describe('what is and is not a diagnostic', () => {
+  test('ignores a Swift parameter label in a source echo', () => {
+    const found = extractXcodeDiagnostics(
+      '/app/Auth.swift:12:16: error: cannot find type in scope\nstatic func map(error: ASAuthorizationError) -> Exception {',
+    );
+    expect(found).toEqual([{ file: '/app/Auth.swift', line: 12, column: 16, message: 'cannot find type in scope' }]);
+  });
+
+  test.each([
+    [18, 'let value: Int = "Network: error: could not proceed"', 35],
+    [52, '/* Build log: error: timed out */ let value: Int = "x"', 3],
+  ])('ignores an error marker inside a Swift source echo (%s)', (column, source, length) => {
+    const message = "cannot convert value of type 'String' to specified type 'Int'";
+    const found = extractXcodeDiagnostics(
+      [`<stdin>:1:${column}: error: ${message}`, source, `${' '.repeat(column - 1)}^${'~'.repeat(length - 1)}`].join(
+        '\n',
+      ),
+    );
+    expect(found).toEqual([{ file: '<stdin>', line: 1, column, message }]);
+  });
+
+  test('preserves the entire message in an unprefixed error', () => {
+    expect(extractXcodeDiagnostics('error: Xcode reported error: missing module')).toEqual([
+      { message: 'Xcode reported error: missing module' },
+    ]);
+  });
+
   test('a development team error is a signing error however it is phrased', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);

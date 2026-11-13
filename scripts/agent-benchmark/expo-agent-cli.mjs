@@ -21,7 +21,11 @@ export function expoAgentCliPrefix(root) {
 }
 
 export function expoAgentCliEnvironment(environment) {
-  const clean = { ...environment, EXPO_NO_TELEMETRY: '1' };
+  const clean = {
+    ...environment,
+    EXPO_NO_TELEMETRY: '1',
+    __UNSAFE_EXPO_HOME_DIRECTORY: join(environment.TMPDIR, 'expo-home'),
+  };
   delete clean.EXPO_TOKEN;
   return clean;
 }
