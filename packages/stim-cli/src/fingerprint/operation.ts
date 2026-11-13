@@ -1,11 +1,11 @@
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
+import { LOCKFILES, readJsonObject } from '@stim-cli/core/state';
 import { backgroundPassesAvailable } from '../daemon/client.ts';
 import { shortHash } from '../command-output.ts';
 import { processContext } from '../cli-operation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
-import { packageManagerInstall } from '../workspace/install-command.ts';
 import { fingerprint, fingerprintRuntime, type Fingerprint, type FingerprintRuntime } from './evaluate.ts';
 import { fingerprintJobEnv } from './env.ts';
 import { installRoot, targetLayout, type StaticTarget } from './inputs.ts';
@@ -110,9 +110,16 @@ export function fingerprintInstallWarning(root: string): string | null {
   if (!pending) return null;
   const consequence = 'the build will be installed but not cached';
   if (isUncertain(pending)) return `${pending.uncertain}; ${consequence}`;
-  const warning = `${pending} changed after the last install; ${consequence}`;
-  const command = packageManagerInstall(install, 'refresh');
-  return command ? `${warning}. Run \`${command}\` in ${JSON.stringify(install)} before the next build.` : warning;
+  const warning = `${pending.input} changed after the last install; ${consequence}`;
+  if (
+    pending.input !== join(install, 'package-lock.json') ||
+    pending.stamp !== join(install, 'node_modules', '.package-lock.json') ||
+    LOCKFILES.some((file) => file !== 'package-lock.json' && existsSync(join(install, file)))
+  )
+    return warning;
+  const declared = readJsonObject(join(install, 'package.json'))?.packageManager;
+  if (typeof declared === 'string' && !declared.startsWith('npm@')) return warning;
+  return `${warning}. Run \`npm install\` in ${JSON.stringify(install)} before the next build.`;
 }
 
 export async function settleFingerprintCheck(
