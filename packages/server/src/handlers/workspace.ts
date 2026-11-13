@@ -2,7 +2,7 @@ import { send, type ConnectionContext } from './context.ts';
 import type { RequestId } from '../protocol.ts';
 import { isJsonObject } from '@stim-cli/core/state';
 import { readWorkspaceDiff } from '../workspace-diff.ts';
-import { createStim } from 'stim/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 
 export function workspaceChanges(
   ctx: ConnectionContext,
@@ -75,10 +75,10 @@ export function workspaceCommand(
   if (!cwd) return;
   if (method === 'settings.get') {
     return void ctx.inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
-      createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
+      createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).settings({ signal }),
     );
   }
   return void ctx.inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
-    createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).stats({ signal }),
+    createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).stats({ signal }),
   );
 }

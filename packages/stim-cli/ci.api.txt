@@ -1,0 +1,483 @@
+// The stim/ci API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
+// Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
+[*] declare const ACTIVITY_RECENCY_BASES: readonly ["agent-action", "device-log", "metro-bundle", "workspace-use", "supervisor-start", "page-log", "viewer"];
+[*] declare const WEB_PAGE_STATES: readonly ["loading", "loaded", "failed"];
+[*] declare const WEB_VIEWPORTS: readonly ["desktop", "phone"];
+[*] declare function buildCI(input: CIBuildOptions): Promise<CIBuildResult>;
+[*] declare function runCI(options: CIOptions): Promise<CIResult>;
+[*] export CIFailure
+[*] export CIOptions
+[*] export CIResult
+[*] export buildCI
+[*] export runCI
+[*] export type CIBuildOptions
+[*] export type CIBuildResult
+[*] export type CommandResult
+[*] interface ActivityDriver {
+[*] interface ActivityDriver { @@1 pid: number | null;
+[*] interface ActivityDriver { @@1 since: string | null;
+[*] interface ActivityDriver { @@1 tool: string;
+[*] interface AndroidBuildFacts {
+[*] interface AndroidBuildFacts { @@1 abi: string | null;
+[*] interface AndroidBuildFacts { @@1 androidPackage: string | null;
+[*] interface AndroidBuildFacts { @@1 apkPath: string;
+[*] interface AndroidBuildFacts { @@1 buildMachine: string;
+[*] interface AndroidBuildFacts { @@1 builtOn: string | null;
+[*] interface AndroidBuildFacts { @@1 cacheHit: string | boolean;
+[*] interface AndroidBuildFacts { @@1 cacheKey: string | null;
+[*] interface AndroidBuildFacts { @@1 cacheSkipped: boolean;
+[*] interface AndroidBuildFacts { @@1 ccache: CcacheActivity;
+[*] interface AndroidBuildFacts { @@1 durationMs: number;
+[*] interface AndroidBuildFacts { @@1 links: {
+[*] interface AndroidBuildFacts { @@1 logs: {
+[*] interface AndroidBuildFacts { @@1 variant: string;
+[*] interface AndroidBuildFacts { @@2 dir: string;
+[*] interface AndroidBuildFacts { @@2 workspace: string;
+[*] interface AndroidFacts {
+[*] interface AndroidFacts { @@1 agentDevice?: {
+[*] interface AndroidFacts { @@1 appPath: string | null;
+[*] interface AndroidFacts { @@1 avdName: string | null;
+[*] interface AndroidFacts { @@1 buildMachine?: string;
+[*] interface AndroidFacts { @@1 builtOn?: string;
+[*] interface AndroidFacts { @@1 bundleId: string | null;
+[*] interface AndroidFacts { @@1 cacheHit: CacheHitLevel;
+[*] interface AndroidFacts { @@1 cacheKey: string | null;
+[*] interface AndroidFacts { @@1 cacheSkipped: boolean;
+[*] interface AndroidFacts { @@1 ccache: CcacheActivity;
+[*] interface AndroidFacts { @@1 debugHttpHost: string | null;
+[*] interface AndroidFacts { @@1 debugHttpHostNote: string | null;
+[*] interface AndroidFacts { @@1 devClientUrl: string | null;
+[*] interface AndroidFacts { @@1 devServer?: DevServerStart;
+[*] interface AndroidFacts { @@1 deviceName: string | null;
+[*] interface AndroidFacts { @@1 devicePlacement?: DevicePlacement;
+[*] interface AndroidFacts { @@1 deviceProfile: string | null;
+[*] interface AndroidFacts { @@1 durationMs: number | null;
+[*] interface AndroidFacts { @@1 fingerprint: string | null;
+[*] interface AndroidFacts { @@1 host?: HostedAndroidStatus;
+[*] interface AndroidFacts { @@1 installSkipped: boolean;
+[*] interface AndroidFacts { @@1 launched: LaunchStatus;
+[*] interface AndroidFacts { @@1 lease?: RunLeaseFacts | null;
+[*] interface AndroidFacts { @@1 logs: string | null;
+[*] interface AndroidFacts { @@1 metroPort: number | null;
+[*] interface AndroidFacts { @@1 offloadFallback?: string;
+[*] interface AndroidFacts { @@1 offloadedTo?: string;
+[*] interface AndroidFacts { @@1 platform: string;
+[*] interface AndroidFacts { @@1 serial: string | null;
+[*] interface AndroidFacts { @@1 slot?: string;
+[*] interface AndroidFacts { @@1 systemImage: string | null;
+[*] interface AndroidFacts { @@1 variant: string | null;
+[*] interface AndroidFacts { @@1 waitedForBuild: {
+[*] interface AndroidFacts { @@1 } | null;
+[*] interface AndroidFacts { @@2 ms: number;
+[*] interface AndroidFacts { @@2 pid: number | null;
+[*] interface AndroidFacts { @@2 stateDir: string;
+[*] interface CIBuildOptions extends CIContextOptions {
+[*] interface CIBuildOptions extends CIContextOptions { @@1 build: WithoutKeys<StimBuildOptions, "signal" | "remoteBuild">;
+[*] interface CIBuildOptions extends CIContextOptions { @@1 exportPath?: string;
+[*] interface CIBuildResult {
+[*] interface CIBuildResult { @@1 artifactPath: string | null;
+[*] interface CIBuildResult { @@1 artifactsDir: string | null;
+[*] interface CIBuildResult { @@1 build: StimBuildResult | null;
+[*] interface CIBuildResult { @@1 buildPath: string | null;
+[*] interface CIBuildResult { @@1 diagnostics: {
+[*] interface CIBuildResult { @@1 durationMs: number;
+[*] interface CIBuildResult { @@1 exitCode: number;
+[*] interface CIBuildResult { @@1 failure?: CIFailure;
+[*] interface CIBuildResult { @@1 platform: StimBuildOptions["platform"];
+[*] interface CIBuildResult { @@1 projectRoot: string;
+[*] interface CIBuildResult { @@1 reportingError?: CIFailure;
+[*] interface CIBuildResult { @@1 resultPath: string | null;
+[*] interface CIBuildResult { @@1 stage: "build";
+[*] interface CIBuildResult { @@1 startedAt: string;
+[*] interface CIBuildResult { @@1 version: 1;
+[*] interface CIBuildResult { @@2 error?: CIFailure;
+[*] interface CIBuildResult { @@2 path: string | null;
+[*] interface CIContextOptions {
+[*] interface CIContextOptions { @@1 artifactsDir?: string;
+[*] interface CIContextOptions { @@1 buildCacheDir?: string;
+[*] interface CIContextOptions { @@1 home?: string;
+[*] interface CIContextOptions { @@1 onProgress?: StimOptions["onProgress"];
+[*] interface CIContextOptions { @@1 projectRoot: string;
+[*] interface CIContextOptions { @@1 signal?: AbortSignal;
+[*] interface CIContextOptions { @@1 timeoutMs?: number;
+[*] interface CIFailure {
+[*] interface CIFailure { @@1 code: string;
+[*] interface CIFailure { @@1 message: string;
+[*] interface CIFailure { @@1 remedy?: string;
+[*] interface CIOptions extends CIContextOptions {
+[*] interface CIOptions extends CIContextOptions { @@1 command?: readonly [string, ...string[]];
+[*] interface CIOptions extends CIContextOptions { @@1 run: WithoutKeys<StimRunOptions, "signal" | "recordedBuild" | "cleanAppState" | "easProfile">;
+[*] interface CIResult {
+[*] interface CIResult { @@1 artifactsDir: string | null;
+[*] interface CIResult { @@1 cleanup: {
+[*] interface CIResult { @@1 diagnostics: {
+[*] interface CIResult { @@1 durationMs: number;
+[*] interface CIResult { @@1 exitCode: number;
+[*] interface CIResult { @@1 failure?: CIFailure;
+[*] interface CIResult { @@1 platform: StimRunOptions["platform"];
+[*] interface CIResult { @@1 projectRoot: string;
+[*] interface CIResult { @@1 reportingError?: CIFailure;
+[*] interface CIResult { @@1 resultPath: string | null;
+[*] interface CIResult { @@1 run: StimRunResult | null;
+[*] interface CIResult { @@1 runPath: string | null;
+[*] interface CIResult { @@1 startedAt: string;
+[*] interface CIResult { @@1 test: CommandResult | null;
+[*] interface CIResult { @@1 version: 1;
+[*] interface CIResult { @@2 error?: CIFailure;
+[*] interface CIResult { @@2 files?: string[];
+[*] interface CIResult { @@2 path: string | null;
+[*] interface CIResult { @@2 result: StimStopResult | null;
+[*] interface CcacheActivity {
+[*] interface CcacheActivity { @@1 hitRatePercent: number | null;
+[*] interface CcacheActivity { @@1 hits: number | null;
+[*] interface CcacheActivity { @@1 misses: number | null;
+[*] interface CcacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
+[*] interface CollectorEntry {
+[*] interface CollectorEntry { @@1 pid: number | null;
+[*] interface CollectorEntry { @@1 platform: string;
+[*] interface CollectorEntry { @@1 reason?: string;
+[*] interface CollectorEntry { @@1 status: string;
+[*] interface CollectorsOutcome {
+[*] interface CollectorsOutcome { @@1 entries: CollectorEntry[];
+[*] interface CollectorsOutcome { @@1 status: string;
+[*] interface CommandResult {
+[*] interface CommandResult { @@1 durationMs: number;
+[*] interface CommandResult { @@1 error?: string;
+[*] interface CommandResult { @@1 exitCode: number | null;
+[*] interface CommandResult { @@1 signal: NodeJS.Signals | null;
+[*] interface CommandResult { @@1 stderr: string | null;
+[*] interface CommandResult { @@1 stdout: string | null;
+[*] interface CompilationCacheActivity {
+[*] interface CompilationCacheActivity { @@1 cacheableTasks: number | null;
+[*] interface CompilationCacheActivity { @@1 hitRatePercent: number | null;
+[*] interface CompilationCacheActivity { @@1 hits: number | null;
+[*] interface CompilationCacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
+[*] interface CompilationCacheActivity { @@1 swiftTargetsWithoutExplicitModules?: number;
+[*] interface DevServerStart {
+[*] interface DevServerStart { @@1 reason: "not running" | "stopped (idle)";
+[*] interface DevServerStart { @@1 started: true;
+[*] interface DeviceActivity {
+[*] interface DeviceActivity { @@1 basis: string[];
+[*] interface DeviceActivity { @@1 driver?: ActivityDriver;
+[*] interface DeviceActivity { @@1 lastActivityAt?: string;
+[*] interface DeviceActivity { @@1 recent?: Partial<Record<ActivityRecencyBasis, string>>;
+[*] interface DeviceActivity { @@1 state: ActivityState;
+[*] interface DeviceActivity { @@1 unknown?: string[];
+[*] interface DeviceOutcome {
+[*] interface DeviceOutcome { @@1 [key: string]: DeviceOutcomeEntry | null | undefined;
+[*] interface DeviceOutcome { @@1 android: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 ios: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 remote?: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcome { @@1 web?: DeviceOutcomeEntry | null;
+[*] interface DeviceOutcomeEntry {
+[*] interface DeviceOutcomeEntry { @@1 kind?: string | null;
+[*] interface DeviceOutcomeEntry { @@1 label?: string;
+[*] interface DeviceOutcomeEntry { @@1 reason?: string;
+[*] interface DeviceOutcomeEntry { @@1 remedy?: string;
+[*] interface DeviceOutcomeEntry { @@1 status: string;
+[*] interface DeviceOutcomeEntry { @@1 until?: string;
+[*] interface DevicePlacement {
+[*] interface DevicePlacement { @@1 decision: "local" | "hosted" | "waited-locally" | "eas";
+[*] interface DevicePlacement { @@1 machine?: string;
+[*] interface DevicePlacement { @@1 reason: string;
+[*] interface IosBuildFacts {
+[*] interface IosBuildFacts { @@1 appPath: string;
+[*] interface IosBuildFacts { @@1 arch: "arm64" | "x86_64" | null;
+[*] interface IosBuildFacts { @@1 buildMachine: string;
+[*] interface IosBuildFacts { @@1 builtOn: string | null;
+[*] interface IosBuildFacts { @@1 bundleId: string | null;
+[*] interface IosBuildFacts { @@1 cacheHit: string | boolean;
+[*] interface IosBuildFacts { @@1 cacheKey: string | null;
+[*] interface IosBuildFacts { @@1 cacheSkipped: boolean;
+[*] interface IosBuildFacts { @@1 compilationCache: CompilationCacheActivity;
+[*] interface IosBuildFacts { @@1 configuration: string;
+[*] interface IosBuildFacts { @@1 durationMs: number;
+[*] interface IosBuildFacts { @@1 links: {
+[*] interface IosBuildFacts { @@1 logs: {
+[*] interface IosBuildFacts { @@1 scheme: string | null;
+[*] interface IosBuildFacts { @@2 dir: string;
+[*] interface IosBuildFacts { @@2 workspace: string;
+[*] interface IosFacts {
+[*] interface IosFacts { @@1 agentDevice?: {
+[*] interface IosFacts { @@1 appPath?: string | null;
+[*] interface IosFacts { @@1 buildMachine?: string;
+[*] interface IosFacts { @@1 builtOn?: string;
+[*] interface IosFacts { @@1 bundleId?: string | null;
+[*] interface IosFacts { @@1 cacheHit: CacheHitLevel;
+[*] interface IosFacts { @@1 cacheKey?: string | null;
+[*] interface IosFacts { @@1 cacheSkipped: boolean;
+[*] interface IosFacts { @@1 compilationCache: CompilationCacheActivity;
+[*] interface IosFacts { @@1 configuration: string | null;
+[*] interface IosFacts { @@1 devServer?: DevServerStart;
+[*] interface IosFacts { @@1 deviceName: string | null;
+[*] interface IosFacts { @@1 devicePlacement?: DevicePlacement;
+[*] interface IosFacts { @@1 deviceType: string | null;
+[*] interface IosFacts { @@1 durationMs?: number;
+[*] interface IosFacts { @@1 fingerprint?: string | null;
+[*] interface IosFacts { @@1 host?: HostedIosStatus;
+[*] interface IosFacts { @@1 installSkipped: boolean;
+[*] interface IosFacts { @@1 launched: LaunchStatus;
+[*] interface IosFacts { @@1 lease?: RunLeaseFacts | null;
+[*] interface IosFacts { @@1 logs: LogsInfo;
+[*] interface IosFacts { @@1 metroPort?: number | null;
+[*] interface IosFacts { @@1 offloadFallback?: string;
+[*] interface IosFacts { @@1 offloadedTo?: string;
+[*] interface IosFacts { @@1 platform: string;
+[*] interface IosFacts { @@1 runtime: string | null;
+[*] interface IosFacts { @@1 scheme?: string;
+[*] interface IosFacts { @@1 slot?: string;
+[*] interface IosFacts { @@1 udid: string | null;
+[*] interface IosFacts { @@1 waitedForBuild: {
+[*] interface IosFacts { @@1 webPreviewUrl?: string | null;
+[*] interface IosFacts { @@1 } | null;
+[*] interface IosFacts { @@2 ms: number;
+[*] interface IosFacts { @@2 pid: number | null;
+[*] interface IosFacts { @@2 stateDir: string;
+[*] interface LogsInfo {
+[*] interface LogsInfo { @@1 dir?: string;
+[*] interface MacosBuild {
+[*] interface MacosBuild { @@1 buildMachine?: string;
+[*] interface MacosBuild { @@1 builtOn?: string;
+[*] interface MacosBuild { @@1 cacheHit?: boolean;
+[*] interface MacosBuild { @@1 cacheKey?: string;
+[*] interface MacosBuild { @@1 cacheSource?: "local" | "provider" | "peer";
+[*] interface MacosBuild { @@1 durationMs?: number;
+[*] interface MacosBuild { @@1 error?: string;
+[*] interface MacosBuild { @@1 errorCode?: string;
+[*] interface MacosBuild { @@1 fingerprint?: string;
+[*] interface MacosBuild { @@1 finishedAt?: string;
+[*] interface MacosBuild { @@1 offloadFallback?: string;
+[*] interface MacosBuild { @@1 offloadedTo?: string;
+[*] interface MacosBuild { @@1 startedAt: string;
+[*] interface MacosBuild { @@1 state: "running" | "ok" | "failed";
+[*] interface MacosBuildFacts {
+[*] interface MacosBuildFacts { @@1 build: MacosBuild;
+[*] interface MacosBuildFacts { @@1 bundle: string;
+[*] interface MacosBuildFacts { @@1 bundleId: string;
+[*] interface MacosBuildFacts { @@1 executable: string;
+[*] interface MacosBuildFacts { @@1 links: {
+[*] interface MacosBuildFacts { @@1 logs: {
+[*] interface MacosBuildFacts { @@1 product: string;
+[*] interface MacosBuildFacts { @@2 dir: string;
+[*] interface MacosBuildFacts { @@2 workspace: string;
+[*] interface MetroOutcome {
+[*] interface MetroOutcome { @@1 pid?: number | null;
+[*] interface MetroOutcome { @@1 port?: number | null;
+[*] interface MetroOutcome { @@1 reason?: string;
+[*] interface MetroOutcome { @@1 status: string;
+[*] interface NativeRunOptions {
+[*] interface NativeRunOptions { @@1 buildCache?: boolean;
+[*] interface NativeRunOptions { @@1 device?: string | boolean;
+[*] interface NativeRunOptions { @@1 easProfile?: string;
+[*] interface NativeRunOptions { @@1 metroCheck?: boolean;
+[*] interface NativeRunOptions { @@1 remote?: string;
+[*] interface NativeRunOptions { @@1 remoteBuild?: string;
+[*] interface NativeRunOptions { @@1 slot?: string;
+[*] interface NativeRunOptions { @@1 wait?: string | boolean;
+[*] interface PortOutcome {
+[*] interface PortOutcome { @@1 port?: number | null;
+[*] interface PortOutcome { @@1 reason?: string;
+[*] interface PortOutcome { @@1 status: string;
+[*] interface ReleasedLease {
+[*] interface ReleasedLease { @@1 deviceName: string | null;
+[*] interface ReleasedLease { @@1 expiresAt: string;
+[*] interface ReleasedLease { @@1 id: string;
+[*] interface ReleasedLease { @@1 platform: LeasePlatform;
+[*] interface RunExtras {
+[*] interface RunExtras { @@1 cleanAppState?: boolean;
+[*] interface RunExtras { @@1 recordedBuild?: boolean;
+[*] interface RunExtras { @@1 signal?: AbortSignal;
+[*] interface RunLeaseFacts {
+[*] interface RunLeaseFacts { @@1 expiresAt: string;
+[*] interface RunLeaseFacts { @@1 kind: string;
+[*] interface StimOptions {
+[*] interface StimOptions { @@1 @internal admission?: "command" | "none";
+[*] interface StimOptions { @@1 buildCacheDir?: string;
+[*] interface StimOptions { @@1 env?: NodeJS.ProcessEnv;
+[*] interface StimOptions { @@1 home?: string;
+[*] interface StimOptions { @@1 onProgress?: (event: StimProgress) => void;
+[*] interface StimOptions { @@1 projectRoot: string;
+[*] interface StimProgress {
+[*] interface StimProgress { @@1 message: string;
+[*] interface StimProgress { @@1 stream: "stdout" | "stderr";
+[*] interface StopOutcomes {
+[*] interface StopOutcomes { @@1 collectors: CollectorsOutcome;
+[*] interface StopOutcomes { @@1 device: DeviceOutcome;
+[*] interface StopOutcomes { @@1 macos?: {
+[*] interface StopOutcomes { @@1 metro: MetroOutcome;
+[*] interface StopOutcomes { @@1 metroTunnel: TunnelOutcome;
+[*] interface StopOutcomes { @@1 port: PortOutcome;
+[*] interface StopOutcomes { @@1 releasedLeases: ReleasedLease[];
+[*] interface StopOutcomes { @@1 supervisor: SupervisorOutcome;
+[*] interface StopOutcomes { @@2 reason?: string;
+[*] interface StopOutcomes { @@2 status: string;
+[*] interface StopResult {
+[*] interface StopResult { @@1 ok: boolean;
+[*] interface StopResult { @@1 outcomes: StopOutcomes;
+[*] interface StopResult { @@1 summary: string;
+[*] interface SupervisorOutcome {
+[*] interface SupervisorOutcome { @@1 mode?: string | null;
+[*] interface SupervisorOutcome { @@1 pid?: number;
+[*] interface SupervisorOutcome { @@1 port?: number | null;
+[*] interface SupervisorOutcome { @@1 reason?: string;
+[*] interface SupervisorOutcome { @@1 status: string;
+[*] interface TunnelOutcome {
+[*] interface TunnelOutcome { @@1 provider?: string;
+[*] interface TunnelOutcome { @@1 reason?: string;
+[*] interface TunnelOutcome { @@1 status: string;
+[*] interface WebBrowserState {
+[*] interface WebBrowserState { @@1 activity?: DeviceActivity;
+[*] interface WebBrowserState { @@1 browser: "chrome";
+[*] interface WebBrowserState { @@1 cdpEndpoint: string | null;
+[*] interface WebBrowserState { @@1 headless: boolean;
+[*] interface WebBrowserState { @@1 page?: WebPageState | null;
+[*] interface WebBrowserState { @@1 pid: number | null;
+[*] interface WebBrowserState { @@1 profile: string;
+[*] interface WebBrowserState { @@1 running: boolean;
+[*] interface WebBrowserState { @@1 supervisorPid: number | null;
+[*] interface WebBrowserState { @@1 targetId: string | null;
+[*] interface WebBrowserState { @@1 url: string;
+[*] interface WebBrowserState { @@1 version: string | null;
+[*] interface WebBrowserState { @@1 viewport: WebViewport;
+[*] interface WebFacts extends WebBrowserState {
+[*] interface WebFacts extends WebBrowserState { @@1 durationMs: number;
+[*] interface WebFacts extends WebBrowserState { @@1 launched: WebLaunched;
+[*] interface WebFacts extends WebBrowserState { @@1 logs: {
+[*] interface WebFacts extends WebBrowserState { @@1 metroPort: number | null;
+[*] interface WebFacts extends WebBrowserState { @@1 platform: "web";
+[*] interface WebFacts extends WebBrowserState { @@1 reused: boolean;
+[*] interface WebFacts extends WebBrowserState { @@2 dir: string;
+[*] interface WebPageState {
+[*] interface WebPageState { @@1 error?: string;
+[*] interface WebPageState { @@1 route?: string;
+[*] interface WebPageState { @@1 state: (typeof WEB_PAGE_STATES)[number];
+[*] interface WebPageState { @@1 url: string;
+[*] type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
+[*] type ActivityState = "driven" | "active" | "idle" | "unknown";
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, {
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "android";
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform"> & {
+[*] type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@1 easProfile?: string;
+[*] type CacheHitLevel = "local" | "remote" | false;
+[*] type HostedAgentAccess = {
+[*] type HostedAgentAccess = { @@1 driver: "none";
+[*] type HostedAgentAccess = { @@1 setting: "hosting.agentDriver";
+[*] type HostedAgentAccess = { @branch1 @@0 } | {
+[*] type HostedAgentAccess = { @branch1 @@1 command: string;
+[*] type HostedAgentAccess = { @branch1 @@1 driver: string;
+[*] type HostedAgentAccess = { @branch1 @@1 remoteConfig: string;
+[*] type HostedAndroidStatus = {
+[*] type HostedAndroidStatus = { @@1 agent: HostedAgentAccess;
+[*] type HostedAndroidStatus = { @@1 device: {
+[*] type HostedAndroidStatus = { @@1 machine: string;
+[*] type HostedAndroidStatus = { @@1 reason?: string;
+[*] type HostedAndroidStatus = { @@1 selected: string;
+[*] type HostedAndroidStatus = { @@1 session: string;
+[*] type HostedAndroidStatus = { @@1 state?: string;
+[*] type HostedAndroidStatus = { @@1 } | null;
+[*] type HostedAndroidStatus = { @@2 api: number;
+[*] type HostedAndroidStatus = { @@2 name: string;
+[*] type HostedAndroidStatus = { @@2 systemImage: string;
+[*] type HostedIosStatus = {
+[*] type HostedIosStatus = { @@1 agent: HostedAgentAccess;
+[*] type HostedIosStatus = { @@1 device: {
+[*] type HostedIosStatus = { @@1 machine: string;
+[*] type HostedIosStatus = { @@1 reason?: string;
+[*] type HostedIosStatus = { @@1 selected: string;
+[*] type HostedIosStatus = { @@1 session: string;
+[*] type HostedIosStatus = { @@1 state?: string;
+[*] type HostedIosStatus = { @@1 } | null;
+[*] type HostedIosStatus = { @@2 name: string;
+[*] type HostedIosStatus = { @@2 runtime: string;
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, {
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "ios";
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform"> & {
+[*] type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@1 easProfile?: string;
+[*] type LaunchStatus = boolean | "unverified" | "bundling";
+[*] type LeasePlatform = "ios" | "android";
+[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, {
+[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { @@1 platform: "macos";
+[*] type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { @branch1 @@0 }>, "platform">;
+[*] type PlatformBuildOptions = {
+[*] type PlatformBuildOptions = { @@1 arch?: "arm64" | "x86_64" | "all";
+[*] type PlatformBuildOptions = { @@1 buildCache?: boolean;
+[*] type PlatformBuildOptions = { @@1 configuration?: string;
+[*] type PlatformBuildOptions = { @@1 platform: "ios";
+[*] type PlatformBuildOptions = { @@1 remoteBuild?: string;
+[*] type PlatformBuildOptions = { @@1 scheme?: string;
+[*] type PlatformBuildOptions = { @branch1 @@0 } | {
+[*] type PlatformBuildOptions = { @branch1 @@1 abi?: "arm64-v8a" | "armeabi-v7a" | "x86" | "x86_64" | "all";
+[*] type PlatformBuildOptions = { @branch1 @@1 buildCache?: boolean;
+[*] type PlatformBuildOptions = { @branch1 @@1 platform: "android";
+[*] type PlatformBuildOptions = { @branch1 @@1 remoteBuild?: string;
+[*] type PlatformBuildOptions = { @branch1 @@1 variant?: string;
+[*] type PlatformBuildOptions = { @branch2 @@0 } | {
+[*] type PlatformBuildOptions = { @branch2 @@1 platform: "macos";
+[*] type PlatformBuildOptions = { @branch2 @@1 remoteBuild?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & {
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 configuration?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 deviceType?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 platform: "ios";
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 runtime?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 scheme?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @@1 simulatorApp?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@0 }) | (NativeRunOptions & {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 deviceProfile?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 platform: "android";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 systemImage?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch1 @@1 variant?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@0 }) | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 platform: "macos";
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remote?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch2 @@1 remoteBuild?: string;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@0 } | {
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@1 headed?: boolean;
+[*] type PlatformRunOptions = (NativeRunOptions & { @branch3 @@1 platform: "web";
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @@1 wait?: unknown;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@0 } ? Omit<Options, "wait"> & {
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
+[*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
+[*] type StimBuildOptions = ((IosBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @@1 platform: "ios";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@0 }) | (AndroidBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch1 @@1 platform: "android";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@0 }) | (MacosBuildOptions & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch2 @@1 platform: "macos";
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@0 })) & {
+[*] type StimBuildOptions = ((IosBuildOptions & { @branch3 @@1 signal?: AbortSignal;
+[*] type StimBuildResult = {
+[*] type StimBuildResult = { @@1 facts: IosBuildFacts;
+[*] type StimBuildResult = { @@1 platform: "ios";
+[*] type StimBuildResult = { @branch1 @@0 } | {
+[*] type StimBuildResult = { @branch1 @@1 facts: AndroidBuildFacts;
+[*] type StimBuildResult = { @branch1 @@1 platform: "android";
+[*] type StimBuildResult = { @branch2 @@0 } | {
+[*] type StimBuildResult = { @branch2 @@1 facts: MacosBuildFacts;
+[*] type StimBuildResult = { @branch2 @@1 platform: "macos";
+[*] type StimRunOptions = RunSelectors & RunExtras;
+[*] type StimRunResult = {
+[*] type StimRunResult = { @@1 facts: IosFacts;
+[*] type StimRunResult = { @@1 platform: "ios";
+[*] type StimRunResult = { @branch1 @@0 } | {
+[*] type StimRunResult = { @branch1 @@1 facts: AndroidFacts;
+[*] type StimRunResult = { @branch1 @@1 platform: "android";
+[*] type StimRunResult = { @branch2 @@0 } | {
+[*] type StimRunResult = { @branch2 @@1 facts: {
+[*] type StimRunResult = { @branch2 @@1 platform: "macos";
+[*] type StimRunResult = { @branch2 @@2 build: MacosBuild;
+[*] type StimRunResult = { @branch2 @@2 bundle: string;
+[*] type StimRunResult = { @branch2 @@2 bundleId: string;
+[*] type StimRunResult = { @branch2 @@2 executable: string;
+[*] type StimRunResult = { @branch2 @@2 launched: LaunchStatus;
+[*] type StimRunResult = { @branch2 @@2 logs: {
+[*] type StimRunResult = { @branch2 @@2 pid: number | null;
+[*] type StimRunResult = { @branch2 @@2 product: string;
+[*] type StimRunResult = { @branch2 @@3 dir: string;
+[*] type StimRunResult = { @branch3 @@0 } | {
+[*] type StimRunResult = { @branch3 @@1 facts: WebFacts;
+[*] type StimRunResult = { @branch3 @@1 platform: "web";
+[*] type StimStopResult = StopResult;
+[*] type WebLaunched = true | "bundling" | "unverified";
+[*] type WebViewport = (typeof WEB_VIEWPORTS)[number];
+[*] type WithoutKeys<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

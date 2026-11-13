@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import type { BuildCacheCapability, CacheProvider } from '@stim-cli/cache';
+import type { BuildCacheCapability, CacheProvider, LocalBuildCache } from '@stim-cli/cache';
 import type { FingerprintCheck } from '../fingerprint/operation.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
@@ -38,7 +38,7 @@ export interface AndroidArtifactRecipe {
   identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
-  cache(compiled?: boolean): BuildCacheCapability;
+  cache(compiled?: boolean): LocalBuildCache;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<AndroidSourcePreparation>;
   validate(): Promise<AndroidArtifactIdentity | null>;

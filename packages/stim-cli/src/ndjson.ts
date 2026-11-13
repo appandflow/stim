@@ -41,7 +41,15 @@ export function createNdjsonWriter(
     fields = {},
     maxBytes,
     now = Date.now,
-  }: { truncate?: boolean; fields?: Record<string, unknown>; maxBytes?: number; now?: () => number } = {},
+    reportFailures = false,
+  }: {
+    truncate?: boolean;
+    fields?: Record<string, unknown>;
+    maxBytes?: number;
+    now?: () => number;
+    /** Print the first failure of a streak to stderr, and log the dropped count and last error when writes recover. */
+    reportFailures?: boolean;
+  } = {},
 ): NdjsonWriter {
   let fd: number | null = null;
   let freshFile = truncate;
@@ -51,6 +59,8 @@ export function createNdjsonWriter(
   let dropped = 0;
   let lastError: Error | null = null;
   let closed = false;
+  let failing = false;
+  let droppedAtFailure = 0;
 
   function open(): void {
     ensurePrivateDir(dirname(file));
@@ -90,6 +100,18 @@ export function createNdjsonWriter(
       writeSync(fd as number, line);
       uncheckedBytes += Buffer.byteLength(line);
       written += 1;
+      if (failing) {
+        failing = false;
+        const lost = dropped - droppedAtFailure;
+        write({
+          src: 'stimd',
+          level: 'warn',
+          event: 'log_writer_dropped',
+          msg: `the log writer dropped ${lost} records: ${lastError?.message}`,
+          dropped: lost,
+          lastError: lastError?.message,
+        });
+      }
       return true;
     } catch (err) {
       if (fd !== null) {
@@ -100,6 +122,13 @@ export function createNdjsonWriter(
       }
       dropped += 1;
       lastError = err as Error;
+      if (reportFailures && !failing) {
+        failing = true;
+        droppedAtFailure = dropped - 1;
+        try {
+          writeSync(2, `stimd: cannot write ${file}: ${lastError.message}\n`);
+        } catch {}
+      }
       return false;
     }
   }

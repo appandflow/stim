@@ -14,7 +14,7 @@ import { send, type ConnectionContext } from './context.ts';
 import { isJsonObject, validRunId } from '@stim-cli/core/state';
 import { CLOSE_REFUSED, HOME_UNAVAILABLE_MESSAGE } from '@stim-cli/core/noise-session';
 import { homedir } from 'node:os';
-import { engineRoot, readRecords } from 'stim/engine-state';
+import { engineRoot, readRecords } from 'stim/internal/engine-state';
 
 export const CLOSE_BAD_REQUEST = 4400;
 
@@ -65,8 +65,17 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
     return ctx.refuse(id, 'bad-request', 'hello needs params.client.', CLOSE_BAD_REQUEST);
   }
   const access = params.access;
-  if (access !== undefined && access !== 'build' && access !== 'device-host') {
-    return ctx.refuse(id, 'bad-request', 'params.access is build or device-host.', CLOSE_BAD_REQUEST);
+  if (access !== undefined && access !== 'build' && access !== 'device-host' && access !== 'test') {
+    return ctx.refuse(id, 'bad-request', 'params.access is build, device-host or test.', CLOSE_BAD_REQUEST);
+  }
+  // @ref LLP 0020#test-approval -- the local socket never acts as a test client
+  if (access === 'test' && ctx.local) {
+    return ctx.refuse(
+      id,
+      'forbidden',
+      'Test access is for another machine, approved with `stim setup --test` here.',
+      CLOSE_REFUSED,
+    );
   }
   if (access === 'device-host' && !ctx.hostsDevices) {
     return ctx.refuse(

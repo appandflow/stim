@@ -16,7 +16,7 @@ import {
 import { isJsonObject as isRecord } from '@stim-cli/core/state';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { startKitWorker, type KitWorker } from '../kit-host.ts';
-import { runContract } from '../transport-kit.ts';
+import { runContract } from '../plugin-kit.ts';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../../../../test/fixtures/plugins/${name}`, import.meta.url));
 const session = '11111111-1111-4111-8111-111111111111';

@@ -112,7 +112,7 @@ beforeAll(() => {
   }
   appendFileSync(
     join(installed('b'), 'dist', 'cli.mjs'),
-    `\nif (process.argv[2] === '__stimd' && (await import('node:fs')).existsSync(process.env.STIM_HOME + '/crash'))\n  setTimeout(() => { throw new Error('crash for the rollback test'); }, 300);\n`,
+    `\nconst fs = await import('node:fs');\nif (process.argv[2] === '__stimd' && fs.existsSync(process.env.STIM_HOME + '/crash'))\n  setTimeout(() => { const homeFault = fs.readFileSync(process.env.STIM_HOME + '/crash', 'utf8') === 'home'; throw Object.assign(new Error('crash for the rollback test'), homeFault ? { code: 'STIM_CONFIG_CORRUPT' } : {}); }, 300);\n`,
   );
   appendFileSync(join(installed('c'), 'dist', 'api.mjs'), `\nglobalThis.__stimApiLoadedFrom = 'c';\n`);
   const bin = join(tmp, 'fake-bin');
@@ -142,6 +142,13 @@ test.skipIf(process.platform === 'win32')(
     expect(readJson(join(root, 'state.json')).installedBy).toBe('install:machine');
     const b: string = select('b', ['--explicit', '--set-by', 'test']).flipped;
     expect(b).toMatch(/^[0-9a-f]{12}$/);
+
+    writeFileSync(join(home, 'crash'), 'home');
+    for (let crash = 0; crash < 3; crash++) expect(await bootOnce(b)).toBe(1);
+    expect(await bootOnce(b)).toBe(0);
+    expect(readJson(join(root, 'current.json')).dir).toBe(b);
+    expect(readJson(join(root, 'state.json')).bad).toEqual([]);
+    rmSync(join(home, 'run', 'stimd-boots.json'));
 
     writeFileSync(join(home, 'crash'), '');
     for (let crash = 0; crash < 3; crash++) expect(await bootOnce(b)).toBe(1);

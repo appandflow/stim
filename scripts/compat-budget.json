@@ -99,6 +99,11 @@
       "loc": 88,
       "end": "2.1.0",
       "mechanism": "stimd stops a pre-2.0 stim-daemon that holds the daemon claim, by its verified process identity, and the CLI refuses a holder it will not stop"
+    },
+    "C33": {
+      "loc": 19,
+      "end": "2026-12-12",
+      "mechanism": "createStim and stim/ci refuse the renamed buildCache, run wait, diagnostics errors and gc() for 30 days, naming the new name"
     }
   },
   "words": {

@@ -43,7 +43,7 @@ import {
 } from '@stim-cli/core/state';
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { type ServerMessage } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
 import {
@@ -51,13 +51,15 @@ import {
   createPairingToken,
   readBuildClients,
   readDeviceHostClients,
+  readDevices,
+  readTestClients,
   dropSetupSecret,
   secretPsk,
   storeSetupSecret,
   watchClientRegistries,
 } from '../src/registry.ts';
 import { pruneSetupJournals, writeSetupJournal } from '../src/setup-journal.ts';
-import { setupClaim, type SetupDeps } from '../src/setup.ts';
+import { runSetup, setupClaim, type SetupDeps } from '../src/setup.ts';
 import { fetchHealth } from '../src/service.ts';
 import type { InstalledService } from '../src/service-plist.ts';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
@@ -756,8 +758,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       const held = claim?.acquired;
       let recovered = false;
       let first = true;
-      const original = stimSelf.createStim;
-      const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+      const original = stimSelf.createLocalStim;
+      const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
         const client = original(options);
         return {
           ...client,
@@ -1259,7 +1261,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     }),
     recordRoute: async () => {},
     createRoute: never,
-    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    records: () => [...readBuildClients(), ...readDeviceHostClients(), ...readTestClients()],
     watchRecords: watchClientRegistries,
     storeSecret: storeSetupSecret,
     dropSecret: dropSetupSecret,
@@ -1437,6 +1439,37 @@ describe('setup approval in Stim Desktop on this machine', () => {
     ]);
     expect(readDeviceHostClients()).toEqual([]);
     expect(readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8')).not.toContain(asked.ticket);
+  });
+
+  it('refuses a test request, which only a terminal approves', async () => {
+    await start({ setupDeps });
+    const desktopClient = await desktop();
+    for (const capabilities of [['test'], ['build', 'test']]) {
+      const asked = request(capabilities);
+      expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining('--test in a terminal') },
+      });
+      expect(asked.stored()).toBe(false);
+    }
+  });
+
+  it('records a test request approved in a terminal only in the test registry, and its client may update the engine', async () => {
+    const port = await start({ setupDeps });
+    const asked = request(['test']);
+    const args = ['--expires', asked.params.expires, '--test', '--yes', '--port', String(port)];
+    const finished = runSetup(args, '1.2.3', { ...setupDeps(), ticket: asked.ticket });
+    await until(asked.stored);
+    const keyPair = generateNoiseKeyPair();
+    const requester = await connect(port, '100.64.0.2', { secret: asked.ticket, keyPair, name: 'Laptop' });
+    expect(await requester.request('hello', { client: CLIENT, access: 'test' })).toHaveProperty('result.capabilities', [
+      'test',
+    ]);
+    expect(await finished).toBe(0);
+    expect(readTestClients()).toEqual([
+      expect.objectContaining({ name: 'Laptop', publicKey: keyPair.publicKey.toString('base64url') }),
+    ]);
+    expect([...readDevices(), ...readBuildClients(), ...readDeviceHostClients()]).toEqual([]);
+    expect(await requester.request('engine.update.status')).toHaveProperty('result');
   });
 
   it('stores nothing when the person refuses every grant', async () => {
@@ -1875,8 +1908,8 @@ describe('build.plan', () => {
       fail: (cause: Error) => void;
     }[] = [];
     let cancelled = 0;
-    const original = stimSelf.createStim;
-    const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => ({
+    const original = stimSelf.createLocalStim;
+    const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => ({
       ...original(options),
       plan: async (request) => {
         assert(request.platform !== 'macos');

@@ -1,9 +1,11 @@
 import {
   daemonClaimRoot,
   daemonNdjsonFile,
+  anyCrashLoop,
   daemonSnapshotFile,
   parseUnverifiedCleanups,
   readDaemonSnapshot,
+  readStimdBoots,
   type DaemonStatus,
 } from '@stim-cli/core/state';
 import { formatBytes } from '../fs-util.ts';
@@ -14,7 +16,11 @@ import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
+import { crashHoldRemedy } from '../stimd/crash-hold.ts';
+import { ownStoreEngine } from './engine-switch.ts';
 import { daemonMode, parseDaemonMode } from './mode.ts';
+
+const DAY_MS = 86_400_000;
 
 /**
  * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last
@@ -38,6 +44,21 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
   const mode = runningMode ?? setting;
   const unverified = parseUnverifiedCleanups(holder?.details.unverified);
+  const now = Date.now();
+  const boots = readStimdBoots();
+  const loop = anyCrashLoop(boots, now);
+  const abnormalExits = boots
+    .filter((boot) => boot.abnormal && now - (boot.exitedAt ?? boot.at) < DAY_MS)
+    .map((boot) => {
+      const exit = {
+        at: new Date(boot.exitedAt ?? boot.at).toISOString(),
+        build: boot.build,
+        pid: boot.pid,
+        reason: boot.reason ?? 'unknown',
+        cause: boot.cause ?? 'engine',
+      };
+      return boot.home ? Object.assign(exit, { home: boot.home }) : exit;
+    });
   return {
     mode,
     ...(mode === setting ? {} : { setting }),
@@ -49,6 +70,17 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     ...(testWaiting.length ? { testWaiting } : {}),
     ...(read?.recent?.length ? { recent: read.recent } : {}),
     ...(unverified.length ? { unverified } : {}),
+    ...(loop
+      ? {
+          crashHold: {
+            build: loop.build,
+            count: loop.count,
+            until: new Date(loop.until).toISOString(),
+            remedy: crashHoldRemedy(loop, ownStoreEngine() !== null),
+          },
+        }
+      : {}),
+    ...(abnormalExits.length ? { abnormalExits } : {}),
     ...(unresolved
       ? {
           claim: {
@@ -66,6 +98,19 @@ export function unverifiedLines(status: DaemonStatus, now: number = Date.now()):
     (entry) =>
       `Daemon waits ${formatLongDuration(Math.max(0, now - Date.parse(entry.since)))} for child ${entry.child}, whose cleanup was not verified: ${entry.message} ${entry.remedy}`,
   );
+}
+
+/** The hold, and the last abnormal exits with when and why, which `stim status` prints under the daemon line. */
+export function crashLines(status: DaemonStatus): string[] {
+  const hold = status.crashHold
+    ? [`stimd is held after ${status.crashHold.count} abnormal exits in 10 minutes: ${status.crashHold.remedy}`]
+    : [];
+  return [
+    ...hold,
+    ...(status.abnormalExits ?? [])
+      .slice(-3)
+      .map((exit) => `stimd exited abnormally at ${exit.at} (build ${exit.build}): ${exit.reason.split('\n')[0]}`),
+  ];
 }
 
 function clock(iso: string): string {
@@ -147,6 +192,22 @@ export function daemonFindings(
       detail: `Since ${entry.since}: ${entry.message} Until child ${entry.child} has stopped, the daemon does not exit when idle or switch engines, and the claims that child holds stay taken.`,
       fix: entry.remedy,
     });
+  if (status.crashHold)
+    findings.push({
+      level: 'cost',
+      title: 'stimd is held after a crash loop',
+      detail: `${status.crashHold.remedy} Until then no stimd starts in this Stim home, so no maintenance, idle stop or log capture runs.`,
+      fix: `Run \`stim doctor --fix\` to clear the hold, fix the cause named in ${daemonNdjsonFile()}, or wait until ${status.crashHold.until}.`,
+    });
+  else if (status.abnormalExits?.length) {
+    const last = status.abnormalExits[status.abnormalExits.length - 1];
+    findings.push({
+      level: 'note',
+      title: `stimd exited abnormally ${status.abnormalExits.length === 1 ? 'once' : `${status.abnormalExits.length} times`} in the last day`,
+      detail: `The last exit was at ${last?.at}: ${last?.reason.split('\n')[0]}. Three in 10 minutes hold stimd back.`,
+      fix: `${daemonNdjsonFile()} has the stimd_predecessor_lost and daemon_exited records.`,
+    });
+  }
   if (status.mode === 'off') return findings;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const late = 3 * (status.intervalMs ?? 60_000);

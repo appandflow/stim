@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveTieredBuild, storeTieredBuild } from '../builds.ts';
-import type { BuildCacheCapability, BuildCacheTarget } from '../provider.ts';
+import type { BuildCacheCapability, BuildCacheTarget, BuildResolveInput, BuildStoreInput } from '../provider.ts';
 
 let workDir: string;
 
@@ -27,16 +27,21 @@ function artifact(name: string): string {
 
 const target: BuildCacheTarget = { projectRoot: '/repo/app', platform: 'android', key: 'fingerprint-debug-sim' };
 
-function capability(overrides: Partial<BuildCacheCapability> = {}) {
+interface Overrides {
+  resolve?: (input: BuildResolveInput) => string | null | Promise<string | null>;
+  store?: (input: BuildStoreInput) => string | null | void | Promise<string | null | void>;
+}
+
+function capability(overrides: Overrides = {}) {
   const calls = { resolve: 0, store: 0 };
   const inputs: { resolve: unknown[]; store: unknown[] } = { resolve: [], store: [] };
   const cap: BuildCacheCapability = {
-    resolve: (input) => {
+    resolve: async (input) => {
       calls.resolve += 1;
       inputs.resolve.push(input);
       return overrides.resolve ? overrides.resolve(input) : null;
     },
-    store: (input) => {
+    store: async (input) => {
       calls.store += 1;
       inputs.store.push(input);
       return overrides.store ? overrides.store(input) : undefined;

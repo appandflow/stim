@@ -116,12 +116,11 @@
                   "stim/**",
                   "!stim/package.json",
                   "!stim/cache-manifest",
-                  "!stim/pull-requests",
-                  "!stim/share-links",
-                  "!stim/build-artifact-cache",
+                  "!stim/internal/pull-requests",
+                  "!stim/internal/share-links",
                   "!stim/ci",
                   "!stim/ci/artifacts",
-                  "!stim/attached-stimd"
+                  "!stim/internal/attached-stimd"
                 ]
               }
             ]
@@ -158,13 +157,12 @@
                   "stim/**",
                   "!stim/package.json",
                   "!stim/cache-manifest",
-                  "!stim/pull-requests",
-                  "!stim/share-links",
-                  "!stim/build-artifact-cache",
+                  "!stim/internal/pull-requests",
+                  "!stim/internal/share-links",
                   "!stim/ci",
                   "!stim/ci/artifacts",
-                  "!stim/api-self",
-                  "!stim/engine-state"
+                  "!stim/internal/api-self",
+                  "!stim/internal/engine-state"
                 ]
               }
             ]

@@ -1,7 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { readFailure, send, type ConnectionContext } from './context.ts';
 import type { StimLogsOptions } from 'stim';
-import { createStim } from 'stim/api-self';
+import { createLocalStim } from 'stim/internal/api-self';
 import {
   type NdjsonRecord,
   isJsonObject,
@@ -46,7 +46,7 @@ function collect(ctx: ConnectionContext, query: StimLogsOptions, cwd: string): P
   ctx.running.add(cancel);
   task = Promise.resolve()
     .then(() =>
-      createStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).logs({
+      createLocalStim({ projectRoot: cwd, env: ctx.options.env, admission: 'none' }).logs({
         ...query,
         signal: abort.signal,
       }),
@@ -246,7 +246,7 @@ export function setRecording(ctx: ConnectionContext, id: RequestId, params: unkn
         }, ctx.actionLimits.timeoutMs);
         const task = Promise.resolve()
           .then(() =>
-            createStim({ projectRoot: homedir(), env: ctx.options.env, admission: 'none' }).setSetting(
+            createLocalStim({ projectRoot: homedir(), env: ctx.options.env, admission: 'none' }).setSetting(
               'recording.enabled',
               String(enabled),
               { scope: 'machine', signal: abort.signal },

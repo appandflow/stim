@@ -4,8 +4,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installKind } from '../../bin/route.mjs';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
 import { engineRoot, FORMAT } from '../engine-store/store.ts';
+import { RUN_OP_WIRE } from './run-op-version.ts';
 
-/** F3's per-op entry: `dist/api.mjs` and `dist/ci.mjs` export it; it resolves the result or rejects a plain failure. */
+/** F3's per-op entry: `dist/api.mjs` exports it; it resolves the result or rejects a plain failure. */
 export type RunOp = (name: string, args: unknown[], ctx: unknown) => Promise<unknown>;
 
 let pointer: { root: string; key: string; dir: string | null } | null = null;
@@ -51,9 +52,19 @@ export function loadEngineRunOp(dir: string): Promise<RunOp | null> {
   let module = modules.get(dir);
   if (!module) {
     module = import(pathToFileURL(join(dir, 'dist', 'api.mjs')).href).then(
-      (api: { runOp?: unknown }) => {
+      (api: { runOp?: unknown; RUN_OP_VERSION?: unknown }) => {
         const { runOp } = api;
         if (typeof runOp !== 'function') return null;
+        const theirs = api.RUN_OP_VERSION ?? 1;
+        if (theirs !== RUN_OP_WIRE) {
+          const refusal = {
+            code: 'STIM_ENGINE_UNAVAILABLE',
+            message: `The machine engine speaks run-op ${String(theirs)}, and this stim speaks ${RUN_OP_WIRE}.`,
+            remedy: 'Run stim engine update, or update the project to the same stim version as the engine.',
+          };
+          const refuse: RunOp = () => Promise.reject(refusal);
+          return refuse;
+        }
         const run: RunOp = (name, args, ctx) => Reflect.apply(runOp, undefined, [name, args, ctx]);
         return run;
       },

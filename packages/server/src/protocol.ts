@@ -833,7 +833,7 @@ export function protocolJsonSchema(): JsonSchema {
               desktopApi: { type: 'integer' },
             },
           },
-          access: { enum: ['build', 'device-host'] },
+          access: { enum: ['build', 'device-host', 'test'] },
           desktopBootstrap: { const: true },
         },
       },

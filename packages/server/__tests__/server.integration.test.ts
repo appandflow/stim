@@ -63,7 +63,7 @@ import {
   settingsJsonSchema,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
-import * as stimSelf from 'stim/api-self';
+import * as stimSelf from 'stim/internal/api-self';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
@@ -92,6 +92,7 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readTestClients,
   revokeDevice,
   serverDir,
   serverIdentity,
@@ -116,8 +117,8 @@ test('server close cancels a home identity waiting on the config lock', async ()
   const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
   assert(lock);
   let entered = false;
-  const original = stimSelf.createStim;
-  const api = vi.spyOn(stimSelf, 'createStim').mockImplementation((options) => {
+  const original = stimSelf.createLocalStim;
+  const api = vi.spyOn(stimSelf, 'createLocalStim').mockImplementation((options) => {
     const client = original(options);
     return {
       ...client,
@@ -837,7 +838,38 @@ describe('setup approval', () => {
     expect(await unpaired.request('hello', { client: CLIENT })).toMatchObject({ error: { code: 'unauthorized' } });
   });
 
-  describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
+  test('a test ticket records test access alone, which a build client and this machine never get', async () => {
+    const port = await start();
+    const ticket = newSecret();
+    storeSetupSecret(Buffer.from(ticket, 'base64url'), ['test'], new Date(Date.now() + 60_000).toISOString());
+    const keyPair = generateNoiseKeyPair();
+    const first = await connect(port, '100.64.0.2', { secret: ticket, keyPair, name: 'Laptop' });
+    expect(await first.request('hello', { client: CLIENT, access: 'test' })).toMatchObject({
+      result: { capabilities: ['test'], actions: [] },
+    });
+    expect(readTestClients()).toEqual([
+      expect.objectContaining({
+        name: 'Laptop',
+        publicKey: keyPair.publicKey.toString('base64url'),
+        capabilities: ['test'],
+      }),
+    ]);
+    expect([...readDevices(), ...readBuildClients(), ...readDeviceHostClients()]).toEqual([]);
+
+    const builder = setupClient(['build']);
+    const asking = await connect(port, '100.64.0.3', { keyPair: builder.keyPair });
+    expect(await asking.request('hello', { client: CLIENT, access: 'test' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+
+    assert(server);
+    const local = await localConnect(server);
+    expect(await local.request('hello', { client: CLIENT, access: 'test' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+  });
+
+  describe.each(['build', 'device-host', 'test'] as const)('%s access', (capability) => {
     test('serves no read method and only its own capability, until revoked', async () => {
       const port = await start();
       const { keyPair, records: made } = setupClient([capability]);
@@ -845,10 +877,16 @@ describe('setup approval', () => {
       const otherCapability: [string, unknown][] =
         capability === 'build'
           ? [['device-host.offer', { platform: 'ios' }]]
-          : [
-              ['build.offer', undefined],
-              ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
-            ];
+          : capability === 'device-host'
+            ? [
+                ['build.offer', undefined],
+                ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
+              ]
+            : [
+                ['build.offer', undefined],
+                ['device-host.offer', { platform: 'ios' }],
+                ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
+              ];
       const refused: [string, unknown][] = [
         ['machine.subscribe', undefined],
         ['machine.get', undefined],
@@ -860,11 +898,12 @@ describe('setup approval', () => {
       for (const [method, params] of refused) {
         expect(await approved.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
       }
-      const other = capability === 'build' ? 'device-host' : 'build';
-      const wider = await connect(port, '100.64.0.2', { keyPair });
-      expect(await wider.request('hello', { client: CLIENT, access: other })).toMatchObject({
-        error: { code: 'forbidden' },
-      });
+      for (const other of (['build', 'device-host', 'test'] as const).filter((each) => each !== capability)) {
+        const wider = await connect(port, '100.64.0.2', { keyPair });
+        expect(await wider.request('hello', { client: CLIENT, access: other })).toMatchObject({
+          error: { code: 'forbidden' },
+        });
+      }
 
       expect(revokeDevice(made[capability]!.id)).toBe(true);
       expect(await approved.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
@@ -948,7 +987,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       protocol: 2,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
-      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, resumes: true },
+      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, tests: 0, resumes: true },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
       keepAwake: { setting: false, held: false, reason: 'off' },
@@ -3371,7 +3410,7 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const api = vi.spyOn(stimSelf, 'createStim');
+    const api = vi.spyOn(stimSelf, 'createLocalStim');
     const methods = [
       'desktop.start.subscribe',
       'desktop.run.subscribe',
@@ -3399,12 +3438,12 @@ describe('attached Desktop admission', () => {
     assert(server);
     const client = await localConnect(server);
     await client.request('hello', { client: CLIENT, desktopBootstrap: true });
-    const original = stimSelf.createStim;
+    const original = stimSelf.createLocalStim;
     const startWork = vi.fn<() => Promise<never>>(async () => {
       throw new Error('fixture start');
     });
     const api = vi
-      .spyOn(stimSelf, 'createStim')
+      .spyOn(stimSelf, 'createLocalStim')
       .mockImplementation((options) => ({ ...original(options), start: startWork }));
     try {
       expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');

@@ -68,7 +68,7 @@ The optional `files` capability stores opaque complete files with
 `store({ key, sourcePath, overwrite, signal })` and downloads them with
 `resolve({ key, destinationDir, signal })`. A hit returns a path inside
 `destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
-the `builds` adapter. A `metro` capability is ignored, including its shape; Metro uses its local store. Native Gradle APK caching consumes `files`
+the `builds` adapter. Native Gradle APK caching consumes `files`
 directly to share the APK together with its verification receipt; a files-only
 provider can support this flow. An optional
 `stat({ key, signal })` returns `{ size }` or `null` without downloading;
@@ -132,10 +132,8 @@ const results = await runCacheProviderContract({
 });
 ```
 
-`cacheProviderContractChecks()` returns the same checks as individual cases for
-a test runner that reports each one separately. Both helpers check advertised
-build capabilities, bound every check with a deadline, and
-verify that a call settles once its `AbortSignal` aborts.
+It checks advertised build capabilities, bounds every check with a deadline,
+and verifies that a call settles once its `AbortSignal` aborts.
 
 ## Budgets
 

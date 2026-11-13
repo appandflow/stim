@@ -18,14 +18,14 @@ function memoryProvider(): CacheProvider {
   const builds = new Map<string, string>();
   return {
     builds: {
-      resolve: ({ key, destinationDir }) => {
+      resolve: async ({ key, destinationDir }) => {
         const source = builds.get(key);
         if (!source) return null;
         const target = join(destinationDir, basename(source));
         cpSync(source, target, { recursive: true });
         return target;
       },
-      store: ({ key, sourcePath, overwrite }) => {
+      store: async ({ key, sourcePath, overwrite }) => {
         if (builds.has(key) && !overwrite) return;
         const kept = join(workDir, `kept-${key}`);
         mkdirSync(kept, { recursive: true });
