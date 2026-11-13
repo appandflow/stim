@@ -12,7 +12,8 @@ import {
   type PressureLevel,
 } from '@stim-cli/core/state';
 import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { deviceSweepIsScoped, SCOPED_PARKED_KEEP } from '../commands/gc/devices.ts';
+import { readCreatedDevices } from '../devices/created-devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { ownedAvdDirectory } from '../devices/android.ts';
@@ -291,7 +292,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
 
 /** Rung 2: parked devices, oldest first; at high until the level clears, at critical all of them. */
 async function parkedRung(context: RungContext): Promise<void> {
-  if (deviceSweepIsScoped(context.operation?.env)) return;
+  const ledger = deviceSweepIsScoped(context.operation?.env) ? readCreatedDevices() : null;
   const parked = [
     ...readParked('ios').map((record) => ({
       platform: 'ios' as const,
@@ -308,6 +309,21 @@ async function parkedRung(context: RungContext): Promise<void> {
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const device of parked) {
     if (context.level === 'high' && !(await context.stillShort())) return;
+    if (ledger && !ledger[device.platform].has(device.id)) {
+      recordAction(
+        context,
+        {
+          rung: 2,
+          kind: 'delete-parked-device',
+          target: device.id,
+          outcome: 'kept',
+          bytes: 0,
+          detail: SCOPED_PARKED_KEEP,
+        },
+        context.why,
+      );
+      continue;
+    }
     await run(
       context,
       {

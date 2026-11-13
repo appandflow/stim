@@ -667,6 +667,9 @@ export function deviceSweepIsScoped(env: NodeJS.ProcessEnv = process.env): boole
   return isScopedHome(env);
 }
 
+export const SCOPED_PARKED_KEEP =
+  'STIM_HOME scopes this home, and its created-devices ledger does not list this parked device';
+
 export function collectDeviceLeases(now: number): DeviceLeaseGarbage {
   const expired: LeaseFileEntry[] = [];
   const kept: KeptLeaseFile[] = [];

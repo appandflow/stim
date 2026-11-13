@@ -35,8 +35,10 @@ import {
   deleteProjectDevices,
   deviceSweepIsScoped,
   findStaleProjectDevices,
+  SCOPED_PARKED_KEEP,
 } from '../../commands/gc/devices.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
+import { readCreatedDevices } from '../../devices/created-devices.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
@@ -256,8 +258,7 @@ async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
   return outcomeOf(results, orphan.bytes ?? 0);
 }
 
-async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
-  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
+async function deleteParkedDevice(action: MaintenanceAction, operation?: StimContext): Promise<ActionOutcome> {
   const age = { olderThanDays: action.olderThanDays ?? null, now: Date.now() };
   const sims = (await collectParkedSims({}, age)).filter((sim) => sim.udid === action.target);
   const avds = sims.length ? [] : (await collectParkedAvds({}, age)).filter((avd) => avd.name === action.target);
@@ -267,6 +268,11 @@ async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutc
         ? 'it is no longer parked'
         : `it is no longer parked, or was parked within ${action.olderThanDays} days`,
     );
+  if (
+    deviceSweepIsScoped(operation?.env ?? process.env) &&
+    !readCreatedDevices()[sims.length ? 'ios' : 'android'].has(action.target)
+  )
+    return kept(SCOPED_PARKED_KEEP);
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
   return outcomeOf(results, freedSince(before));
@@ -523,7 +529,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-unregister-cache':
       return unregisterCache(action);
     case 'would-delete-parked-device':
-      return deleteParkedDevice(action);
+      return deleteParkedDevice(action, context.operation);
     case 'would-delete-devices':
       return deleteDevices(action, context);
     case 'would-shutdown-device':

@@ -18,7 +18,8 @@ import {
 } from '../../commands/gc/worktrees.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
-import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
+import { deviceSweepIsScoped, SCOPED_PARKED_KEEP } from '../../commands/gc/devices.ts';
+import { readCreatedDevices } from '../../devices/created-devices.ts';
 import { readParked } from '../../devices/sim-pool.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { collectGradleVersions } from '../../commands/gc/gradle-versions.ts';
@@ -133,15 +134,21 @@ export async function planSweep({
       `Could not look for orphaned workspace directories: ${error instanceof Error ? error.message : error}`,
     );
   }
-  if (devices && days > 0 && !deviceSweepIsScoped(operation?.env ?? process.env))
+  const ledger = deviceSweepIsScoped(operation?.env ?? process.env) ? readCreatedDevices() : null;
+  if (devices && days > 0)
     for (const kind of ['ios', 'android'] as const)
       for (const record of readParked(kind)) {
         const parkedDays = Math.floor((now - Date.parse(record.parkedAt)) / 86_400_000);
         if (!(parkedDays >= days)) continue;
+        const target = kind === 'ios' ? record.udid : record.name;
+        if (ledger && !ledger[kind].has(target)) {
+          skips.push({ target, reason: SCOPED_PARKED_KEEP });
+          continue;
+        }
         const label = `parked ${kind === 'ios' ? 'simulator' : 'emulator'} ${record.name}`;
         actions.push({
           kind: 'would-delete-parked-device',
-          target: kind === 'ios' ? record.udid : record.name,
+          target,
           bytes:
             sizes.find((size) => size.category === 'owned-devices' && !size.workspace && size.name === label)?.bytes ??
             0,
