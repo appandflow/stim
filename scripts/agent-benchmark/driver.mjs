@@ -170,9 +170,21 @@ function verifyRunnerShell(arm, environment) {
       throw new Error(`timed shell locale mismatch: ${locale}`);
     }
   }
-  if (arm === 'control') {
+  if (arm !== 'stim') {
     const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { cwd: main, env: environment });
-    if (resolved) throw new Error(`control login shell resolved Stim: ${resolved}`);
+    if (resolved) throw new Error(`${arm} login shell resolved Stim: ${resolved}`);
+    if (arm === 'expo-agent-cli') {
+      const expo = run('/bin/zsh', ['-lc', 'command -v expo-agent-cli'], { cwd: main, env: environment });
+      if (expo !== join(expoAgentCliPrefix(root), 'bin', 'expo-agent-cli')) {
+        throw new Error(`Expo agent CLI login shell resolved an unexpected executable: ${expo}`);
+      }
+      const version = run('/bin/zsh', ['-lc', 'expo-agent-cli --version'], { cwd: main, env: environment });
+      if (version !== pins.EXPO_AGENT_CLI_VERSION) {
+        throw new Error(
+          `Expo agent CLI login shell resolved version ${version}, expected ${pins.EXPO_AGENT_CLI_VERSION}`,
+        );
+      }
+    }
     return null;
   }
   const expected = expectedStimShellProvenance();
@@ -501,7 +513,7 @@ function deviceSnapshot(platform) {
   return platform === 'android' ? androidEmulatorSnapshot() : simulatorSnapshot();
 }
 
-function controlSimulatorForCleanup(runDir, preferredUdid) {
+function controlSimulatorForCleanup(runDir, preferredUdid, expectedName) {
   const baselinePath = existsSync(join(runDir, 'devices-before.json'))
     ? join(runDir, 'devices-before.json')
     : join(runDir, 'simulators-before.json');
@@ -509,7 +521,7 @@ function controlSimulatorForCleanup(runDir, preferredUdid) {
   const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
   const candidates = Object.values(data.devices)
     .flat()
-    .filter((device) => device.isAvailable && !baseline.has(device.udid) && device.name.startsWith('Trailhead '));
+    .filter((device) => device.isAvailable && !baseline.has(device.udid) && device.name === expectedName);
   if (preferredUdid) {
     return candidates.find((device) => device.udid === preferredUdid) ?? null;
   }
@@ -994,8 +1006,13 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const deviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
   const device =
     platform === 'ios'
-      ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
-      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}, the ${JSON.stringify(ANDROID_BENCHMARK_AVD_CONFIG['hw.device.name'])} hardware profile, a hardware keyboard enabled, and an 8 GiB data partition${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`;
+      ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm !== 'stim' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
+      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}, the ${JSON.stringify(ANDROID_BENCHMARK_AVD_CONFIG['hw.device.name'])} hardware profile, a hardware keyboard enabled, and an 8 GiB data partition${arm !== 'stim' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`;
+  const deviceInstruction =
+    platform === 'android' && arm !== 'stim'
+      ? device +
+        '. Create it with avdmanager in the supplied ANDROID_AVD_HOME without --path, then target it by serial.'
+      : device;
   const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const screenshot = join('/tmp', `${runId}-settings.png`);
   const recording = join('/tmp', `${runId}-session.mp4`);
@@ -1026,7 +1043,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
     worktree,
     branch,
     marker: `Trailhead ${runId}`,
-    device,
+    device: deviceInstruction,
     proof,
   });
 }
@@ -1337,7 +1354,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     expectedStimDevice,
     expectedControlSimulator,
     expectedControlAvdConfig:
-      platform === 'android' && arm === 'control'
+      platform === 'android' && arm !== 'stim'
         ? join(
             process.env.ANDROID_AVD_HOME ?? join(process.env.HOME, '.android', 'avd'),
             expectedControlSimulator.name + '.avd',
@@ -1539,8 +1556,8 @@ function commandEvidence(meta, eventsPath, runDir, device) {
   const commandText = commands.map((command) => command.command ?? '').join('\n');
   const outputText = completedEvents.map((item) => item.aggregated_output ?? '').join('\n');
   const invalidReasons = [];
-  if (meta.arm === 'control' && /(^|[\s;&|])(?:npx\s+)?stim(?:-cli)?([\s;&|]|$)/m.test(commandText)) {
-    invalidReasons.push('control-used-stim');
+  if (meta.arm !== 'stim' && /(^|[\s;&|])(?:npx\s+)?stim(?:-cli)?([\s;&|]|$)/m.test(commandText)) {
+    invalidReasons.push(`${meta.arm}-used-stim`);
   }
   if (meta.arm === 'stim') {
     if (/(?:^|[\s;&|])(?:export\s+)?STIM_HOME\s*=(?!%s)/m.test(commandText)) {
@@ -2054,7 +2071,7 @@ function deviceMismatchReasons(meta, device) {
     platform === 'ios'
       ? matchesExpectedIosSimulator(device, meta.expectedControlSimulator ?? {})
       : matchesExpectedAndroidEmulator(device, meta.expectedControlSimulator ?? {});
-  return matchesExpected ? [] : [`control-${platform === 'android' ? 'emulator' : 'simulator'}-mismatch`];
+  return matchesExpected ? [] : [`${meta.arm}-${platform === 'android' ? 'emulator' : 'simulator'}-mismatch`];
 }
 
 function collect(runDir) {
@@ -2299,7 +2316,7 @@ function cleanup(runDir) {
         actions.push(`failed: parked simulator verification: ${error}`);
       }
     }
-  } else if (meta.arm === 'control') {
+  } else if (meta.arm !== 'stim') {
     const simulator =
       meta.platform === 'android'
         ? controlAndroidForCleanup(
@@ -2308,7 +2325,7 @@ function cleanup(runDir) {
             meta.expectedControlSimulator?.name,
             appAlive.simulator?.configPath,
           )
-        : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid);
+        : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid, meta.expectedControlSimulator?.name);
     if (simulator) {
       const udid = simulator.udid;
       if (!appAlive.simulator?.udid) {
@@ -2343,7 +2360,7 @@ function cleanup(runDir) {
           run('xcrun', ['simctl', 'shutdown', udid], { timeout: 60_000 });
           actions.push(`shutdown ${udid}`);
         } catch {}
-        if (controlSimulatorForCleanup(runDir, udid)) {
+        if (controlSimulatorForCleanup(runDir, udid, meta.expectedControlSimulator?.name)) {
           try {
             run('xcrun', ['simctl', 'delete', udid], { timeout: 60_000 });
             actions.push(`delete ${udid}`);

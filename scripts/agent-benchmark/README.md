@@ -44,12 +44,12 @@ the fixture's `package.json` does not set `buildBackend` or `deviceBackend` to
 `eas`, puts the shim on the arm's `PATH`, sets `EXPO_NO_TELEMETRY=1` and removes
 `EXPO_TOKEN`. Collection rejects the cloud usage named in the package README
 (`--eas`, `deploy`, `feedback`, `login`, `logout`, `register`, `eas` or `eas-cli`
-invocations, `EXPO_TOKEN`, `@latest`) from the recorded commands. The tool
-manages its own device: the watcher accepts the single new device without
-matching a name, and the proof still runs `agent-device` against the device the
-run reports. Not run yet: the install, whether the shim or a bare `npx` call
-resolves the pinned copy, how the tool allocates and releases its device, the
-flags for Android, and the skills setup that fills `STIM_BENCH_EXPO_SKILLS`.
+invocations, `EXPO_TOKEN`, `@latest`) from the recorded commands. The timed
+shell must resolve the pinned Expo CLI and have no Stim executable on PATH.
+The arm creates the assigned simulator or emulator and passes its device ID
+to the Expo CLI. Android uses the supplied AVD home so the watcher and
+cleanup can verify the registration. The proof uses the same agent-device
+commands as the other arms.
 
 ## Task prompts
 
