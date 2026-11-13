@@ -276,7 +276,10 @@ export function stimCommandSegments(command, expected) {
   const required = literalShellArguments(expected);
   return shellCommandSegments(command).filter((segment) => {
     if (segment === expected || segment.startsWith(`${expected} `)) return true;
-    const words = literalShellArguments(segment);
+    const tmpdirPrefix = 'STIM_TMPDIR="$TMPDIR" ';
+    const scoped = segment.startsWith(tmpdirPrefix);
+    const words = literalShellArguments(scoped ? segment.slice(tmpdirPrefix.length) : segment);
+    if (scoped) return Boolean(required?.length && words && required.every((word, offset) => words[offset] === word));
     if (words?.[0] !== 'env' || !required?.length) return false;
     let index = 1;
     while (/^(?:STIM_TMPDIR|TMPDIR)=\//.test(words[index] ?? '')) index++;
