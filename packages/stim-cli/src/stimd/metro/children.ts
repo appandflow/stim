@@ -586,6 +586,11 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   try {
     if (!GROUPS) {
       await stopTree(child);
+      const helper = child.helper;
+      if (helper && !(await gone(() => inspectProcessIdentity(helper) === 'same', STOP_MS)))
+        throw new Error(
+          `Could not confirm shutdown of dev-server helper pid ${helper.pid}: its identity still reads same ${STOP_MS / 1000} s after the dev server stopped.`,
+        );
     } else {
       if (child.helper) {
         const leader = inspectProcessIdentity(child);
