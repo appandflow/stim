@@ -192,15 +192,21 @@ attempt falls back here. Placement and failure reasons are in build logs.
 
 AGENT ACTIONS
 
-Launch through stim macos first. Use its isolated bundleId from the JSON launch
-record or status --json. stim macos waits, for up to 20 seconds, until macOS
-LaunchServices lists the app, so agent-device open attaches to it instead of
-starting a second copy. If it is still unlisted, stim macos warns and returns;
-wait before opening. A --remote launch skips the wait:
+Launch through stim macos first. For a local launch, use the printed agent-device
+command once LaunchServices lists the app. If Stim warns the app is still unlisted,
+wait before opening it. Use agentDevice.stateDir and the isolated bundleId from
+the launch JSON or status --json if assembling the command yourself.
 
-  agent-device open <bundleId> --platform macos --surface app --foreground
-  agent-device click <ref> --settle
+Use the same AGENT_DEVICE_STATE_DIR for every action, and keep the same --session
+if you specify one. A state directory assignment in front of a command applies
+only to that invocation:
+
+  AGENT_DEVICE_STATE_DIR='<stateDir>' agent-device open <bundleId> --platform macos --surface app --foreground
+  AGENT_DEVICE_STATE_DIR='<stateDir>' agent-device click <ref> --settle
   stim logs --source agent
+
+For a --remote launch, use the command and connection settings in the hosted
+agent-device section below.
 
 Stim reads agent-device's recorded app-scoped actions and failures into the
 native workspace's agent feed in Desktop and the phone viewer. Text stays
