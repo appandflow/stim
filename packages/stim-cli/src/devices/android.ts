@@ -30,6 +30,7 @@ import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
+import { defaultAndroidSdkRoot } from '@stim-cli/core/toolchain';
 import { ANDROID_LOCATION_VARIABLES } from './android-locations.ts';
 
 export interface SystemImage {
@@ -84,14 +85,7 @@ export interface ResolvedAvdSerial {
 }
 
 export function androidHome(env: NodeJS.ProcessEnv = ambientEnv()): string {
-  const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
-  if (configured) return configured;
-  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
-  if (process.platform === 'win32') {
-    return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
-  }
-  if (process.platform === 'linux') return join(home, 'Android', 'Sdk');
-  return join(home, 'Library', 'Android', 'sdk');
+  return env.ANDROID_HOME || env.ANDROID_SDK_ROOT || defaultAndroidSdkRoot(env);
 }
 
 const SDK_TOOL_LOCATIONS = {
@@ -814,6 +808,17 @@ function isDirectoryPath(path: string): boolean {
   }
 }
 
+// Android Emulator UpdateChecker.cpp stores integer timestamps keyed by encoded emulator and core versions.
+function isEmulatorUpdateCheck(name: string, contents: string): boolean {
+  return (
+    name === 'emu-update-last-check.ini' &&
+    contents
+      .trim()
+      .split(/\r?\n/)
+      .every((line) => /^_version\.3D[\w.]+\.26coreVersion\.3D[\w.]+[ \t]*=[ \t]*-?\d+$/.test(line.trim()))
+  );
+}
+
 export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirectory[] {
   const roots = avdStorageRoots();
   const stores = roots.filter(avdPathExists).map((root) => ({
@@ -827,7 +832,10 @@ export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirecto
       const path = join(root, name);
       const ini = readFileSync(path, 'utf8');
       const targets = new Set([...avdIniPaths(root, ini), ...avdIniPaths(canonicalRoot, ini)]);
-      if (!targets.size) throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      if (!targets.size) {
+        if (isEmulatorUpdateCheck(name, ini)) continue;
+        throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      }
       for (const target of targets) {
         try {
           registered.add(realpathSync(target));

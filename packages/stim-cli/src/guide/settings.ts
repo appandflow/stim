@@ -682,7 +682,7 @@ ENGINE UPDATES ARE MACHINE-LEVEL
 engine.autoUpdate  default auto. Whether stimd moves the machine engine (stim
 engine install) to the newest version on its channel by itself: once a day,
 when Stim Desktop connects, when a phone needs a newer engine, and at most
-once an hour while a crash-looping build is held. auto turns it on for an
+once an hour while a crash-looping build is held. Exits that a fault of the Stim home caused, such as a config.json that does not parse or a full disk, do not mark the build bad or roll the engine back; stimd stops with the file or disk to fix. A stimd killed with no record has an unknown cause: it never rolls the engine back and holds only after five in 10 minutes. Without a previous engine (an npm or global install) the hold only stops automatic detached restarts; a command falls back to a stimd of its own, an attached stimd is never refused, and stim doctor --fix clears the hold. auto turns it on for an
 engine Stim Desktop installed or a service runs and off for any other, such as
 a global npm install; on and off decide for every engine. A person's
 stim engine use or rollback pins the engine and stops it until stim engine
@@ -1254,11 +1254,6 @@ the configured entry.
                it refuses with STIM_OFFLOAD_REFUSED
   name         requires a matching entry in remote.machines, already paired and
                approved for builds; ignores this machine's load/slot gating
-
-\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
-\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
-replaces it (auto stays auto, force becomes remote, off becomes local). See
-REMOVED SETTINGS below.
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
@@ -1923,13 +1918,13 @@ temporary directory, the Stim config directory or a filesystem root, and gc
 never prunes or empties such a directory.
 
 REMOVED SETTINGS
-Removed keys and environment variables are listed below with their replacements.
-Get and set refuse removed keys with STIM_BAD_ARG; unset removes them from every
-layer, or just --scope. Doctor reports them. start, ios, android, web, macos,
-revive and gc refuse old environment variables marked "refused" and removed
-config values that turned a mechanism off. Their remedies name the set and
-unset commands that preserve that behavior. maintenance.idleStopHours remains
-read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
+The keys and environment variables below are no longer read. Get and set refuse
+them as unknown settings; unset removes them from every layer, or just --scope.
+start, ios, android, web, macos, revive and gc refuse old environment variables
+marked "refused" and removed config values that turned a mechanism off. Their
+remedies name the set and unset commands that preserve that behavior. Any other
+removed name is an unknown one: Stim ignores it and does not name a replacement.
+maintenance.idleStopHours remains read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
 
 ${[...REMOVED_SETTINGS]
   .filter(([, entry]) => !entry.kept)

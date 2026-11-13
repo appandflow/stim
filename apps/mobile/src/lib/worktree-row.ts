@@ -6,7 +6,7 @@ import type { HomeItem } from '@/lib/home';
 import { rowHosts, rowProblems, rowStatus, type RowHosts, type RowProblem, type RowStatus } from '@/lib/home-list';
 import { worktreePage } from '@/lib/worktree-page';
 import { gitChip } from '@/lib/workspace-view';
-import { devicesOf, isActive, platformName } from '@/lib/workspaces';
+import { devicesOf, isActive, isMacosBuilding, platformName, runningBuild, visibleDevices } from '@/lib/workspaces';
 import type { AgentSession, DevicePlatform, EnvironmentState } from '@/protocol/types';
 
 export interface PlatformState {
@@ -35,6 +35,7 @@ const age = (at: string | null | undefined, now: number): number | null => {
  */
 export function platformStates(env: EnvironmentState, now: number): PlatformState[] {
   const devices = devicesOf(env);
+  const build = runningBuild(env);
   return PLATFORM_ORDER.flatMap((platform): PlatformState[] => {
     const isBuildPlatform = platform === 'ios' || platform === 'android';
     const last = isBuildPlatform ? env.lastBuilds?.[platform] : undefined;
@@ -46,11 +47,7 @@ export function platformStates(env: EnvironmentState, now: number): PlatformStat
       !!last;
     if (!ran) return [];
     const state = (kind: PlatformState['kind']): PlatformState[] => [{ platform, kind }];
-    if (
-      (env.build?.state === 'running' && env.build.platform === platform) ||
-      (platform === 'macos' && env.macos?.build.state === 'running')
-    )
-      return state('building');
+    if (build?.platform === platform || (platform === 'macos' && isMacosBuilding(env))) return state('building');
     let failed: boolean;
     let failedAt: string | null | undefined;
     if (platform === 'macos') {
@@ -66,9 +63,7 @@ export function platformStates(env: EnvironmentState, now: number): PlatformStat
       const ms = age(failedAt, now);
       if (platform === 'web' || isActive(env) || (ms !== null && ms < STALE_MS)) return state('failed');
     }
-    const up =
-      devices.some((d) => d.platform === platform && d.running) ||
-      (platform === 'macos' && env.macos?.state === 'running');
+    const up = !env.pathMissing && devices.some((d) => d.platform === platform && d.running);
     return state(up ? 'running' : 'idle');
   });
 }
@@ -171,7 +166,7 @@ export function worktreeRowSummary(
     drivers: [
       ...new Set(
         apps.flatMap(({ env }) =>
-          devicesOf(env)
+          visibleDevices(env)
             .filter((d) => d.running && d.activity?.state === 'driven')
             .map((d) => d.activity?.driver?.tool ?? ''),
         ),

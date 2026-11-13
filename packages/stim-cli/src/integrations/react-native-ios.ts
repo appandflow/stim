@@ -11,7 +11,7 @@ import {
 } from '../cache/build-cache.ts';
 import { configInputsChanged, inputsChangedDuringBuild } from '../fingerprint/changes.ts';
 import {
-  fingerprintInstallProblem,
+  fingerprintInstallWarning,
   fingerprintOffloadInputs,
   type FingerprintCheck,
 } from '../fingerprint/operation.ts';
@@ -503,9 +503,9 @@ function reactNativeIosArtifact(
     },
     async validate() {
       if (!storeHash || !lookupFingerprint || !storeFingerprint) return null;
-      const installProblem = fingerprintInstallProblem(root);
-      if (installProblem) {
-        note(chalk.yellow(phaseLine('fingerprint', `${installProblem}; the build will be installed but not cached`)));
+      const installWarning = fingerprintInstallWarning(root);
+      if (installWarning) {
+        note(chalk.yellow(phaseLine('fingerprint', installWarning)));
         storeHash = null;
         return null;
       }
@@ -625,7 +625,7 @@ function reactNativeIosArtifact(
       },
       syncPlan: iosSyncPlan,
       unchanged: async () => {
-        if (fingerprintInstallProblem(root)) return false;
+        if (fingerprintInstallWarning(root)) return false;
         const after = await computeFresh();
         return Boolean(after && after.hash === storeHash);
       },

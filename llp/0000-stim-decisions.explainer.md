@@ -75,7 +75,7 @@ maintainer's.
 
 A new document takes the next free number; numbers are never reused. The header
 needs `Type`, `Status`, `Systems`, `Author` and `Date`, and the filename ends in
-the type (`.decision.md`). `scripts/ref-check`, run by `pnpm run lint`, fails on
+the type (`.decision.md`). `scripts/ref-check.mjs`, run by `pnpm run lint`, fails on
 a missing document, a missing section, a malformed header or a reference to a
 file that does not exist. It does not judge whether a document still matches the
 code. It reads `@ref` followed by a space as a reference in every file git
@@ -83,11 +83,10 @@ lists except `.json` files, and only inside `<!-- -->` comments in Markdown, so
 prose in code, a guide or a fixture that writes `@ref` and a space fails lint;
 write it in backticks or without the space.
 
-This repository uses the format of Linked Literate Programming
-(https://github.com/ccheever/llp), its `@ref` comments and its checker, not its
-process: there is no `llp/current/` or `llp/foundation/`, no review loop and no
-skills. Issues, claims, pull requests and the fresh review in `AGENTS.md` stay
-the workflow.
+This repository uses the [Linked Literate Programming format](https://github.com/ccheever/llp)
+and its `@ref` comments. Stim's Node checker validates the subset used in this
+repository. Issues, claims, pull requests and the fresh review in `AGENTS.md`
+govern the workflow.
 
 ## Documents
 
@@ -110,4 +109,5 @@ the workflow.
 - [LLP 0017](./0017-macos-app-supervisor.decision.md) covers why the macOS app keeps its supervisor while the other long-lived children run in stimd.
 - [LLP 0019](./0019-stimd-device-logs.decision.md) covers device log streams across a stimd crash, an update and a logs worker failure.
 - [LLP 0020](./0020-test-offload.decision.md) covers the test approval and the planned `stim test` command.
+- [LLP 0021](./0021-stimd-reliability.decision.md) covers stimd exit records, the crash hold and handovers with no successor.
 - [LLP 0024](./0024-fingerprint-package-copies.decision.md) covers how installed package copies become fingerprint inputs.

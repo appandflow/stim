@@ -7,6 +7,7 @@ import {
   type DaemonPressure,
   type DaemonStatus,
 } from '@stim-cli/core/state';
+import { clearCrashHold } from '../stimd/crash-hold.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
@@ -810,6 +811,7 @@ export function doctorOp(
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
+      if (opts.fix && clearCrashHold()) console.error('stimd crash hold cleared; the next command starts stimd again.');
       const { findings, stim, toolchain, maintenance, daemon } = report;
       const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [

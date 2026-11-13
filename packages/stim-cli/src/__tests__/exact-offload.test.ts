@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -97,6 +97,13 @@ test('EXACT2 in the environment overrides the launcher default', () => {
   execFileSync('git', ['clone', '-q', exact2, moved]);
   rmSync(exact2, { recursive: true });
   expect(exactOffloadPlan(app, { EXACT2: moved })).toMatchObject({ exact2: sha });
+});
+
+test.each(['\u5e97', '\u5e97\u00a0'])('a non-ASCII Git checkout root %j is refused', (name) => {
+  const checkout = join(root, name);
+  renameSync(app, checkout);
+  git(checkout, 'init', '-q');
+  expect(exactOffloadPlan(checkout, { EXACT2: exact2 })).toMatchObject({ unsupported: /plain ASCII file name/ });
 });
 
 test('a worker refuses a malformed Exact build request', () => {

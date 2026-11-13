@@ -120,7 +120,7 @@ test('build.start admits declared fingerprint inputs only when they match the ke
   }
 });
 
-test('build.start admits an Exact build, keyed by its synced manifest, without a fingerprint replay description', async () => {
+test.each(['', 'apps/\u5e97'])('build.start admits Exact project %j without fingerprint replay', async (project) => {
   const host = new BuildHost({ worker: 'unused', env: process.env });
   const session = host.session('client', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
   const launch = vi.spyOn(host, 'launch').mockResolvedValue({ error: { code: 'build-refused', message: 'admitted' } });
@@ -129,13 +129,13 @@ test('build.start admits an Exact build, keyed by its synced manifest, without a
     expect(
       await session.start({
         repo: 'repo',
-        project: '',
+        project,
         platform: 'ios',
         runtime: 'iOS-27-0',
         stimBuild: 'b1',
         compat: 6,
         fingerprint: 'a'.repeat(64),
-        exact: { name: 'shop-app', exact2: 'b'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: {} },
+        exact: { name: project ? 'app' : 'shop-app', exact2: 'b'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: {} },
       }),
     ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
     expect(launch).toHaveBeenCalledTimes(1);

@@ -9,7 +9,6 @@ import {
 } from '../workspace/settings-payload.ts';
 import {
   REMOVED_SETTINGS,
-  replacementAdvice,
   settingDefinition,
   SETTING_SCOPES,
   type SettingEntry,
@@ -160,15 +159,7 @@ export function settingsOp(io: Output = CONSOLE, env: NodeJS.ProcessEnv = proces
           io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${formatOrigin(entry)})`)}`);
         }
         for (const entry of payload.unknown) {
-          const advice = replacementAdvice(entry.key, entry.value, entry.scope);
-          const instead = entry.replacement
-            ? ` Run \`${entry.replacement}\` instead.`
-            : advice?.key
-              ? ` Use ${advice.key} instead.`
-              : advice
-                ? ` ${advice.replacement.charAt(0).toUpperCase()}${advice.replacement.slice(1)}.`
-                : '';
-          io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.${instead}`));
+          io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.`));
         }
       }),
   });

@@ -26,6 +26,7 @@ import {
   readDaemonSnapshot,
   readDiskUsage,
   readMaintenanceState,
+  readStimdBoots,
   stimBuildId,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -73,7 +74,6 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { daemonFindings, daemonStatus } from '../daemon/status.ts';
-import { parseBoots } from '../stimd/crash-hold.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -386,24 +386,31 @@ describe('stimd on every platform', () => {
 
 describe.skipIf(process.platform === 'win32')('stimd', () => {
   test('a CI hold keeps a quiescent persistent daemon alive through off mode', async () => {
-    const running = runStimd({ mode: 'on', tickMs: 500 });
-    await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
-    let ended = false;
-    void running.finally(() => {
-      ended = true;
+    let pinned: () => void = () => {};
+    const held = new Promise<void>((done) => {
+      pinned = done;
     });
-    const releaseHold = await vi
-      .waitFor(() => holdCIStimd({ ...process.env, STIM_HOME: home }, home, null), { timeout: 10_000, interval: 50 })
-      .catch((error: unknown) => {
-        throw new Error(
-          `${String(error)}\nstimd ended: ${ended}; record: ${existsSync(stimdRecordFile())}\ndaemon.ndjson:\n${daemonLog()}`,
-        );
-      });
+    const gate = vi.spyOn(daemonPasses, 'runHomePasses').mockImplementationOnce(async (...args) => {
+      await held;
+      return runHomePasses(...args);
+    });
+    onTestFinished(() => {
+      pinned();
+      gate.mockRestore();
+    });
+    const running = runStimd({ mode: 'on', tickMs: 500 });
+    await listening();
+    const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
     try {
-      await new Promise((done) => setTimeout(done, 1200));
+      expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).pid).toBe(process.pid);
+      pinned();
+      await vi.waitFor(() => expect(daemonLog().match(/"event":"daemon_tick"/g)?.length).toBeGreaterThanOrEqual(3), {
+        timeout: 10_000,
+        interval: 20,
+      });
       expect(existsSync(stimdRecordFile())).toBe(true);
       saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
-      await new Promise((done) => setTimeout(done, 1200));
+      await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
       expect(existsSync(stimdRecordFile())).toBe(true);
     } finally {
       releaseHold();
@@ -1050,8 +1057,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await running;
       for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
         expect(readClaimSet(claimRoot)).toMatchObject({ live: [{ childDeclared: false }], unresolved: [] });
-      const [own] = readClaimSet(stimdClaimRoot()).live;
-      expect(parseBoots(own?.details.boots).some((boot) => boot.abnormal)).toBe(false);
+      expect(readStimdBoots().some((boot) => boot.abnormal)).toBe(false);
       threads.mockRestore();
       const gone = goneClaimOwner();
       for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])

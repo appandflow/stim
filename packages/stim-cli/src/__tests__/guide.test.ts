@@ -532,10 +532,7 @@ test('the placement words are documented for every workload, and a removed setti
 });
 
 test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
-  const removed = [...REMOVED_SETTINGS]
-    .filter(([, entry]) => !entry.kept)
-    .map(([key]) => key)
-    .filter((key) => key !== 'remote.buildMode');
+  const removed = [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept).map(([key]) => key);
   for (const [name, topic] of Object.entries(TOPICS)) {
     if (name === 'settings') continue;
     const bodies = [
@@ -1074,6 +1071,8 @@ test('the macos guide covers the declared command flags and project settings', (
   const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
   expect(agentActions).toContain('agent-device open <bundleId>');
   expect(agentActions).not.toContain('lsappinfo find');
+  expect(body).toContain('<bundleId> --remote-config <path> --session <name>');
+  expect(body).toContain('agent-device disconnect --session <your-name>');
 });
 
 test.each([iosCommand, androidCommand, macosCommand])(

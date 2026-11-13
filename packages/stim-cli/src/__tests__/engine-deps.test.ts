@@ -2,10 +2,12 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
+import { PassThrough } from 'node:stream';
 import {
   DEPS_ERROR,
   extractPodDiagnostics,
   podConflictNames,
+  runCaptured,
   runPodInstall,
   parseLoginRubyEnv,
   podEnvForRuby,
@@ -95,6 +97,63 @@ describe('podEnvForRuby (#43, #44)', () => {
     expect(parseLoginRubyEnv('nothing here')).toBeNull();
     expect(parseLoginRubyEnv('@@ruby-env-begin@@\nPATH=/a\n')).toBeNull();
   });
+});
+
+test('runCaptured includes stdout and stderr delivered after the build step exits', async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = makeChildProcess({ stdout, stderr });
+  const writer = collectingWriter();
+  const pending = runCaptured({
+    cmd: 'fixture',
+    args: [],
+    cwd: root,
+    env: {},
+    event: 'fixture',
+    logWriter: writer,
+    spawn: () => child,
+    now: Date.now,
+    heartbeatMs: 500,
+    onHeartbeat: () => {},
+  });
+
+  child.emit('exit', 1, null);
+  await Promise.resolve();
+  stdout.end('last stdout\n');
+  stderr.end('last stderr');
+  child.emit('close', 1, null);
+
+  expect(await pending).toMatchObject({ code: 1, transcript: ['last stdout', 'last stderr'] });
+  expect(writer.records.map((record) => record.msg)).toEqual(['last stdout', 'last stderr']);
+});
+
+test('runCaptured stops collecting when a descendant keeps stderr open', async () => {
+  const stderr = new PassThrough();
+  const child = makeChildProcess({ stderr });
+  const writer = collectingWriter();
+  const pending = runCaptured({
+    cmd: 'fixture',
+    args: [],
+    cwd: root,
+    env: {},
+    event: 'fixture',
+    logWriter: writer,
+    spawn: () => child,
+    now: Date.now,
+    heartbeatMs: 500,
+    onHeartbeat: () => {},
+  });
+
+  stderr.write('available stderr');
+  child.emit('exit', 1, null);
+  const result = await pending;
+  try {
+    stderr.write('\nunrelated output\n');
+    expect(result).toMatchObject({ code: 1, transcript: ['available stderr'] });
+    expect(writer.records.map((record) => record.msg)).toEqual(['available stderr']);
+  } finally {
+    stderr.end();
+  }
 });
 
 describe('runPodInstall', () => {

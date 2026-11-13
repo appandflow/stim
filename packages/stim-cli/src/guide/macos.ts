@@ -459,16 +459,21 @@ While a placement is recorded, gc treats the workspace as in use. agent says
 how a coding agent drives the app: { driver: "none", setting:
 "hosting.agentDriver" } until the hosting Mac's owner sets that setting there,
 or { driver: "agent-device", remoteConfig, command }. remoteConfig is a mode
-0600 file in the workspace directory that holds the credential; run the command
-it names and never print the file. stop, worktree remove and gc first run
-agent-device close and disconnect for the connection that agent-device reports
-as connected to that remote config (the default or active session), then delete
-the file, so the next hosted workspace needs no manual disconnect. Any other
-connection, including one under another session name, stays untouched, and a
-failure or a missing agent-device is reported without blocking the stop. When
-the hosted session ends, stim-server removes its agent-device session
+0600 file in the workspace directory that holds the credential. Use the
+command Stim prints with its workspace-specific --session and --remote-config.
+Never print the config file. stop, worktree remove and gc check the printed
+session name and any AGENT_DEVICE_SESSION in their environment. They close
+and disconnect only names that agent-device reports using this remote config.
+Use the same agent-device state directory you used to connect. If you used
+another name, including default from older Stim versions, set
+AGENT_DEVICE_SESSION=<your-name> when stopping, or run
+agent-device disconnect --session <your-name> yourself. Stim deletes the config
+file when the host confirms stop or revocation. A local cleanup error does not
+block the hosted stop.
+When the hosted session ends, stim-server removes its agent-device session
 directories under its own state directory. Start with agent-device open
-<bundleId> --remote-config <path>, using macos.host.bundleId; the lease allows
+<bundleId> --remote-config <path> --session <name>, using macos.host.bundleId
+and the name in the reported command. The lease allows
 open, close, snapshot, wait, find, get, is, click, fill, press, type, focus,
 scroll, screenshot and batch on that app only. The agent-device on this Mac must
 know the macos-app lease backend. A request outside that command list, or a
@@ -489,8 +494,9 @@ script such as mini-desktop.sh use these instead:
   build                      stim macos --remote <mac>
   launch                     the same command; the host launches it under the
                              session's own home
-  shot <out.png>             agent-device screenshot --remote-config <path>
-  click, key, type           agent-device click, press or type --remote-config <path>
+  shot <out.png>             agent-device screenshot <out.png> with the reported
+                             --remote-config and --session
+  click, key, type           agent-device click, press or type with the same flags
   rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
@@ -501,14 +507,11 @@ script such as mini-desktop.sh use these instead:
 
 The agent-device rows work once the host's agent field names agent-device.
 
-On macOS 27, agent-device screenshot of a hosted app can return an image of the
-window-sharing indicator (66x20 points, 132x40 pixels) instead of the app
-window. macOS adds that small window to the app while something captures the
-app, and agent-device picks it as the front window (callstack/agent-device#3961).
-snapshot -i lists it as an axdialog named "Window" with a
-WindowSharingSessionButton before the real window. Read the UI with snapshot
-until agent-device selects the app's main window. Commands that use the front
-window's frame, such as scroll, may also target the indicator.
+For screenshots and scrolling while a hosted app's window is being shared on
+macOS 27, use agent-device 0.21.37 or later on the hosting Mac. Earlier versions
+can select the macOS sharing indicator instead of the app window. If a
+screenshot is only 132x40 pixels, update agent-device on the host
+(https://github.com/callstack/agent-device/releases/tag/v0.21.37).
 
 DESKTOP DOGFOOD
 

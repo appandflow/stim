@@ -96,3 +96,37 @@ it('refuses a name index pointing at a different AVD before selecting its cleanu
   writeFileSync(join(home, `${name}.ini`), `path=${root}\n`);
   expect(() => benchmarkAvdDescription(name, { reportedPath: directory, allowedRoots: [root] })).toThrow('index');
 });
+
+it('accepts the exact run-private Expo AVD only when its supplied home has the matching index', () => {
+  const run = join(realpathSync(root), 'run');
+  const privateDirectory = join(run, 'tmp', 'avd');
+  mkdirSync(privateDirectory, { recursive: true });
+  const configPath = join(privateDirectory, 'config.ini');
+  writeFileSync(
+    configPath,
+    'hw.device.name=pixel_6\nimage.sysdir.1=system-images/android-36/google_apis_playstore_ps16k/arm64-v8a/\n',
+  );
+  const home = process.env.ANDROID_AVD_HOME;
+  const index = join(home, `${name}.ini`);
+  const options = { allowedRoots: [run], privateDirectory };
+  expect(() => benchmarkAvdDescription(name, { ...options, reportedPath: privateDirectory })).toThrow('index');
+  writeFileSync(index, `path=${privateDirectory}\n`);
+  expect(benchmarkAvdDescription(name, { ...options, reportedPath: privateDirectory })).toMatchObject({
+    name,
+    configPath,
+    avdHome: realpathSync(home),
+    systemImage: image,
+  });
+  expect(benchmarkAvdDescription(name, options).configPath).toBe(configPath);
+  const alias = join(realpathSync(root), 'run-alias');
+  symlinkSync(run, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  expect(
+    benchmarkAvdDescription(name, {
+      allowedRoots: [alias],
+      privateDirectory: join(alias, 'tmp', 'avd'),
+      reportedPath: privateDirectory,
+    }).configPath,
+  ).toBe(configPath);
+
+  expect(() => benchmarkAvdDescription(name, { ...options, reportedPath: join(run, 'avd') })).toThrow('path');
+});
