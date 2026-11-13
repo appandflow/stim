@@ -64,6 +64,14 @@ export interface Toolchain {
   entries: ToolchainEntry[];
 }
 
+export function defaultAndroidSdkRoot(env: NodeJS.ProcessEnv): string {
+  const platform = process.platform;
+  const home = (platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir();
+  if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
+  if (platform === 'linux') return join(home, 'Android', 'Sdk');
+  return join(home, 'Library', 'Android', 'sdk');
+}
+
 const HOMEBREW_BINS = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin'];
 const SYSTEM_JDKS = '/Library/Java/JavaVirtualMachines';
 const HOMEBREW_PREFIXES = ['/opt/homebrew', '/usr/local'];
