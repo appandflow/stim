@@ -736,10 +736,14 @@ run waiting to boot, and automatic maintenance.
           STIM_DAEMON_UNAVAILABLE, naming the running build and what holds
           it, and other commands run without stimd;
           stimd keeps serving until nothing runs in the home, and the next
-          command starts its own build's stimd. stimd does not
-          start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon
-          claim exclusively: daemon.ndjson names its pid; stop it with
-          kill <pid>, or update the stim that project pins.
+          command starts its own build's stimd. A stim-daemon from Stim
+          1.40 to 1.42 holds the daemon claim exclusively and does not
+          exit when its workspaces stop; stimd checks its process identity
+          and stops it with SIGTERM, in every daemon.mode, which leaves the dev servers and
+          devices it did not own running. A holder that is not a verified
+          stim-daemon, or that does not stop, makes stim start and the
+          commands that need Metro or a managed tunnel exit with its PID
+          and the stop command. Update projects that pin the older Stim.
   report  the same passes log what they would do and act on nothing.
   off     no pass. stimd still starts when a command needs it, because it
           runs each workspace's Metro and tunnel and collects device logs;

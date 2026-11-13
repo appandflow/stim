@@ -78,6 +78,7 @@ import {
   SANDBOX_BLOCKED,
   launchStimd,
   launchdLabelPrefix,
+  legacyDaemonRefusal,
   serveThroughStimd,
   isSandboxBlocked,
   stimdBuildId,
@@ -99,6 +100,7 @@ import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
+import { takeOverLegacyDaemon } from '../daemon/legacy-daemon.ts';
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -227,14 +229,12 @@ async function takeClaim(
   }
 }
 
-/** Why stimd cannot start while a stim-daemon from Stim 1.40 to 1.42 holds the daemon claim exclusively. */
-// @ref LLP 0015#an-older-stim-daemons-claim-is-refused-not-taken-over -- stimd never signals a pid read from a claim
+/** Why stimd cannot start while a stim-daemon from before Stim 2.0 holds the daemon claim exclusively. */
 export function daemonClaimRefusal(): string {
-  const pid = readClaimSet(daemonClaimRoot()).live.find((holder) => holder.mode === 'exclusive')?.owner.pid;
-  const stop = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
-  return pid === undefined
-    ? "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it."
-    : `stim-daemon pid ${pid} from an older stim holds this home's daemon claim, so stimd cannot start. Stop it with \`${stop}\`; it also exits on its own after its workspaces stop. If a project pins stim 1.40-1.42, update it to stim 2.0.0 or later there (npm i -D stim@next until 2.0.0 is released; for npx: npx stim@next)`;
+  const refusal = legacyDaemonRefusal(true);
+  return refusal
+    ? `${refusal.message} ${refusal.remedy}`
+    : "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it.";
 }
 
 function answers(path: string): Promise<boolean> {
@@ -874,6 +874,9 @@ async function runStimdInner(
     log('warn', 'stimd_boots_failed', error instanceof Error ? error.message : String(error));
   }
   startup.signal.throwIfAborted();
+  // compat C32 until 2.1.0
+  await takeOverLegacyDaemon(log);
+  // compat end
   let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
   startupClaim = claim;
   startup.signal.throwIfAborted();
