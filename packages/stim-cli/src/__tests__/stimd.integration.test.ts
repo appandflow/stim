@@ -394,7 +394,10 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await held;
       return runHomePasses(...args);
     });
-    onTestFinished(() => gate.mockRestore());
+    onTestFinished(() => {
+      pinned();
+      gate.mockRestore();
+    });
     const running = runStimd({ mode: 'on', tickMs: 500 });
     await listening();
     const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
@@ -410,7 +413,6 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
       expect(existsSync(stimdRecordFile())).toBe(true);
     } finally {
-      pinned();
       releaseHold();
     }
     await running;
