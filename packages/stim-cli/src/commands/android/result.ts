@@ -232,6 +232,7 @@ export async function finishAndroidUpload(
 export interface ReportAndroidResultArgs {
   host?: import('@stim-cli/core/state').HostedAndroidStatus;
   root: string;
+  agentDevicePlacement?: { physical: boolean; adapter: unknown; device: { owned?: boolean } | null | undefined };
   slot?: string;
   lease?: { kind: string; expiresAt: string } | null;
   json: boolean;
@@ -266,6 +267,7 @@ export interface ReportAndroidResultArgs {
 export function reportAndroidResult({
   host,
   root,
+  agentDevicePlacement,
   slot,
   json,
   useBuildCache,
@@ -334,8 +336,11 @@ export function reportAndroidResult({
   writer.close();
 
   if (record.devicePlacement) facts.devicePlacement = record.devicePlacement;
+  const { physical, adapter, device: localDevice } = agentDevicePlacement ?? {};
   const openCommand =
-    launchState === true && !host && androidPackage ? mobileAgentOpenCommand('android', androidPackage, slot) : null;
+    launchState === true && !host && !physical && !adapter && localDevice?.owned && serial
+      ? mobileAgentOpenCommand('android', androidPackage, serial, slot)
+      : null;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
     if (openCommand) out(phaseLine('agent-device', openCommand));

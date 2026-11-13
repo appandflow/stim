@@ -26,7 +26,7 @@ reports the same field, shared by its slots, without creating the directory.
 Set `AGENT_DEVICE_STATE_DIR` to it when driving a device yourself; see
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
-Successful mobile launches print a copyable `stim agent-device open` command
+Successful owned simulator and emulator launches print a copyable `stim agent-device open` command
 for the workspace's device. A local macOS launch prints the app-scoped
 `agent-device open` command once LaunchServices lists the app. With `--json`,
 these local handoff commands go to stderr so stdout remains parseable.

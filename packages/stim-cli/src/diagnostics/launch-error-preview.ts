@@ -158,8 +158,13 @@ function androidCrashSummary(record: RecordLike, root?: string): string | null {
   let cause: string | undefined;
   let summary: string | null = null;
   for (const line of lines) {
-    if (line.startsWith('Caused by:')) cause = line;
-    else if (cause && line.startsWith(appPrefix) && framePriority(line, root) === 0) {
+    if (line.startsWith('Caused by:')) cause = line.length <= 1000 ? line : undefined;
+    else if (
+      cause &&
+      line.length <= MAX_FRAME_LINE_LENGTH &&
+      line.startsWith(appPrefix) &&
+      framePriority(line, root) === 0
+    ) {
       summary = `${cause} (${shortFrame(line, root)})`;
       cause = undefined;
     }

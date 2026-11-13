@@ -237,6 +237,7 @@ export interface ReportIosResultArgs {
   host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   root: string;
+  agentDevicePlacement?: { physical: boolean; adapter: unknown; device: { owned?: boolean } | null | undefined };
   json: boolean;
   release: boolean;
   runtimeKind?: IosRuntimeKind;
@@ -280,6 +281,7 @@ export function reportIosResult({
   host,
   slot,
   root,
+  agentDevicePlacement,
   json,
   release,
   runtimeKind = release ? 'embedded-js' : 'metro',
@@ -382,7 +384,11 @@ export function reportIosResult({
     facts.host = host;
     delete facts.agentDevice;
   }
-  const openCommand = launchState === true && !host && bundleId ? mobileAgentOpenCommand('ios', bundleId, slot) : null;
+  const { physical, adapter, device: localDevice } = agentDevicePlacement ?? {};
+  const openCommand =
+    launchState === true && !host && !physical && !adapter && localDevice?.owned && udid
+      ? mobileAgentOpenCommand('ios', bundleId, udid, slot)
+      : null;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
     if (openCommand) note(phaseLine('agent-device', openCommand));

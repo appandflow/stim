@@ -53,9 +53,10 @@ OWNERSHIP
 
 Use only the device or app Stim reports for the workspace. Stop only devices
 in workspaces you own. Ask before closing other apps or other workspaces' devices.
-Run stim stop when done. Ask before gc, worktree remove --force, or removing
-a worktree you did not create. Read stim guide agent ownership for
-cleanup and consent.
+Run stim stop when done. Remove your clean linked worktree with stim worktree
+remove after its work is merged or abandoned. Ask before gc, worktree remove
+--force, or removing a worktree you did not create. See stim guide agent
+ownership for cleanup and consent.
 Agents never run stim setup and never approve access requests. Agents never set
 STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
 
@@ -236,7 +237,9 @@ before changing named placement.
 DRIVING THE DEVICE
 
 Drive this workspace's iOS or Android device through stim agent-device, never
-agent-device directly. Pass agent-device's own arguments and no device ids:
+agent-device directly. Use the exact command Stim prints after launch. For other
+commands, keep its device selector if the slot also has a leased phone.
+Otherwise Stim selects the workspace device from the platform and slot:
 
   stim agent-device open <bundle id>
   stim agent-device snapshot -i --json

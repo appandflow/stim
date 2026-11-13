@@ -1377,6 +1377,7 @@ export async function finishIosRun({
     output,
     devicePlacement,
     root,
+    agentDevicePlacement: { physical, adapter: remoteDevice, device },
     slot,
     json,
     release,
