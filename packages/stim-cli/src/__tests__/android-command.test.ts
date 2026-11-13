@@ -2059,6 +2059,32 @@ describe('a cache miss', () => {
     },
   );
 
+  test('cancellation while waiting for a cold emulator prevents APK installation', async () => {
+    const boot = deferred<Awaited<ReturnType<typeof ensureOwnedDevice>>>();
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const device = { avdName: 'stim-app-412', owned: true, setup: true, created: true };
+    const h = harness({
+      context,
+      ensureDevice: async () => ({ ...device, androidBoot: boot.promise }),
+      ensureDeviceBooted: never('a second emulator boot'),
+    });
+    const run = withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    try {
+      await vi.waitFor(() => expect(h.calls.build).toHaveLength(1));
+      await vi.waitFor(() => expect(h.stderr).toContainEqual(expect.stringMatching(/build +ok/)));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.abort('SIGINT');
+    } finally {
+      boot.resolve({ ...device, serial: 'emulator-5584', consolePort: 5584 });
+    }
+    expect((await run).error?.code).toBe('STIM_CANCELLED');
+    expect(h.calls.install).toEqual([]);
+    expect(h.calls.launch).toEqual([]);
+  });
+
   test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {
     const h = harness({
       ensureDevice: async () => ({
