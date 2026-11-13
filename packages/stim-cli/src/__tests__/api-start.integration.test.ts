@@ -211,9 +211,14 @@ test.skipIf(process.platform === 'win32')(
       entry,
       "import {createServer} from 'node:http'; createServer((req,res)=>res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');",
     );
+    const listener = createServer().listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
     writeFileSync(
       join(root, '.stim.json'),
-      JSON.stringify({ metro: { command: [process.execPath, entry, '{port}'], tunnel: 'off' } }),
+      JSON.stringify({ metro: { command: [process.execPath, entry, '{port}'], port: address.port, tunnel: 'off' } }),
     );
     const env = { ...process.env, STIM_HOME: home, STIM_ENGINE_ROOT: join(home, 'engine'), STIM_DAEMON: 'off' };
     vi.stubEnv('STIM_HOME', home);
@@ -234,6 +239,7 @@ test.skipIf(process.platform === 'win32')(
       await vi.waitFor(() => expect(existsSync(join(home, 'run', 'stimd.json'))).toBe(true), { timeout: 15_000 });
       const first = await client.start({ waitSeconds: 10 });
       expect(first.alreadyRunning).toBe(false);
+      expect(first.port).toBe(address.port);
       const state = JSON.parse(readFileSync(join(home, 'workspaces', workspaceName(root), 'state.json'), 'utf8'));
       identity = { pid: state.supervisor.pid, processToken: state.supervisor.processToken };
       expect(first.supervisorPid).toBe(identity.pid);
