@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { projectNodeBin } from '@stim-cli/core/toolchain';
 import type { StimContext } from '@stim-cli/core';
 import type { BuildFingerprintSource } from '@stim-cli/core/protocol';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, isTimeoutError } from '../exec.ts';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import { processContext } from '../cli-operation.ts';
 import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
@@ -220,6 +220,7 @@ async function run(
       throw Object.assign(error, { remedy: `${remedy}After confirming cleanup, remove ${directory}.` });
     }
     signal?.throwIfAborted();
+    if (isTimeoutError(error)) return failed(part, 'timed out');
     const stderr =
       error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr : '';
     const status =
