@@ -35,6 +35,7 @@ import { delimiter, dirname, join } from 'node:path';
 import {
   buildLedgerFile,
   gcLogFile,
+  isJsonObject,
   type BuildPlanPayload,
   readStatsReport,
   workspaceMetadataFile,
@@ -44,6 +45,7 @@ import {
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
 import * as stimSelf from 'stim/internal/api-self';
+import * as shareLinks from 'stim/internal/share-links';
 import { type ServerMessage } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
 import {
@@ -68,6 +70,10 @@ import { localConnect, setupClient, type Client } from './noise-client.ts';
 import { captureProcessToken, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { waitForPid } from '../../stim-cli/src/__tests__/_pid-file.ts';
+
+vi.mock('stim/internal/share-links', async (importOriginal) => ({
+  ...(await importOriginal<typeof shareLinks>()),
+}));
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -391,6 +397,148 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     await client.request('share.stop', { workspace });
     await vi.waitFor(() => expect(idle).toHaveBeenCalledTimes(1));
     expect(await listed()).toEqual([]);
+  });
+
+  it.each([
+    ['token', 'A'.repeat(43)],
+    ['slug', 'saved-demo'],
+  ])('reuses or replaces a restored %s in a full server', async (kind, secret) => {
+    const link = { [kind]: secret };
+    const probe = createNetServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    assert(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}/s/`;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({ projects: { [workspace]: {} }, share: { exposure: 'proxy', port: address.port } }),
+    );
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const saved = {
+      platform: 'ios',
+      physical: false,
+      control: true,
+      auth: 'generated',
+      password: 'saved-password',
+      viewAuth: 'generated',
+      viewPassword: 'view-password',
+      origin,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      state: 'live',
+    };
+    const other = { ...saved, slot: 'tablet', token: 'B'.repeat(43) };
+    writeFileSync(
+      workspaceShareLinksFile(workspace),
+      JSON.stringify({ version: 1, links: { ios: { ...saved, slot: 'default', ...link }, 'ios@tablet': other } }),
+    );
+    const statusEnv = {
+      FAKE_STIM_PAYLOADS: JSON.stringify([
+        { environments: [{ path: workspace, ios: { udid: 'SIM-1', owned: true, state: 'Booted' } }] },
+      ]),
+    };
+    const fixture = await routeServer({}, statusEnv);
+    const client = await desktop();
+    const reuseClient = await desktop();
+    const path = `${origin}${secret}/`;
+    const otherPath = `${origin}${other.token}/`;
+    await vi.waitFor(async () => expect((await fetch(path)).status).toBe(200));
+    await vi.waitFor(async () => expect((await fetch(otherPath)).status).toBe(200));
+    const request = {
+      workspace,
+      platform: 'ios',
+      control: true,
+      password: saved.password,
+      view: { password: saved.viewPassword },
+      expiresAt,
+      ...link,
+    };
+    for (const change of [
+      { slot: 'tablet' },
+      { password: 'other-password' },
+      { password: saved.viewPassword, view: { password: saved.password } },
+      { control: false, view: undefined },
+      { view: undefined },
+      ...(kind === 'token' ? [{ passwordless: true, password: undefined, view: undefined }] : []),
+    ]) {
+      expect(await client.request('share.start', { ...request, ...change })).toMatchObject({
+        error: { message: expect.stringMatching(/live now|in use by live share/) },
+      });
+    }
+    const listed = await client.request('share.list');
+    assert('result' in listed && listed.result && 'shares' in listed.result);
+    const { shares } = listed.result;
+    assert(Array.isArray(shares));
+    const restored = shares.find((row: unknown) => isJsonObject(row) && row.slot === 'default');
+    assert(isJsonObject(restored) && typeof restored.id === 'string');
+    let resume = () => {};
+    const paused = new Promise<void>((resolve) => (resume = resolve));
+    const pause = shareLinks.pauseShareLinkAsync;
+    const delayedPause = vi.spyOn(shareLinks, 'pauseShareLinkAsync').mockImplementationOnce(async (...args) => {
+      await paused;
+      await pause(...args);
+    });
+    const stopping = client.request('share.stop', { workspace, id: restored.id });
+    let reused: ServerMessage;
+    try {
+      await vi.waitFor(() => expect(delayedPause).toHaveBeenCalled());
+      reused = await reuseClient.request('share.start', request);
+    } finally {
+      resume();
+    }
+    expect(await stopping).toMatchObject({ result: { stopped: [] } });
+    delayedPause.mockRestore();
+    expect(reused).toMatchObject({ result: { url: path, expiresAt, saved: true } });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('live');
+    expect(await client.request('share.start', request)).toMatchObject({
+      error: { message: expect.stringMatching(/live now|in use by live share/) },
+    });
+    const login = (password: string) =>
+      fetch(`${path}login`, {
+        method: 'POST',
+        redirect: 'manual',
+        body: new URLSearchParams({ password }),
+      });
+    for (const [password, canControl] of [
+      [saved.password, true],
+      [saved.viewPassword, false],
+    ] as const) {
+      const session = await login(password);
+      expect(session.status).toBe(303);
+      const cookie = session.headers.get('set-cookie')?.split(';')[0];
+      assert(cookie);
+      const viewer = await fetch(path, { headers: { cookie } });
+      expect(await viewer.text()).toContain(`data-control="${canControl}"`);
+    }
+    expect((await login('other-password')).status).toBe(401);
+
+    assert(server);
+    await server.close();
+    const successor = await routeServer({}, statusEnv);
+    const restartedClient = await desktop();
+    await vi.waitFor(async () => expect((await fetch(path)).status).toBe(200));
+    await vi.waitFor(async () => expect((await fetch(otherPath)).status).toBe(200));
+    const fresh = await restartedClient.request('share.start', { workspace, platform: 'ios' });
+    expect(fresh).toMatchObject({ result: { url: expect.stringMatching(/\/s\/[a-zA-Z0-9_-]{43}\/$/), saved: true } });
+    assert('result' in fresh && fresh.result && 'url' in fresh.result && typeof fresh.result.url === 'string');
+    const freshUrl = fresh.result.url;
+    expect((await fetch(freshUrl)).status).toBe(200);
+    expect((await fetch(path)).status).toBe(404);
+    expect((await fetch(otherPath)).status).toBe(200);
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toMatchObject({
+      ios: { token: new URL(freshUrl).pathname.split('/')[2], state: 'live' },
+      'ios@tablet': { token: other.token },
+    });
+    assert('id' in fresh.result && typeof fresh.result.id === 'string');
+    expect(await restartedClient.request('share.stop', { workspace, id: fresh.result.id })).toMatchObject({
+      result: { stopped: [expect.objectContaining({ id: fresh.result.id })] },
+    });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped');
+    expect(fixture.commands()).toEqual([]);
+    expect(successor.commands()).toEqual([]);
   });
 
   it('leaves a saved share stopped, and runs no Funnel or serve command, when it was shared under another address', async () => {

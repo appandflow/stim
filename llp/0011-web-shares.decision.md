@@ -49,6 +49,8 @@ marks the entry stopped through the same module.
 
 A restart can restore a live link created from either entry point. Deliberately stopped links remain available for explicit reuse, and restoring a link keeps its original expiry. [Reuse](https://github.com/appandflow/stim/pull/4975), [Server-side persistence](https://github.com/appandflow/stim/pull/5228).
 
+A successful `stim share --reuse` replaces a restored share of the same link, target and access settings. It keeps the saved expiry unless `--expires` sets a new one. A new link ends a restored share for the same target once the new link is saved. This applies to full and share-only servers. [Restored share replacement](https://github.com/appandflow/stim/issues/5627).
+
 ## A share-only net thread resumes with stimd
 
 A share started with no Desktop and no service lives in a share-only net thread
@@ -87,10 +89,7 @@ entry stopped means a later stimd does not start a thread for it; an entry of a
 workspace that is not registered, which the registry cannot prove stale, is left
 as it is and not counted either. A dead share route
 claim starts a thread only while a tailscale command exists to remove its route.
-In a share-only server a restored share gives way: `stim share --reuse` of its
-link replaces it and takes the passwords and expiry of that command, and a new
-share of the same target ends it, so the saved file and the running shares name
-the same link. The route claim path is
+The route claim path is
 `shareRouteClaimRoot` in `@stim-cli/core/state`.
 
 Maintainer decision: "another important consteaint of stimd is being resumable", 2026-11-12.
