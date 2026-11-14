@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
@@ -30,6 +30,7 @@ const MAX_DISCOVERED_TARGETS = 6;
 export interface CargoTargetCandidate {
   root: string;
   dir: string;
+  identity: string;
   discovered: boolean;
   measuredAt: number | null;
 }
@@ -53,8 +54,8 @@ export function selectCargoTargets(
 ): { measured: CargoTargetCandidate[]; unlisted: CargoTargetCandidate[] } {
   const byDir = new Map<string, CargoTargetCandidate>();
   for (const candidate of candidates) {
-    const seen = byDir.get(candidate.dir);
-    if (!seen || (seen.discovered && !candidate.discovered)) byDir.set(candidate.dir, candidate);
+    const seen = byDir.get(candidate.identity);
+    if (!seen || (seen.discovered && !candidate.discovered)) byDir.set(candidate.identity, candidate);
   }
   const all = [...byDir.values()];
   const discovered = all
@@ -98,7 +99,9 @@ async function cargoTargetCandidates(
     for (const path of await cargoTargetDirsAsync(root)) {
       try {
         await lstat(path);
-        found.push({ root, dir: path, discovered, measuredAt: lastMeasured.get(path) ?? null });
+        // Windows 8.3 aliases need native realpath. If it fails, keep the path for the existing ownership checks.
+        const identity = process.platform === 'win32' ? await realpath(path).catch(() => path) : path;
+        found.push({ root, dir: path, identity, discovered, measuredAt: lastMeasured.get(path) ?? null });
       } catch {}
     }
   };
