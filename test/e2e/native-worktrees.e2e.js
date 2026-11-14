@@ -245,25 +245,38 @@ test('native preparation controls simulator shutdown and stops after a failed pr
     { failure: 'prepare', shutdown: true },
     { failure: null, shutdown: false },
     { failure: 'inventory', shutdown: false },
+    { failure: 'lost-first', shutdown: false },
+    { failure: 'same-udid', shutdown: false },
   ]) {
+    const ids = ['owned-first', failure === 'same-udid' ? 'owned-first' : 'owned-second'];
+    let last = -1;
     const events = [];
     const h = {
       log() {},
       sh(file, args, { cwd, allowFail } = {}) {
         if (file === 'xcrun') {
+          assert.deepEqual(args, ['simctl', 'list', 'devices', '--json']);
           assert.equal(allowFail, true);
           if (failure === 'inventory') return { code: 1, stdout: '', stderr: 'inventory timed out' };
           return {
             code: 0,
-            stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: shutdown ? 'Shutdown' : 'Booted' }] } }),
+            stdout: JSON.stringify({
+              devices: {
+                ios: ids.slice(0, last + 1).map((udid, index) => ({
+                  udid,
+                  state: shutdown || (failure === 'lost-first' && last === 1 && index === 0) ? 'Shutdown' : 'Booted',
+                })),
+              },
+            }),
           };
         }
         assert.equal(file, process.execPath);
         assert.equal(args[2], cwd);
+        last = homes.indexOf(cwd);
         events.push(['prepare', cwd]);
         return {
           code: failure === 'prepare' ? 1 : 0,
-          stdout: JSON.stringify({ udid: 'owned' }),
+          stdout: JSON.stringify({ udid: ids[last] }),
           stderr: failure === 'prepare' ? 'boot timed out' : '',
         };
       },
@@ -292,14 +305,22 @@ test('native preparation controls simulator shutdown and stops after a failed pr
       } catch (error) {
         observed = error;
       }
-      assert.match(observed.message, failure === 'prepare' ? /boot timed out/ : /inventory timed out/);
+      const messages = {
+        prepare: /boot timed out/,
+        inventory: /inventory timed out/,
+        'lost-first': /did not stay booted alongside/,
+        'same-udid': /assigned twice during preparation/,
+      };
+      assert.match(observed.message, messages[failure]);
       assert.equal(observed.preserveNativeState, true);
       cleanupTmp(homes, observed);
       assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
-    } else run();
+    } else {
+      assert.deepEqual(run(), shutdown ? [] : homes.map((cwd, i) => ({ cwd, slot: 'default', udid: ids[i] })));
+    }
     assert.deepEqual(
       events,
-      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) =>
+      (failure === 'prepare' || failure === 'inventory' ? homes.slice(0, 1) : homes).flatMap((cwd) =>
         [
           ['prepare', cwd],
           ['record', cwd],

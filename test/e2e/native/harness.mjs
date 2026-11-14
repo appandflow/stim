@@ -290,7 +290,8 @@ export function teardownWorkspaces({ h, created, removeWorktrees = true, timeout
 }
 
 export function prepareIosDevices({ h, platform, targets, cleanup, shutdown = true }) {
-  if (platform !== 'ios') return;
+  const prepared = [];
+  if (platform !== 'ios') return prepared;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
   try {
     for (const { cwd, slot = 'default' } of targets) {
@@ -313,11 +314,21 @@ export function prepareIosDevices({ h, platform, targets, cleanup, shutdown = tr
       const listed = h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000, allowFail: true });
       assert(listed.code === 0, `could not inspect prepared simulator ${slot}: ${listed.stderr}`);
       const inventory = JSON.parse(listed.stdout);
-      const sim = Object.values(inventory.devices)
-        .flat()
-        .find((device) => device.udid === udid);
+      const sims = Object.values(inventory.devices).flat();
+      const sim = sims.find((device) => device.udid === udid);
       assert(sim?.state === (shutdown ? 'Shutdown' : 'Booted'), `prepared simulator ${slot} has the wrong state`);
+      if (!shutdown) {
+        for (const { udid: prior } of prepared) {
+          assert(prior !== udid, `simulator ${udid} was assigned twice during preparation`);
+          assert(
+            sims.some((device) => device.udid === prior && device.state === 'Booted'),
+            `prepared simulator ${prior} did not stay booted alongside ${udid}`,
+          );
+        }
+        prepared.push({ cwd, slot, udid });
+      }
     }
+    return prepared;
   } catch (error) {
     error.preserveNativeState = true;
     h.log(`Simulator preparation failed. Keeping ${h.env?.STIM_HOME ?? 'STIM_HOME'} for recovery.`);

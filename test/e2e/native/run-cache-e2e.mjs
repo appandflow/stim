@@ -601,13 +601,19 @@ async function main() {
   } else {
     const wt3 = worktreeCreate('e2e-cache-3', appDir);
     const wt4 = worktreeCreate('e2e-cache-4', appDir);
-    prepareIosDevices({ h, platform: PLATFORM, cleanup, targets: [{ cwd: wt3 }, { cwd: wt4 }] });
     if (PLATFORM === 'ios') {
       assertMatchingPods(wt3);
       assertMatchingPods(wt4);
     }
     startAndAssertMode(wt3);
     startAndAssertMode(wt4);
+    const prepared = prepareIosDevices({
+      h,
+      platform: PLATFORM,
+      cleanup,
+      targets: [{ cwd: wt3 }, { cwd: wt4 }],
+      shutdown: false,
+    });
     const casBeforeRace = dirStats(CAS_DIR);
     banner('racing two workspaces at ONE uncached fingerprint');
     log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through STIM_HOME`);
@@ -617,24 +623,30 @@ async function main() {
       cliAsync([PLATFORM, '--json'], { cwd: wt4, env: raceEnv }),
     ]);
     const casAfterRace = dirStats(CAS_DIR);
-    raceOutcome = { r3, r4, casBeforeRace, casAfterRace };
+    raceOutcome = { r3, r4, casBeforeRace, casAfterRace, prepared };
   }
 
   await runCheck('single-flight', (c) => {
     if (!raceOutcome) return c.skip('--skip-race was passed, so no race was run');
-    const { r3, r4 } = raceOutcome;
+    const { r3, r4, prepared } = raceOutcome;
     for (const [label, r] of [
       ['wt3', r3],
       ['wt4', r4],
     ]) {
       assert(r.code === 0, `${label} exited ${r.code}:\n${lastLines(r.stderr, 25)}`);
+      const udid = prepared.find(({ cwd }) => cwd === r.cwd)?.udid;
+      if (udid) {
+        assert(r.facts.udid === udid, `${label} launched on ${r.facts.udid}, expected prepared simulator ${udid}`);
+        c.ev(`${label}: used prepared simulator ${udid}`);
+      }
       if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: r.facts, label, cwd: r.cwd });
       c.ev(
         `${label}: cacheHit=${JSON.stringify(r.facts.cacheHit)} waitedForBuild=${JSON.stringify(r.facts.waitedForBuild)} durationMs=${r.facts.durationMs}`,
       );
     }
+    if (PLATFORM === 'ios') assert(r3.facts.udid !== r4.facts.udid, 'the cache racers shared one iOS simulator');
     assert(
-      r3.facts.cacheKey === r4.facts.cacheKey,
+      r3.facts.cacheKey && r3.facts.cacheKey === r4.facts.cacheKey,
       `the racers did not fingerprint alike (${r3.facts.cacheKey} vs ${r4.facts.cacheKey}), so they were never racing the same entry`,
     );
     c.ev(`both racers computed the same key: ${r3.facts.cacheKey}`);
@@ -656,6 +668,13 @@ async function main() {
       Number(waiter.facts.waitedForBuild?.ms) > 0 && waiter.facts.waitedForBuild?.pid,
       `waitedForBuild must carry the builder's pid and a non-zero wait: ${JSON.stringify(waiter.facts.waitedForBuild)}`,
     );
+    if (PLATFORM === 'ios') {
+      const buildStarts = (cwd) => readNdjson(buildLog(cwd)).filter((record) => record.event === 'build_start').length;
+      assert(
+        buildStarts(builder.cwd) === 1 && buildStarts(waiter.cwd) === 0,
+        'exactly the iOS cache builder must run xcodebuild',
+      );
+    }
     const line = waiter.stderr.split('\n').find((l) => /waited .* -> installed from cache/.test(l));
     assert(
       line,
