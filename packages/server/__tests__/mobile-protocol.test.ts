@@ -428,7 +428,16 @@ test('the build.start wire schema accepts every BuildStartParams field, includin
     cacheArtifact: true,
     podsOnWorker: true,
     reuseArtifact: true,
-    exact: { name: 'app', exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: { API_URL: 'x' } },
+    exact: {
+      name: 'app',
+      exact2: 'a'.repeat(40),
+      bun: '1.4.2',
+      rust: '1.97.0',
+      checkout: 'exact2',
+      url: null,
+      env: { API_URL: 'x' },
+      link: '../../.exact/exact2/exact2',
+    },
   } satisfies Required<Server.BuildStartParams>;
   expect(accepts(full)).toBe(true);
 });

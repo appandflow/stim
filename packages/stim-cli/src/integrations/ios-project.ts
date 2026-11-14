@@ -40,6 +40,8 @@ export interface IosArtifactRecipe {
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
   cache(): LocalBuildCache;
+  /** Settles before a build on this machine takes its build slot; not awaited for a build placed elsewhere. */
+  beforeLocalBuild?(): Promise<void>;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
   validate(): Promise<IosArtifactIdentity | null>;

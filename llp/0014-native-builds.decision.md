@@ -15,11 +15,12 @@ and Android use fixed `xcodebuild` and Gradle arguments. An Exact app builds
 with its own `./exact.mjs ios --no-install` (plus `--release` for
 `--configuration Release`), with `EXACT_SIM` naming the
 workspace's owned simulator, started only once Stim has booted that simulator,
-so Exact never boots or shuts it down. Build-only runs, build workers and runs whose
+so Exact never boots or shuts it down. Build-only runs and runs whose
 simulator is hosted on another Mac use the same command with no `EXACT_SIM`,
 and only for an app whose
 `app.json` declares no native modules, because Exact may run code on a
-simulator during the build to read an app's native modules.
+simulator during the build to read an app's native modules. A build worker
+gives such an app a simulator its build owns ([LLP 0009](./0009-build-offload.decision.md#exact-builds)).
 
 Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451).
 

@@ -173,6 +173,8 @@ const exactPinProperties = {
   exact2: { type: 'string', pattern: '^[0-9a-f]{40}$' },
   bun: { type: 'string', pattern: '^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$' },
   rust: { type: 'string', pattern: '^[0-9A-Za-z][0-9A-Za-z.-]{0,39}$' },
+  checkout: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' },
+  url: { type: ['string', 'null'], maxLength: 400 },
 };
 const buildArtifactIdentity: JsonSchema = {
   type: 'object',
@@ -2177,9 +2179,10 @@ export function protocolJsonSchema(): JsonSchema {
               swiftpmArtifact: swiftpmArtifactQuery,
               exact: {
                 type: 'object',
-                required: ['exact2', 'bun', 'rust'],
+                required: ['exact2', 'bun', 'rust', 'checkout', 'url'],
                 additionalProperties: false,
-                description: "An Exact app's pins; the offer then reports what of Exact's toolchain the machine lacks.",
+                description:
+                  "An Exact app's pins, its exact2 checkout folder name and a remote URL with the commit; the offer then reports what of Exact's toolchain the machine lacks.",
                 properties: exactPinProperties,
               },
             },
@@ -2387,10 +2390,10 @@ export function protocolJsonSchema(): JsonSchema {
               },
               exact: {
                 type: 'object',
-                required: ['name', 'exact2', 'bun', 'rust', 'env'],
+                required: ['name', 'exact2', 'bun', 'rust', 'checkout', 'url', 'env', 'link'],
                 additionalProperties: false,
                 description:
-                  "An Exact app's iOS build: its directory name, pins and declared settings' values; fingerprint is the synced manifest digest.",
+                  "An Exact app's iOS build: its directory name, pins, declared settings' values and the app's relative path to exact2 when it leaves the repository; fingerprint is the synced manifest digest.",
                 properties: {
                   name: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' },
                   ...exactPinProperties,
@@ -2400,6 +2403,7 @@ export function protocolJsonSchema(): JsonSchema {
                     propertyNames: { pattern: '^[A-Z][A-Z0-9_]*$' },
                     additionalProperties: { type: 'string' },
                   },
+                  link: { type: ['string', 'null'], maxLength: 2000 },
                 },
               },
               jdk: {

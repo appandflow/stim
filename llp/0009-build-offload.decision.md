@@ -75,14 +75,20 @@ A simulator build does not need store signing credentials. Syncing every ignored
 An offloaded Exact
 build is keyed by the synced manifest's digest, installed from the fetched
 app and never cached; it carries the values of the settings `app.json` `env`
-declares that the client's environment, `.env.local` or `.env` sets, and only for an
-app that declares no native modules. Its worker needs Exact's own Bun, Rust
-and exact2 for the app's pins, reports what it lacks in the offer, and builds
+declares that the client's environment, `.env.local` or `.env` sets. Its worker needs Exact's own Bun, Rust
+and exact2 for the app's pins, at `~/.exact/exact2/<commit>` or in a folder named like the client's exact2
+checkout, reports what it lacks in the offer with commands that fetch the commit from the client's remote, and builds
 an app at the repository root in a checkout folder named like the client's; it shares the worker
-user's `~/.cargo` and `~/.cache/exact` across clients.
+user's `~/.cargo` and `~/.cache/exact` across clients. The app's relative path to exact2, which its Cargo
+manifests use, is linked inside the build area to that checkout, never outside the area.
 
-Exact can run an app on a simulator during the build to resolve native modules.
-An offload has no access to the client's owned simulator. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
+For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it,
+passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build ends; a build starts by
+deleting any simulator that home's ledger still lists.
+
+Exact can run an app on a simulator during the build to resolve native modules, and without `EXACT_SIM` it takes any
+booted simulator or boots one itself. An offload has no access to the client's owned simulator, and a simulator kept
+in a build area's home would outlive that home when the area is evicted. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
 
 ## Run the client build
 

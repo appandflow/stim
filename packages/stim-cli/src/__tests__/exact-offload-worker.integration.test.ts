@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -15,10 +16,29 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { EXACT_SIM_TARGET, exactOffloadParam, exactOffloadPlan } from '../integrations/exact-offload.ts';
 import { runOffloadWorker } from '../job/offload/worker.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { sourceManifest } from '../offload/native-source.ts';
+
+vi.mock('../devices/ios.ts', async (actual) => ({
+  ...(await actual<typeof import('../devices/ios.ts')>()),
+  createOwnedIosSim: vi.fn<typeof import('../devices/ios.ts').createOwnedIosSim>(async () => ({
+    udid: 'PROBE-SIM',
+    name: 'stim-probe',
+    deviceType: null,
+    runtime: null,
+  })),
+  bootIosSim: vi.fn<typeof import('../devices/ios.ts').bootIosSim>(async () => {}),
+}));
+vi.mock('../devices/teardown.ts', async (actual) => ({
+  ...(await actual<typeof import('../devices/teardown.ts')>()),
+  teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(async () => ({
+    status: 'torn-down',
+  })),
+}));
 
 let root: string;
 let home: string;
@@ -82,7 +102,11 @@ afterEach(() => {
 /** Runs the worker's build mode on the files under `client`, as stim-server hands it a synced manifest. */
 async function build(
   files: Record<string, string>,
-  { project = '', env = {} }: { project?: string; env?: Record<string, string> } = {},
+  {
+    project = '',
+    env = {},
+    link = null,
+  }: { project?: string; env?: Record<string, string>; link?: string | null } = {},
 ): Promise<{ result: Record<string, unknown>; area: string }> {
   const client = join(root, 'client');
   const blobs = join(root, 'blobs');
@@ -97,7 +121,7 @@ async function build(
   }
   const exact = project
     ? exactOffloadParam(exactOffloadPlan(join(client, project), { EXACT2: join(home, '.exact', 'exact2', sha) }))
-    : { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', env };
+    : { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', checkout: sha, url: null, env, link };
   expect(exact).not.toBeNull();
   const area = join(root, 'area');
   mkdirSync(area, { recursive: true });
@@ -155,13 +179,37 @@ test('the worker runs Exact without the simulator, the worker caches or Exact se
     expect(seen).not.toHaveProperty(name);
 });
 
-test('the worker refuses an Exact app that declares native modules before running anything', async () => {
+test('an Exact app that declares native modules builds next to a simulator the build owns, deleted after', async () => {
+  vi.mocked(teardownOwnedIosSim).mockClear();
+  recordCreatedDevice('ios', 'LEFT-BY-A-STOPPED-BUILD');
   const { result, area } = await build({
     'exact.mjs': LAUNCHER,
     'app.json': JSON.stringify({ modules: ['shop-map'] }),
   });
-  expect(result).toMatchObject({ ok: false, code: 'exact-modules' });
-  expect(existsSync(join(area, 'checkout', 'shop-app', 'env-seen.txt'))).toBe(false);
+  expect(result).toMatchObject({ ok: false, code: 'exact-build-failed' });
+  expect(readFileSync(join(area, 'checkout', 'shop-app', 'env-seen.txt'), 'utf8')).toContain('EXACT_SIM=PROBE-SIM\n');
+  expect(vi.mocked(teardownOwnedIosSim).mock.calls).toEqual([
+    ['LEFT-BY-A-STOPPED-BUILD', { del: true }],
+    ['PROBE-SIM', { del: true }],
+  ]);
+});
+
+test("the app's relative path to exact2 reaches this machine's checkout from inside the build area", async () => {
+  const { result, area } = await build(
+    { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
+    { link: '../../.exact/exact2/scroll-zoom' },
+  );
+  expect(result).toMatchObject({ ok: false, code: 'exact-build-failed' });
+  expect(realpathSync(join(area, 'checkout', 'shop-app', '../../.exact/exact2/scroll-zoom'))).toBe(
+    realpathSync(join(home, '.exact', 'exact2', sha)),
+  );
+
+  const escaping = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../../.exact/exact2/x' });
+  expect(escaping.result).toMatchObject({
+    ok: false,
+    code: 'exact-tools',
+    message: /cannot place inside its build area/,
+  });
 });
 
 test('the worker refuses a setting app.json does not declare', async () => {
