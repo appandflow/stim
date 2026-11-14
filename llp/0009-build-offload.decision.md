@@ -82,9 +82,9 @@ an app at the repository root in a checkout folder named like the client's; it s
 user's `~/.cargo` and `~/.cache/exact` across clients. The app's relative path to exact2, which its Cargo
 manifests use, is linked inside the build area to that checkout, never outside the area.
 
-For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it,
-passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build ends; a build starts by
-deleting any simulator that home's ledger still lists.
+For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it
+through device boot admission, passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build
+ends or the job is stopped; a build starts by deleting any simulator that home's ledger still lists.
 
 Exact can run an app on a simulator during the build to resolve native modules, and without `EXACT_SIM` it takes any
 booted simulator or boots one itself. An offload has no access to the client's owned simulator, and a simulator kept

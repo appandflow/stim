@@ -33,6 +33,12 @@ vi.mock('../devices/ios.ts', async (actual) => ({
   })),
   bootIosSim: vi.fn<typeof import('../devices/ios.ts').bootIosSim>(async () => {}),
 }));
+vi.mock('../engine/device-capacity.ts', async (actual) => ({
+  ...(await actual<typeof import('../engine/device-capacity.ts')>()),
+  withDeviceBootAdmission: vi.fn<(device: unknown, boot: () => Promise<unknown>) => Promise<unknown>>(
+    async (_device, boot) => boot(),
+  ),
+}));
 vi.mock('../devices/teardown.ts', async (actual) => ({
   ...(await actual<typeof import('../devices/teardown.ts')>()),
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(async () => ({
@@ -203,6 +209,13 @@ test("the app's relative path to exact2 reaches this machine's checkout from ins
   expect(realpathSync(join(area, 'checkout', 'shop-app', '../../.exact/exact2/scroll-zoom'))).toBe(
     realpathSync(join(home, '.exact', 'exact2', sha)),
   );
+
+  const sibling = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../exact2' });
+  expect(sibling.result).toMatchObject({ ok: false, code: 'exact-build-failed' });
+  expect(realpathSync(join(area, 'checkout', 'exact2'))).toBe(realpathSync(join(home, '.exact', 'exact2', sha)));
+
+  const replacing = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../src' });
+  expect(replacing.result).toMatchObject({ ok: false, code: 'exact-tools', message: /not a link to exact2/ });
 
   const escaping = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../../.exact/exact2/x' });
   expect(escaping.result).toMatchObject({

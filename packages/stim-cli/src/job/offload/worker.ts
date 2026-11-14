@@ -92,6 +92,7 @@ import { runExactIosBuild } from '../../integrations/exact-ios.ts';
 import { readCreatedDevices } from '../../devices/created-devices.ts';
 import { bootIosSim, createOwnedIosSim } from '../../devices/ios.ts';
 import { teardownOwnedIosSim } from '../../devices/teardown.ts';
+import { withDeviceBootAdmission } from '../../engine/device-capacity.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
 import { buildIosOperation } from '../../commands/ios/build.ts';
 import { buildAndroidOperation } from '../../commands/android/build.ts';
@@ -1144,11 +1145,13 @@ function inside(dir: string, path: string): boolean {
 function linkExact2(area: string, root: string, link: string, checkout: string): string | null {
   const realArea = realpathSync(area);
   const at = resolvePath(root, link);
-  if (!inside(realArea, at) || at === realArea || inside(root, at) || inside(join(realArea, 'checkout'), at))
+  if (!inside(realArea, at) || at === realArea || inside(root, at) || at === join(realArea, 'checkout'))
     return `the app names exact2 at ${link}, which this machine cannot place inside its build area`;
   const stat = lstatSync(at, { throwIfNoEntry: false });
-  if (stat?.isSymbolicLink() && readlinkSync(at) === checkout) return null;
-  if (stat && !stat.isSymbolicLink()) return `${at} is not a link this machine made`;
+  const target = stat?.isSymbolicLink() ? readlinkSync(at) : null;
+  if (target === checkout) return null;
+  if (stat && (target === null || !inside(dirname(checkout), target)))
+    return `${at} is not a link to exact2 this machine made`;
   mkdirSync(dirname(at), { recursive: true });
   rmSync(at, { force: true });
   symlinkSync(checkout, at);
@@ -1160,7 +1163,10 @@ function linkExact2(area: string, root: string, link: string, checkout: string):
  * (exact2 `host/apple/build.mjs`) and with no `EXACT_SIM` takes any booted one. The build deletes it after; one a
  * stopped build left is deleted first.
  */
-async function exactProbeSimulator(job: WorkerJob): Promise<{ udid: string; remove(): Promise<void> } | string> {
+async function exactProbeSimulator(
+  job: WorkerJob,
+  root: string,
+): Promise<{ udid: string; remove(): Promise<void> } | string> {
   for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
   note('build', 'creating a simulator for the native-module roster');
   let udid: string;
@@ -1174,7 +1180,11 @@ async function exactProbeSimulator(job: WorkerJob): Promise<{ udid: string; remo
     if (outcome.status === 'failed') note('build', `could not delete the roster simulator ${udid}: ${outcome.reason}`);
   };
   try {
-    await bootIosSim(udid, { openViewer: false, out: (line) => note('build', line) });
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: udid },
+      () => bootIosSim(udid, { openViewer: false, out: (line) => note('build', line) }),
+      { root, out: (line) => note('build', line) },
+    );
   } catch (error) {
     await remove();
     return `could not boot a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
@@ -1234,9 +1244,13 @@ async function compileExact(
     )
       env[key] = value;
   Object.assign(env, exact.env, { EXACT2: checkout });
-  const probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job) : null;
+  const probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job, root) : null;
   if (typeof probe === 'string') return { ok: false, code: 'exact-simulator', message: probe };
   if (probe) env.EXACT_SIM = probe.udid;
+  const stop = () => {
+    void probe?.remove().finally(() => process.exit(143));
+  };
+  if (probe) process.once('SIGTERM', stop);
   note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
   let built: Awaited<ReturnType<typeof runExactIosBuild>>;
   try {
@@ -1251,6 +1265,7 @@ async function compileExact(
       }),
     );
   } finally {
+    process.off('SIGTERM', stop);
     await probe?.remove();
   }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
