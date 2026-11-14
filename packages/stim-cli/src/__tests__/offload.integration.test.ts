@@ -163,7 +163,7 @@ describe('pickOffer', () => {
 });
 
 test("an Exact build skips a machine that lacks Exact's toolchain and names the command that installs it", () => {
-  const exact = { exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0' };
+  const exact = { exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', checkout: 'exact2', url: null };
   const EXACT: BuildTarget = { ...IOS, runtime: null, exact };
   const missing = [{ reason: 'no Bun 1.4.2 at ~/.bun-1.4.2', commands: ['install-bun'] }];
   const offers = (each: BuildOffer['exact']) => [{ machine: 'mini', offer: offer({ exact: each }) }];
@@ -684,8 +684,8 @@ describe('strict client routing', () => {
   });
 
   it('an Exact build asks for its pins in the offer and starts on the synced digest with the declared settings', async () => {
-    const exact = { name: 'shop-app', exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: { API_URL: 'x' } };
-    const pins = { exact2: exact.exact2, bun: exact.bun, rust: exact.rust };
+    const pins = { exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', checkout: 'exact2', url: null };
+    const exact = { ...pins, name: 'shop-app', env: { API_URL: 'x' }, link: '../../.exact/exact2/exact2' };
     let started: unknown = null;
     const offered: unknown[] = [];
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {

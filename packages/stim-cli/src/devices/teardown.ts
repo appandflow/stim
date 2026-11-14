@@ -38,6 +38,7 @@ import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   deleteParkedIosSim,
   deleteIosSim,
+  listAllIosSims,
   listAllIosSimsAsync,
   listIosDeviceTypesAsync,
   parkedSimName,
@@ -441,6 +442,24 @@ export async function teardownOwnedIosSim(
       reason: String((e as Error)?.message || e),
       ...(parkFallback ? { parkFallback } : {}),
     };
+  }
+}
+
+/**
+ * Deletes an owned simulator at once, for a process that is being stopped and cannot wait for the full teardown:
+ * re-resolves ownership from a fresh listing, deletes it with `simctl delete` (which shuts a booted one down) within
+ * `timeoutMs`, and forgets it only once it is gone. Whether it is gone.
+ */
+export function deleteOwnedIosSimNow(udid: string, timeoutMs: number): boolean {
+  try {
+    const resolved = resolveOwnedIosSim(udid, listAllIosSims({ timeoutMs, includeUnavailable: true }));
+    if (resolved.notOwned) return false;
+    if (!resolved.missing && getExecutor().runFileQuiet('xcrun', ['simctl', 'delete', udid], { timeoutMs }) === null)
+      return false;
+    forgetCreatedDevice('ios', udid);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -153,9 +153,9 @@ async function compile(
       throw new IosRecipeRefusal({
         code: 'STIM_BAD_ARG',
         message:
-          "This Exact app declares native modules in app.json, and Exact may run code on a simulator to read them, so it builds only on this workspace's own booted simulator.",
+          "This Exact app declares native modules in app.json, and Exact may run code on a simulator to read them, so on this Mac it builds only next to this workspace's own booted simulator.",
         remedy:
-          'Build and run it with stim ios; build-only runs (stim ci build) support Exact apps without native modules.',
+          'Build and run it with stim ios, or build it on a build machine with --remote-build, which gives the build a simulator of its own.',
       });
     const env = { ...context.operation?.env };
     delete env.EXACT_SIM;
@@ -171,13 +171,13 @@ async function compile(
   return run({ ...context.operation?.env, EXACT_SIM: booted.udid });
 }
 
-async function exactOffloadTarget(root: string, { exact2, bun, rust }: ExactPins): Promise<BuildTarget> {
+async function exactOffloadTarget(root: string, { exact2, bun, rust, checkout, url }: ExactPins): Promise<BuildTarget> {
   return {
     platform: 'ios',
     local: await iosToolchainAsync(root, null),
     runtime: null,
     cocoapodsPinned: false,
-    exact: { exact2, bun, rust },
+    exact: { exact2, bun, rust, checkout, url },
   };
 }
 
@@ -194,7 +194,6 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
   return {
     buildTool: EXACT_CLI,
     identity: async () => {
-      await boot();
       const incremental = exactIncremental(root, context.configuration, context.operation?.env ?? {});
       return { cacheIneligible: CACHE_INELIGIBLE, ...(incremental === undefined ? {} : { incremental }) };
     },
@@ -204,6 +203,9 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
         sources: null,
         readAppId: (path) => readBundleId(path),
       }),
+    beforeLocalBuild: async () => {
+      await boot();
+    },
     prepare: async () => {},
     reconcile: async () => ({ identity: null, rekeyedBy: [], mutationLabel: '' }),
     validate: async () => null,

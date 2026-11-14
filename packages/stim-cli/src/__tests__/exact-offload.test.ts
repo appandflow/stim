@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import {
   EXACT_SIM_TARGET,
+  exactCheckoutDir,
   exactOffloadParam,
   exactLocalToolProblems,
   exactOffloadPlan,
@@ -55,7 +56,10 @@ beforeEach(() => {
       'ensureBun("1.4.2");',
     ].join('\n'),
   );
-  writeFileSync(join(app, 'app.json'), JSON.stringify({ env: ['API_URL', 'STORE_ID', 'REGION', 'UNSET', 'lower'] }));
+  writeFileSync(
+    join(app, 'app.json'),
+    JSON.stringify({ env: ['API_URL', 'STORE_ID', 'REGION', 'UNSET', 'lower'], modules: ['shop-map'] }),
+  );
   writeFileSync(join(app, '.env.local'), 'API_URL=from-file\nSTORE_ID="42"\nOTHER=secret\n');
   writeFileSync(join(app, '.env'), 'STORE_ID=1\nREGION=ca\n');
 });
@@ -64,22 +68,53 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('an offload carries the pins, the app directory name and the declared settings in Exact order', () => {
+test('an offload carries the pins, the app directory name, the declared settings in Exact order and the exact2 path', () => {
   expect(exactOffloadPlan(app, { API_URL: 'from-shell' })).toEqual({
     name: 'shop-app',
     exact2: sha,
     bun: '1.4.2',
     rust: '1.97.0',
+    checkout: 'exact2',
+    url: null,
     env: { API_URL: 'from-shell', STORE_ID: '42', REGION: 'ca' },
+    link: '../../pins/exact2',
   });
 });
 
+test('an app in a subdirectory whose exact2 sits more than one folder above its repository builds here', () => {
+  const repo = join(root, 'deep', 'repo');
+  const nested = join(repo, 'sub', 'shop-app');
+  mkdirSync(join(repo, 'sub'), { recursive: true });
+  renameSync(app, nested);
+  git(repo, 'init', '-q');
+  expect(exactOffloadPlan(nested, { EXACT2: exact2 })).toMatchObject({
+    unsupported: expect.stringContaining('exact2 sits 2 folders above the repository'),
+  });
+  renameSync(repo, join(root, 'repo'));
+  expect(exactOffloadPlan(join(root, 'repo', 'sub', 'shop-app'), { EXACT2: exact2 })).toMatchObject({
+    link: '../../../pins/exact2',
+  });
+});
+
+test('an app whose exact2 path lands on an entry a build machine keeps for itself builds here', () => {
+  const moved = join(root, 'src', 'exact2');
+  mkdirSync(join(root, 'src'));
+  renameSync(exact2, moved);
+  expect(exactOffloadPlan(app, { EXACT2: moved })).toMatchObject({
+    unsupported: expect.stringContaining('lands on src'),
+  });
+});
+
+test('an offload names the remote that has the exact2 commit, never one carrying credentials', () => {
+  git(exact2, 'remote', 'add', 'leaky', 'https://user:token@github.com/someone/exact.git');
+  git(exact2, 'update-ref', 'refs/remotes/leaky/main', 'HEAD');
+  expect(exactOffloadPlan(app, {})).toMatchObject({ url: null });
+  git(exact2, 'remote', 'add', 'fork', 'https://github.com/someone/exact.git');
+  git(exact2, 'update-ref', 'refs/remotes/fork/feature', 'HEAD');
+  expect(exactOffloadPlan(app, {})).toMatchObject({ url: 'https://github.com/someone/exact.git' });
+});
+
 test.each([
-  [
-    'native modules',
-    () => writeFileSync(join(app, 'app.json'), JSON.stringify({ modules: ['shop-map'] })),
-    /native modules/,
-  ],
   [
     'a changed exact2',
     () => writeFileSync(join(exact2, 'rust-toolchain.toml'), 'channel = "1.98.0"\n'),
@@ -107,11 +142,26 @@ test.each(['\u5e97', '\u5e97\u00a0'])('a non-ASCII Git checkout root %j is refus
 });
 
 test('a worker refuses a malformed Exact build request', () => {
-  const valid = { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', env: { API_URL: 'x' } };
+  const valid = {
+    name: 'shop-app',
+    exact2: sha,
+    bun: '1.4.2',
+    rust: '1.97.0',
+    checkout: 'scroll-zoom',
+    url: 'git@github.com:someone/exact.git',
+    env: { API_URL: 'x' },
+    link: '../../.exact/exact2/scroll-zoom',
+  };
   expect(exactOffloadParam(valid)).toEqual(valid);
+  const { checkout: _checkout, url: _url, link: _link, ...older } = valid;
+  expect(exactOffloadParam(older)).toEqual({ ...older, checkout: sha, url: null, link: null });
   for (const bad of [
     { ...valid, name: '../escape' },
     { ...valid, exact2: 'main' },
+    { ...valid, checkout: '..' },
+    { ...valid, url: 'https://user:token@github.com/someone/exact.git' },
+    { ...valid, link: '/Users/someone/.exact/exact2/scroll-zoom' },
+    { ...valid, link: '../../.exact/../../etc' },
     { ...valid, env: { 'BAD-NAME': 'x' } },
     { ...valid, env: { API_URL: 1 } },
   ])
@@ -120,14 +170,24 @@ test('a worker refuses a malformed Exact build request', () => {
 
 test("a machine reports each missing piece of Exact's toolchain with the command that installs it", () => {
   const home = join(root, 'home');
-  const pins = { exact2: sha, bun: '1.4.2', rust: '1.97.0' };
+  const pins = {
+    exact2: sha,
+    bun: '1.4.2',
+    rust: '1.97.0',
+    checkout: 'fork',
+    url: 'https://github.com/someone/exact.git',
+  };
   const bare = exactToolProblems(pins, { HOME: home });
   expect(bare.map((each) => each.reason)).toEqual([
     'no Bun 1.4.2 at ~/.bun-1.4.2',
     'no rustup',
-    `no exact2 ${sha.slice(0, 10)} at ~/.exact/exact2/${sha}`,
+    `no exact2 ${sha.slice(0, 10)} at ~/.exact/exact2/${sha} or ~/.exact/exact2/fork`,
   ]);
   expect(bare.every((each) => each.commands.length > 0)).toBe(true);
+  expect(bare.at(-1)?.commands.slice(0, 2)).toEqual([
+    `git clone https://github.com/someone/exact.git ~/.exact/exact2/${sha}`,
+    `git -C ~/.exact/exact2/${sha} fetch https://github.com/someone/exact.git ${sha}`,
+  ]);
 
   mkdirSync(join(home, '.bun-1.4.2', 'bin'), { recursive: true });
   script(join(home, '.bun-1.4.2', 'bin', 'bun'), 'echo 1.4.2');
@@ -140,6 +200,9 @@ test("a machine reports each missing piece of Exact's toolchain with the command
   writeFileSync(join(checkout, 'scripts', 'app-cli.mjs'), '');
   expect(exactToolProblems(pins, { HOME: home }).map((each) => each.reason)).toContain(
     `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}`,
+  );
+  expect(exactToolProblems({ ...pins, url: null }, { HOME: home }).map((each) => each.reason)).toContain(
+    `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}; the client's exact2 checkout has ${sha.slice(0, 10)} on no remote branch whose URL Stim passes on, so push it where this machine can fetch it`,
   );
   execFileSync('git', ['clone', '-q', exact2, join(root, 'clone')]);
   execFileSync('mv', [join(root, 'clone', '.git'), join(checkout, '.git')]);
@@ -156,6 +219,10 @@ test("a machine reports each missing piece of Exact's toolchain with the command
     `[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 9; printf 'aarch64-apple-darwin\\n${EXACT_SIM_TARGET}\\n'`,
   );
   expect(exactToolProblems(pins, { HOME: home })).toEqual([]);
+
+  renameSync(checkout, join(home, '.exact', 'exact2', 'fork'));
+  expect(exactToolProblems(pins, { HOME: home })).toEqual([]);
+  expect(exactCheckoutDir(pins, home)).toBe(join(home, '.exact', 'exact2', 'fork'));
 });
 
 test("doctor finds this Mac's Bun, exact2 and Rust where the app's launcher looks, at or above the pins", () => {
@@ -221,8 +288,8 @@ test('doctor asks build machines about the pins only for an Exact app they could
   };
   const inspect = exactDoctor().offloadTargets?.(context, async () => null);
   expect((await inspect?.())?.map((target) => target.platform === 'ios' && target.exact)).toEqual([
-    { exact2: sha, bun: '1.4.2', rust: '1.97.0' },
+    { exact2: sha, bun: '1.4.2', rust: '1.97.0', checkout: 'exact2', url: null },
   ]);
-  writeFileSync(join(app, 'app.json'), JSON.stringify({ modules: ['shop-map'] }));
+  writeFileSync(join(exact2, 'rust-toolchain.toml'), 'channel = "1.98.0"\n');
   expect(exactDoctor().offloadTargets?.(context, async () => null)).toBeNull();
 });

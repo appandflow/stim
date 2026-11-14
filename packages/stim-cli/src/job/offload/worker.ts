@@ -19,6 +19,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -29,7 +30,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
@@ -83,12 +84,18 @@ import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/cor
 import { projectRegistry } from '../../integrations/projects.ts';
 import {
   exactCheckoutDir,
+  EXACT2_MAKING,
+  reservedAreaEntry,
   exactDeclaredSettings,
   exactDeclaresModules,
   exactToolProblems,
   type ExactOffload,
 } from '../../integrations/exact-offload.ts';
 import { runExactIosBuild } from '../../integrations/exact-ios.ts';
+import { readCreatedDevices } from '../../devices/created-devices.ts';
+import { bootIosSim, createOwnedIosSim } from '../../devices/ios.ts';
+import { deleteOwnedIosSimNow, teardownOwnedIosSim } from '../../devices/teardown.ts';
+import { withDeviceBootAdmission } from '../../engine/device-capacity.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
 import { buildIosOperation } from '../../commands/ios/build.ts';
 import { buildAndroidOperation } from '../../commands/android/build.ts';
@@ -311,7 +318,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
  * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string, job: Pick<WorkerJob, 'exact' | 'project'>): void {
-  if (job.exact && job.project === '') exactCheckout(area, job.exact.name);
+  if (job.exact && job.project === '') exactCheckout(area, job.exact.name, job.exact.link);
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform === 'win32') {
     const linked = !stat || stat.isSymbolicLink();
@@ -1096,16 +1103,24 @@ async function nativeIdentityRefusal(
 
 /**
  * Makes `<area>/src` a link to `<area>/checkout/<name>`: Exact names the crates it generates after the real name of the
- * app directory, so the app must build in a directory named like the client's. An existing `src` directory moves there.
+ * app directory, so the app must build in a directory named like the client's. The checkout sits as many folders below
+ * the area as the app's relative path to exact2 climbs above it, so that path ends inside the area. An existing `src`
+ * directory, or the checkout an earlier link pointed at, moves there.
  */
-function exactCheckout(area: string, name: string): void {
+function exactCheckout(area: string, name: string, link: string | null): void {
   const src = join(area, 'src');
-  const target = join('checkout', name);
+  const climbs = (link?.match(/^(?:\.\.\/)+/)?.[0].length ?? 0) / 3;
+  const target = join('checkout', ...Array<string>(Math.max(0, climbs - 2)).fill('up'), name);
+  const dest = join(area, target);
   const stat = lstatSync(src, { throwIfNoEntry: false });
-  if (stat?.isSymbolicLink() && readlinkSync(src) === target) return;
-  mkdirSync(join(area, 'checkout'), { recursive: true });
-  if (stat?.isDirectory() && !existsSync(join(area, target))) renameSync(src, join(area, target));
-  else mkdirSync(join(area, target), { recursive: true });
+  const current = stat?.isSymbolicLink() ? readlinkSync(src) : null;
+  if (current === target) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  if (!existsSync(dest)) {
+    if (current?.startsWith(`checkout${sep}`) && existsSync(join(area, current))) renameSync(join(area, current), dest);
+    else if (stat?.isDirectory()) renameSync(src, dest);
+    else mkdirSync(dest, { recursive: true });
+  }
   rmSync(src, { recursive: !stat?.isSymbolicLink(), force: true });
   symlinkSync(target, src);
 }
@@ -1129,7 +1144,124 @@ async function compileSyncedManifest(
     : workerOperation(root, (context) => compileMacos(context, job, root, log, time));
 }
 
-/** Runs the Exact build with this machine's exact2 for the pins and the client's settings, never on a simulator. */
+function inside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+const EXACT2_SOURCE = 'stim.exact2-source';
+
+/** Copies exact2's installed packages, which git leaves out, where Exact finds its TypeScript tools. */
+function copyPackages(from: string, to: string): void {
+  rmSync(join(to, 'node_modules'), { recursive: true, force: true });
+  if (existsSync(join(from, 'node_modules')))
+    cpSync(join(from, 'node_modules'), join(to, 'node_modules'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    });
+}
+
+/**
+ * Puts a checkout of exact2 at the app's relative path to it, inside the build area: Exact's Cargo manifests name
+ * exact2's crates by that path, and Exact names each compiler input by its place under the exact2 directory it runs
+ * from (exact2 `scripts/app.mjs` `nameOf`), which Bun resolves through links, so the path holds a real checkout. It
+ * shares this machine's checkout's objects, and never lands in the app, on one of the area's own entries, or outside
+ * the area. Returns why it cannot.
+ */
+function placeExact2(area: string, root: string, link: string, checkout: string, commit: string): string | null {
+  const realArea = realpathSync(area);
+  const at = resolvePath(root, link);
+  const top = relative(realArea, at).split(sep)[0] ?? '';
+  let parent = dirname(at);
+  while (!existsSync(parent)) parent = dirname(parent);
+  const realParent = realpathSync(parent);
+  if (
+    !inside(realArea, at) ||
+    inside(root, at) ||
+    at === join(realArea, 'checkout') ||
+    (top !== 'checkout' && reservedAreaEntry(top)) ||
+    !inside(realArea, realParent) ||
+    inside(root, realParent) ||
+    inside(join(realArea, 'home'), realParent)
+  )
+    return `the app names exact2 at ${link}, which this machine cannot place inside its build area`;
+  if (lstatSync(at, { throwIfNoEntry: false })) {
+    const source = gitQuiet(area, ['config', '--file', join(at, '.git', 'config'), '--get', EXACT2_SOURCE]);
+    if (source === null) return `${at} is not an exact2 checkout this machine made`;
+    if (source !== checkout) rmSync(at, { recursive: true, force: true });
+  }
+  const place = () => {
+    if (!existsSync(at)) {
+      mkdirSync(dirname(at), { recursive: true });
+      for (const left of readdirSync(dirname(at)))
+        if (left.startsWith(EXACT2_MAKING)) rmSync(join(dirname(at), left), { recursive: true, force: true });
+      const making = mkdtempSync(join(dirname(at), EXACT2_MAKING));
+      git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
+        write: true,
+        timeoutMs: 120_000,
+      });
+      git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
+      copyPackages(checkout, making);
+      renameSync(making, at);
+    }
+    const head = gitQuiet(at, ['rev-parse', 'HEAD']);
+    if (head !== commit || git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== '') {
+      if (head !== commit) copyPackages(checkout, at);
+      git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
+    }
+  };
+  try {
+    place();
+  } catch {
+    rmSync(at, { recursive: true, force: true });
+    place();
+  }
+  return null;
+}
+
+/**
+ * A simulator this build's Stim home owns, booted through device admission, for Exact's native-module roster probe,
+ * which spawns on a simulator (exact2 `host/apple/build.mjs`) and with no `EXACT_SIM` takes any booted one. `created`
+ * learns its udid as soon as it exists.
+ */
+async function exactProbeSimulator(
+  job: WorkerJob,
+  root: string,
+  created: (udid: string) => void,
+): Promise<{ udid: string; remove(): Promise<void> } | string> {
+  note('build', 'creating a simulator for the native-module roster');
+  let udid: string;
+  try {
+    ({ udid } = await createOwnedIosSim(`exact-${job.job.slice(0, 8)}`));
+  } catch (error) {
+    return `could not create a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  created(udid);
+  let removing: Promise<void> | undefined;
+  const remove = () =>
+    (removing ??= (async () => {
+      const outcome = await teardownOwnedIosSim(udid, { del: true });
+      if (outcome.status === 'failed')
+        note('build', `could not delete the roster simulator ${udid}: ${outcome.reason}`);
+    })());
+  try {
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: udid },
+      () => bootIosSim(udid, { openViewer: false, out: (line) => note('build', line) }),
+      { root, out: (line) => note('build', line) },
+    );
+  } catch (error) {
+    await remove();
+    return `could not boot a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return { udid, remove };
+}
+
+/**
+ * Runs the Exact build with this machine's exact2 for the pins and the client's settings. An app that declares native
+ * modules builds next to a simulator this build owns; any other runs on none.
+ */
 async function compileExact(
   job: WorkerJob,
   exact: ExactOffload,
@@ -1152,12 +1284,7 @@ async function compileExact(
   } catch {
     return { ok: false, code: 'bad-project', message: 'The Exact app has no readable app.json.' };
   }
-  if (!isJsonObject(manifest) || exactDeclaresModules(manifest))
-    return {
-      ok: false,
-      code: 'exact-modules',
-      message: 'This machine does not build Exact apps that declare native modules.',
-    };
+  if (!isJsonObject(manifest)) return { ok: false, code: 'bad-project', message: 'app.json is not a JSON object.' };
   const declared = exactDeclaredSettings(manifest);
   const undeclared = Object.keys(exact.env).filter((name) => !declared.includes(name));
   if (undeclared.length)
@@ -1169,6 +1296,9 @@ async function compileExact(
       code: 'exact-tools',
       message: `Exact's toolchain is incomplete here: ${missing.map((problem) => problem.reason).join('; ')}.`,
     };
+  const checkout = exactCheckoutDir(exact);
+  const unplaced = exact.link ? placeExact2(job.area, root, exact.link, checkout, exact.exact2) : null;
+  if (unplaced) return { ok: false, code: 'exact-tools', message: `${unplaced}.` };
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env))
     if (
@@ -1179,18 +1309,37 @@ async function compileExact(
       !key.startsWith('EXACT_')
     )
       env[key] = value;
-  Object.assign(env, exact.env, { EXACT2: exactCheckoutDir(exact) });
-  note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
-  const built = await time('buildMs', () =>
-    runExactIosBuild({
-      root,
-      release: job.configuration === 'Release',
-      env,
-      logWriter: log,
-      onHeartbeat: (line) => note('build', line),
-      estimateMs: null,
-    }),
-  );
+  Object.assign(env, exact.env, { EXACT2: checkout });
+  if (exact.link) env.EXACT2 = resolvePath(root, exact.link);
+  delete env.EXACT_SIM;
+  for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
+  let made: string | null = null;
+  const stop = () => {
+    if (made) deleteOwnedIosSimNow(made, 1500);
+    process.exit(143);
+  };
+  process.once('SIGTERM', stop);
+  let probe: Awaited<ReturnType<typeof exactProbeSimulator>> | null = null;
+  let built: Awaited<ReturnType<typeof runExactIosBuild>>;
+  try {
+    probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job, root, (udid) => (made = udid)) : null;
+    if (typeof probe === 'string') return { ok: false, code: 'exact-simulator', message: probe };
+    if (probe) env.EXACT_SIM = probe.udid;
+    note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
+    built = await time('buildMs', () =>
+      runExactIosBuild({
+        root,
+        release: job.configuration === 'Release',
+        env,
+        logWriter: log,
+        onHeartbeat: (line) => note('build', line),
+        estimateMs: null,
+      }),
+    );
+  } finally {
+    if (probe && typeof probe !== 'string') await probe.remove();
+    process.off('SIGTERM', stop);
+  }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
   const lines = built.diagnostics.map((each) => each.message);
   return { ok: false, code: 'exact-build-failed', message: lines.join(' | ') || 'The Exact build failed.' };

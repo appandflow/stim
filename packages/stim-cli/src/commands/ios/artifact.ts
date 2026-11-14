@@ -470,6 +470,7 @@ export async function acquireIosArtifact(
 
   async function takeBuildSlot(): Promise<void> {
     requireLocalBuild(buildMachine);
+    await recipe.beforeLocalBuild?.();
     if (!maxBuilds) return;
     try {
       const buildSlot = await run.takeBuildSlot({
