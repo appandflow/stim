@@ -88,8 +88,9 @@ The `@stim-cli/cache-s3` peer range tracks the published Stim version so the
 
 Within 2.x a `--json` payload, a `logs --json` record and an API result only
 gain fields and enum values. `website/docs/commands.md` ("JSON stability within
-2.x") names the parts that carry no compatibility. Results keep their current
-`exitCode` or `ok` fields and their platform-specific run and build facts.
+2.x") names the parts that carry no compatibility. Results retain `exitCode`
+and `ok` where those fields are defined, along with their platform-specific
+run and build facts.
 Keep the current settings and flags for 2.0. Normalize run and build JSON
 only with coordinated Desktop and CI decoder updates, subject to the JSON
 compatibility rules.
@@ -139,11 +140,11 @@ later pull request.
 
 ## Provenance
 
-The maintainer said "Keep new names" on 2026-11-13 for `buildCacheDir`,
+**Maintainer decision:** "Keep new names" (2026-11-13) for `buildCacheDir`,
 `waitSeconds`, `errorsOnly` and `previewGarbage`.
 [Rename decision](https://github.com/appandflow/stim/issues/5685#issuecomment-6857364673).
 
-On 2026-11-13 the maintainer answered "yes" to keeping the cache provider
+**Maintainer decision:** "yes" (2026-11-13) to keeping the cache provider
 contract and both `exitCode` and `ok`.
 [Contract decision](https://github.com/appandflow/stim/issues/5685#issuecomment-6862867536).
 
