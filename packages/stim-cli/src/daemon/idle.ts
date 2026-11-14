@@ -36,7 +36,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { MODE_COMMAND, readWorkspaceLaunches, revivesWithoutMetro } from '../stimd/metro/state.ts';
+import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -243,7 +243,7 @@ export function revivable(path: string): boolean {
     return (
       parsed !== null &&
       !hostedNativeRecords(state, parsed.platform)[parsed.slot] &&
-      revivesWithoutMetro(parsed.platform, record)
+      launchWithoutMetro(record) !== null
     );
   });
 }

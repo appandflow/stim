@@ -25,6 +25,7 @@ import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
 import * as iosDevices from '../devices/ios.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import * as installedArtifact from '../engine/installed-artifact.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
@@ -4996,6 +4997,52 @@ describe('a recorded build', () => {
       cacheKey: 'f1-debug',
       cacheHit: 'local',
     });
+  });
+});
+
+describe('reviving the installed Android app', () => {
+  async function reviveInstalled(kind: 'embedded-js' | 'process', installed: boolean) {
+    const packageProbe = vi.spyOn(installedArtifact, 'androidPackageInstalled').mockResolvedValue(installed);
+    try {
+      const h = harness({
+        installedApp: { appId: 'dev.installed', kind },
+        expectedDevice: 'stim-app-412',
+        build: never('a build'),
+        install: never('an install'),
+      });
+      const result = await h.run();
+      expect(packageProbe).toHaveBeenCalledWith('emulator-5584', 'dev.installed', expect.anything());
+      expect(h.calls.fingerprint).toHaveLength(0);
+      expect(h.calls.metro).toHaveLength(0);
+      return { result, calls: h.calls };
+    } finally {
+      packageProbe.mockRestore();
+    }
+  }
+
+  test.each(['embedded-js', 'process'] as const)('launches and verifies an installed %s app', async (kind) => {
+    const { result } = await reviveInstalled(kind, true);
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { bundleId: 'dev.installed', launched: true, installSkipped: true, metroPort: null },
+    });
+    expect(readWorkspaceLaunches(root).android).toMatchObject({
+      appId: 'dev.installed',
+      metroPort: null,
+      release: kind === 'embedded-js',
+      avdName: 'stim-app-412',
+      artifact: { configuration: kind === 'embedded-js' ? 'release' : 'debug' },
+    });
+    expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
+  });
+
+  test('an uninstalled package gives the native launch command', async () => {
+    const { result, calls } = await reviveInstalled('process', false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'STIM_NO_RECORDED_BUILD', remedy: expect.stringContaining('`stim android`') },
+    });
+    expect(calls.launchRelease).toHaveLength(0);
   });
 });
 

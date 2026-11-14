@@ -83,7 +83,12 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
+import {
+  ensureDevServer,
+  isPhysicalDeviceRequest,
+  type InstalledLaunch,
+  type MobileRuntimePreparation,
+} from './native-runtime.ts';
 import {
   PLATFORM,
   buildLogFile,
@@ -107,7 +112,7 @@ import {
 } from './ios/support.ts';
 import { iosLedgerDevice, lastBuildRecord, writeLastBuild } from './ios/result.ts';
 import type { BuildLedgerExtras } from '../engine/build-ledger.ts';
-import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
+import { finishIosRun, iosProcessRuntime, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
 
 export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
@@ -268,7 +273,7 @@ export function runIosOperation(
         root,
         { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
-          const lightened = await restoreLightenedDependencies(root, context);
+          const lightened = opts.installedApp ? null : await restoreLightenedDependencies(root, context);
           if (lightened) {
             printLightenedFailure(context, lightened, Boolean(opts.json));
             onFailure(lightened);
@@ -454,7 +459,25 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
   return d;
 }
 
-function iosRunDeps(overrides: Partial<IosDeps>, slot: string, installedApp: string | undefined): IosDeps {
+function iosRunMode(
+  opts: IosCommandOptions,
+  settings: Parameters<typeof resolveConfiguration>[1],
+  integration: Pick<IosProject, 'runtimeKind'>,
+) {
+  const installed = opts.installedApp;
+  const configuration = installed
+    ? (opts.configuration ?? (installed.kind === 'embedded-js' ? 'Release' : 'Debug'))
+    : opts.easProfile !== undefined
+      ? null
+      : resolveConfiguration(opts.configuration, settings);
+  const release = installed ? installed.kind === 'embedded-js' : isReleaseConfiguration(configuration);
+  const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
+    installed?.kind ?? integration.runtimeKind(configuration)
+  ];
+  return { configuration, release, appMode };
+}
+
+function iosRunDeps(overrides: Partial<IosDeps>, slot: string, installedApp: InstalledLaunch | undefined): IosDeps {
   const d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
   return installedApp ? { ...d, installIosApp: async () => ({ skipped: true }) } : d;
 }
@@ -681,14 +704,10 @@ async function runIos(
   }
   const integration = await selectedProject.load(settings);
 
-  const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
+  const { configuration, release, appMode } = iosRunMode(opts, settings, integration);
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = resolveSchemeSelection(opts, settings);
   builtScheme = buildScheme;
-  const release = isReleaseConfiguration(configuration);
-  const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
-    integration.runtimeKind(configuration)
-  ];
   const cachePolicy = artifactCachePolicy(
     optimizations,
     opts.buildCache !== false,
@@ -726,7 +745,10 @@ async function runIos(
   };
 
   const isExpo = integration.isExpo;
-  const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
+  function validateScheme() {
+    return opts.installedApp ? null : integration.schemeProblem(buildScheme, configuration);
+  }
+  const schemeRefusal = await validateScheme();
   if (schemeRefusal) return fail(schemeRefusal);
   const recordedLookup = lookupRecordedBuild(opts.recordedBuild, root, {
     platform: 'ios',
@@ -1010,15 +1032,17 @@ async function runIos(
     function composeRuntime() {
       return (
         d.runtimePlan ??
-        integration.runtime({
-          configuration,
-          prepareMetro,
-          prepareEmbedded: async () => {
-            phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-            hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
-            return { ok: true, prepared: { metroPort: null } };
-          },
-        })
+        (opts.installedApp
+          ? iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } }), opts.installedApp.kind)
+          : integration.runtime({
+              configuration,
+              prepareMetro,
+              prepareEmbedded: async () => {
+                phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+                hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
+                return { ok: true, prepared: { metroPort: null } };
+              },
+            }))
       );
     }
 
@@ -1260,7 +1284,7 @@ async function runIos(
         context,
         opts.installedApp
           ? await installedIosArtifact({
-              bundleId: opts.installedApp,
+              bundleId: opts.installedApp.appId,
               booted,
               installedApp: d.installedIosApp,
               runCommand: nativeRunCommand(PLATFORM, slot),

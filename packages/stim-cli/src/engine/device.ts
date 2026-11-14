@@ -111,7 +111,12 @@ function requireRecordedDevice(
   expected: string,
   simSnapshot: IosSimSnapshot | undefined,
 ): void {
-  if (!record?.owned || recordedDeviceId(platform, record) !== expected || record.setupIncomplete) {
+  if (
+    !record?.owned ||
+    recordedDeviceId(platform, record) !== expected ||
+    record.setupIncomplete ||
+    record.adoptionPending
+  ) {
     throw new RecordedDeviceLostError(platform, expected, "is no longer this slot's owned device");
   }
   const exists =

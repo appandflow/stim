@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
+import { androidPackageInstalled } from '../../engine/installed-artifact.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import {
   androidDataFreeBytes,
@@ -78,7 +79,12 @@ import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLockAsync, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { settleFingerprintCheck, type FingerprintCheck } from '../../fingerprint/operation.ts';
-import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
+import {
+  launchOutcomeRecord,
+  type InstalledLaunch,
+  type MobileRuntimePreparation,
+  type RuntimeReadiness,
+} from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { stopPreviousDeviceLog, startCollector } from './collector.ts';
 import {
@@ -508,6 +514,7 @@ interface FinishAndroidRunArgs {
   physical: boolean;
   remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
   cleanAppState?: boolean;
+  installedApp?: InstalledLaunch;
   bootPromise: Promise<AndroidBootLike>;
   resolveAvdSerial: typeof resolveOwnedAvdSerialAsync;
   waitForDeviceBoot: typeof waitForBoot;
@@ -724,10 +731,11 @@ function launchedIdentity(
   apkPath: string | null | undefined,
   variant: string | null | undefined,
   record: AndroidRecord,
+  installedApp: boolean,
 ): { avdName?: string; artifact?: LaunchedArtifact } {
   return {
     ...(device.owned && device.avdName ? { avdName: device.avdName } : {}),
-    ...(apkPath
+    ...(apkPath || installedApp
       ? {
           artifact: {
             configuration: variant ?? 'debug',
@@ -760,6 +768,7 @@ export async function finishAndroidRun({
   physical,
   remoteDevice,
   cleanAppState = false,
+  installedApp,
   bootPromise,
   resolveAvdSerial,
   waitForDeviceBoot,
@@ -867,95 +876,124 @@ export async function finishAndroidRun({
       : `${device.avdName || serial} (${serial}) ${device.adopted || device.adoptionPending ? 'adopted' : 'booted'} ${bootDuration()}`,
   );
 
-  const packageFromApk = await readApkPackage(apkPath);
+  async function verifyInstalledApp(packageName: string) {
+    const present = await androidPackageInstalled(serial, packageName, { signal: cancellation });
+    throwIfCancelled(cancellation, 'Android launch');
+    if (present === null) {
+      return fail(
+        NO_DEVICE,
+        `Could not check whether ${packageName} is installed on ${serial}.`,
+        'Check that the emulator responds to adb, then retry `stim revive`.',
+      );
+    }
+    if (!present) {
+      return fail(
+        'STIM_NO_RECORDED_BUILD',
+        `${packageName} is no longer installed on emulator ${serial}, so there is no app to relaunch without a build.`,
+        `Run \`${runCommand}\` to build, install and launch it.`,
+      );
+    }
+    return { installSkipped: true };
+  }
+
+  async function prepareInstall(): Promise<RunAndroidResult | { installSkipped: boolean }> {
+    throwIfCancelled(cancellation, 'Android launch');
+    if (installedApp) return verifyInstalledApp(installedApp.appId);
+    const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
+    if (adopting || (cleanAppState && !physical && !remoteDevice)) {
+      const cleanupFailure = await cleanEmulatorAppState(device, serial, androidPackage, adopting, phase);
+      if (cleanupFailure) return fail(cleanupFailure.code, cleanupFailure.message, cleanupFailure.remedy);
+    }
+
+    throwIfCancelled(cancellation, 'Android launch');
+    const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
+    if (lostBeforeInstall) return lostBeforeInstall;
+    enterPhase('install');
+    let installTimer = stepTimer(now);
+    const installApk = (target: string) => {
+      installTimer = stepTimer(now);
+      return install({
+        serial: target,
+        apkPath: apkPath!,
+        packageName: androidPackage,
+        allowUninstall: release || adopting,
+      });
+    };
+    let installed: InstallResultLike;
+    if (adopting && device.avdName && apkPath) {
+      const room = {
+        root,
+        slot,
+        avdName: device.avdName,
+        apkPath,
+        phase,
+        rebootDevice,
+        dataFreeBytes,
+        trimCaches,
+        wipeDevice,
+        resolveAvdSerial,
+      };
+      try {
+        ({ serial, installed } = await installOnAdoptedAvd(room, serial, installApk));
+      } catch (error) {
+        return fail(
+          INSTALL_FAILED,
+          `Could not make room on adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
+          `Run \`${runCommand}\` again; adoption remains pending, so it retries the cleanup.`,
+        );
+      }
+    } else installed = await installApk(serial);
+    if (installed.failed) {
+      const installRemedy =
+        remoteDevice?.failureRemedy() ??
+        localInstallRemedy({ reason: installed.reason, packageName: androidPackage, serial, useBuildCache });
+      return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
+    }
+    if (adopting) {
+      try {
+        await withConfigLockAsync(() => {
+          const config = loadConfig();
+          const current = deviceSlotPlatforms(config?.projects?.[root], slot)?.android;
+          if (!config || !current || current.avdName !== device.avdName)
+            throw new Error('The adopted emulator assignment changed during installation.');
+          delete current.adoptionPending;
+          saveConfig(config);
+        });
+      } catch (error) {
+        return fail(
+          LAUNCH_FAILED,
+          `Could not finish adopting emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
+          'Retry to reconcile the emulator assignment; the app was not launched.',
+        );
+      }
+    }
+    const installSkipped = Boolean(installed.skipped);
+    phase(
+      'install',
+      installSkipped
+        ? `unchanged (${serial} already has this build) ${installTimer()}`
+        : `${basename(apkPath!)} -> ${serial} ${installTimer()}`,
+    );
+    if (installed.note) {
+      phase('install', chalk.yellow(installed.note));
+      writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
+    }
+
+    return { installSkipped };
+  }
+
+  const packageFromApk = installedApp ? null : await readApkPackage(apkPath);
   if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
-  androidPackage = packageFromApk || androidPackage || (await readProjectPackage());
+  if (!installedApp) androidPackage = packageFromApk || androidPackage || (await readProjectPackage());
   if (!androidPackage && androidPackageProblem) {
     return fail(LAUNCH_FAILED, androidPackageProblem, packageRemedy, { lastBuildStatus: true });
   }
 
-  throwIfCancelled(cancellation, 'Android launch');
-  const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
-  if (adopting || (cleanAppState && !physical && !remoteDevice)) {
-    const cleanupFailure = await cleanEmulatorAppState(device, serial, androidPackage, adopting, phase);
-    if (cleanupFailure) return fail(cleanupFailure.code, cleanupFailure.message, cleanupFailure.remedy);
-  }
-
-  throwIfCancelled(cancellation, 'Android launch');
-  const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
-  if (lostBeforeInstall) return lostBeforeInstall;
-  enterPhase('install');
-  let installTimer = stepTimer(now);
-  const installApk = (target: string) => {
-    installTimer = stepTimer(now);
-    return install({
-      serial: target,
-      apkPath: apkPath!,
-      packageName: androidPackage,
-      allowUninstall: release || adopting,
-    });
-  };
-  let installed: InstallResultLike;
-  if (adopting && device.avdName && apkPath) {
-    const room = {
-      root,
-      slot,
-      avdName: device.avdName,
-      apkPath,
-      phase,
-      rebootDevice,
-      dataFreeBytes,
-      trimCaches,
-      wipeDevice,
-      resolveAvdSerial,
-    };
-    try {
-      ({ serial, installed } = await installOnAdoptedAvd(room, serial, installApk));
-    } catch (error) {
-      return fail(
-        INSTALL_FAILED,
-        `Could not make room on adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
-        `Run \`${runCommand}\` again; adoption remains pending, so it retries the cleanup.`,
-      );
-    }
-  } else installed = await installApk(serial);
-  if (installed.failed) {
-    const installRemedy =
-      remoteDevice?.failureRemedy() ??
-      localInstallRemedy({ reason: installed.reason, packageName: androidPackage, serial, useBuildCache });
-    return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
-  }
-  if (adopting) {
-    try {
-      await withConfigLockAsync(() => {
-        const config = loadConfig();
-        const current = deviceSlotPlatforms(config?.projects?.[root], slot)?.android;
-        if (!config || !current || current.avdName !== device.avdName)
-          throw new Error('The adopted emulator assignment changed during installation.');
-        delete current.adoptionPending;
-        saveConfig(config);
-      });
-    } catch (error) {
-      return fail(
-        LAUNCH_FAILED,
-        `Could not finish adopting emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
-        'Retry to reconcile the emulator assignment; the app was not launched.',
-      );
-    }
-  }
-  const installSkipped = Boolean(installed.skipped);
-  phase(
-    'install',
-    installSkipped
-      ? `unchanged (${serial} already has this build) ${installTimer()}`
-      : `${basename(apkPath!)} -> ${serial} ${installTimer()}`,
-  );
-  if (installed.note) {
-    phase('install', chalk.yellow(installed.note));
-    writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
-  }
+  const installation = await prepareInstall();
+  if ('ok' in installation) return installation;
+  const { installSkipped } = installation;
 
   if (androidPackage) await withConfigLockAsync(() => upsertProject(root, { androidPackage }));
   record.bundleId = androidPackage;
@@ -1011,7 +1049,7 @@ export async function finishAndroidRun({
       env,
     );
     return fail(launched.code || LAUNCH_FAILED, launched.reason, launchRemedy(remoteDevice, serial, androidPackage), {
-      lastBuildStatus: true,
+      lastBuildStatus: !installedApp,
     });
   }
   writer.write({
@@ -1037,7 +1075,7 @@ export async function finishAndroidRun({
         release,
         ...(runtime.kind === 'process' ? { runtime: 'process' as const } : {}),
         launchedAt: new Date(launchedAt).toISOString(),
-        ...launchedIdentity(device, apkPath, variant, record),
+        ...launchedIdentity(device, apkPath, variant, record, Boolean(installedApp)),
       });
     } catch (error) {
       out(phaseLine('state', chalk.yellow(`could not record Android launch: ${(error as Error)?.message || error}`)));
@@ -1061,7 +1099,9 @@ export async function finishAndroidRun({
     (entry) => writer.write(entry),
   );
 
-  persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
+  if (!installedApp) {
+    persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
+  }
 
   const remoteRelease = Boolean(remoteDevice && release);
   let deviceStreamId: string | null = null;
@@ -1131,7 +1171,7 @@ export async function finishAndroidRun({
       LAUNCH_FAILED,
       'The app failed its launch readiness check.',
       `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
-      { lastBuildStatus: true, logPath: displayPath(root, logsDir) },
+      { lastBuildStatus: !installedApp, logPath: displayPath(root, logsDir) },
     );
   }
   writer.write(

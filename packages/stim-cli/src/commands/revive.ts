@@ -12,12 +12,7 @@ import { nativeRunCommand } from '../engine/slot-launch.ts';
 import type { RecordedBuild } from '../engine/recorded-build.ts';
 import { resolveBuild } from '../cache/build-cache.ts';
 import { describeMetroLastStop, metroLastStop } from '../stimd/metro/stop-cause.ts';
-import {
-  launchWithoutMetro,
-  readWorkspaceLaunches,
-  revivesWithoutMetro,
-  type WorkspaceLaunchRecord,
-} from '../stimd/metro/state.ts';
+import { launchWithoutMetro, readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
@@ -27,6 +22,7 @@ import { repoRootAsync } from '../workspace/worktree.ts';
 import { liveSupervisor, startDevServer } from './start.ts';
 import { runIosOperation } from './ios.ts';
 import { runAndroidOperation } from './android.ts';
+import type { InstalledLaunch } from './native-runtime.ts';
 
 type Platform = 'ios' | 'android';
 
@@ -66,7 +62,7 @@ interface RunRequest {
   slot: string;
   configuration: string | null;
   recordedBuild: RecordedBuild | null;
-  installedApp: string | null;
+  installedApp: InstalledLaunch | null;
   expectedDevice: string;
 }
 
@@ -167,16 +163,7 @@ async function noMetroRefusal(
   recorded: RecordedLaunch[],
   d: ReviveDeps,
 ): Promise<{ ok: false; error: ReviveFailure }> {
-  const [first] = recorded;
-  if (first && recorded.every(({ record }) => launchWithoutMetro(record) !== null)) {
-    const runs = [...new Set(recorded.map(({ platform, slot }) => `\`${nativeRunCommand(platform, slot)}\``))];
-    return failure(
-      'STIM_NO_METRO',
-      `This workspace's last launch ran without Metro (${launchWithoutMetro(first.record)}), so revive has no Metro to resume and does not relaunch it.`,
-      `Run ${runs.join(' or ')} to launch the app again.`,
-    );
-  }
-  if (!first) {
+  if (recorded.length === 0) {
     const detected = await d.detectProject(root);
     if (!detected.devServer) {
       return failure(
@@ -225,7 +212,7 @@ async function inspectTarget(
       `Run \`${run}\`; it boots or creates this workspace's owned device and launches the app.`,
     );
   const entry = launchedCacheEntry(record);
-  const installed = revivesWithoutMetro(platform, record);
+  const installed = launchWithoutMetro(record) !== null;
   if (!entry && !installed) {
     return failure(
       'STIM_NO_RECORDED_BUILD',
@@ -239,7 +226,7 @@ async function inspectTarget(
   let booted: boolean;
   if (platform === 'ios') {
     const owned = slotDevices?.ios;
-    if (!owned?.owned || owned.deviceUdid !== record.deviceId) {
+    if (!owned?.owned || owned.adoptionPending || owned.deviceUdid !== record.deviceId) {
       return lost(`Simulator ${record.deviceId} is no longer this workspace's owned simulator`);
     }
     const resolved = await d.resolveIos(record.deviceId);
@@ -250,7 +237,7 @@ async function inspectTarget(
     booted = resolved.sim.state === 'Booted';
   } else {
     const owned = slotDevices?.android;
-    if (!record.avdName || !owned?.owned || owned.avdName !== record.avdName) {
+    if (!record.avdName || !owned?.owned || owned.adoptionPending || owned.avdName !== record.avdName) {
       return lost(`Emulator ${record.avdName ?? record.deviceId} is no longer this workspace's owned emulator`);
     }
     const resolved = await d.resolveAndroid(record.avdName);
@@ -319,10 +306,7 @@ export async function runRevive({
     if (!parsed || hostedNativeRecords(state, parsed.platform)[parsed.slot]) return [];
     return [{ ...parsed, record }];
   });
-  const launches = recorded.filter(
-    ({ platform, record }) =>
-      revivesWithoutMetro(platform, record) || (resumesMetro && launchWithoutMetro(record) === null),
-  );
+  const launches = resumesMetro ? recorded : recorded.filter(({ record }) => launchWithoutMetro(record) !== null);
   if (!resumesMetro && launches.length === 0) return noMetroRefusal(root, state, idle, recorded, d);
   const selected = requestedDevice
     ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))
@@ -343,9 +327,9 @@ export async function runRevive({
     targets.push(target);
   }
 
-  let metroPort = resumesMetro ? port : null;
+  let metroPort = live ? port : null;
   let restarted = false;
-  if (resumesMetro && !live) {
+  if (resumesMetro && !live && (targets.length === 0 || targets.some((target) => target.build !== null))) {
     const started = await d.startMetro(root, note);
     if (!started.ok) return started;
     metroPort = started.port;
@@ -354,7 +338,11 @@ export async function runRevive({
 
   const devices: RevivedDevice[] = [];
   for (const target of targets) {
-    if (!restarted && target.booted && (await d.appRunning(target.platform, target.deviceId, target.record.appId))) {
+    if (
+      (!restarted || target.build === null) &&
+      target.booted &&
+      (await d.appRunning(target.platform, target.deviceId, target.record.appId))
+    ) {
       devices.push({
         platform: target.platform,
         slot: target.slot,
@@ -369,7 +357,9 @@ export async function runRevive({
       slot: target.slot,
       configuration: target.configuration,
       recordedBuild: target.build,
-      installedApp: target.build ? null : target.record.appId,
+      installedApp: target.build
+        ? null
+        : { appId: target.record.appId, kind: target.record.runtime === 'process' ? 'process' : 'embedded-js' },
       expectedDevice: target.expectedDevice,
     });
     if (!outcome.ok) {
@@ -506,6 +496,7 @@ export function reviveDeps(context: StimContext): ReviveDeps {
       const result = await runAndroidOperation(nested, root, {
         slot,
         ...(recordedBuild ? { recordedBuild } : {}),
+        ...(installedApp ? { installedApp } : {}),
         expectedDevice,
         remote: 'local',
         ...(configuration ? { variant: configuration } : {}),
