@@ -1207,8 +1207,8 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
     }
     const head = gitQuiet(at, ['rev-parse', 'HEAD']);
     if (head !== commit || git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== '') {
-      git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
       if (head !== commit) copyPackages(checkout, at);
+      git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
     }
   };
   try {
