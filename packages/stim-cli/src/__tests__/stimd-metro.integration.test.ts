@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
@@ -17,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { stimdClaimRoot } from '@stim-cli/core/state';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { resolveProjectMetro } from '../metro.ts';
@@ -850,16 +852,26 @@ socket.on('data', chunk => {
     let output = '';
     stop.stdout?.on('data', (chunk) => (output += String(chunk)));
     stop.stderr?.on('data', (chunk) => (output += String(chunk)));
-    const [code] = await once(stop, 'exit');
-    const adopter = record();
+    const exited = once(stop, 'exit');
+    const replacement = await vi.waitFor(
+      () => {
+        const pid = record()?.pid;
+        assert(pid && pid !== killed);
+        const identity = readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid === pid)?.owner;
+        assert(identity, `Could not identify replacement stimd ${pid}.`);
+        return identity;
+      },
+      { timeout: 15_000, interval: 50 },
+    );
     try {
+      const [code] = await exited;
       expect({ code, output }).toMatchObject({ code: 0 });
-      expect(adopter?.pid).not.toBe(killed);
       expect(processGroupAlive(Number(metro.pid))).toBe(false);
       const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
       expect([...claims.live, ...claims.unresolved]).toEqual([]);
     } finally {
-      if (adopter && adopter.pid !== killed && alive(adopter.pid)) process.kill(adopter.pid, 'SIGTERM');
+      if (inspectProcessIdentity(replacement) === 'same') process.kill(replacement.pid, 'SIGTERM');
+      assert(await waitForProcessExit(replacement, 15_000), `Replacement stimd ${replacement.pid} did not exit.`);
     }
   }, 60_000);
 
