@@ -1,4 +1,4 @@
-import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
+import { ambientContext, ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
 import { runOperationFile, runOperationFileQuiet } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { cancellableSleep } from '../cancellation.ts';
@@ -7,10 +7,11 @@ import {
   configuredAndroidEmulatorApp,
   openEmulatorInStimDesktop,
 } from './android-emulator-viewer.ts';
-import { recordCreatedDeviceAsync } from './created-devices.ts';
+import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
+  type BigIntStats,
   lstatSync,
   mkdirSync,
   openSync,
@@ -273,8 +274,9 @@ export async function createOwnedAvd(
   {
     systemImage,
     deviceProfile = DEFAULT_AVD_DEVICE_PROFILE,
+    detached = true,
     spawn = (...args) => getExecutor().spawn(...args),
-  }: { systemImage?: string; deviceProfile?: string; spawn?: Executor['spawn'] } = {},
+  }: { systemImage?: string; deviceProfile?: string; detached?: boolean; spawn?: Executor['spawn'] } = {},
 ): Promise<{ avdName: string; systemImage: string; deviceProfile: string }> {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
@@ -284,7 +286,6 @@ export async function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
-  await recordCreatedDeviceAsync('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
   // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
@@ -296,7 +297,30 @@ export async function createOwnedAvd(
     mkdirSync(root, { recursive: true });
     env = { ...env, ANDROID_AVD_HOME: root };
   }
-  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env });
+  const cwd = ambientContext()?.cwd ?? process.cwd();
+  const roots = avdStorageRoots(env).map((root) => resolve(cwd, root));
+  // Android's avdmanager also recognizes preferences overrides outside the emulator's lookup roots.
+  if (env.XDG_CONFIG_HOME) roots.push(resolve(cwd, env.XDG_CONFIG_HOME, '.android', 'avd'));
+  if (env.ANDROID_PREFS_ROOT) roots.push(resolve(cwd, env.ANDROID_PREFS_ROOT, '.android', 'avd'));
+  if (env.TEST_TMPDIR) roots.push(resolve(cwd, env.TEST_TMPDIR, '.android', 'avd'));
+  const root = roots[0];
+  let emptyRoot: BigIntStats | undefined;
+  try {
+    if (root && avdNameAbsent(avdName, roots)) emptyRoot = statSync(root, { bigint: true });
+  } catch {}
+  // @ref LLP 0013#prove-ownership-in-this-stim-home -- reserve the ledger entry before native creation
+  const recorded = await recordCreatedDeviceAsync('android', avdName);
+  const forgetFailedCreation = async () => {
+    if (!recorded || !root || !emptyRoot) return;
+    const { dev, ino } = emptyRoot;
+    await forgetCreatedDeviceAsync('android', avdName, undefined, (forget) => {
+      const current = statSync(root, { bigint: true });
+      if (current.dev !== dev || current.ino !== ino || !avdNameAbsent(avdName, roots)) return false;
+      forget();
+      return true;
+    }).catch(() => {});
+  };
+  const child = spawn(tool, args, { detached, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   child.stdout?.on('data', () => {});
   child.stderr?.on('data', (chunk) => {
@@ -308,8 +332,27 @@ export async function createOwnedAvd(
   });
   child.stdin?.on('error', () => {});
   child.stdin?.end('no\n');
-  const result = await completed;
+  const result = await completed.catch(async (error: unknown) => {
+    if (
+      child.pid === undefined &&
+      error instanceof Error &&
+      'syscall' in error &&
+      typeof error.syscall === 'string' &&
+      error.syscall.startsWith('spawn ')
+    ) {
+      await forgetFailedCreation();
+    }
+    throw error;
+  });
   if (result.code !== 0) {
+    if (result.code !== null && detached && process.platform !== 'win32' && child.pid !== undefined) {
+      // A wrapper can exit while an avdmanager descendant still writes the AVD.
+      try {
+        process.kill(-child.pid, 0);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') await forgetFailedCreation();
+      }
+    }
     throw new Error(`Command failed: ${tool} ${args.join(' ')} (${result.signal ?? result.code})\n${stderr.trim()}`);
   }
   return { avdName, systemImage: pick.pkg, deviceProfile };

@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -17,7 +18,7 @@ import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { createOwnedAvd, deleteAvd, ownedAvdDirectory } from '../devices/android.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
@@ -41,6 +42,8 @@ const envKeys = [
   'ANDROID_USER_HOME',
   'ANDROID_EMULATOR_HOME',
   'XDG_CONFIG_HOME',
+  'ANDROID_PREFS_ROOT',
+  'TEST_TMPDIR',
 ];
 
 function createFiles(): void {
@@ -66,6 +69,7 @@ beforeEach(() => {
     ANDROID_USER_HOME: join(home, '.android'),
     ANDROID_EMULATOR_HOME: join(home, '.android'),
   });
+  for (const key of ['XDG_CONFIG_HOME', 'ANDROID_PREFS_ROOT', 'TEST_TMPDIR']) delete process.env[key];
   for (const abi of ['arm64-v8a', 'x86_64'])
     mkdirSync(join(home, 'sdk', 'system-images', 'android-36', 'google_apis', abi), { recursive: true });
   mkdirSync(project);
@@ -415,6 +419,72 @@ test.each(['throw', 'error'])('a spawn %s releases the claim and retains the inc
   await expect(prepare()).rejects.toThrow(kind === 'throw' ? 'fixture spawn failed' : 'ENOENT');
   expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
   releaseClaim(acquireAvdClaim(avdName));
+});
+
+test.each(['empty', 'directory', 'ini', 'replaced-root', 'existing-record'] as const)(
+  'a clean exit rolls back only a verified new, empty AVD ledger entry (%s)',
+  async (state) => {
+    if (state === 'existing-record') recordCreatedDevice('android', avdName);
+    const directory = join(avdRoot, `${avdName}.avd`);
+    const ini = join(avdRoot, `${avdName}.ini`);
+    await expect(
+      createOwnedAvd('setup', {
+        spawn: (_file, _args, options) => {
+          expect(readCreatedDevices().android.has(avdName)).toBe(true);
+          if (state === 'directory') mkdirSync(directory);
+          if (state === 'ini') writeFileSync(ini, 'unreadable as an AVD registration');
+          if (state === 'replaced-root') {
+            renameSync(avdRoot, `${avdRoot}-aside`);
+            mkdirSync(avdRoot);
+          }
+          return spawn(process.execPath, ['-e', 'process.exitCode = 1'], options ?? {});
+        },
+      }),
+    ).rejects.toThrow('Command failed');
+    expect(readCreatedDevices().android.has(avdName)).toBe(process.platform === 'win32' || state !== 'empty');
+    expect(existsSync(directory)).toBe(state === 'directory');
+    expect(existsSync(ini)).toBe(state === 'ini');
+  },
+);
+
+test('a confirmed spawn failure forgets its new AVD ledger entry', async () => {
+  await expect(
+    createOwnedAvd('setup', {
+      spawn: () => spawn(join(home, 'missing-avdmanager')),
+    }),
+  ).rejects.toThrow('ENOENT');
+  expect(readCreatedDevices().android.has(avdName)).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')('a surviving AVD creation descendant keeps the ledger entry', async () => {
+  let child: ChildProcess | undefined;
+  const finished = join(avdRoot, 'finish');
+  try {
+    await expect(
+      createOwnedAvd('setup', {
+        spawn: (_file, _args, options) => {
+          const spawned = spawn(
+            process.execPath,
+            [
+              '-e',
+              `const { spawn } = require('node:child_process');
+               spawn(process.execPath, ['-e', 'const fs = require("node:fs"); const timer = setInterval(() => { if (fs.existsSync(process.argv[1])) clearInterval(timer); }, 20);', process.argv[1]], { stdio: 'ignore' }).unref();
+               process.exitCode = 1;`,
+              finished,
+            ],
+            options ?? {},
+          );
+          child = spawned;
+          return spawned;
+        },
+      }),
+    ).rejects.toThrow('Command failed');
+    expect(readCreatedDevices().android.has(avdName)).toBe(true);
+  } finally {
+    writeFileSync(finished, 'done');
+    const pid = child?.pid;
+    if (pid !== undefined) await until(() => !processGroupAlive(pid));
+  }
 });
 
 describe.skipIf(process.platform === 'win32')('POSIX process groups; skipped on win32', () => {
