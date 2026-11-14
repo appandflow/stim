@@ -186,9 +186,10 @@ function areaDevices(area: string): string | null {
   const home = join(area, 'home');
   let ledger: unknown;
   try {
-    ledger = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
+    const text = readWorkerRecord(join(home, 'created-devices.json'));
+    if (text === null) return null;
+    ledger = JSON.parse(text);
   } catch (error) {
-    if (isMissing(error)) return null;
     return `its Stim home's device ledger cannot be read: ${String(error)}`;
   }
   if (!isJsonObject(ledger)) return "its Stim home's device ledger is malformed";

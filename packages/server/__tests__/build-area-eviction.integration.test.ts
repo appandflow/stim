@@ -407,6 +407,19 @@ test('keeps an area whose Stim home lists a device it created, through eviction 
   expect(existsSync(join(root, 'a'))).toBe(false);
 });
 
+test.skipIf(process.platform === 'win32')('keeps an area whose device ledger is not a regular file', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  mkdirSync(join(path, 'home'), { recursive: true });
+  spawnSync('mkfifo', [join(path, 'home', 'created-devices.json')]);
+  const host = start();
+  await host.evictAreas();
+  await host.remove('a');
+  expect(existsSync(path)).toBe(true);
+  expect(logs.filter((line) => /retaining the build area a\/subject: .*not a regular file/.test(line))).toHaveLength(1);
+  expect(logs.join('\n')).toMatch(/retaining the build area of a; subject: .*not a regular file/);
+});
+
 test('an eviction pass reuses the process list across refusals and refreshes it after deletion', async () => {
   area('a', 'newest', 0);
   const removedPath = area('a', 'expired', 30);
