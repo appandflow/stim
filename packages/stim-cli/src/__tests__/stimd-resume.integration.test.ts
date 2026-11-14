@@ -1,13 +1,29 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
-import { isJsonObject, stimdBootsFile, stimdClaimRoot, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  readMetroExit,
+  stimdBootsFile,
+  stimdClaimRoot,
+  stimdRecordFile,
+  stimdSocket,
+} from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
@@ -21,11 +37,14 @@ import {
 } from '../daemon/client.ts';
 import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
+import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import { invocation } from '../stimd/forwarded.ts';
+import { METRO_RUN_ACCEPT } from '../stimd/metro/child-server.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 const entry = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 const RESTARTED = 'Stim: stimd restarted; this command continues with the new stimd.';
@@ -340,9 +359,25 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
   }, 60_000);
 });
 
-/** A bare React Native project whose `metro` starts answering `/status` only after `delayMs`. */
-function slowMetroProject(delayMs: number): string {
+function pausedMetroProject() {
   const root = join(dir, 'bare');
+  const allowReady = join(dir, 'metro-ready');
+  const helperAccepted = join(dir, 'metro-helper-accepted');
+  const recordAcceptance = join(dir, 'record-metro-acceptance.cjs');
+  writeFileSync(
+    recordAcceptance,
+    `const { writeFileSync } = require('node:fs');
+if (process.argv[1] === ${JSON.stringify(spawnEntry.spawnEntry('metro-run'))}) {
+  process.on('message', (message) => {
+    if (message !== ${JSON.stringify(METRO_RUN_ACCEPT)}) return;
+    process.once('disconnect', () => writeFileSync(${JSON.stringify(helperAccepted)}, String(process.pid)));
+  });
+}`,
+  );
+  vi.stubEnv(
+    'NODE_OPTIONS',
+    [process.env.NODE_OPTIONS, `--require ${JSON.stringify(recordAcceptance)}`].filter(Boolean).join(' '),
+  );
   const module = (name: string, body: string) => {
     mkdirSync(join(root, 'node_modules', name), { recursive: true });
     writeFileSync(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, main: 'index.js' }));
@@ -356,11 +391,14 @@ function slowMetroProject(delayMs: number): string {
   module(
     'metro',
     `const http = require('node:http');
+const { existsSync } = require('node:fs');
+const { setTimeout } = require('node:timers/promises');
 exports.loadConfig = async ({ port }) => ({ server: { port }, resolver: { platforms: ['ios'] }, watchFolders: [] });
-exports.runServer = (config) => new Promise((resolve) => setTimeout(() => {
+exports.runServer = async (config) => {
+  while (!existsSync(${JSON.stringify(allowReady)})) await setTimeout(25);
   const httpServer = http.createServer((req, res) => res.end(req.url === '/status' ? 'packager-status:running' : ''));
-  httpServer.listen(config.server.port, () => resolve({ httpServer }));
-}, ${delayMs}));`,
+  return new Promise((resolve) => httpServer.listen(config.server.port, () => resolve({ httpServer })));
+};`,
   );
   module(
     '@react-native/dev-middleware',
@@ -371,7 +409,26 @@ exports.runServer = (config) => new Promise((resolve) => setTimeout(() => {
     `exports.createDevServerMiddleware = () => ({ middleware: (q, s, n) => n(), websocketEndpoints: {} });`,
   );
   upsertProject(root, {});
-  return realpathSync(root);
+  return {
+    root: realpathSync(root),
+    helperAccepted,
+    allowReady: () => writeFileSync(allowReady, ''),
+  };
+}
+
+async function waitForAcceptedMetro(root: string, helperAccepted: string): Promise<number> {
+  return vi.waitFor(
+    () => {
+      const [claim] = readClaimSet(join(workspaceDir(root), 'metro.claim')).live;
+      assert(claim?.child && claim.details.starting === true);
+      const helper = claim.details.helper;
+      assert(isJsonObject(helper) && typeof helper.pid === 'number');
+      expect(existsSync(helperAccepted) && readFileSync(helperAccepted, 'utf8')).toBe(String(helper.pid));
+      expect(readWorkspaceState(root)?.supervisor).toMatchObject(claim.child);
+      return claim.child.pid;
+    },
+    { timeout: 20_000, interval: 50 },
+  );
 }
 
 async function freePort(): Promise<number> {
@@ -402,23 +459,33 @@ async function stopMetro(root: string): Promise<void> {
 
 describe.skipIf(process.platform === 'win32')('Metro across a stimd restart', () => {
   test('a Metro wait continues with the stimd started after a kill and answers the same Metro', async () => {
-    const root = slowMetroProject(4000);
+    const { root, helperAccepted, allowReady } = pausedMetroProject();
     const port = await freePort();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const answer = ensureMetroThroughStimd({ root, port }, 45_000);
-      let metro: number | undefined;
-      await vi.waitFor(
-        () => {
-          metro = metroChildren(root)[0];
-          expect(metro).toBeDefined();
-        },
-        { timeout: 20_000, interval: 50 },
-      );
+      const metro = await waitForAcceptedMetro(root, helperAccepted);
       const first = stimdPid();
       expect(first).not.toBeNull();
       process.kill(Number(first), 'SIGKILL');
-      await expect(answer).resolves.toMatchObject({ op: 'metro', pid: metro, port });
+      await vi.waitFor(
+        () => {
+          const successor = stimdPid();
+          expect(successor).not.toBeNull();
+          expect(successor).not.toBe(first);
+          const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+          expect({
+            claims: claims.live,
+            exit: readMetroExit(root),
+          }).toMatchObject({
+            claims: [{ owner: { pid: successor }, child: { pid: metro }, details: { starting: true } }],
+            exit: null,
+          });
+        },
+        { timeout: 20_000, interval: 50 },
+      );
+      allowReady();
+      await expect(answer).resolves.toMatchObject({ op: 'metro', state: 'started', pid: metro, port });
       expect(stimdPid()).not.toBe(first);
       expect(metroChildren(root)).toEqual([metro]);
       expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
@@ -431,31 +498,60 @@ describe.skipIf(process.platform === 'win32')('Metro across a stimd restart', ()
 
 describe.skipIf(process.platform === 'win32')('an operation held through the API', () => {
   test('cancelled during a resume, it stops at once and is not admitted again', async () => {
-    const root = slowMetroProject(4000);
+    const { root, helperAccepted } = pausedMetroProject();
     const port = await freePort();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const delayed = delayedEntry(3000);
     const controller = new AbortController();
+    let starter: { child: ChildProcess; settled: Promise<unknown> } | undefined;
+    const executor = getExecutor();
+    const spawnChild = executor.spawn.bind(executor);
+    vi.spyOn(executor, 'spawn').mockImplementation((command, args, options) => {
+      const child = spawnChild(command, args, options);
+      if (args?.[0] === delayed.path) starter = { child, settled: once(child, 'exit').catch(() => {}) };
+      return child;
+    });
+    const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
     try {
-      const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
-      await vi.waitFor(() => expect(metroChildren(root)[0]).toBeDefined(), { timeout: 20_000, interval: 50 });
+      await waitForAcceptedMetro(root, helperAccepted);
       const first = stimdPid();
       expect(first).not.toBeNull();
       vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
       process.kill(Number(first), 'SIGKILL');
-      await vi.waitFor(() => expect(() => readFileSync(delayed.marker)).not.toThrow(), {
-        timeout: 20_000,
-        interval: 50,
-      });
+      const replacement = await vi.waitFor(
+        () => {
+          assert(starter?.child.pid);
+          expect(() => readFileSync(delayed.marker)).not.toThrow();
+          return starter.child;
+        },
+        { timeout: 20_000, interval: 50 },
+      );
       const aborted = Date.now();
       controller.abort();
-      await answer;
+      await expect(answer).resolves.toBeNull();
       expect(Date.now() - aborted).toBeLessThan(2000);
-      await vi.waitFor(() => expect(stimdPid()).not.toBe(first), { timeout: 20_000, interval: 50 });
+      await vi.waitFor(
+        () => {
+          expect(stimdPid()).toBe(replacement.pid);
+          expect(replacement.exitCode).toBeNull();
+          expect(replacement.signalCode).toBeNull();
+        },
+        { timeout: 20_000, interval: 50 },
+      );
       expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     } finally {
-      await stopStimd();
-      await stopMetro(root);
+      controller.abort();
+      try {
+        await answer;
+      } finally {
+        if (starter) {
+          const { child, settled } = starter;
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+          await settled;
+        }
+        await stopStimd();
+        await stopMetro(root);
+      }
     }
   }, 90_000);
 });
