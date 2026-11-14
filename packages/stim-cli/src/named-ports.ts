@@ -7,7 +7,7 @@ import {
   saveConfig,
   withConfigLockAsync,
 } from './workspace/config.ts';
-import { getExecutor } from './exec.ts';
+import { getExecutor, windowsSystemExecutable } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { parseNetstatPids, signalProcessTree } from './metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';
@@ -31,7 +31,10 @@ function validatePortLabel(label: string): void {
 
 function portListeners(port: number, platform: NodeJS.Platform): number[] {
   if (platform === 'win32') {
-    const out = getExecutor().runFile('netstat', ['-ano'], { timeoutMs: 5000, rejectStderr: true });
+    const out = getExecutor().runFile(windowsSystemExecutable('netstat.exe'), ['-ano'], {
+      timeoutMs: 5000,
+      rejectStderr: true,
+    });
     if (!/^\s*(?:Proto|TCP)\s/m.test(out)) throw new Error('netstat printed no TCP connection table.');
     return parseNetstatPids(out, port);
   }
@@ -53,7 +56,9 @@ function portListeners(port: number, platform: NodeJS.Platform): number[] {
 function processCommand(pid: number, platform: NodeJS.Platform): string {
   const e = getExecutor();
   if (platform === 'win32') {
-    const csv = e.runFileQuiet('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { timeoutMs: 5000 });
+    const csv = e.runFileQuiet(windowsSystemExecutable('tasklist.exe'), ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+      timeoutMs: 5000,
+    });
     return /^"([^"]*)"/.exec((csv ?? '').trim())?.[1] ?? '';
   }
   return (e.runFileQuiet('ps', ['-p', String(pid), '-o', 'args='], { timeoutMs: 5000 }) ?? '').trim();

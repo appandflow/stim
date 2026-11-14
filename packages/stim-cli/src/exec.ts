@@ -1,7 +1,7 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename, delimiter, join, resolve as resolvePath } from 'path';
+import { basename, delimiter, join, resolve as resolvePath, win32 } from 'path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +17,17 @@ import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
 import { processGroupAlive } from './ownership-claim.ts';
+
+type SystemExecutable = 'netstat.exe' | 'taskkill.exe' | 'tasklist.exe' | 'powershell.exe';
+
+/** System utilities must resolve even when the caller's PATH omits the Windows directories. */
+export function windowsSystemExecutable(file: SystemExecutable): string {
+  const configured = process.env.SystemRoot || process.env.SYSTEMROOT || '';
+  const system32 = win32.join(/^[a-z]:[\\/]/i.test(configured) ? configured : 'C:\\Windows', 'System32');
+  return file === 'powershell.exe'
+    ? win32.join(system32, 'WindowsPowerShell', 'v1.0', file)
+    : win32.join(system32, file);
+}
 
 export interface ExecOptions {
   /** Milliseconds before the child is killed, or 'unbounded' for a call that may legitimately run as long as it needs, such as a native build. */
@@ -242,7 +253,9 @@ function reportChild(
             child.kill('SIGKILL');
           } else {
             // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
-            const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+            const killer = spawn(windowsSystemExecutable('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
+              stdio: 'ignore',
+            });
             const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
             await new Promise<void>((resolve) => {
               killer.once('error', () => child.kill('SIGKILL'));
