@@ -1,7 +1,7 @@
 import { SLOW, temps, write, expoApp, baseEnv, key, refusal } from './fingerprint-evaluate-harness.ts';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { getExecutor, setExecutor } from '../exec.ts';
 import { readFingerprint, runFingerprintVerification } from '../fingerprint-precompute.ts';
@@ -923,5 +923,35 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     const result = await refusal(root);
     expect(result.evaluator).toBe('rnConfig');
     expect(result.stderrTail?.join('\n')).toMatch(/no ios platform/);
+  });
+
+  test('reports an evaluator timeout with a wrapper exit status without exposing subprocess details', async () => {
+    const root = bareApp({ ios: {} }, { ios: { sourceDir: 'ios' } });
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync: async (file, args, options) => {
+        if (basename(args[2] ?? '') === 'fp-eval.cjs' && args[3] === 'rn')
+          throw Object.assign(new Error(`executor timed out: ${file} ${args.join(' ')}`), {
+            code: 'ETIMEDOUT',
+            status: 1,
+            stdout: 'partial private stdout',
+            stderr: 'partial private stderr',
+          });
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+
+    const result = await fingerprint(
+      root,
+      { platform: 'ios' },
+      { env: baseEnv(), embedMode: 'development', index: 'skip' },
+    );
+
+    expect(result).toEqual({
+      uncertain: 'rnConfig (React Native autolinking config) timed out',
+      evaluator: 'rnConfig',
+      remedy: 'npx react-native config',
+    });
   });
 });
