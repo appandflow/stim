@@ -22,7 +22,7 @@ type SystemExecutable = 'netstat.exe' | 'taskkill.exe' | 'tasklist.exe' | 'power
 
 /** System utilities must resolve even when the caller's PATH omits the Windows directories. */
 export function windowsSystemExecutable(file: SystemExecutable): string {
-  const configured = process.env.SystemRoot || process.env.SYSTEMROOT || '';
+  const configured = Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1] ?? '';
   const system32 = win32.join(/^[a-z]:[\\/]/i.test(configured) ? configured : 'C:\\Windows', 'System32');
   return file === 'powershell.exe'
     ? win32.join(system32, 'WindowsPowerShell', 'v1.0', file)

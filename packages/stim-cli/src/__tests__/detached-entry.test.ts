@@ -47,7 +47,9 @@ test('the Windows launcher escapes a trailing backslash so the closing quote sur
 });
 
 test('the Windows launcher passes paths through the environment without parsing them as PowerShell source', () => {
-  vi.stubEnv('SystemRoot', 'D:\\Windows Folder');
+  vi.stubEnv('SYSTEMROOT', undefined);
+  vi.stubEnv('SystemRoot', undefined);
+  vi.stubEnv('sYsTeMrOoT', 'D:\\Windows Folder');
   const launcher = windowsLauncherArgs({
     entry: 'C:\\Program Files\\stim\\supervisor-run.mjs',
     args: ['--root', "D:\\it's here\\app", '--port', '8082'],
