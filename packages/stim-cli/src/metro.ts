@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
-import { getExecutor } from './exec.ts';
+import { getExecutor, windowsSystemExecutable } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
 import { addressPort, parseLsofListeners } from './listening-ports.ts';
 import { readlinkSync, realpathSync, rmSync, writeFileSync } from 'fs';
@@ -54,7 +54,10 @@ export function listeningPids(port: number, platform: NodeJS.Platform = process.
     getExecutor().runFileQuiet('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 10_000 }),
   );
   if (pids.length > 0 || platform !== 'win32') return pids;
-  return parseNetstatPids(getExecutor().runQuiet('netstat -ano', { timeoutMs: 10_000 }), port);
+  return parseNetstatPids(
+    getExecutor().runFileQuiet(windowsSystemExecutable('netstat.exe'), ['-ano'], { timeoutMs: 10_000 }),
+    port,
+  );
 }
 
 /** Reads listener pids without blocking on lsof or netstat. */
@@ -72,7 +75,11 @@ export async function listeningPidsAsync(
   );
   if (pids.length > 0 || platform !== 'win32') return pids;
   return parseNetstatPids(
-    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL', signal }),
+    await getExecutor().runFileQuietAsync(windowsSystemExecutable('netstat.exe'), ['-ano'], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+      signal,
+    }),
     port,
   );
 }
@@ -283,7 +290,11 @@ export function signalProcessTree(
 ): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if (platform !== 'win32') return process.kill(group ? -pid : pid, signal);
-  return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 30_000 }) !== null;
+  return (
+    getExecutor().runFileQuiet(windowsSystemExecutable('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
+      timeoutMs: 30_000,
+    }) !== null
+  );
 }
 
 export function killMetroTree(leader: number | null | undefined, processToken?: string): boolean {
@@ -306,15 +317,21 @@ export async function signalProcessTreeAsync(
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
   if (options.operation) {
-    await runOperationFile(options.operation, getExecutor(), 'taskkill', ['/PID', String(pid), '/T', '/F'], {
-      cwd: options.operation.cwd,
-      timeoutMs: 30_000,
-      killSignal: 'SIGKILL',
-    });
+    await runOperationFile(
+      options.operation,
+      getExecutor(),
+      windowsSystemExecutable('taskkill.exe'),
+      ['/PID', String(pid), '/T', '/F'],
+      {
+        cwd: options.operation.cwd,
+        timeoutMs: 30_000,
+        killSignal: 'SIGKILL',
+      },
+    );
     return true;
   }
   return (
-    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    (await getExecutor().runFileQuietAsync(windowsSystemExecutable('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
       timeoutMs: 30_000,
       killSignal: 'SIGKILL',
     })) !== null

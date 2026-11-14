@@ -31,7 +31,7 @@ import {
   type ClaimHandle,
   type ClaimHolder,
 } from '@stim-cli/core/ownership-claim';
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
 import {
   pidExists,
   recordForeignMetro,
@@ -522,7 +522,7 @@ async function stopTree(child: MetroChild): Promise<void> {
   const identity = inspectProcessIdentity(child);
   if (identity === 'unknown') throw unconfirmed('its identity reads unknown');
   if (identity !== 'same') return;
-  const taskkill = join(process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+  const taskkill = windowsSystemExecutable('taskkill.exe');
   const failed = await getExecutor()
     .runFileAsync(taskkill, ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000, killSignal: 'SIGKILL' })
     .then(

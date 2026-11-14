@@ -606,7 +606,7 @@ export function dumpDiagnostics(h, created) {
     h.log(`--- ${logPath} (tail) ---`);
     const text = readFileSync(logPath, 'utf-8');
     process.stderr.write(lastLines(text, 60) + '\n');
-    const launch = text
+    const target = text
       .split('\n')
       .flatMap((line) => {
         try {
@@ -615,23 +615,25 @@ export function dumpDiagnostics(h, created) {
           return [];
         }
       })
-      .findLast((record) => record?.event === 'launch_attempt');
-    if (launch?.platform !== 'android' || typeof launch.deviceId !== 'string' || typeof launch.appId !== 'string')
-      continue;
-    const queries = [
-      ['get-state'],
-      ['shell', 'pm', 'path', launch.appId],
-      ['shell', 'cmd', 'package', 'resolve-activity', '--brief', launch.appId],
-      ['shell', 'pidof', launch.appId],
-      ['logcat', '-b', 'all', '-d', '-t', '2000'],
-    ];
+      .findLast((record) => record?.event === 'launch_attempt' || record?.event === 'install_attempt');
+    if (target?.platform !== 'android' || typeof target.deviceId !== 'string') continue;
+    const queries = [['get-state']];
+    if (typeof target.appId === 'string') {
+      queries.push(
+        ['shell', 'pm', 'path', target.appId],
+        ['shell', 'cmd', 'package', 'resolve-activity', '--brief', target.appId],
+        ['shell', 'pidof', target.appId],
+      );
+    }
+    queries.push(['logcat', '-b', 'all', '-d', '-t', '2000']);
     const diagnostics = queries.map((query) => {
-      const argv = ['-s', launch.deviceId, ...query];
+      const argv = ['-s', target.deviceId, ...query];
       const started = Date.now();
       const result = h.sh('adb', argv, { allowFail: true, timeout: 10_000 });
       return { argv, elapsedMs: Date.now() - started, code: result.code, stdout: result.stdout, stderr: result.stderr };
     });
-    const output = JSON.stringify({ launch, diagnostics }, null, 2);
+    const eventKey = target.event === 'launch_attempt' ? 'launch' : 'install';
+    const output = JSON.stringify({ [eventKey]: target, diagnostics }, null, 2);
     writeFileSync(join(dirname(logPath), 'android-failure-diagnostics.json'), output + '\n');
     h.log(output);
   }

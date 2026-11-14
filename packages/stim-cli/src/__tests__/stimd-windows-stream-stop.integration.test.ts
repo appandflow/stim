@@ -72,7 +72,7 @@ test.skipIf(process.platform === 'win32')(
       const pid = await waitForPid(pidFile);
       const executor = getExecutor();
       const run = vi.spyOn(executor, 'runFileAsync').mockImplementation(async (file, args, opts) => {
-        expect(file).toBe(join('C:\\Windows-Test', 'System32', 'taskkill.exe'));
+        expect(file).toBe('C:\\Windows-Test\\System32\\taskkill.exe');
         expect(args).toEqual(['/PID', String(pid), '/T', '/F']);
         expect(opts.timeoutMs).toBe(30_000);
         await held;

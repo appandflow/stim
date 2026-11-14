@@ -37,7 +37,7 @@ export function idleCargoUnits(units: readonly CargoUnit[], now: number, idleMs:
 /** Exact's sweep sets the access time of every fingerprint file back to 1970-01-02; a later read of one shows a build considered the unit. */
 const ACCESS_RESET_MS = 86_400_000;
 
-function readSinceSweep(path: string): boolean {
+export function cargoUnitWasRead(path: string): boolean {
   try {
     return readdirSync(path).some((name) => statSync(join(path, name)).atimeMs > ACCESS_RESET_MS);
   } catch {
@@ -72,7 +72,7 @@ export function readCargoUnits(
       id,
       crate: match[1] ?? id,
       hash: match[2] ?? '',
-      lastUsedMs: stamped === undefined ? null : readSinceSweep(join(profile, FINGERPRINT, id)) ? now : stamped,
+      lastUsedMs: stamped === undefined ? null : cargoUnitWasRead(join(profile, FINGERPRINT, id)) ? now : stamped,
     });
   }
   return units;

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
-import { getExecutor } from './exec.ts';
+import { getExecutor, windowsSystemExecutable } from './exec.ts';
 
 /**
  * Returns occupied TCP ports across local interfaces. Rejects if listener inspection fails.
@@ -20,7 +20,7 @@ export async function readListeningPorts(platform: NodeJS.Platform = process.pla
       return parseLinuxPorts(tables);
     }
     case 'win32':
-      return parseWindowsPorts(await readNetstat('netstat', ['-an']));
+      return parseWindowsPorts(await readNetstat(windowsSystemExecutable('netstat.exe'), ['-an']));
     default:
       throw new Error(`TCP listener inspection is not supported on ${platform}.`);
   }

@@ -433,7 +433,7 @@ describe('stopTunnel: idempotent, never throws', () => {
     try {
       const result = await stopVerified(fixtureRecord(), { isAlive: () => alive, platform: 'win32' });
       expect(result.status).toBe('stopped');
-      expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
+      expect(taskkill).toEqual([[expect.stringMatching(/\\System32\\taskkill\.exe$/i), '/PID', '4242', '/T', '/F']]);
     } finally {
       resetExecutor();
     }
@@ -563,6 +563,6 @@ describe('terminateChild on win32', () => {
       platform: 'win32',
     });
     expect(stopped).toBe(true);
-    expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
+    expect(taskkill).toEqual([[expect.stringMatching(/\\System32\\taskkill\.exe$/i), '/PID', '4242', '/T', '/F']]);
   });
 });

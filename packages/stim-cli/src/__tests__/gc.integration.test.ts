@@ -3505,7 +3505,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
     ...original,
     findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runFile: (file, args, opts) => {
-      if (file === 'netstat') {
+      if (file.endsWith('\\netstat.exe')) {
         inspected.push(args.join(' '));
         return 'Proto Local Address Foreign Address State PID\n';
       }

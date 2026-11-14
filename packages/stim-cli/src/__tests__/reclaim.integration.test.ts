@@ -986,7 +986,7 @@ test('worktree reclaim releases named ports without inspecting or signalling the
     findExecutable: () => '/usr/sbin/lsof',
     runFile: (file: string, args: string[]) => {
       commands.push([file, ...args].join(' '));
-      return file === 'netstat'
+      return file.endsWith('\\netstat.exe')
         ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n'
         : file === 'lsof'
           ? '41219'

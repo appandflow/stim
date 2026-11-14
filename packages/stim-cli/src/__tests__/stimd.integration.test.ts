@@ -2022,11 +2022,12 @@ test('on win32 a command starts stimd through the hidden launcher, which passes 
   setExecutor({ ...getExecutor(), spawn });
   onTestFinished(() => resetExecutor());
 
+  vi.stubEnv('SystemRoot', 'D:\\Windows');
   await ensureStimd({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on', Path: 'C:\\tools' }, 'win32');
 
   expect(spawn).toHaveBeenCalledTimes(1);
   expect(spawn).toHaveBeenCalledWith(
-    'powershell.exe',
+    'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     expect.any(Array),
     expect.objectContaining({
       windowsHide: true,

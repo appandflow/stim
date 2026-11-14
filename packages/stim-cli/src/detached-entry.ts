@@ -1,6 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { openSync } from 'node:fs';
-import { getExecutor } from './exec.ts';
+import { getExecutor, windowsSystemExecutable } from './exec.ts';
 
 const LOG_FILE_FLAG = '--log-file';
 
@@ -38,7 +38,7 @@ export function windowsLauncherArgs({
     '$start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden; ' +
     '[System.Diagnostics.Process]::Start($start) | Out-Null';
   return {
-    file: 'powershell.exe',
+    file: windowsSystemExecutable('powershell.exe'),
     args: ['-NoProfile', '-NonInteractive', '-Command', script],
     env: {
       STIM_WINDOWS_LAUNCH_FILE: execPath,
@@ -67,7 +67,7 @@ export function windowsShellLaunchArgs({ file, args, cwd }: { file: string; args
     '$start.UseShellExecute = $true; ' +
     '[Console]::Out.Write([System.Diagnostics.Process]::Start($start).Id)';
   return {
-    file: 'powershell.exe',
+    file: windowsSystemExecutable('powershell.exe'),
     args: ['-NoProfile', '-NonInteractive', '-Command', script],
     env: {
       STIM_WINDOWS_LAUNCH_FILE: file,

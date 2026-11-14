@@ -1729,17 +1729,13 @@ CARGO UNITS
   unit with no stamp stays, and so does one unit per crate name, the most
   recently used (its other units, whatever their kind, can go when idle). A
   ledger whose own time is over 3 days old shows no use and its target keeps
-  its units. Units are swept at critical only. The
-  work goes in chunks of 25 units: the three lock files (.cargo-lock,
-  .cargo-build-lock, .cargo-artifact-lock) are checked before and after each
-  chunk and the sweep of that profile stops when one is held. A chunk is
-  renamed aside, fingerprints first, then build/, then deps/. When a lock turns
-  up after a chunk, the chunk is put back path by path without overwriting:
-  a path a build recreated since is left alone and its old copy deleted.
-  A unit removed while no build holds a lock costs a rebuild of that crate. The
-  remaining window is one chunk: a build that starts after a chunk's first
-  check and judged a unit fresh before that chunk moved it can still fail with
-  a missing file, and the next build recovers. Hard links Cargo made in the
+  its units. Units are swept at critical only, in chunks of 25. Each chunk
+  needs exclusive locks on Exact's ledger and the Cargo profile. If a build or
+  Exact already holds a lock, the profile's sweep stops. If a build starts while
+  Stim holds the locks, Cargo waits until Stim has moved the files aside.
+  The locks require Perl on macOS or Linux. The sweep keeps units on Windows,
+  Linux NFS, and when it cannot verify a lock. A chunk is renamed aside,
+  fingerprints first, then build/, then deps/. Hard links Cargo made in the
   profile root keep the bytes of a removed deps/ file.
 
 WORKSPACE BUILD OUTPUTS
