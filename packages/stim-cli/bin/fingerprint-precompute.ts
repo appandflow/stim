@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const controller = new AbortController();
 let loaded = false;
@@ -20,6 +21,8 @@ acknowledge = () =>
   writeFileSync(input.ownership.acknowledgement, JSON.stringify({ nonce: input.ownership.nonce, settled: true }), {
     mode: 0o600,
   });
+// @ref LLP 0007#releasing-a-claim-after-a-killed-fingerprint-child -- project work starts only after the observer is installed
+writeFileSync(join(input.ownership.directory, 'observing.json'), '{}', { mode: 0o600 });
 const { runPrecomputeChild } = await import('../src/fingerprint/precompute-child.ts');
 loaded = true;
 const output = await runPrecomputeChild(input, controller, process.env);
