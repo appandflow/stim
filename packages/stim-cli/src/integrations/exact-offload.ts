@@ -170,6 +170,31 @@ export function exactOffloadPlan(root: string, env: NodeJS.ProcessEnv): ExactOff
   };
 }
 
+const AREA_ENTRIES = new Set([
+  'src',
+  'checkout',
+  'home',
+  'out',
+  'cache',
+  'area.json',
+  'fingerprint-work',
+  'mirror.json',
+  'build.ndjson',
+  'artifact-cache',
+  'macos',
+  'lockfile',
+  'gradle-outputs.json',
+  'last-used',
+]);
+
+/** Where a build machine makes an exact2 checkout before moving it to the app's path. */
+export const EXACT2_MAKING = '.stim-exact2-';
+
+/** Whether `name`, at the top of a build machine's repository area, is an entry the machine keeps for itself. */
+export function reservedAreaEntry(name: string): boolean {
+  return AREA_ENTRIES.has(name) || name.startsWith('.artifact-fetch-') || name.startsWith(EXACT2_MAKING);
+}
+
 /**
  * The path from the app directory to exact2 as the app's Cargo manifests name it, when it leaves the repository: Exact
  * writes it relative when the two share their top directory and absolute otherwise (exact2 `scripts/app.mjs`
@@ -192,6 +217,13 @@ function exact2Link(app: string, exact2Dir: string): string | null | { unsupport
     return {
       unsupported: `exact2 sits ${above} folders above the repository of this app in a subdirectory, and a build machine places it at most one above`,
     };
+  const parts = link.split('/');
+  const climbs = parts.length - parts.filter((part) => part !== '..').length;
+  const lands = (depth === 0 ? climbs >= 2 : climbs === depth + 1) ? parts[climbs] : undefined;
+  if (lands !== undefined && reservedAreaEntry(lands) && !(lands === 'checkout' && parts.length > climbs + 1))
+    return {
+      unsupported: `the path ${link} from the app to exact2 lands on ${lands}, which a build machine keeps for itself`,
+    };
   return link;
 }
 
@@ -211,7 +243,7 @@ function exactRemoteUrl(exact2Dir: string): string | null {
 
 export function exactPinsParam(value: unknown): ExactPins | null {
   if (!isJsonObject(value)) return null;
-  const { exact2, bun, rust, checkout, url } = value;
+  const { exact2, bun, rust, checkout = exact2, url = null } = value;
   return typeof exact2 === 'string' &&
     SHA.test(exact2) &&
     typeof bun === 'string' &&
@@ -228,7 +260,7 @@ export function exactPinsParam(value: unknown): ExactPins | null {
 export function exactOffloadParam(value: unknown): ExactOffload | null {
   const pins = exactPinsParam(value);
   if (!pins || !isJsonObject(value)) return null;
-  const { name, env, link } = value;
+  const { name, env, link = null } = value;
   if (typeof name !== 'string' || !APP_NAME.test(name) || !isJsonObject(env)) return null;
   if (link !== null && (typeof link !== 'string' || !LINK.test(link))) return null;
   const entries = Object.entries(env);

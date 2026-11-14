@@ -19,6 +19,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -83,6 +84,8 @@ import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/cor
 import { projectRegistry } from '../../integrations/projects.ts';
 import {
   exactCheckoutDir,
+  EXACT2_MAKING,
+  reservedAreaEntry,
   exactDeclaredSettings,
   exactDeclaresModules,
   exactToolProblems,
@@ -1146,8 +1149,6 @@ function inside(dir: string, path: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-const AREA_ENTRIES = new Set(['src', 'checkout', 'home', 'out', 'cache', 'area.json', 'fingerprint-work']);
-
 const EXACT2_SOURCE = 'stim.exact2-source';
 
 /**
@@ -1168,7 +1169,7 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
     !inside(realArea, at) ||
     inside(root, at) ||
     at === join(realArea, 'checkout') ||
-    (top !== 'checkout' && (AREA_ENTRIES.has(top) || top.startsWith('.artifact-fetch-'))) ||
+    (top !== 'checkout' && reservedAreaEntry(top)) ||
     !inside(realArea, realParent) ||
     inside(root, realParent) ||
     inside(join(realArea, 'home'), realParent)
@@ -1180,14 +1181,21 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
     if (source !== checkout) rmSync(at, { recursive: true, force: true });
   }
   if (!existsSync(at)) {
-    const making = `${at}.stim-clone`;
     mkdirSync(dirname(at), { recursive: true });
-    rmSync(making, { recursive: true, force: true });
+    for (const left of readdirSync(dirname(at)))
+      if (left.startsWith(EXACT2_MAKING)) rmSync(join(dirname(at), left), { recursive: true, force: true });
+    const making = mkdtempSync(join(dirname(at), EXACT2_MAKING));
     git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
       write: true,
       timeoutMs: 120_000,
     });
     git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
+    if (existsSync(join(checkout, 'node_modules')))
+      cpSync(join(checkout, 'node_modules'), join(making, 'node_modules'), {
+        recursive: true,
+        verbatimSymlinks: true,
+        mode: constants.COPYFILE_FICLONE,
+      });
     renameSync(making, at);
   }
   if (
@@ -1293,7 +1301,7 @@ async function compileExact(
   for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
   let made: string | null = null;
   const stop = () => {
-    if (made) deleteOwnedIosSimNow(made, 2500);
+    if (made) deleteOwnedIosSimNow(made, 1500);
     process.exit(143);
   };
   process.once('SIGTERM', stop);

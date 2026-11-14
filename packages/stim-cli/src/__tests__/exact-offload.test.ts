@@ -96,6 +96,15 @@ test('an app in a subdirectory whose exact2 sits more than one folder above its 
   });
 });
 
+test('an app whose exact2 path lands on an entry a build machine keeps for itself builds here', () => {
+  const moved = join(root, 'src', 'exact2');
+  mkdirSync(join(root, 'src'));
+  renameSync(exact2, moved);
+  expect(exactOffloadPlan(app, { EXACT2: moved })).toMatchObject({
+    unsupported: expect.stringContaining('lands on src'),
+  });
+});
+
 test('an offload names the remote that has the exact2 commit, never one carrying credentials', () => {
   git(exact2, 'remote', 'add', 'leaky', 'https://user:token@github.com/someone/exact.git');
   git(exact2, 'update-ref', 'refs/remotes/leaky/main', 'HEAD');
@@ -144,6 +153,8 @@ test('a worker refuses a malformed Exact build request', () => {
     link: '../../.exact/exact2/scroll-zoom',
   };
   expect(exactOffloadParam(valid)).toEqual(valid);
+  const { checkout: _checkout, url: _url, link: _link, ...older } = valid;
+  expect(exactOffloadParam(older)).toEqual({ ...older, checkout: sha, url: null, link: null });
   for (const bad of [
     { ...valid, name: '../escape' },
     { ...valid, exact2: 'main' },

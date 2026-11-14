@@ -74,14 +74,15 @@ function write(path: string, text: string, mode = 0o644): void {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-exact-worker-'));
-  home = join(root, 'home');
+  home = join(root, 'user');
   write(join(home, '.bun-1.4.2', 'bin', 'bun'), '#!/bin/sh\necho 1.4.2\n', 0o755);
   write(join(home, '.cargo', 'bin', 'rustup'), `#!/bin/sh\necho ${EXACT_SIM_TARGET}\n`, 0o755);
   mkdirSync(join(home, '.cargo', 'hermes-lean-sys'));
   const pins = join(home, '.exact', 'exact2', 'pending');
   write(join(pins, 'scripts', 'app-cli.mjs'), '');
   write(join(pins, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.97.0"\n');
-  mkdirSync(join(pins, 'node_modules'));
+  write(join(pins, 'node_modules', 'tool.js'), '');
+  write(join(pins, '.gitignore'), 'node_modules/\n');
   git(pins, 'init', '-q');
   git(pins, 'add', '.');
   git(pins, 'commit', '-q', '-m', 'pin');
@@ -209,6 +210,7 @@ test("the app's relative path to exact2 holds a checkout of the pinned commit in
     expect(lstatSync(dir).isDirectory()).toBe(true);
     expect(git(dir, 'rev-parse', 'HEAD')).toBe(sha);
     expect(existsSync(join(dir, 'scripts', 'app-cli.mjs'))).toBe(true);
+    expect(existsSync(join(dir, 'node_modules', 'tool.js'))).toBe(true);
   };
   const { result, area } = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
@@ -218,6 +220,9 @@ test("the app's relative path to exact2 holds a checkout of the pinned commit in
   const at = join(realpathSync(area), '.exact', 'exact2', 'scroll-zoom');
   placed(at);
   expect(readFileSync(join(area, 'checkout', 'shop-app', 'env-seen.txt'), 'utf8')).toContain(`EXACT2=${at}\n`);
+  writeFileSync(join(at, 'scripts', 'app-cli.mjs'), 'edited');
+  await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../.exact/exact2/scroll-zoom' });
+  expect(readFileSync(join(at, 'scripts', 'app-cli.mjs'), 'utf8')).toBe('');
 
   const sibling = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../exact2' });
   expect(sibling.result).toMatchObject({ ok: false, code: 'exact-build-failed' });

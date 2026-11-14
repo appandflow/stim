@@ -2179,7 +2179,7 @@ export function protocolJsonSchema(): JsonSchema {
               swiftpmArtifact: swiftpmArtifactQuery,
               exact: {
                 type: 'object',
-                required: ['exact2', 'bun', 'rust', 'checkout', 'url'],
+                required: ['exact2', 'bun', 'rust'],
                 additionalProperties: false,
                 description:
                   "An Exact app's pins, its exact2 checkout folder name and a remote URL with the commit; the offer then reports what of Exact's toolchain the machine lacks.",
@@ -2390,7 +2390,7 @@ export function protocolJsonSchema(): JsonSchema {
               },
               exact: {
                 type: 'object',
-                required: ['name', 'exact2', 'bun', 'rust', 'checkout', 'url', 'env', 'link'],
+                required: ['name', 'exact2', 'bun', 'rust', 'env'],
                 additionalProperties: false,
                 description:
                   "An Exact app's iOS build: its directory name, pins, declared settings' values and the app's relative path to exact2 when it leaves the repository; fingerprint is the synced manifest digest.",
