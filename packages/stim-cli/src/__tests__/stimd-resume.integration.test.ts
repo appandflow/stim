@@ -306,6 +306,99 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
   }, 60_000);
 
+  test('SIGINT cancels a spawned Android CLI waiting for a lease on the replacement stimd', async () => {
+    const other = workspace('other');
+    const root = workspace('app');
+    const device = 'STIM-TEST-PHONE';
+    const sdk = join(dir, 'sdk');
+    const adbDir = join(sdk, 'platform-tools');
+    const trace = join(dir, 'trace.json');
+    vi.stubEnv('ANDROID_HOME', sdk);
+    vi.stubEnv('ANDROID_SDK_ROOT', sdk);
+    vi.stubEnv('PATH', [adbDir, process.env.PATH].join(delimiter));
+    mkdirSync(adbDir, { recursive: true });
+    mkdirSync(join(sdk, 'build-tools', '35.0.0'), { recursive: true });
+    writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'fixture'\n");
+    writeFileSync(join(root, '.stim.json'), '{"optimizations":{"android":{"compilerCache":"none"}}}');
+    writeFileSync(join(sdk, 'build-tools', '35.0.0', 'apksigner'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(
+      join(root, 'gradlew'),
+      `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+const model = process.argv.find(arg => arg.startsWith('-Pstim.native.model='));
+if (!model) process.exit(0);
+const apk = path.join(__dirname, 'app.apk');
+fs.writeFileSync(apk, 'fixture bytes');
+const output = model.slice('-Pstim.native.model='.length);
+fs.mkdirSync(path.dirname(output), { recursive: true });
+fs.writeFileSync(output, JSON.stringify({ schema: 1, module: ':app', variant: 'debug',
+  applicationId: 'com.fixture.app', sdkDirectory: process.env.ANDROID_HOME, elements: [{ path: apk, filters: [] }] }));
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(adbDir, 'adb'),
+      `#!/bin/sh
+case "$1" in
+  devices) printf 'List of devices attached\\n${device}\\tdevice\\n' ;;
+  -s) case "$5" in
+    ro.product.cpu.abi) echo arm64-v8a ;;
+    ro.product.model) echo 'fixture phone' ;;
+  esac ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const held = takeLease({ root: other, platform: 'android', id: device, kind: 'run', durationMs: 60_000 });
+    assert(held.status === 'taken');
+    const first = await startStimd();
+    const firstExit = once(first, 'exit');
+    const cli = spawn(
+      process.execPath,
+      [entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
+      {
+        cwd: root,
+        env: { ...process.env, STIM_TRACE: trace },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const exited = once(cli, 'exit');
+    let output = '';
+    cli.stdout?.on('data', (chunk) => (output += String(chunk)));
+    cli.stderr?.on('data', (chunk) => (output += String(chunk)));
+    const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
+    try {
+      await vi.waitFor(() => assert.equal(waitsForHolder(), 1, output), { timeout: 15_000, interval: 25 });
+      assert(first.kill('SIGKILL'));
+      await firstExit;
+      await vi.waitFor(
+        () => {
+          expect(output).toContain(RESTARTED);
+          assert.equal(waitsForHolder(), 2, output);
+        },
+        { timeout: 15_000, interval: 25 },
+      );
+      const successor = stimdPid();
+      expect(successor).toEqual(expect.any(Number));
+      expect(successor).not.toBe(first.pid);
+      assert(cli.kill('SIGINT'));
+      await vi.waitFor(() => assert.equal(cli.exitCode, 130, output), { timeout: 5000, interval: 25 });
+      await vi.waitFor(
+        () =>
+          expect(readFileSync(trace, 'utf8')).toMatch(
+            new RegExp(`"name":"stimd\\.lease\\.acquire"[^\\n]*"pid":${successor}\\}`),
+          ),
+        { timeout: 5000, interval: 25 },
+      );
+      expect(listLeaseFiles().map(({ lease }) => lease?.token)).toEqual([held.lease.token]);
+      releaseRunLease({ root: other, platform: 'android', token: held.lease.token });
+      expect(listLeaseFiles()).toEqual([]);
+    } finally {
+      if (cli.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
+      await exited;
+    }
+  }, 45_000);
+
   test('a resume that meets the crash hold fails at once with the hold and its remedy', async () => {
     const other = workspace('other');
     const root = workspace('app');
