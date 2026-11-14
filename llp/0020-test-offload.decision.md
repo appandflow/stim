@@ -9,12 +9,10 @@
 
 ## Test approval
 
-stim-server's `test` capability lets another machine run any command it sends
-on this machine, as the worker's user, with no sandbox. It is its own
-approval: it never comes with `read`, `control`, `build` or `device-host`,
-and none of those grants it. A person on the worker approves it the way LLP
-0009 describes for `build`: by running `stim setup --test` (or `stim-server
-setup --test`) with the requesting machine's setup ticket in
+stim-server records a separate `test` approval for a requesting machine. It
+never comes with `read`, `control`, `build` or `device-host`, and none of
+those grants it. The operator runs `stim setup --test` (or `stim-server setup
+--test`) with the requesting machine's setup ticket in
 `STIM_SETUP_TICKET`, which approves at most one request per capability, from
 the key that holds one ticket, until one expiry. The terminal question is its
 own Y/n (Enter approves), and it says that the machine may run any command it
@@ -39,11 +37,9 @@ approvals always reports. Setup asked for `--test` refuses to reuse a running
 server whose `/health` lacks it, because that server would never turn the
 ticket into a record, and names the update instead.
 
-Running a test command is a remote shell for the approved machine. A build
-approval already runs the client's install and Gradle scripts, but its
-recipe is fixed; a test approval runs whatever the client sends. Keeping it a
-separate record lets a person give build access without that, revoke one
-without the other, and lets the worker check and count test work on its own.
+The proposed test command would have given the approved machine a remote
+shell. The build recipe fixes which project steps can run. Separate records
+let a worker grant and revoke the two capabilities independently.
 
 Maintainer decision: "Separate test capability", 2026-11-12, in answer to which
 permission a worker should require
@@ -57,35 +53,15 @@ approval and Windows refusal, `busy.tests` with the setup refusal, the
 refusal over the local socket, and terminal-only approval are coordinator proposals from the plan on
 #5529, not quoted decisions.
 
-## Planned (#5529): the stim test command
+## Test slots and retired command proposal
 
-Planned: #5529
+The test slot class, `concurrency.maxTests`, and the test wait queue shipped
+in #5573. Worker-side test approval shipped in #5576 and follows the rules
+above.
 
-`stim test -- <argv>` runs one whole test command, given as an
-argument vector with no shell and nothing read from project scripts, in the
-caller's checkout or on one approved worker. The worker's stimd checks the
-test approval and counts test work in its own slot class.
-
-Maintainer decision: "Test", 2026-11-12, in answer to which name to use
-([#5529](https://github.com/appandflow/stim/issues/5529#issuecomment-6834426069)).
-
-Maintainer decision: "Auto when loaded (Recommended)", 2026-11-12, in answer to
-where `stim test` runs by default: a run goes to a worker when this machine is
-loaded, and otherwise runs here under a test slot.
-
-Maintainer decision: "Yes, all three (Recommended)", 2026-11-12, in answer to
-whether to start the cheap local fixes: a machine-wide test slot, splitting the
-slowest integration files, and a cap on test workers.
-
-Maintainer decision: "Use ur recs for test", 2026-11-12, in answer to the
-coordinator's recommendations of the `--remote-test` flag name, separate worker
-folders for tests, no environment forwarding, and conservative defaults. The
-coordinator reads it as accepting the plan's other defaults too: the flags
-`--remote-test`, `--timeout` and `--json`; the settings `remote.test`,
-`concurrency.maxTests` and `server.testsPaused`; its exit codes; no named
-commands in `.stim.json`; no Linux worker kept running; result caching out of
-the first version. Those remain coordinator proposals, open to change in
-review.
+The 2.0 backlog triage retired the proposal for a `stim test` command with
+automatic placement. The original proposal and decisions remain in
+[#5529](https://github.com/appandflow/stim/issues/5529).
 
 ## Code
 

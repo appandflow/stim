@@ -743,7 +743,7 @@ paths are still too long refuses with `STIM_PATH_TOO_LONG`.
 | `device-host` | Running the client's native app in its own hosted device or app session.                     |
 | `read`        | Reading workspaces, logs and device screens, including workspace text diffs where supported. |
 | `control`     | Device input and workspace Reload/Stop actions for a paired viewer.                          |
-| `test`        | Running any command the requesting machine sends, as the worker user, with no sandbox.       |
+| `test`        | A separate test client record that can authorize managed worker updates.                     |
 
 Build, device-host and test grants are separate from each other and from viewer
 read/control grants. Pairing a phone does not grant build, hosting or test
@@ -752,9 +752,8 @@ access, and `stim pairings grant` never grants `build`, `device-host` or
 
 ### Test approval
 
-A person on the worker approves `test` by adding `--test` to the setup command
-the requesting machine printed. No Stim command asks for `test` yet; the
-`stim test` command that will use it is not released:
+The `stim test` command proposal was retired before 2.0. A person on the
+worker can still record a test approval using a setup ticket and `--test`.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -773,9 +772,9 @@ STIM_SETUP_TICKET=<43-base64url-characters> npx --yes stim setup --expires <ISO-
 </TabItem>
 </Tabs>
 
-Setup asks its own Y/n question, which says the approved machine may run any
-command it sends on this machine, as this user, with no sandbox. The command
-can read and change that user's files. Approve it only for your own machines.
+Setup asks a separate Y/n question. The prompt describes the authority in the
+original proposal, which would have let the approved machine run commands as
+the worker user without a sandbox. Approve it only for your own machines.
 The approval is stored in `test-clients.json`, apart from every other record,
 and `stim pairings` lists it with kind `test-client` and access `test`; revoke
 it with `stim pairings revoke <id>`. A Linux worker can approve `test`; a
@@ -887,9 +886,8 @@ a client's records.
 
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
-user. It is not a sandbox for untrusted projects. Test approval goes further:
-the client chooses the command itself. Approved build, device-host or test
-clients can also request managed server updates. Only accept requests from
+user. It is not a sandbox for untrusted projects. Approved build, device-host
+or test clients can also request managed server updates. Only accept requests from
 machines you trust. Forwarded peer addresses label approvals and key rate
 limits. A local process on the server can forge one to lock a peer out
 temporarily; it cannot authenticate.
