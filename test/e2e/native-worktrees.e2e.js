@@ -20,6 +20,7 @@ import {
   createHarness,
   createWarmWorktree,
   prepareIosDevices,
+  runCacheRace,
   teardownWorkspaces,
   cleanupTmp,
   workspaceLogsDir,
@@ -329,6 +330,51 @@ test('native preparation controls simulator shutdown and stops after a failed pr
     );
   }
 });
+
+for (const failure of ['invalid facts', 'spawn error']) {
+  test(`a cache racer with ${failure} waits for its sibling and preserves native state`, async (t) => {
+    const base = scratch(t);
+    const first = join(base, 'first');
+    const second = join(base, 'second');
+    if (failure !== 'spawn error') mkdirSync(first);
+    mkdirSync(second);
+    const command = join(base, 'racer.cjs');
+    writeFileSync(
+      command,
+      "const { basename } = require('node:path');\n" +
+        "const { writeFile } = require('node:fs/promises');\n" +
+        "if (basename(process.cwd()) === 'second') {\n" +
+        "  setTimeout(async () => { await writeFile('finished', 'done'); console.log('{\"udid\":\"second\"}'); }, 80);\n" +
+        "} else console.log('{}');\n",
+    );
+    const recordedWorkspaces = [];
+    const recordedBuilds = [];
+    await assert.rejects(
+      runCacheRace({ cliPath: command }, ['ios', '--json'], {
+        workspaces: [first, second],
+        env: process.env,
+        cleanup: {
+          recordWorkspace(cwd) {
+            recordedWorkspaces.push(cwd);
+          },
+          recordBuild(facts) {
+            assert.ok(facts.udid, 'missing device identity');
+            recordedBuilds.push(facts.udid);
+          },
+        },
+      }),
+      (error) => {
+        assert.match(error.message, failure === 'spawn error' ? /ENOENT/ : /missing device identity/);
+        assert.equal(error.preserveNativeState, true);
+        cleanupTmp([second], error);
+        assert.equal(readFileSync(join(second, 'finished'), 'utf-8'), 'done');
+        return true;
+      },
+    );
+    assert.deepEqual(recordedWorkspaces, [first, second]);
+    assert.deepEqual(recordedBuilds, ['second']);
+  });
+}
 
 test('failure teardown stops and removes every created worktree, newest first, despite command failures', (t) => {
   const base = scratch(t);

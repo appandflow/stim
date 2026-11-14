@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { launchEvidenceMessage } from './assertions.mjs';
 import {
   appendFileSync,
@@ -648,6 +648,70 @@ export function dumpDiagnostics(h, created) {
     writeFileSync(join(dirname(logPath), 'android-failure-diagnostics.json'), output + '\n');
     h.log(output);
   }
+}
+
+export async function runCacheRace(h, argv, { workspaces, env, cleanup }) {
+  const settled = await Promise.allSettled(
+    workspaces.map(
+      (cwd) =>
+        new Promise((complete, reject) => {
+          const child = spawn(process.execPath, [h.cliPath, ...argv], { cwd, env });
+          let stdout = '';
+          let stderr = '';
+          let spawnError;
+          let timedOut = false;
+          const tag = `[${argv[0]} in ${basename(cwd)}] `;
+          child.stdout.setEncoding('utf-8');
+          child.stderr.setEncoding('utf-8');
+          child.stdout.on('data', (text) => (stdout += text));
+          child.stderr.on('data', (text) => {
+            stderr += text;
+            for (const line of text.split('\n')) if (line.trim()) process.stderr.write(tag + line + '\n');
+          });
+          child.once('error', (error) => (spawnError = error));
+          const timer = setTimeout(
+            () => {
+              timedOut = true;
+              child.kill('SIGKILL');
+            },
+            40 * 60 * 1000,
+          );
+          child.once('close', (code, signal) => {
+            clearTimeout(timer);
+            if (spawnError) return reject(spawnError);
+            if (timedOut || signal)
+              return reject(new Error(timedOut ? 'command timed out' : `command ended on ${signal}`));
+            complete({ code: code ?? 1, stdout, stderr });
+          });
+        }),
+    ),
+  );
+  const results = [];
+  const failures = [];
+  for (const [index, result] of settled.entries()) {
+    const cwd = workspaces[index];
+    try {
+      cleanup.recordWorkspace(cwd);
+      if (result.status === 'rejected') throw result.reason;
+      const { code, stdout, stderr } = result.value;
+      let facts = {};
+      if (code === 0) {
+        const line = stdout.trim().split('\n').findLast(Boolean);
+        assert(line, `stim ${argv.join(' ')} did not emit build facts`);
+        facts = JSON.parse(line);
+        cleanup.recordBuild(facts);
+      }
+      results.push({ cwd, code, stdout, stderr, facts });
+    } catch (error) {
+      failures.push(new Error(`${cwd}: ${error.message}`, { cause: error }));
+    }
+  }
+  if (failures.length) {
+    throw Object.assign(new AggregateError(failures, failures.map((error) => error.message).join('\n')), {
+      preserveNativeState: true,
+    });
+  }
+  return results;
 }
 
 export function cleanupTmp(dirs, error) {
