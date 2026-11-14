@@ -37,6 +37,7 @@ import {
 } from '../daemon/client.ts';
 import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
+import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import { invocation } from '../stimd/forwarded.ts';
@@ -502,26 +503,55 @@ describe.skipIf(process.platform === 'win32')('an operation held through the API
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const delayed = delayedEntry(3000);
     const controller = new AbortController();
+    let starter: { child: ChildProcess; settled: Promise<unknown> } | undefined;
+    const executor = getExecutor();
+    const spawnChild = executor.spawn.bind(executor);
+    vi.spyOn(executor, 'spawn').mockImplementation((command, args, options) => {
+      const child = spawnChild(command, args, options);
+      if (args?.[0] === delayed.path) starter = { child, settled: once(child, 'exit').catch(() => {}) };
+      return child;
+    });
+    const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
     try {
-      const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
       await waitForAcceptedMetro(root, helperAccepted);
       const first = stimdPid();
       expect(first).not.toBeNull();
       vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
       process.kill(Number(first), 'SIGKILL');
-      await vi.waitFor(() => expect(() => readFileSync(delayed.marker)).not.toThrow(), {
-        timeout: 20_000,
-        interval: 50,
-      });
+      const replacement = await vi.waitFor(
+        () => {
+          assert(starter?.child.pid);
+          expect(() => readFileSync(delayed.marker)).not.toThrow();
+          return starter.child;
+        },
+        { timeout: 20_000, interval: 50 },
+      );
       const aborted = Date.now();
       controller.abort();
-      await answer;
+      await expect(answer).resolves.toBeNull();
       expect(Date.now() - aborted).toBeLessThan(2000);
-      await vi.waitFor(() => expect(stimdPid()).not.toBe(first), { timeout: 20_000, interval: 50 });
+      await vi.waitFor(
+        () => {
+          expect(stimdPid()).toBe(replacement.pid);
+          expect(replacement.exitCode).toBeNull();
+          expect(replacement.signalCode).toBeNull();
+        },
+        { timeout: 20_000, interval: 50 },
+      );
       expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     } finally {
-      await stopStimd();
-      await stopMetro(root);
+      controller.abort();
+      try {
+        await answer;
+      } finally {
+        if (starter) {
+          const { child, settled } = starter;
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+          await settled;
+        }
+        await stopStimd();
+        await stopMetro(root);
+      }
     }
   }, 90_000);
 });

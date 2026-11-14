@@ -119,6 +119,10 @@ async function stopStimd(): Promise<void> {
   await exited;
 }
 
+function replacementStimd(killed: number) {
+  return readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid !== killed)?.owner;
+}
+
 function ask(op: string, params: Record<string, unknown>, opToken?: string): Promise<Record<string, unknown>> {
   const { socket: path, build } = record() ?? { socket: '', build: '' };
   return new Promise((resolve, reject) => {
@@ -853,25 +857,32 @@ socket.on('data', chunk => {
     stop.stdout?.on('data', (chunk) => (output += String(chunk)));
     stop.stderr?.on('data', (chunk) => (output += String(chunk)));
     const exited = once(stop, 'exit');
-    const replacement = await vi.waitFor(
-      () => {
-        const pid = record()?.pid;
-        assert(pid && pid !== killed);
-        const identity = readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid === pid)?.owner;
-        assert(identity, `Could not identify replacement stimd ${pid}.`);
-        return identity;
-      },
-      { timeout: 15_000, interval: 50 },
-    );
+    let replacement: ReturnType<typeof replacementStimd>;
     try {
+      await vi.waitFor(
+        () => {
+          replacement = replacementStimd(killed);
+          assert(replacement, 'Could not identify the replacement stimd.');
+          expect(record()?.pid).toBe(replacement.pid);
+        },
+        { timeout: 15_000, interval: 50 },
+      );
       const [code] = await exited;
       expect({ code, output }).toMatchObject({ code: 0 });
       expect(processGroupAlive(Number(metro.pid))).toBe(false);
       const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
       expect([...claims.live, ...claims.unresolved]).toEqual([]);
     } finally {
-      if (inspectProcessIdentity(replacement) === 'same') process.kill(replacement.pid, 'SIGTERM');
-      assert(await waitForProcessExit(replacement, 15_000), `Replacement stimd ${replacement.pid} did not exit.`);
+      if (stop.exitCode === null && stop.signalCode === null) stop.kill('SIGTERM');
+      try {
+        await exited;
+      } finally {
+        const owner = replacementStimd(killed) ?? replacement;
+        if (owner) {
+          if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
+          assert(await waitForProcessExit(owner, 15_000), `Replacement stimd ${owner.pid} did not exit.`);
+        }
+      }
     }
   }, 60_000);
 
