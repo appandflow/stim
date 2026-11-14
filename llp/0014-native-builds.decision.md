@@ -20,7 +20,8 @@ simulator is hosted on another Mac use the same command with no `EXACT_SIM`,
 and only for an app whose
 `app.json` declares no native modules, because Exact may run code on a
 simulator during the build to read an app's native modules. A build worker
-gives such an app a simulator its build owns ([LLP 0009](./0009-build-offload.decision.md#exact-builds)).
+builds an app that declares native modules too, next to a simulator the build
+owns ([LLP 0009](./0009-build-offload.decision.md#exact-builds)).
 
 Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451).
 

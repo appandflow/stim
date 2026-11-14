@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -126,7 +127,10 @@ async function build(
     write(join(blobs, sha256.slice(0, 2), sha256), text);
   }
   const exact = project
-    ? exactOffloadParam(exactOffloadPlan(join(client, project), { EXACT2: join(home, '.exact', 'exact2', sha) }))
+    ? {
+        ...exactOffloadParam(exactOffloadPlan(join(client, project), { EXACT2: join(home, '.exact', 'exact2', sha) })),
+        link,
+      }
     : { name: 'shop-app', exact2: sha, bun: '1.4.2', rust: '1.97.0', checkout: sha, url: null, env, link };
   expect(exact).not.toBeNull();
   const area = join(root, 'area');
@@ -201,28 +205,33 @@ test('an Exact app that declares native modules builds next to a simulator the b
 });
 
 test("the app's relative path to exact2 reaches this machine's checkout from inside the build area", async () => {
+  const exact2 = realpathSync(join(home, '.exact', 'exact2', sha));
   const { result, area } = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
     { link: '../../.exact/exact2/scroll-zoom' },
   );
   expect(result).toMatchObject({ ok: false, code: 'exact-build-failed' });
-  expect(realpathSync(join(area, 'checkout', 'shop-app', '../../.exact/exact2/scroll-zoom'))).toBe(
-    realpathSync(join(home, '.exact', 'exact2', sha)),
-  );
+  expect(realpathSync(join(area, 'checkout', 'shop-app', '../../.exact/exact2/scroll-zoom'))).toBe(exact2);
 
   const sibling = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../exact2' });
   expect(sibling.result).toMatchObject({ ok: false, code: 'exact-build-failed' });
-  expect(realpathSync(join(area, 'checkout', 'exact2'))).toBe(realpathSync(join(home, '.exact', 'exact2', sha)));
+  expect(realpathSync(join(area, 'checkout', 'exact2'))).toBe(exact2);
 
-  const replacing = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../src' });
-  expect(replacing.result).toMatchObject({ ok: false, code: 'exact-tools', message: /not a link to exact2/ });
+  const worktree = await build(
+    { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
+    { link: '../../../../.exact/exact2/scroll-zoom' },
+  );
+  expect(worktree.result).toMatchObject({ ok: false, code: 'exact-build-failed' });
+  expect(readlinkSync(join(area, 'src'))).toBe(join('checkout', 'up', 'up', 'shop-app'));
+  expect(existsSync(join(area, 'src', 'env-seen.txt'))).toBe(true);
+  expect(realpathSync(join(area, '.exact', 'exact2', 'scroll-zoom'))).toBe(exact2);
 
-  const escaping = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../../.exact/exact2/x' });
-  expect(escaping.result).toMatchObject({
-    ok: false,
-    code: 'exact-tools',
-    message: /cannot place inside its build area/,
-  });
+  for (const link of ['../../src/x', '../../home/exact2'])
+    expect((await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link })).result).toMatchObject({
+      ok: false,
+      code: 'exact-tools',
+      message: /cannot place inside its build area/,
+    });
 });
 
 test('the worker refuses a setting app.json does not declare', async () => {

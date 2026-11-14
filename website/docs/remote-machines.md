@@ -240,9 +240,9 @@ user that runs its Stim service:
   `aarch64-apple-ios-sim` target, which Exact's setup does not add.
 - The exact2 commit the app uses, at `~/.exact/exact2/<commit>` or in a folder
   named like the client's exact2 checkout (`~/.exact/exact2/<name>`), set up
-  with `bun scripts/exact.mjs setup` there. The install command fetches the
-  commit from the remote the client's exact2 checkout has it on, so an app built
-  against an exact2 fork works. A setup line about Chrome or Android does not
+  with `bun scripts/exact.mjs setup` there. The install command clones into
+  `~/.exact/exact2/<commit>` and fetches the commit from the remote the client's
+  exact2 checkout has it on, so an app built against an exact2 fork works. A setup line about Chrome or Android does not
   matter for iOS builds.
 
 A worker that lacks one is skipped: the placement line, the refusal of a
@@ -250,7 +250,9 @@ named `--remote-build` and `stim doctor` in the app name the missing piece and
 the command that installs it there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
 client sent them, and keep `target/` warm in the checkout's own repository area.
 An app's Cargo manifests name exact2 by a path relative to the app; the worker
-links that path inside the repository area to its exact2 checkout. For an app
+links that path inside the repository area to its exact2 checkout; for an app in
+a subdirectory of its repository, exact2 may sit at most one folder above the
+repository. For an app
 whose `app.json` declares native modules, the worker creates a simulator of its
 own for each build, boots it, passes it to Exact as `EXACT_SIM` to read the
 module roster, and deletes it when the build ends. Booting a new simulator adds

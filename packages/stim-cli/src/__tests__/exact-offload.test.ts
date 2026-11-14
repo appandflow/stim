@@ -81,6 +81,21 @@ test('an offload carries the pins, the app directory name, the declared settings
   });
 });
 
+test('an app in a subdirectory whose exact2 sits more than one folder above its repository builds here', () => {
+  const repo = join(root, 'deep', 'repo');
+  const nested = join(repo, 'sub', 'shop-app');
+  mkdirSync(join(repo, 'sub'), { recursive: true });
+  renameSync(app, nested);
+  git(repo, 'init', '-q');
+  expect(exactOffloadPlan(nested, { EXACT2: exact2 })).toMatchObject({
+    unsupported: expect.stringContaining('exact2 sits 2 folders above the repository'),
+  });
+  renameSync(repo, join(root, 'repo'));
+  expect(exactOffloadPlan(join(root, 'repo', 'sub', 'shop-app'), { EXACT2: exact2 })).toMatchObject({
+    link: '../../../pins/exact2',
+  });
+});
+
 test('an offload names the remote that has the exact2 commit, never one carrying credentials', () => {
   git(exact2, 'remote', 'add', 'leaky', 'https://user:token@github.com/someone/exact.git');
   git(exact2, 'update-ref', 'refs/remotes/leaky/main', 'HEAD');
@@ -155,12 +170,12 @@ test("a machine reports each missing piece of Exact's toolchain with the command
   expect(bare.map((each) => each.reason)).toEqual([
     'no Bun 1.4.2 at ~/.bun-1.4.2',
     'no rustup',
-    `no exact2 ${sha.slice(0, 10)} at ~/.exact/exact2/fork`,
+    `no exact2 ${sha.slice(0, 10)} at ~/.exact/exact2/${sha} or ~/.exact/exact2/fork`,
   ]);
   expect(bare.every((each) => each.commands.length > 0)).toBe(true);
   expect(bare.at(-1)?.commands.slice(0, 2)).toEqual([
-    'git clone https://github.com/someone/exact.git ~/.exact/exact2/fork',
-    `git -C ~/.exact/exact2/fork fetch https://github.com/someone/exact.git ${sha}`,
+    `git clone https://github.com/someone/exact.git ~/.exact/exact2/${sha}`,
+    `git -C ~/.exact/exact2/${sha} fetch https://github.com/someone/exact.git ${sha}`,
   ]);
 
   mkdirSync(join(home, '.bun-1.4.2', 'bin'), { recursive: true });
@@ -176,7 +191,7 @@ test("a machine reports each missing piece of Exact's toolchain with the command
     `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}`,
   );
   expect(exactToolProblems({ ...pins, url: null }, { HOME: home }).map((each) => each.reason)).toContain(
-    `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}; the client's exact2 checkout has ${sha.slice(0, 10)} on no remote branch, so push it where this machine can fetch it`,
+    `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}; the client's exact2 checkout has ${sha.slice(0, 10)} on no remote branch whose URL Stim passes on, so push it where this machine can fetch it`,
   );
   execFileSync('git', ['clone', '-q', exact2, join(root, 'clone')]);
   execFileSync('mv', [join(root, 'clone', '.git'), join(checkout, '.git')]);

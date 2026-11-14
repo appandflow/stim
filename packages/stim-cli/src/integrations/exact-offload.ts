@@ -185,7 +185,14 @@ function exact2Link(app: string, exact2Dir: string): string | null | { unsupport
       unsupported: `the exact2 checkout at ${exact2Dir} shares no top directory with the app, so its Cargo manifests name it by an absolute path a build machine does not have`,
     };
   const link = relative(app, exact2Dir).split(sep).join('/');
-  return LINK.test(link) ? link : { unsupported: `the path ${link} from the app to exact2 is not one Stim places` };
+  if (!LINK.test(link)) return { unsupported: `the path ${link} from the app to exact2 is not one Stim places` };
+  const depth = relative(repo, app).split(sep).filter(Boolean).length;
+  const above = link.split('/').filter((part) => part === '..').length - depth;
+  if (depth > 0 && above > 1)
+    return {
+      unsupported: `exact2 sits ${above} folders above the repository of this app in a subdirectory, and a build machine places it at most one above`,
+    };
+  return link;
 }
 
 /** A remote URL of the exact2 checkout whose fetched branches hold its commit, without credentials; null when none does. */
@@ -194,7 +201,9 @@ function exactRemoteUrl(exact2Dir: string): string | null {
   const remotes = (git(exact2Dir, ['remote']) ?? '').split('\n').filter(Boolean);
   for (const branch of (branches ?? '').split('\n')) {
     const remote = remotes.find((each) => branch.startsWith(`${each}/`));
-    const url = remote ? git(exact2Dir, ['remote', 'get-url', remote]) : null;
+    const url = remote
+      ? git(exact2Dir, ['remote', 'get-url', remote])?.replace(/^git@github\.com:/, 'https://github.com/')
+      : null;
     if (url && REMOTE_URL.test(url)) return url;
   }
   return null;
@@ -249,9 +258,12 @@ function exactCheckoutCandidates(pins: Pick<ExactPins, 'exact2' | 'checkout'>, h
 
 /** Where a build machine builds with exact2 for `pins`: the first candidate folder at the pinned commit, else the commit's. */
 export function exactCheckoutDir(pins: Pick<ExactPins, 'exact2' | 'checkout'>, home: string = homedir()): string {
-  return (
-    exactCheckoutCandidates(pins, home).find((dir) => git(dir, ['rev-parse', 'HEAD']) === pins.exact2) ??
-    join(home, '.exact', 'exact2', pins.exact2)
+  return pinnedCheckout(pins, home) ?? join(home, '.exact', 'exact2', pins.exact2);
+}
+
+function pinnedCheckout(pins: Pick<ExactPins, 'exact2' | 'checkout'>, home: string): string | undefined {
+  return exactCheckoutCandidates(pins, home).find(
+    (dir) => existsSync(join(dir, 'scripts', 'app-cli.mjs')) && git(dir, ['rev-parse', 'HEAD']) === pins.exact2,
   );
 }
 
@@ -302,10 +314,9 @@ function exact2Problem(pins: ExactPins, home: string, cargoHome: string): ExactT
   const short = pins.exact2.slice(0, 10);
   const source = pins.url ?? 'https://github.com/expo/exact';
   const setup = (shown: string) => `cd ${shown} && ~/.bun-${pins.bun}/bin/bun scripts/exact.mjs setup`;
-  const present = exactCheckoutCandidates(pins, home).filter((dir) => existsSync(join(dir, 'scripts', 'app-cli.mjs')));
-  const ready = present.find((dir) => git(dir, ['rev-parse', 'HEAD']) === pins.exact2);
+  const ready = pinnedCheckout(pins, home);
   if (!ready) {
-    const dir = present.at(-1) ?? join(home, '.exact', 'exact2', pins.checkout);
+    const dir = join(home, '.exact', 'exact2', pins.exact2);
     const shown = shownPath(dir, home);
     const checkout = [
       `git -C ${shown} fetch ${source} ${pins.exact2}`,
@@ -313,11 +324,16 @@ function exact2Problem(pins: ExactPins, home: string, cargoHome: string): ExactT
     ];
     const unpushed = pins.url
       ? ''
-      : `; the client's exact2 checkout has ${short} on no remote branch, so push it where this machine can fetch it`;
-    return present.length
+      : `; the client's exact2 checkout has ${short} on no remote branch whose URL Stim passes on, so push it where this machine can fetch it`;
+    const named = join(home, '.exact', 'exact2', pins.checkout);
+    const elsewhere =
+      named !== dir && existsSync(join(named, 'scripts', 'app-cli.mjs'))
+        ? ` (${shownPath(named, home)} is at another commit)`
+        : '';
+    return existsSync(join(dir, 'scripts', 'app-cli.mjs'))
       ? { reason: `${shown} is not at commit ${short}${unpushed}`, commands: [...checkout, setup(shown)] }
       : {
-          reason: `no exact2 ${short} at ${shown}${unpushed}`,
+          reason: `no exact2 ${short} at ${shown}${named === dir ? '' : ` or ${shownPath(named, home)}`}${elsewhere}${unpushed}`,
           commands: [`git clone ${source} ${shown}`, ...checkout, setup(shown)],
         };
   }

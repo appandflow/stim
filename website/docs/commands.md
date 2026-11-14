@@ -727,9 +727,11 @@ app whose `app.json` declares native modules, the worker creates and boots a
 simulator of its own for that build, passes it as `EXACT_SIM` so Exact can read
 the module roster, and deletes it afterwards. The values of the settings
 `app.json` `env` declares travel with the build: this shell's, else
-`.env.local`'s, else `.env`'s, as Exact reads them. An `exact2` checkout with
-local changes or one that shares no top directory with the app, and
-repository-root apps whose folder name is not a plain ASCII file name build here. See
+`.env.local`'s, else `.env`'s, as Exact reads them. These build here: an
+`exact2` checkout with local changes, one that shares no top directory with the
+app or whose folder name is not a plain ASCII file name, an app in a
+subdirectory whose `exact2` sits more than one folder above its repository, and
+repository-root apps whose folder name is not a plain ASCII file name. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
 what the worker needs; `stim doctor` reports what each machine in
 `remote.machines` lacks.
