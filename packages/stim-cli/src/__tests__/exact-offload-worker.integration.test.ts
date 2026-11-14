@@ -223,6 +223,11 @@ test("the app's relative path to exact2 holds a checkout of the pinned commit in
   writeFileSync(join(at, 'scripts', 'app-cli.mjs'), 'edited');
   await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../.exact/exact2/scroll-zoom' });
   expect(readFileSync(join(at, 'scripts', 'app-cli.mjs'), 'utf8')).toBe('');
+  writeFileSync(join(at, 'scripts', 'app-cli.mjs'), 'edited');
+  writeFileSync(join(at, '.git', 'index.lock'), '');
+  await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../../.exact/exact2/scroll-zoom' });
+  placed(at);
+  expect(readFileSync(join(at, 'scripts', 'app-cli.mjs'), 'utf8')).toBe('');
 
   const sibling = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../exact2' });
   expect(sibling.result).toMatchObject({ ok: false, code: 'exact-build-failed' });

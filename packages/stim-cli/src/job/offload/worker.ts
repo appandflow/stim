@@ -1151,6 +1151,17 @@ function inside(dir: string, path: string): boolean {
 
 const EXACT2_SOURCE = 'stim.exact2-source';
 
+/** Copies exact2's installed packages, which git leaves out, where Exact finds its TypeScript tools. */
+function copyPackages(from: string, to: string): void {
+  rmSync(join(to, 'node_modules'), { recursive: true, force: true });
+  if (existsSync(join(from, 'node_modules')))
+    cpSync(join(from, 'node_modules'), join(to, 'node_modules'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    });
+}
+
 /**
  * Puts a checkout of exact2 at the app's relative path to it, inside the build area: Exact's Cargo manifests name
  * exact2's crates by that path, and Exact names each compiler input by its place under the exact2 directory it runs
@@ -1180,29 +1191,32 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
     if (source === null) return `${at} is not an exact2 checkout this machine made`;
     if (source !== checkout) rmSync(at, { recursive: true, force: true });
   }
-  if (!existsSync(at)) {
-    mkdirSync(dirname(at), { recursive: true });
-    for (const left of readdirSync(dirname(at)))
-      if (left.startsWith(EXACT2_MAKING)) rmSync(join(dirname(at), left), { recursive: true, force: true });
-    const making = mkdtempSync(join(dirname(at), EXACT2_MAKING));
-    git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
-      write: true,
-      timeoutMs: 120_000,
-    });
-    git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
-    if (existsSync(join(checkout, 'node_modules')))
-      cpSync(join(checkout, 'node_modules'), join(making, 'node_modules'), {
-        recursive: true,
-        verbatimSymlinks: true,
-        mode: constants.COPYFILE_FICLONE,
+  const place = () => {
+    if (!existsSync(at)) {
+      mkdirSync(dirname(at), { recursive: true });
+      for (const left of readdirSync(dirname(at)))
+        if (left.startsWith(EXACT2_MAKING)) rmSync(join(dirname(at), left), { recursive: true, force: true });
+      const making = mkdtempSync(join(dirname(at), EXACT2_MAKING));
+      git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
+        write: true,
+        timeoutMs: 120_000,
       });
-    renameSync(making, at);
+      git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
+      copyPackages(checkout, making);
+      renameSync(making, at);
+    }
+    const head = gitQuiet(at, ['rev-parse', 'HEAD']);
+    if (head !== commit || git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== '') {
+      git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
+      if (head !== commit) copyPackages(checkout, at);
+    }
+  };
+  try {
+    place();
+  } catch {
+    rmSync(at, { recursive: true, force: true });
+    place();
   }
-  if (
-    gitQuiet(at, ['rev-parse', 'HEAD']) !== commit ||
-    git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== ''
-  )
-    git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
   return null;
 }
 
@@ -1323,8 +1337,8 @@ async function compileExact(
       }),
     );
   } finally {
-    process.off('SIGTERM', stop);
     if (probe && typeof probe !== 'string') await probe.remove();
+    process.off('SIGTERM', stop);
   }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
   const lines = built.diagnostics.map((each) => each.message);
