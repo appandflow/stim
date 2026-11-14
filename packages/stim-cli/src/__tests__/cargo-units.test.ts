@@ -3,7 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
-  readFileSync,
+  renameSync,
   realpathSync,
   rmSync,
   utimesSync,
@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import { idleCargoUnitPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
 import { idleCargoUnits, readCargoUnits, removalOrder, type CargoUnit } from '../workspace/cargo-units.ts';
 
@@ -24,6 +25,7 @@ const unit = (crate: string, hash: string, ageMs: number | null): CargoUnit => (
   hash,
   lastUsedMs: ageMs === null ? null : NOW - ageMs,
 });
+const canFlock = process.platform === 'darwin' || process.platform === 'linux';
 const h = (n: number) => n.toString(16).padStart(16, '0');
 
 describe('idleCargoUnits', () => {
@@ -78,13 +80,14 @@ describe('a profile on disk with Exact ledger', () => {
     rmSync(target, { recursive: true, force: true });
   });
 
-  function stub(handlers: { lsof?: (args: string[]) => string; ps?: () => string }): void {
+  function stub(handlers: { ps?: () => string; du?: () => void }): void {
     const real = getExecutor();
     setExecutor({
       ...real,
       runFileAsync: async (file, args, options) => {
-        if (file === 'lsof') return handlers.lsof?.(args) ?? '';
+        if (file === 'lsof') return '';
         if (file === 'ps') return handlers.ps?.() ?? '';
+        if (file === 'du') handlers.du?.();
         return real.runFileAsync(file, args, options);
       },
     });
@@ -105,19 +108,22 @@ describe('a profile on disk with Exact ledger', () => {
     expect(age('nostamp')).toBeNull();
   });
 
-  it('keeps every live unit of a package whose lib, build script and test units differ, and removes only superseded ones', async () => {
-    for (const crate of ['foo', 'foo-bar'])
-      for (const n of [1, 2, 3, 4]) makeUnit(crate, h(n + (crate === 'foo' ? 10 : 20)), n ** 2 * 1.25 * 3_600_000);
-    makeUnit('foo', h(99), 8 * DAY);
-    writeLedger();
-    stub({});
+  it.skipIf(!canFlock)(
+    'keeps every live unit of a package whose lib, build script and test units differ, and removes only superseded ones',
+    async () => {
+      for (const crate of ['foo', 'foo-bar'])
+        for (const n of [1, 2, 3, 4]) makeUnit(crate, h(n + (crate === 'foo' ? 10 : 20)), n ** 2 * 1.25 * 3_600_000);
+      makeUnit('foo', h(99), 8 * DAY);
+      writeLedger();
+      stub({});
 
-    const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
+      const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
 
-    expect(result.removed).toContain('debug: 1 idle units');
-    expect(readdirSync(join(profile(), '.fingerprint')).filter((name) => name.startsWith('foo-'))).toHaveLength(8);
-    expect(existsSync(join(profile(), 'deps', `libfoo-${h(99)}.rlib`))).toBe(false);
-  });
+      expect(result.removed).toContain('debug: 1 idle units');
+      expect(readdirSync(join(profile(), '.fingerprint')).filter((name) => name.startsWith('foo-'))).toHaveLength(8);
+      expect(existsSync(join(profile(), 'deps', `libfoo-${h(99)}.rlib`))).toBe(false);
+    },
+  );
 
   it('sweeps no unit when the ledger itself is older than 3 days, since it shows no use', async () => {
     makeUnit('serde', h(1), 5 * DAY);
@@ -146,69 +152,93 @@ describe('a profile on disk with Exact ledger', () => {
     expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
   });
 
-  it('keeps a unit whose file a process names, and the whole profile while a build holds a lock', async () => {
+  it.skipIf(!canFlock)('keeps a unit whose file a process names', async () => {
     makeUnit('serde', h(1), 5 * DAY);
     makeUnit('serde', h(2), 3 * DAY);
     makeUnit('tokio', h(3), 5 * DAY);
     makeUnit('tokio', h(4), 3 * DAY);
-    writeFileSync(join(profile(), '.cargo-lock'), '');
     writeLedger();
     stub({ ps: () => `${join(profile(), 'deps', `tokio-${h(3)}.d`)} --nocapture\n` });
-    const used = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
-    expect(used.removed).toEqual(['debug: 1 idle units']);
-    expect(existsSync(join(profile(), 'deps', `libtokio-${h(3)}.rlib`))).toBe(true);
-    expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(false);
-
-    makeUnit('serde', h(5), 5 * DAY);
-    writeLedger();
-    stub({ lsof: (args) => (args.includes('-t') ? '4242\n' : '') });
-    const locked = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
-    expect(locked.removed).toEqual([]);
-    expect(locked.kept.join(' ')).toContain('a build holds its .cargo-lock');
-    expect(existsSync(join(profile(), 'deps', `libserde-${h(5)}.rlib`))).toBe(true);
-  });
-
-  it('stops the sweep of a profile when a lock turns up between chunks, with the earlier chunks gone and later units untouched', async () => {
-    for (let i = 0; i < 60; i++) makeUnit('dup', h(100 + i), (10 + i) * DAY);
-    makeUnit('dup', h(1), DAY / 4);
-    writeFileSync(join(profile(), '.cargo-lock'), '');
-    writeLedger();
-    let checks = 0;
-    stub({ lsof: (args) => (args.includes('-t') && ++checks > 3 ? '4242\n' : '') });
 
     const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
 
-    const left = readdirSync(join(profile(), '.fingerprint')).length;
-    expect(left).toBeGreaterThan(1);
-    expect(left).toBeLessThan(61);
-    expect(result.kept.join(' ')).toContain('the sweep stopped');
-    expect(existsSync(join(target, '.stim-trimmed', 'NOT-RESTORED'))).toBe(false);
+    expect(result.removed).toEqual(['debug: 1 idle units']);
+    expect(existsSync(join(profile(), 'deps', `libtokio-${h(3)}.rlib`))).toBe(true);
+    expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(false);
   });
 
-  it('deletes the old copy and writes no marker when a build recreated a path during the move', async () => {
-    for (let i = 0; i < 4; i++) makeUnit('dup', h(100 + i), (10 + i) * DAY);
-    makeUnit('dup', h(1), DAY / 4);
-    writeFileSync(join(profile(), '.cargo-lock'), '');
+  it.skipIf(!canFlock).each([
+    ['debug', '.cargo-lock'],
+    ['debug', '.cargo-build-lock'],
+    ['debug', '.cargo-artifact-lock'],
+    ['', '.exact-sweep.json.lock'],
+  ])('keeps the profile when %s/%s is held across the helper exit', async (dir, lock) => {
+    makeUnit('serde', h(1), 5 * DAY);
+    makeUnit('serde', h(2), 3 * DAY);
     writeLedger();
-    const victim = join(profile(), 'deps', `libdup-${h(100)}.rlib`);
-    let after = 0;
+    stub({});
+
+    const sweep = () => trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const locked = await withCargoLocks([join(target, dir, lock)], sweep);
+
+    expect(locked).toMatchObject({ value: { removed: [], kept: [expect.stringContaining(`holds ${lock}`)] } });
+    expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
+    expect((await sweep()).removed).toEqual(['debug: 1 idle units']);
+  });
+
+  it.skipIf(!canFlock)('keeps units when a Cargo lock file cannot be safely opened', async () => {
+    makeUnit('serde', h(1), 5 * DAY);
+    makeUnit('serde', h(2), 3 * DAY);
+    writeLedger();
+    mkdirSync(join(profile(), '.cargo-build-lock'));
+    stub({});
+
+    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept.join(' ')).toContain('.cargo-build-lock could not be locked');
+    expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
+  });
+
+  it.skipIf(!canFlock)('keeps a unit read after planning and before the sweep locked the profile', async () => {
+    makeUnit('serde', h(1), 5 * DAY);
+    makeUnit('serde', h(2), 3 * DAY);
+    writeLedger();
+    const fp = join(profile(), '.fingerprint', `serde-${h(1)}`, 'invoked.timestamp');
+    let probes = 0;
     stub({
-      lsof: (args) => {
-        if (!args.includes('-t') || ++after < 2) return '';
-        mkdirSync(join(profile(), '.fingerprint', `dup-${h(100)}`), { recursive: true });
-        writeFileSync(join(profile(), '.fingerprint', `dup-${h(100)}`, 'fresh'), 'new');
-        writeFileSync(victim, 'fresh build');
-        return '4242\n';
+      ps: () => {
+        if (++probes === 2) utimesSync(fp, new Date(), new Date(Date.now() - 9 * DAY));
+        return '';
       },
     });
 
     const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
 
-    expect(existsSync(join(target, '.stim-trimmed', 'NOT-RESTORED'))).toBe(false);
-    expect(readdirSync(target).filter((name) => name.startsWith('.stim-not-restored-'))).toEqual([]);
-    expect(existsSync(join(profile(), '.fingerprint', `dup-${h(100)}`, 'fresh'))).toBe(true);
-    expect(readFileSync(victim, 'utf8')).toBe('fresh build');
-    expect(result.kept.join(' ')).toContain('took its');
+    expect(result.removed).toEqual([]);
+    expect(existsSync(fp)).toBe(true);
+  });
+
+  it.skipIf(!canFlock)('stops after one chunk when Exact replaces the ledger', async () => {
+    for (let i = 0; i < 30; i++) makeUnit('dup', h(100 + i), (10 + i) * DAY);
+    makeUnit('dup', h(1), DAY / 4);
+    writeLedger();
+    let replaced = false;
+    stub({
+      du: () => {
+        if (replaced) return;
+        replaced = true;
+        const staged = join(target, '.exact-sweep.json.tmp');
+        writeFileSync(staged, JSON.stringify({ at: Date.now(), units: stamps }));
+        renameSync(staged, join(target, '.exact-sweep.json'));
+      },
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+
+    expect(result.removed).toEqual(['debug: 25 idle units']);
+    expect(result.kept.join(' ')).toContain('Exact updated its ledger');
+    expect(readdirSync(join(profile(), '.fingerprint'))).toHaveLength(6);
   });
 
   it('removes the order fingerprint first, then build, then deps', () => {
