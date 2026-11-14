@@ -2,6 +2,7 @@ import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { StimContext } from '@stim-cli/core';
 import {
   chmodSync,
@@ -29,6 +30,7 @@ import {
   crashLoop,
   isJsonObject,
   readJsonObject,
+  runId as currentRunId,
   stimdClaimRoot,
   stimdRecordFile,
   stimdRunDir,
@@ -768,6 +770,8 @@ async function runStimdInner(
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const previousRun = previousRunId(daemonNdjsonFile());
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES, reportFailures: true });
+  const daemonRunId = currentRunId();
+  const inDaemonContext = AsyncLocalStorage.snapshot();
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
   const path = stimdSocket();
@@ -1050,7 +1054,18 @@ async function runStimdInner(
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
   const opControllers = new Map<Socket, AbortController>();
   const opTokens = new Map<string, Socket>();
-  const leaseTickets = createLeaseTickets((message) => log('warn', 'device_lease_release_failed', message));
+  const leaseTickets = createLeaseTickets(
+    (message) => log('warn', 'device_lease_release_failed', message),
+    ({ waitMs, outcome }) =>
+      inDaemonContext(() =>
+        log('info', 'device_lease_acquire', 'device lease acquisition finished', {
+          runId: daemonRunId,
+          operation: 'lease.acquire',
+          waitMs,
+          outcome,
+        }),
+      ),
+  );
   const metroTickets = createMetroTickets(log);
   const socketTokens = new WeakMap<Socket, string>();
   const opCommands = new WeakMap<Socket, string>();
