@@ -120,29 +120,40 @@ export interface UnverifiedCleanup {
   remedy: string;
 }
 
+/** The well-formed entries of a daemon claim's `unverified` details. */
+export function parseUnverifiedCleanups(value: unknown): UnverifiedCleanup[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.child === 'number' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, child: entry.child, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
+}
+
 /** A physical iPhone console the running daemon could not take over or settle. */
 export interface UnverifiedConsole {
-  kind: 'console';
   since: string;
   message: string;
   remedy: string;
 }
 
-/** The well-formed entries of a daemon claim's `unverified` details. */
-export function parseUnverifiedCleanups(value: unknown): (UnverifiedCleanup | UnverifiedConsole)[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry): (UnverifiedCleanup | UnverifiedConsole)[] => {
-    if (
-      !isJsonObject(entry) ||
-      typeof entry.since !== 'string' ||
-      typeof entry.message !== 'string' ||
-      typeof entry.remedy !== 'string'
-    )
-      return [];
-    const { since, message, remedy } = entry;
-    if (entry.kind === 'console') return [{ kind: 'console', since, message, remedy }];
-    return typeof entry.child === 'number' ? [{ since, child: entry.child, message, remedy }] : [];
-  });
+/** The well-formed entries of a daemon claim's `unverifiedConsoles` details. */
+export function parseUnverifiedConsoles(value: unknown): UnverifiedConsole[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
 }
 
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
@@ -168,8 +179,10 @@ export interface DaemonStatus {
   testWaiting?: DaemonTestWaiter[];
   /** The last actions a daemon of this home took, oldest first, from its snapshot. */
   recent?: DaemonRecentAction[];
-  /** Unverified child cleanup and physical iPhone console recovery, from the running daemon's claim. */
-  unverified?: (UnverifiedCleanup | UnverifiedConsole)[];
+  /** The children the running daemon stays up for, from its claim. */
+  unverified?: UnverifiedCleanup[];
+  /** Physical iPhone console recoveries the daemon could not verify. */
+  unverifiedConsoles?: UnverifiedConsole[];
   /** Set while stimd refuses to start after three abnormal exits in 10 minutes. */
   crashHold?: { build: string; count: number; until: string; remedy: string };
   /** The last abnormal stimd exits of the last day, oldest first. */

@@ -192,7 +192,6 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
         );
         expect(streams.unverifiedConsoles()).toEqual([
           {
-            kind: 'console',
             since: expect.any(String),
             message: expect.stringContaining('could not be settled'),
             remedy: expect.stringContaining(`shows console-run`),
@@ -266,7 +265,6 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
       await vi.waitFor(() =>
         expect(streams.unverifiedConsoles()).toEqual([
           expect.objectContaining({
-            kind: 'console',
             message: expect.stringContaining(consoleRoot),
             remedy: expect.stringContaining('its process identity token does not decode'),
           }),
@@ -302,13 +300,16 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
     const successor = runStimd({ mode: 'on', tickMs: 60_000 });
     try {
       await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000 });
-      await vi.waitFor(() => expect(daemonStatus().unverified?.[0]?.message).toContain(claimPath(root, streamId)), {
-        timeout: 20_000,
-      });
-      const waiting = daemonStatus();
-      expect(waiting.unverified).toEqual([
+      await vi.waitFor(
+        () => expect(daemonStatus().unverifiedConsoles?.[0]?.message).toContain(claimPath(root, streamId)),
         {
-          kind: 'console',
+          timeout: 20_000,
+        },
+      );
+      const waiting = daemonStatus();
+      expect(waiting.unverified).toBeUndefined();
+      expect(waiting.unverifiedConsoles).toEqual([
+        {
           since: expect.any(String),
           message: expect.stringContaining('could not be taken over'),
           remedy: expect.stringContaining(`pid ${stimd.pid}`),
@@ -318,7 +319,7 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
       expect(daemonFindings(waiting, { serving: () => [] })).toContainEqual(
         expect.objectContaining({
           title: 'The stim-daemon could not recover a device console',
-          fix: waiting.unverified?.[0]?.remedy,
+          fix: waiting.unverifiedConsoles?.[0]?.remedy,
         }),
       );
       expect(await stopDeviceLogStream(root, 'ios', 'default', streamId)).toMatchObject({
@@ -327,16 +328,16 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
         remedy: expect.stringContaining(`pid ${stimd.pid}`),
       });
       writeFileSync(holder.path, '{');
-      await vi.waitFor(() => expect(daemonStatus().unverified?.[0]?.remedy).toContain('is unresolved'), {
+      await vi.waitFor(() => expect(daemonStatus().unverifiedConsoles?.[0]?.remedy).toContain('is unresolved'), {
         timeout: 5000,
       });
-      expect(daemonStatus().unverified?.[0]?.since).toBe(waiting.unverified?.[0]?.since);
+      expect(daemonStatus().unverifiedConsoles?.[0]?.since).toBe(waiting.unverifiedConsoles?.[0]?.since);
       expect(inspectProcessIdentity(helper)).toBe('same');
       writeFileSync(holder.path, claimText);
       const predecessorExit = once(stimd, 'exit');
       stimd.kill('SIGKILL');
       await predecessorExit;
-      await vi.waitFor(() => expect(daemonStatus().unverified).toBeUndefined(), { timeout: 10_000 });
+      await vi.waitFor(() => expect(daemonStatus().unverifiedConsoles).toBeUndefined(), { timeout: 10_000 });
       expect(claimed(streamId).helper).toEqual(helper);
       expect(await stopDeviceLogStream(root, 'ios', 'default', streamId)).toEqual({ stopped: true });
       expect(records().at(-1)).toMatchObject({ event: 'collector_stopped', msg: 'device log stream stopped' });

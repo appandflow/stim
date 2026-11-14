@@ -1677,7 +1677,6 @@ export function createStreams(
     running: () => streams.size > 0 || consoles.size > 0 || untaken.size > 0,
     unverifiedConsoles: () => [
       ...[...untaken.values()].map(({ root, id, reason, since }): UnverifiedConsole => ({
-        kind: 'console',
         since,
         message: `The device console ${id} in ${root} could not be taken over (claim ${claimPath(root, id)}).`,
         remedy: `${reason}${reason.endsWith('.') ? '' : '.'} Stim retries while the stream remains recorded.`,
@@ -1687,7 +1686,6 @@ export function createStreams(
         const remedy: unknown = Reflect.get(refused.error, 'remedy');
         return [
           {
-            kind: 'console',
             since: refused.since,
             message: `The device console ${id} in ${root} could not be settled. ${refused.error.message}`,
             remedy:
