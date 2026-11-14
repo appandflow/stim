@@ -275,8 +275,15 @@ export async function createOwnedAvd(
     systemImage,
     deviceProfile = DEFAULT_AVD_DEVICE_PROFILE,
     detached = true,
+    onCreationRecordCleared,
     spawn = (...args) => getExecutor().spawn(...args),
-  }: { systemImage?: string; deviceProfile?: string; detached?: boolean; spawn?: Executor['spawn'] } = {},
+  }: {
+    systemImage?: string;
+    deviceProfile?: string;
+    detached?: boolean;
+    onCreationRecordCleared?: () => void;
+    spawn?: Executor['spawn'];
+  } = {},
 ): Promise<{ avdName: string; systemImage: string; deviceProfile: string }> {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
@@ -303,22 +310,25 @@ export async function createOwnedAvd(
   if (env.XDG_CONFIG_HOME) roots.push(resolve(cwd, env.XDG_CONFIG_HOME, '.android', 'avd'));
   if (env.ANDROID_PREFS_ROOT) roots.push(resolve(cwd, env.ANDROID_PREFS_ROOT, '.android', 'avd'));
   if (env.TEST_TMPDIR) roots.push(resolve(cwd, env.TEST_TMPDIR, '.android', 'avd'));
-  const root = roots[0];
-  let emptyRoot: BigIntStats | undefined;
+  let emptyRoots: Map<string, BigIntStats | null> | undefined;
   try {
-    if (root && avdNameAbsent(avdName, roots)) emptyRoot = statSync(root, { bigint: true });
+    if (avdNameAbsent(avdName, roots)) emptyRoots = new Map(roots.map((root) => [root, avdRootIdentity(root)]));
   } catch {}
   // @ref LLP 0013#prove-ownership-in-this-stim-home -- reserve the ledger entry before native creation
   const recorded = await recordCreatedDeviceAsync('android', avdName);
   const forgetFailedCreation = async () => {
-    if (!recorded || !root || !emptyRoot) return;
-    const { dev, ino } = emptyRoot;
-    await forgetCreatedDeviceAsync('android', avdName, undefined, (forget) => {
-      const current = statSync(root, { bigint: true });
-      if (current.dev !== dev || current.ino !== ino || !avdNameAbsent(avdName, roots)) return false;
+    const snapshot = emptyRoots;
+    if (!recorded || !snapshot) return;
+    const cleared = await forgetCreatedDeviceAsync('android', avdName, undefined, (forget) => {
+      const sameRoots = [...snapshot].every(([root, before]) => {
+        const current = avdRootIdentity(root);
+        return before === null ? current === null : current?.dev === before.dev && current.ino === before.ino;
+      });
+      if (!sameRoots || !avdNameAbsent(avdName, roots)) return false;
       forget();
       return true;
-    }).catch(() => {});
+    }).catch(() => false);
+    if (cleared) onCreationRecordCleared?.();
   };
   const child = spawn(tool, args, { detached, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
@@ -840,6 +850,14 @@ export function avdNameAbsent(avdName: string, roots: readonly string[] = avdSto
   return roots.every(
     (root) => !avdPathExists(join(root, `${avdName}.ini`)) && !avdPathExists(join(root, `${avdName}.avd`)),
   );
+}
+
+function avdRootIdentity(path: string): BigIntStats | null {
+  const entry = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  if (!entry) return null;
+  const root = entry.isSymbolicLink() ? statSync(path, { bigint: true }) : entry;
+  if (!root.isDirectory()) throw new Error(`Cannot verify AVD storage at ${path}`);
+  return root;
 }
 
 function isDirectoryPath(path: string): boolean {

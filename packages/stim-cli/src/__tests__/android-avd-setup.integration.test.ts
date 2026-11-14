@@ -19,6 +19,8 @@ import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { createOwnedAvd, deleteAvd, ownedAvdDirectory } from '../devices/android.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { isStimOwnedAvd } from '../devices/device-ownership.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
@@ -408,7 +410,7 @@ test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes fr
   expect(deleteEnv).toEqual({ ANDROID_AVD_HOME: join(home, '.android', 'avd') });
 });
 
-test.each(['throw', 'error'])('a spawn %s releases the claim and retains the incomplete reservation', async (kind) => {
+test.each(['throw', 'error'])('a spawn %s releases the claim', async (kind) => {
   setExecutor({
     ...getExecutor(),
     spawn() {
@@ -417,14 +419,54 @@ test.each(['throw', 'error'])('a spawn %s releases the claim and retains the inc
     },
   });
   await expect(prepare()).rejects.toThrow(kind === 'throw' ? 'fixture spawn failed' : 'ENOENT');
-  expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
+  expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(kind === 'throw' ? true : undefined);
   releaseClaim(acquireAvdClaim(avdName));
 });
 
-test.each(['empty', 'directory', 'ini', 'replaced-root', 'existing-record'] as const)(
+test.each([false, true])(
+  'verified rollback leaves no ownership of a later same-name AVD (previous record: %s)',
+  async (hasPrevious) => {
+    const { STIM_HOME, ...env } = process.env;
+    if (!STIM_HOME) throw new Error('The scratch Stim home is missing');
+    const previous = { avdName: 'stim-previous', owned: true, deviceName: 'stim-previous' };
+    await withAmbientContext(
+      {
+        home: STIM_HOME,
+        env,
+        cwd: project,
+        projectRoot: project,
+        buildCache: null,
+        runId: 'avd-setup',
+        signal: new AbortController().signal,
+        output: () => {},
+      },
+      async () => {
+        if (hasPrevious) setDevice(project, 'android', previous);
+        setExecutor({ ...getExecutor(), spawn: () => spawn(join(home, 'missing-avdmanager')) });
+        await expect(
+          prepareOwnedAvd({
+            projectPath: project,
+            label: 'setup',
+            previousAvdName: hasPrevious ? previous.avdName : undefined,
+            configuration: 'fixture',
+            configure: () => {},
+          }),
+        ).rejects.toThrow('ENOENT');
+        expect(getProject(project)?.platforms?.android).toEqual(hasPrevious ? previous : undefined);
+        expect(readCreatedDevices().android.has(avdName)).toBe(false);
+        createFiles();
+        expect(isStimOwnedAvd(avdName)).toBe(false);
+      },
+    );
+  },
+);
+
+test.each(['empty', 'directory', 'ini', 'replaced-root', 'missing-optional-root', 'existing-record'] as const)(
   'a clean exit rolls back only a verified new, empty AVD ledger entry (%s)',
   async (state) => {
     if (state === 'existing-record') recordCreatedDevice('android', avdName);
+    const optionalRoot = join(home, '.android', 'avd');
+    if (state === 'missing-optional-root') mkdirSync(optionalRoot, { recursive: true });
     const directory = join(avdRoot, `${avdName}.avd`);
     const ini = join(avdRoot, `${avdName}.ini`);
     await expect(
@@ -437,6 +479,7 @@ test.each(['empty', 'directory', 'ini', 'replaced-root', 'existing-record'] as c
             renameSync(avdRoot, `${avdRoot}-aside`);
             mkdirSync(avdRoot);
           }
+          if (state === 'missing-optional-root') renameSync(optionalRoot, `${optionalRoot}-aside`);
           return spawn(process.execPath, ['-e', 'process.exitCode = 1'], options ?? {});
         },
       }),
