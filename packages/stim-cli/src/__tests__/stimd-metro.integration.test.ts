@@ -34,6 +34,7 @@ let dir: string;
 let home: string;
 let env: NodeJS.ProcessEnv;
 let stimd: ChildProcess | null = null;
+let retainScratch: boolean;
 
 function write(path: string, text: string, mode?: number): void {
   mkdirSync(join(path, '..'), { recursive: true });
@@ -181,6 +182,7 @@ function claimFile(root: string, kind: string): string {
 }
 
 beforeEach(() => {
+  retainScratch = false;
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
   home = join(dir, 'home');
   mkdirSync(home);
@@ -226,7 +228,7 @@ afterEach(async () => {
         }
       }
     }
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (!retainScratch) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } finally {
     vi.unstubAllEnvs();
   }
@@ -857,13 +859,16 @@ socket.on('data', chunk => {
     stop.stdout?.on('data', (chunk) => (output += String(chunk)));
     stop.stderr?.on('data', (chunk) => (output += String(chunk)));
     const exited = once(stop, 'exit');
+    // A detached stimd starts in this scratch home before taking its claim.
+    // Leave an unverified home to the test-run process sweep before removal.
+    retainScratch = true;
     let replacement: ReturnType<typeof replacementStimd>;
     try {
       await vi.waitFor(
         () => {
           replacement = replacementStimd(killed);
-          assert(replacement, 'Could not identify the replacement stimd.');
-          expect(record()?.pid).toBe(replacement.pid);
+          assert(replacement, `Could not identify the replacement stimd in scratch home ${dir}.`);
+          expect(record()?.pid, `Replacement stimd has not registered; scratch home is ${dir}.`).toBe(replacement.pid);
         },
         { timeout: 15_000, interval: 50 },
       );
@@ -880,7 +885,11 @@ socket.on('data', chunk => {
         const owner = replacementStimd(killed) ?? replacement;
         if (owner) {
           if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
-          assert(await waitForProcessExit(owner, 15_000), `Replacement stimd ${owner.pid} did not exit.`);
+          assert(
+            await waitForProcessExit(owner, 15_000),
+            `Replacement stimd ${owner.pid} did not exit in scratch home ${dir}.`,
+          );
+          retainScratch = false;
         }
       }
     }
