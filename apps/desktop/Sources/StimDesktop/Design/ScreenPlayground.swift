@@ -71,7 +71,8 @@
       case .machineActions: return [.ready, .loading, .empty, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .connectionsIncoming, .connectionsOutgoing: return [.ready]
+      case .connectionsIncoming: return [.ready, .empty, .error]
+      case .connectionsOutgoing: return [.ready]
       case .tokens, .addMachine, .approveMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
         return [.ready]
       }
@@ -309,7 +310,7 @@
         }
         .padding(Space.md)
       case .connectionsIncoming:
-        ConnectionsPlayground(segment: .incoming, now: fixtureDate)
+        ConnectionsPlayground(segment: .incoming, now: fixtureDate, scenario: scenario)
       case .connectionsOutgoing:
         ConnectionsPlayground(segment: .outgoing, now: fixtureDate)
       case .discovery:
