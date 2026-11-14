@@ -15,7 +15,7 @@ export async function installRequestedIosRuntime(
   },
 ): Promise<FailArgs | null> {
   const { targetRefusal, opts, settings, physical, runtime, d, progress, note, context } = args;
-  if (targetRefusal) return targetRefusal;
+  if (targetRefusal || opts.installedApp) return targetRefusal;
   const installRuntime =
     opts.installRuntime === true ||
     (!physical && runtime !== null && settingValueAt(settings, 'ios.autoInstallRuntime') === true);

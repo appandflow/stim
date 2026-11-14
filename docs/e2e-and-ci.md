@@ -491,10 +491,10 @@ the temporary directory containing `result.json` and emulator logs.
 
 When an iOS fixture declares a SimSlim profile, the loop and cache suites
 prepare their required simulator assignments one at a time before starting
-the workload. Preparation creates or reuses an owned simulator, waits for boot
-and profile reconciliation, then shuts it down through Stim. It does not start
-Metro, build the app, or populate the native artifact cache. Stock fixtures
-and Android do not take this preparation path.
+the workload. Preparation creates or reuses an owned simulator and waits for
+boot and profile reconciliation. It normally shuts down the simulator through
+Stim before the workload. This step does not populate the native artifact
+cache. Stock fixtures and Android do not take this preparation path.
 
 The iOS loop asserts that two distinct simulators, the default slot and the
 `second` slot, are booted simultaneously, and that stopping `second` leaves the
@@ -505,10 +505,12 @@ or a per-slot `--device-type` override. The CI job also turns off Spotlight
 indexing before it installs anything. The
 Windows Android loop runs one emulator at a time and skips the named-slot proof, because
 the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
-Cache suites still require a cold artifact miss and race two commands against
-one empty cache. The preparation reduces overlapping first-boot work; it does
-not establish that host memory caused earlier failures or guarantee enough
-capacity for the eventual concurrent workload. Runner sizes are unchanged.
+Cache suites require a cold artifact miss and race two commands against
+one empty cache. For the iOS single-flight race, both prepared simulators stay
+booted. The harness verifies that both are booted together, that each concurrent
+launch uses its own simulator, and that only the builder invokes Xcode. The
+initial cache launches and the loop suite still boot their simulators after
+preparation.
 
 If preparation or its shutdown fails, the suite preserves its temporary
 worktrees and `STIM_HOME` and prints the state location. Inspect the failure

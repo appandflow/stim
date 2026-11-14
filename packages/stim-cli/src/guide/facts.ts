@@ -509,12 +509,9 @@ leased until <time>" for each one.`,
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
                   and are null when Metro was already running. port is
-                  null when revive relaunched only native-process launches
-                  of a workspace with no Metro to resume
-  devices         one entry per recorded launch on a local owned
-                  simulator or emulator, except Release, Android
-                  native-process and hosted launches, which revive does
-                  not relaunch. Run as
+                  null when revive uses only installed apps with no Metro
+  devices         one entry per restored launch on a local owned
+                  simulator or emulator. Run as
                   agent-device's boot hook, only the launch on the device
                   agent-device asked for: { platform, slot, deviceId, deviceName,
                   rebooted, app: { bundleId, relaunched, launched } }.

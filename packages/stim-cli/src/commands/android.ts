@@ -78,7 +78,12 @@ import { setRemoteLogSink } from '../remote-log.ts';
 import { resolveBuildPlacement, resolveBuildMachine } from '../build-placement.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
-import { ensureDevServer, type MobileRuntimePreparation, ensureWorkspaceStorageSafely } from './native-runtime.ts';
+import {
+  ensureDevServer,
+  type InstalledLaunch,
+  type MobileRuntimePreparation,
+  ensureWorkspaceStorageSafely,
+} from './native-runtime.ts';
 import { startDevServer } from './start.ts';
 import {
   readRunEstimates,
@@ -152,11 +157,15 @@ import { startDeviceLogStream } from '../daemon/client.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
+import {
+  acquireAndroidArtifactOrRecorded,
+  existingAndroidArtifact,
+  type PreparedAndroidArtifact,
+} from './android/artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRequest } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { settleArtifactCleanup, unresolvedCleanup } from '../engine/acquire-artifact.ts';
-import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
+import { finishAndroidRun, androidProcessRuntime, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
 import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
@@ -189,6 +198,7 @@ interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
   recordedBuild?: RecordedBuildRequest;
+  installedApp?: InstalledLaunch;
   expectedDevice?: string;
   cleanAppState?: boolean;
   slot?: string;
@@ -322,7 +332,7 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
-      const lightened = await restoreLightenedDependencies(root, context);
+      const lightened = opts.installedApp ? null : await restoreLightenedDependencies(root, context);
       if (lightened) {
         printLightenedFailure(context, lightened, Boolean(opts.json));
         return { ok: false, error: lightened };
@@ -343,6 +353,7 @@ export function runAndroidOperation(
           slot: opts.slot,
           easProfile: opts.easProfile,
           recordedBuild: opts.recordedBuild,
+          installedApp: opts.installedApp,
           expectedDevice: opts.expectedDevice,
           cleanAppState: opts.cleanAppState,
           json: Boolean(opts.json),
@@ -380,6 +391,7 @@ interface RunAndroidOptions {
   progress?: BuildProgress;
   easProfile?: string;
   recordedBuild?: RecordedBuildRequest;
+  installedApp?: InstalledLaunch;
   expectedDevice?: string;
   cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
@@ -479,6 +491,7 @@ function resolveRunAndroidOptions(
     useBuildCache = true,
     easProfile,
     recordedBuild,
+    installedApp,
     expectedDevice,
     cleanAppState = false,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
@@ -562,6 +575,7 @@ function resolveRunAndroidOptions(
     useBuildCache,
     easProfile,
     recordedBuild,
+    installedApp,
     expectedDevice,
     cleanAppState,
     resolveEasBuild,
@@ -628,6 +642,10 @@ function resolveRunAndroidOptions(
     out,
     emit,
   };
+}
+
+function runtimeRelease(installedApp: InstalledLaunch | undefined, buildRelease: boolean): boolean {
+  return installedApp?.kind === 'embedded-js' || buildRelease;
 }
 
 function androidSlotOptions(options: RunAndroidOptions) {
@@ -737,6 +755,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     useBuildCache: requestedBuildCache,
     easProfile,
     recordedBuild: recordedBuildRequested,
+    installedApp,
     expectedDevice,
     cleanAppState,
     resolveEasBuild,
@@ -950,36 +969,40 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     const { code, message, remedy } = placement.failure;
     return fail(code, message, remedy, { setup: true });
   }
-  const planned = await resolveAndroidRunPlan(
-    {
-      settings,
-      settingsContext,
-      env: context.env,
-      signal: context.signal,
-      slot,
-      easProfile,
-      recordedBuild: recordedBuildRequested,
-      variant: variantFlag,
-      systemImage: systemImageFlag,
-      deviceProfile: deviceProfileFlag,
-      device: deviceFlag,
-      wait: waitFlag,
-      waitConflict,
-      remote: commandRemoteBackend,
-      buildCache: requestedBuildCache,
-      buildMachine: placement.selected,
-    },
-    {
-      preflight: integration.preflight,
-      resolveCacheProvider,
-      runtimeKind: integration.runtimeKind,
-      variantProblem: integration.variantProblem,
-      detectExpo: () => integration.isExpo,
-      listSystemImages,
-      listDeviceProfiles,
-      warn: (label, message) => out(phaseLine(label, chalk.yellow(message))),
-    },
-  );
+  function planRun() {
+    return resolveAndroidRunPlan(
+      {
+        settings,
+        settingsContext,
+        env: context.env,
+        signal: context.signal,
+        slot,
+        easProfile,
+        recordedBuild: recordedBuildRequested,
+        expectedDevice,
+        variant: variantFlag ?? (installedApp ? (installedApp.kind === 'embedded-js' ? 'release' : 'debug') : null),
+        systemImage: systemImageFlag,
+        deviceProfile: deviceProfileFlag,
+        device: deviceFlag,
+        wait: waitFlag,
+        waitConflict,
+        remote: commandRemoteBackend,
+        buildCache: requestedBuildCache,
+        buildMachine: placement.selected,
+      },
+      {
+        preflight: installedApp ? undefined : integration.preflight,
+        resolveCacheProvider,
+        runtimeKind: integration.runtimeKind,
+        variantProblem: installedApp ? () => null : integration.variantProblem,
+        detectExpo: () => integration.isExpo,
+        listSystemImages,
+        listDeviceProfiles,
+        warn: (label, message) => out(phaseLine(label, chalk.yellow(message))),
+      },
+    );
+  }
+  const planned = await planRun();
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
   if (!integration.targets.includes(plan.target.kind))
@@ -1007,14 +1030,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
-  const { variant, release } = buildPlan;
+  const { variant } = buildPlan;
+  const release = runtimeRelease(installedApp, buildPlan.release);
   const recordedLookup = lookupRecordedBuild(recordedBuildRequested, root, {
     platform: 'android',
     configuration: variant,
   });
-  const runtimeKind = integration.runtimeKind(buildPlan);
+  const runtimeKind = installedApp?.kind ?? integration.runtimeKind(buildPlan);
   const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
+  const allowEasFallback = () => !installedApp && integration.eas && remoteEasFallbackSetting(settings);
   const localSelectors = (target: { systemImage: string | null; deviceProfile: string | null }) =>
     androidDeviceSelectorRefusal(
       {
@@ -1046,7 +1071,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
     automatic: options.automaticDevicePlacement,
-    ...(integration.eas && remoteEasFallbackSetting(settings)
+    ...(allowEasFallback()
       ? {
           eas: () =>
             (options.checkEasFallback ?? checkEasFallback)({
@@ -1091,7 +1116,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const localRefusal = await localRunRefusal(
     budget.refusal,
     target,
-    () => slotKeepsAvd(root, slot),
+    () => Boolean(expectedDevice) || slotKeepsAvd(root, slot),
     () =>
       (options.ensureImage ?? ensureSystemImage)({
         requested: target.kind === 'emulator' ? target.systemImage : null,
@@ -1207,7 +1232,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: true, prepared: { metroPort } };
   }
 
-  const runtime = options.runtimePlan ?? integration.runtime({ build: buildPlan, prepareMetro, phase });
+  function runtimePlan() {
+    return (
+      options.runtimePlan ??
+      (installedApp
+        ? androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } }), installedApp.kind)
+        : integration.runtime({ build: buildPlan, prepareMetro, phase }))
+    );
+  }
+  const runtime = runtimePlan();
   const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
@@ -1393,6 +1426,76 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.deviceProfile = device.deviceProfile;
 
   let preparedArtifact: PreparedAndroidArtifact | undefined;
+  async function prepareArtifact(eas: Extract<typeof easBuild, { ok: true }> | null) {
+    return installedApp
+      ? { ok: true as const, artifact: existingAndroidArtifact(installedApp.appId) }
+      : acquireAndroidArtifactOrRecorded(
+          recordedLookup.build,
+          {
+            context,
+            root,
+            buildLog,
+            writer,
+            recipe: integration.artifact({
+              operation: context,
+              root,
+              buildLog,
+              writer,
+              settings,
+              buildPlan,
+              target: await androidBuildOptions({
+                release,
+                physical,
+                device,
+                variant,
+                deviceAbi,
+                targetAbiOnly: buildPlan.targetAbiOnly,
+                hostedAbi: hostedTarget?.choice.architecture,
+              }),
+              phase,
+              out,
+              step: progress.step,
+              estimates,
+            }),
+            targetOffloadRefusal: physical
+              ? 'device builds build here'
+              : remoteDevice
+                ? 'remote device builds build here'
+                : null,
+            buildPlan,
+            cacheProviderConfig,
+            requestedBuildCache,
+            easBuild: eas,
+            androidPackage,
+            record,
+            maxBuilds: limits.maxBuilds,
+            progress: {
+              phase,
+              out,
+              stats,
+              step: progress.step,
+              miss: progress.miss,
+              hit: progress.hit,
+              place: progress.place,
+              waitingOn: progress.waitingOn,
+              waitingFor: progress.waitingFor,
+            },
+          },
+          {
+            acquireLock,
+            releaseLock,
+            waitForBuild,
+            easAuth,
+            resolveRemoteBuild,
+            uploadRemoteBuild,
+            loadCacheProviderModule,
+            storedAppId,
+            acquireSlot,
+            releaseSlot,
+            now,
+          },
+        );
+  }
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
     if (metroCheck && metroPort !== null && plan.metroWarmup)
       void prewarmMetro({
@@ -1404,72 +1507,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logsDir,
         root,
       });
-    const acquiredArtifact = await acquireAndroidArtifactOrRecorded(
-      recordedLookup.build,
-      {
-        context,
-        root,
-        buildLog,
-        writer,
-        recipe: integration.artifact({
-          operation: context,
-          root,
-          buildLog,
-          writer,
-          settings,
-          buildPlan,
-          target: await androidBuildOptions({
-            release,
-            physical,
-            device,
-            variant,
-            deviceAbi,
-            targetAbiOnly: buildPlan.targetAbiOnly,
-            hostedAbi: hostedTarget?.choice.architecture,
-          }),
-          phase,
-          out,
-          step: progress.step,
-          estimates,
-        }),
-        targetOffloadRefusal: physical
-          ? 'device builds build here'
-          : remoteDevice
-            ? 'remote device builds build here'
-            : null,
-        buildPlan,
-        cacheProviderConfig,
-        requestedBuildCache,
-        easBuild,
-        androidPackage,
-        record,
-        maxBuilds: limits.maxBuilds,
-        progress: {
-          phase,
-          out,
-          stats,
-          step: progress.step,
-          miss: progress.miss,
-          hit: progress.hit,
-          place: progress.place,
-          waitingOn: progress.waitingOn,
-          waitingFor: progress.waitingFor,
-        },
-      },
-      {
-        acquireLock,
-        releaseLock,
-        waitForBuild,
-        easAuth,
-        resolveRemoteBuild,
-        uploadRemoteBuild,
-        loadCacheProviderModule,
-        storedAppId,
-        acquireSlot,
-        releaseSlot,
-        now,
-      },
-    );
+    const acquiredArtifact = await prepareArtifact(easBuild);
     if (!acquiredArtifact.ok) {
       ccacheActivity = acquiredArtifact.ccache;
       const { failure } = acquiredArtifact;
@@ -1487,7 +1525,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
-    artifactAcquired = true;
+    artifactAcquired = !installedApp;
     if (runCancellation(context)) return fail('STIM_CANCELLED', 'before install');
 
     if (hostedTarget)
@@ -1630,6 +1668,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         physical,
         remoteDevice,
         cleanAppState,
+        installedApp,
         bootPromise,
         resolveAvdSerial,
         waitForDeviceBoot,

@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
@@ -17,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { stimdClaimRoot } from '@stim-cli/core/state';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { resolveProjectMetro } from '../metro.ts';
@@ -32,6 +34,7 @@ let dir: string;
 let home: string;
 let env: NodeJS.ProcessEnv;
 let stimd: ChildProcess | null = null;
+let retainScratch: boolean;
 
 function write(path: string, text: string, mode?: number): void {
   mkdirSync(join(path, '..'), { recursive: true });
@@ -117,6 +120,10 @@ async function stopStimd(): Promise<void> {
   await exited;
 }
 
+function replacementStimd(killed: number) {
+  return readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid !== killed)?.owner;
+}
+
 function ask(op: string, params: Record<string, unknown>, opToken?: string): Promise<Record<string, unknown>> {
   const { socket: path, build } = record() ?? { socket: '', build: '' };
   return new Promise((resolve, reject) => {
@@ -175,6 +182,7 @@ function claimFile(root: string, kind: string): string {
 }
 
 beforeEach(() => {
+  retainScratch = false;
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
   home = join(dir, 'home');
   mkdirSync(home);
@@ -220,7 +228,7 @@ afterEach(async () => {
         }
       }
     }
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (!retainScratch) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } finally {
     vi.unstubAllEnvs();
   }
@@ -850,16 +858,40 @@ socket.on('data', chunk => {
     let output = '';
     stop.stdout?.on('data', (chunk) => (output += String(chunk)));
     stop.stderr?.on('data', (chunk) => (output += String(chunk)));
-    const [code] = await once(stop, 'exit');
-    const adopter = record();
+    const exited = once(stop, 'exit');
+    // A detached stimd starts in this scratch home before taking its claim.
+    // Leave an unverified home to the test-run process sweep before removal.
+    retainScratch = true;
+    let replacement: ReturnType<typeof replacementStimd>;
     try {
+      await vi.waitFor(
+        () => {
+          replacement = replacementStimd(killed);
+          assert(replacement, `Could not identify the replacement stimd in scratch home ${dir}.`);
+          expect(record()?.pid, `Replacement stimd has not registered; scratch home is ${dir}.`).toBe(replacement.pid);
+        },
+        { timeout: 15_000, interval: 50 },
+      );
+      const [code] = await exited;
       expect({ code, output }).toMatchObject({ code: 0 });
-      expect(adopter?.pid).not.toBe(killed);
       expect(processGroupAlive(Number(metro.pid))).toBe(false);
       const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
       expect([...claims.live, ...claims.unresolved]).toEqual([]);
     } finally {
-      if (adopter && adopter.pid !== killed && alive(adopter.pid)) process.kill(adopter.pid, 'SIGTERM');
+      if (stop.exitCode === null && stop.signalCode === null) stop.kill('SIGTERM');
+      try {
+        await exited;
+      } finally {
+        const owner = replacementStimd(killed) ?? replacement;
+        if (owner) {
+          if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
+          assert(
+            await waitForProcessExit(owner, 15_000),
+            `Replacement stimd ${owner.pid} did not exit in scratch home ${dir}.`,
+          );
+          retainScratch = false;
+        }
+      }
     }
   }, 60_000);
 

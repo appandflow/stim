@@ -140,9 +140,9 @@ RULES DURING THE LOOP
 - When the app shows "could not connect", a red or blank screen after a
   pause, run stim revive. After an idle stop it restarts Metro, boots the owned
   simulator or emulator the app last ran on, and relaunches the app from cold,
-  so in-app state is gone. An app that runs without Metro (Exact) gets its
-  simulator booted and the installed app relaunched. It never builds and never
-  starts what the workspace did not have; when it refuses, follow its remedy
+  so in-app state is gone. For Release React Native and native apps, revive
+  launches the app already installed on the owned simulator or emulator.
+  Revive never builds. If the app is missing, follow the printed remedy
   (guide metro).
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.

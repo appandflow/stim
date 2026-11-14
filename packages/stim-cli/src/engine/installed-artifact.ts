@@ -192,6 +192,25 @@ export async function deviceHoldsApk(
   return artifactsMatch(hashFile(apkPath), installed);
 }
 
+/** Checks the exact Android package id on the booted emulator. Null means the check failed. */
+export async function androidPackageInstalled(
+  serial: string,
+  packageName: string,
+  { exec = getExecutor(), signal }: { exec?: Executor; signal?: AbortSignal } = {},
+): Promise<boolean | null> {
+  if (!PACKAGE_NAME.test(packageName)) return false;
+  try {
+    const result = await exec.runFileAsync(
+      'adb',
+      ['-s', serial, 'shell', 'pm', 'list', 'packages', '--user', 'current', packageName],
+      { timeoutMs: DEVICE_PATH_TIMEOUT_MS, signal },
+    );
+    return result.split(/\r?\n/).some((line) => line.trim() === `package:${packageName}`);
+  } catch {
+    return null;
+  }
+}
+
 /** The `.app` the booted simulator `udid` has installed for `bundleId`, or null when simctl names none. */
 export async function installedIosApp(
   udid: string,
