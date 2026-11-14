@@ -147,6 +147,7 @@ export async function runHostedAndroidDevice(
       await createOwnedAvd(`hosted-${request.session}`, {
         systemImage: choice.systemImage,
         deviceProfile: choice.deviceProfile,
+        detached: false,
         spawn: (file, args, options) => {
           assertHostedDeviceLedger(home, avdName, 'android');
           withDirLock(join(home, 'hosted-device.lock'), () => {

@@ -12,14 +12,14 @@ import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
 
-function update(platform: CreatedDevicePlatform | 'systemImages', change: (entries: Set<string>) => boolean): void {
+function update(platform: CreatedDevicePlatform | 'systemImages', change: (entries: Set<string>) => boolean): boolean {
   const dir = getConfigDir();
-  withDirLock(
+  return withDirLock(
     createdDevicesLock(),
     () => {
       const current = readCreatedDevices();
       const entries = new Set(current[platform]);
-      if (!change(entries)) return;
+      if (!change(entries)) return false;
       const next = {
         version: 1,
         ios: [...current.ios],
@@ -38,21 +38,22 @@ function update(platform: CreatedDevicePlatform | 'systemImages', change: (entri
         throw error;
       }
       noteStimHome({ ios: next.ios, android: next.android });
+      return true;
     },
     { ensureParent: () => ensurePrivateDir(dir) },
   );
 }
 
-export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
-  update(platform, (entries) => entries.size !== entries.add(id).size);
+export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string): boolean {
+  return update(platform, (entries) => entries.size !== entries.add(id).size);
 }
 
 export function forgetCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
   update(platform, (entries) => entries.delete(id));
 }
 
-/** Waits asynchronously for the ledger lock, then records the device. */
-export function recordCreatedDeviceAsync(platform: CreatedDevicePlatform, id: string): Promise<void> {
+/** Records the device under the ledger lock and returns whether it added the ID. */
+export function recordCreatedDeviceAsync(platform: CreatedDevicePlatform, id: string): Promise<boolean> {
   return withDirLockAsync(createdDevicesLock(), () => recordCreatedDevice(platform, id), {
     ensureParent: () => ensurePrivateDir(getConfigDir()),
   });
@@ -78,7 +79,9 @@ export function forgetCreatedDeviceAsync(
 export function recordInstalledSystemImageAsync(directory: string): Promise<void> {
   return withDirLockAsync(
     createdDevicesLock(),
-    () => update('systemImages', (entries) => entries.size !== entries.add(directory).size),
+    () => {
+      update('systemImages', (entries) => entries.size !== entries.add(directory).size);
+    },
     { ensureParent: () => ensurePrivateDir(getConfigDir()) },
   );
 }

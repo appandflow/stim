@@ -23,7 +23,11 @@ devices or tear them down. The ownership re-check
 before boot and teardown applies that rule, and `gc` only lists other `stim-*`
 devices with a manual delete command. Never do any of those actions to a
 user-created emulator or simulator. Keep a device record
-when teardown fails so `gc` can find the device later.
+when teardown fails so `gc` can find the device later. Android records the AVD
+name before creation so an interruption leaves a record for recovery. A verified
+creation failure rolls back the new ledger entry and the workspace's own setup
+reservation if the storage is still available, has no AVD data or registration
+for that name, and the creation process cannot still write it.
 
 Scratch homes and the main home use the same naming convention. Name-based ownership previously let a main-home GC delete devices that agents still owned. The per-home record lets cleanup distinguish those devices even when their names look identical. [Cross-home deletion fix](https://github.com/appandflow/stim/pull/1395), [Ownership recheck](https://github.com/appandflow/stim/pull/4693).
 
