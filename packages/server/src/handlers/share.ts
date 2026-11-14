@@ -1,7 +1,7 @@
 import { type ShareRequest, type StartedShare, SHARE_EXPIRY } from '../share.ts';
 import { saveShareLinkAsync, pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/internal/share-links';
 import { shareLinkKey, isJsonObject, SHARE_TOKEN } from '@stim-cli/core/state';
-import { savedShareFor } from '../share-save.ts';
+import { savedLinkIs, savedShareFor } from '../share-save.ts';
 import { SHARE_SLUG_PATTERN, RESERVED_SHARE_SLUGS, type RequestId } from '../protocol.ts';
 import { SLOT_NAME } from '../control.ts';
 import { send, registeredWorkspace, type ConnectionContext } from './context.ts';
@@ -149,7 +149,12 @@ export async function shareMethod(
     if (params.id !== undefined && (!row || row.workspace !== workspace))
       return ctx.error(id, 'bad-request', `No share ${params.id} in this workspace.`);
     const unsaved = await markSavedStopped(() =>
-      row ? pauseShareLinkAsync(workspace, shareLinkKey(row)) : pauseShareLinksAsync(workspace, slot),
+      row
+        ? pauseShareLinkAsync(workspace, shareLinkKey(row), (saved) => {
+            const digest = ctx.shares.liveLinkDigest(workspace, row.id);
+            return digest !== undefined && savedLinkIs(saved, digest);
+          })
+        : pauseShareLinksAsync(workspace, slot),
     );
     const stopped = row
       ? [await ctx.shares.stopOne(workspace, row.id)]

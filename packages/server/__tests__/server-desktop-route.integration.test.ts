@@ -35,6 +35,7 @@ import { delimiter, dirname, join } from 'node:path';
 import {
   buildLedgerFile,
   gcLogFile,
+  isJsonObject,
   type BuildPlanPayload,
   readStatsReport,
   workspaceMetadataFile,
@@ -44,6 +45,7 @@ import {
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
 import * as stimSelf from 'stim/internal/api-self';
+import * as shareLinks from 'stim/internal/share-links';
 import { type ServerMessage } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
 import {
@@ -68,6 +70,10 @@ import { localConnect, setupClient, type Client } from './noise-client.ts';
 import { captureProcessToken, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { waitForPid } from '../../stim-cli/src/__tests__/_pid-file.ts';
+
+vi.mock('stim/internal/share-links', async (importOriginal) => ({
+  ...(await importOriginal<typeof shareLinks>()),
+}));
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -436,6 +442,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     };
     const fixture = await routeServer({}, statusEnv);
     const client = await desktop();
+    const reuseClient = await desktop();
     const path = `${origin}${secret}/`;
     const otherPath = `${origin}${other.token}/`;
     await vi.waitFor(async () => expect((await fetch(path)).status).toBe(200));
@@ -461,8 +468,31 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
         error: { message: expect.stringMatching(/live now|in use by live share/) },
       });
     }
-    const reused = await client.request('share.start', request);
+    const listed = await client.request('share.list');
+    assert('result' in listed && listed.result && 'shares' in listed.result);
+    const { shares } = listed.result;
+    assert(Array.isArray(shares));
+    const restored = shares.find((row: unknown) => isJsonObject(row) && row.slot === 'default');
+    assert(isJsonObject(restored) && typeof restored.id === 'string');
+    let resume = () => {};
+    const paused = new Promise<void>((resolve) => (resume = resolve));
+    const pause = shareLinks.pauseShareLinkAsync;
+    const delayedPause = vi.spyOn(shareLinks, 'pauseShareLinkAsync').mockImplementationOnce(async (...args) => {
+      await paused;
+      await pause(...args);
+    });
+    const stopping = client.request('share.stop', { workspace, id: restored.id });
+    let reused: ServerMessage;
+    try {
+      await vi.waitFor(() => expect(delayedPause).toHaveBeenCalled());
+      reused = await reuseClient.request('share.start', request);
+    } finally {
+      resume();
+    }
+    expect(await stopping).toMatchObject({ result: { stopped: [] } });
+    delayedPause.mockRestore();
     expect(reused).toMatchObject({ result: { url: path, expiresAt, saved: true } });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('live');
     expect(await client.request('share.start', request)).toMatchObject({
       error: { message: expect.stringMatching(/live now|in use by live share/) },
     });
@@ -502,6 +532,11 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       ios: { token: new URL(freshUrl).pathname.split('/')[2], state: 'live' },
       'ios@tablet': { token: other.token },
     });
+    assert('id' in fresh.result && typeof fresh.result.id === 'string');
+    expect(await restartedClient.request('share.stop', { workspace, id: fresh.result.id })).toMatchObject({
+      result: { stopped: [expect.objectContaining({ id: fresh.result.id })] },
+    });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped');
     expect(fixture.commands()).toEqual([]);
     expect(successor.commands()).toEqual([]);
   });

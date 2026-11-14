@@ -560,6 +560,9 @@ export class ShareHub {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
+    if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
+      return { code: 'bad-request', message: 'That link has expired.' };
+    }
     const resolved = this.resolve(status, request, null);
     if (typeof resolved === 'string' && !restore) return { code: 'action-failed', message: resolved };
     const bound = typeof resolved === 'string' ? null : resolved;
@@ -599,7 +602,13 @@ export class ShareHub {
     const viewShown = viewAuth === 'generated' ? password() : null;
     const secret = request.slug ?? given ?? token();
     const id = `w${this.next++}`;
-    const expiresAt = until ?? Date.now() + request.expiresMinutes * 60_000;
+    const now = Date.now();
+    const expiresAt = until ?? now + request.expiresMinutes * 60_000;
+    if (expiresAt <= now) {
+      source?.close();
+      void this.teardown();
+      return { code: 'bad-request', message: 'That link has expired.' };
+    }
     const share: Share = {
       id,
       key: digest(secret).toString('hex'),
@@ -793,11 +802,19 @@ export class ShareHub {
   }
 
   async stopOne(workspace: string, id: string, message = 'The share was stopped.'): Promise<ShareRow | null> {
-    const share = [...this.shares.values()].find((candidate) => candidate.id === id);
-    if (!share || share.request.workspace !== workspace) return null;
+    const share = this.shareById(workspace, id);
+    if (!share) return null;
     const row = this.row(share);
     await this.end(share, message);
     return row;
+  }
+
+  liveLinkDigest(workspace: string, id: string): string | undefined {
+    return this.shareById(workspace, id)?.key;
+  }
+
+  private shareById(workspace: string, id: string): Share | undefined {
+    return [...this.shares.values()].find((share) => share.id === id && share.request.workspace === workspace);
   }
 
   async close(): Promise<void> {
