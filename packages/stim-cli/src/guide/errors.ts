@@ -535,7 +535,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   A physical iPhone console's helper that stimd cannot take over or verify
   stopped keeps the stream's claim the same way. stimd logs why once, with
   the claim path, tries the takeover again every second and does not exit
-  while it waits; \`stim stop\` prints this code with the commands that list
+  while it waits. \`stim status\` and \`stim doctor\` report the unresolved console
+  claim and its remedy. \`stim stop\` prints this code with the commands that list
   and stop what can still be the console's, then the claim's remove command.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.

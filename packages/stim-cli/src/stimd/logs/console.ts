@@ -45,7 +45,7 @@ export interface ConsoleStream {
   revision: number;
   settling: Promise<void> | null;
   /** Why the last settle refused; the watcher leaves the entry alone until a stop or start tries again. */
-  refused: Error | null;
+  refused: { error: Error; since: string } | null;
 }
 
 const identityOf = (value: unknown): Identity | null =>

@@ -247,7 +247,7 @@ function noteRefusal(message: Record<string, unknown>): void {
 function waitingChildren(): number[] {
   try {
     return readClaimSet(daemonClaimRoot()).live.flatMap((holder) =>
-      parseUnverifiedCleanups(holder.details.unverified).map((entry) => entry.child),
+      parseUnverifiedCleanups(holder.details.unverified).flatMap((entry) => ('child' in entry ? [entry.child] : [])),
     );
   } catch {
     return [];

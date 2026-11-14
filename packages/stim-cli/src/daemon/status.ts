@@ -106,12 +106,14 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   };
 }
 
-/** One line per child whose cleanup the running daemon could not verify, with how long it has waited for it. */
+/** One line per unresolved cleanup or console recovery the daemon reports. */
 export function unverifiedLines(status: DaemonStatus, now: number = Date.now()): string[] {
-  return (status.unverified ?? []).map(
-    (entry) =>
-      `Daemon waits ${formatLongDuration(Math.max(0, now - Date.parse(entry.since)))} for child ${entry.child}, whose cleanup was not verified: ${entry.message} ${entry.remedy}`,
-  );
+  return (status.unverified ?? []).map((entry) => {
+    const age = formatLongDuration(Math.max(0, now - Date.parse(entry.since)));
+    return 'kind' in entry
+      ? `Daemon has waited ${age} for a device console: ${entry.message} ${entry.remedy}`
+      : `Daemon waits ${age} for child ${entry.child}, whose cleanup was not verified: ${entry.message} ${entry.remedy}`;
+  });
 }
 
 /** The hold, and the last abnormal exits with when and why, which `stim status` prints under the daemon line. */
@@ -217,8 +219,14 @@ export function daemonFindings(
   for (const entry of status.unverified ?? [])
     findings.push({
       level: 'cost',
-      title: 'The stim-daemon waits for a child whose cleanup was not verified',
-      detail: `Since ${entry.since}: ${entry.message} Until child ${entry.child} has stopped, the daemon does not exit when idle or switch engines, and the claims that child holds stay taken.`,
+      title:
+        'kind' in entry
+          ? 'The stim-daemon could not recover a device console'
+          : 'The stim-daemon waits for a child whose cleanup was not verified',
+      detail:
+        'kind' in entry
+          ? `Since ${entry.since}: ${entry.message}`
+          : `Since ${entry.since}: ${entry.message} Until child ${entry.child} has stopped, the daemon does not exit when idle or switch engines, and the claims that child holds stay taken.`,
       fix: entry.remedy,
     });
   if (status.crashHold)

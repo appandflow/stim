@@ -2,7 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { isJsonObject, readDevServerStop, type DevServerStopRecord } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  readDevServerStop,
+  type DevServerStopRecord,
+  type UnverifiedConsole,
+} from '@stim-cli/core/state';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
 import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
@@ -169,6 +174,7 @@ export interface StreamTable {
     coverage?: 'pending' | 'covered' | 'failed';
   }>;
   running(): boolean;
+  unverifiedConsoles(): UnverifiedConsole[];
   /** The engine builds the physical iPhone consoles' helpers run from, which the engine store must keep. */
   engineDirs(): string[];
   /** Restarts the streams a predecessor stimd handed over in these workspaces, with this process's environment. */
@@ -456,6 +462,7 @@ const errorRemedy = (error: unknown): string => {
 export function createStreams(
   log: (message: string) => void,
   ownedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
+  reportConsoleChange: () => void = () => {},
 ): StreamTable {
   const streams = new Map<string, Stream>();
   const queues = new Map<string, Promise<void>>();
@@ -470,7 +477,10 @@ export function createStreams(
   let closePromise: Promise<void> | null = null;
   let ownedRunning = true;
   const consoles = new Map<string, ConsoleStream>();
-  const untaken = new Map<string, { root: string; slotKey: string; id: string; reason: string; retrying: boolean }>();
+  const untaken = new Map<
+    string,
+    { root: string; slotKey: string; id: string; reason: string; since: string; retrying: boolean }
+  >();
   let consoleWatch: NodeJS.Timeout | null = null;
   const unwatchConsoles = () => {
     if (consoles.size || untaken.size || !consoleWatch) return;
@@ -478,16 +488,20 @@ export function createStreams(
     consoleWatch = null;
   };
   const settleConsoleAt = (key: string, entry: ConsoleStream, requested: boolean): Promise<void> => {
-    if (requested && !entry.settling) entry.refused = null;
     entry.settling ??= (requested ? stopConsole(entry) : settleConsole(entry)).then(
       () => {
         if (consoles.get(key) === entry) consoles.delete(key);
+        if (entry.refused) reportConsoleChange();
         unwatchConsoles();
         return undefined;
       },
       (error: unknown) => {
         entry.settling = null;
-        entry.refused = error instanceof Error ? error : new Error(String(error));
+        entry.refused = {
+          error: error instanceof Error ? error : new Error(String(error)),
+          since: entry.refused?.since ?? new Date().toISOString(),
+        };
+        reportConsoleChange();
         throw error;
       },
     );
@@ -1173,18 +1187,28 @@ export function createStreams(
         ? adoptConsole(root, id, current)
         : `its claim at ${holder.path} changed`;
     if (typeof entry === 'string') {
-      if (untaken.get(key)?.reason !== entry)
+      const pending = untaken.get(key);
+      if (pending?.reason !== entry)
         ownedLog(
           'warn',
           'device_log_stream_unverified',
           `device console ${id} in ${root} was not taken over (claim ${claimPath(root, id)}): ${entry}`,
         );
-      untaken.set(key, { root, slotKey, id, reason: entry, retrying: untaken.get(key)?.retrying ?? false });
+      untaken.set(key, {
+        root,
+        slotKey,
+        id,
+        reason: entry,
+        since: pending?.since ?? new Date().toISOString(),
+        retrying: pending?.retrying ?? false,
+      });
+      if (pending?.reason !== entry) reportConsoleChange();
       watchConsoles();
       return;
     }
-    untaken.delete(key);
+    const cleared = untaken.delete(key);
     consoles.set(key, entry);
+    if (cleared) reportConsoleChange();
     watchConsoles();
     ownedLog(
       'info',
@@ -1228,6 +1252,7 @@ export function createStreams(
     const holder = consoleHolder(pending.root, pending.id);
     if (!holder || !(isJsonObject(recorded) && recorded.streamId === pending.id)) {
       untaken.delete(key);
+      reportConsoleChange();
       unwatchConsoles();
       return;
     }
@@ -1630,6 +1655,29 @@ export function createStreams(
       });
     },
     running: () => streams.size > 0 || consoles.size > 0 || untaken.size > 0,
+    unverifiedConsoles: () => [
+      ...[...untaken.values()].map(({ root, id, reason, since }): UnverifiedConsole => ({
+        kind: 'console',
+        since,
+        message: `The device console ${id} in ${root} could not be taken over (claim ${claimPath(root, id)}).`,
+        remedy: `${reason}${reason.endsWith('.') ? '' : '.'} Stim retries while the stream remains recorded.`,
+      })),
+      ...[...consoles.values()].flatMap(({ id, root, claim, refused }): UnverifiedConsole[] => {
+        if (!refused) return [];
+        const remedy: unknown = Reflect.get(refused.error, 'remedy');
+        return [
+          {
+            kind: 'console',
+            since: refused.since,
+            message: `The device console ${id} in ${root} could not be settled. ${refused.error.message}`,
+            remedy:
+              typeof remedy === 'string'
+                ? remedy
+                : `Inspect the console claim ${claim.path} before retrying \`stim stop\` in the workspace.`,
+          },
+        ];
+      }),
+    ],
     engineDirs: () =>
       [...consoles.values()].flatMap((entry) =>
         typeof entry.claim.details.engineDir === 'string' ? [entry.claim.details.engineDir] : [],

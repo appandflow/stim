@@ -12,16 +12,19 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, stimdRecordFile } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { stopDeviceLogStream } from '../daemon/client.ts';
+import { daemonFindings, daemonStatus, unverifiedLines } from '../daemon/status.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { claimPath, consoleExitFile } from '../stimd/logs/claim.ts';
-import { handleLogRequest } from '../stimd/logs/protocol.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
+import { runStimd } from '../stimd/main.ts';
+import * as groupStop from '../stimd/metro/group-stop.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -171,7 +174,7 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
     expect(existsSync(consoleExitFile(root, streamId))).toBe(false);
   }, 60_000);
 
-  test('a stop goes through the helper, which ends devicectl and records the stop', async () => {
+  test('a refused console stop is reported until a retry reaches the helper and stops it', async () => {
     const streams = createStreams(() => {});
     try {
       const { streamId } = await streams.start(
@@ -180,12 +183,31 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
       );
       await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
       const { helper, console } = claimed(streamId);
+      const stopHelper = vi.spyOn(groupStop, 'stopHelperProcess');
+      stopHelper.mockRejectedValueOnce(new Error('fixture could not stop the helper'));
+      try {
+        await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow(
+          'fixture could not stop the helper',
+        );
+        expect(streams.unverifiedConsoles()).toEqual([
+          {
+            kind: 'console',
+            since: expect.any(String),
+            message: expect.stringContaining('could not be settled'),
+            remedy: expect.stringContaining(`shows console-run`),
+          },
+        ]);
+        expect(inspectProcessIdentity(helper)).toBe('same');
+      } finally {
+        stopHelper.mockRestore();
+      }
       expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
       expect(inspectProcessIdentity(helper)).not.toBe('same');
       expect(processGroupAlive(console.pid)).toBe(false);
       expect(records().at(-1)).toMatchObject({ event: 'collector_stopped', msg: 'device log stream stopped' });
       expect(readWorkspaceState(root)?.collectors).toBeUndefined();
       expect(streams.running()).toBe(false);
+      expect(streams.unverifiedConsoles()).toEqual([]);
     } finally {
       await streams.close();
     }
@@ -226,54 +248,46 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
     const { streamId } = started;
     await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
     const { helper } = claimed(streamId);
-    const logged: string[] = [];
-    const streams = createStreams(
-      () => {},
-      (_level, event, msg) => logged.push(`${event}: ${msg}`),
-    );
+    upsertProject(root, {});
+    const before = new Set(process.listeners('SIGTERM'));
+    const successor = runStimd({ mode: 'on', tickMs: 60_000 });
     try {
-      streams.resume([root], env);
-      await vi.waitFor(
-        () => expect(logged.find((entry) => entry.startsWith('device_log_stream_unverified'))).toBeDefined(),
-        { timeout: 20_000 },
-      );
-      expect(logged.find((entry) => entry.startsWith('device_log_stream_unverified'))).toContain(
-        claimPath(root, streamId),
-      );
-      expect(streams.running()).toBe(true);
-      const socket = new Socket();
-      const replied = new Promise<unknown>((resolve) =>
-        vi.spyOn(socket, 'end').mockImplementation((data: unknown) => {
-          resolve(JSON.parse(String(data)));
-          return socket;
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000 });
+      await vi.waitFor(() => expect(daemonStatus().unverified?.[0]?.message).toContain(claimPath(root, streamId)), {
+        timeout: 20_000,
+      });
+      const waiting = daemonStatus();
+      expect(waiting.unverified).toEqual([
+        {
+          kind: 'console',
+          since: expect.any(String),
+          message: expect.stringContaining('could not be taken over'),
+          remedy: expect.stringContaining(`pid ${stimd.pid}`),
+        },
+      ]);
+      expect(unverifiedLines(waiting).join(' ')).toContain(`pid ${stimd.pid}`);
+      expect(daemonFindings(waiting, { serving: () => [] })).toContainEqual(
+        expect.objectContaining({
+          title: 'The stim-daemon could not recover a device console',
+          fix: waiting.unverified?.[0]?.remedy,
         }),
       );
-      handleLogRequest({
-        message: { op: 'logs.stop', params: { root, platform: 'ios', slot: 'default', streamId } },
-        socket,
-        streams,
-        operations: new Map(),
-        controllers: new Map(),
-        tokens: new Map(),
-        attached: false,
-      });
-      expect(await replied).toMatchObject({
-        op: 'error',
+      expect(await stopDeviceLogStream(root, 'ios', 'default', streamId)).toMatchObject({
         code: 'STIM_CLAIM_UNAVAILABLE',
-        message: expect.stringContaining(claimPath(root, streamId)),
+        error: expect.stringContaining(claimPath(root, streamId)),
         remedy: expect.stringContaining(`pid ${stimd.pid}`),
       });
+      const predecessorExit = once(stimd, 'exit');
       stimd.kill('SIGKILL');
-      await once(stimd, 'exit');
-      await vi.waitFor(() => expect(logged.some((entry) => entry.startsWith('device_console_adopted'))).toBe(true), {
-        timeout: 10_000,
-      });
+      await predecessorExit;
+      await vi.waitFor(() => expect(daemonStatus().unverified).toBeUndefined(), { timeout: 10_000 });
       expect(claimed(streamId).helper).toEqual(helper);
-      expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
+      expect(await stopDeviceLogStream(root, 'ios', 'default', streamId)).toEqual({ stopped: true });
       expect(records().at(-1)).toMatchObject({ event: 'collector_stopped', msg: 'device log stream stopped' });
       expect(readFileSync(launches, 'utf8')).toBe('x');
     } finally {
-      await streams.close();
+      process.listeners('SIGTERM').find((listener) => !before.has(listener))?.('SIGTERM');
+      await successor;
     }
   }, 60_000);
 });

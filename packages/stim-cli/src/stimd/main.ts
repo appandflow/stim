@@ -961,12 +961,16 @@ async function runStimdInner(
     desktopKey: key,
     script,
   });
-  const logs = createStreams((message) => log('warn', 'device_logs', message), log);
+  const logs = createStreams(
+    (message) => log('warn', 'device_logs', message),
+    log,
+    () => reportUnverified(),
+  );
   const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
-    const unverified = cleanups.entries();
+    const unverified = [...cleanups.entries(), ...logs.unverifiedConsoles()];
     if (!claim || JSON.stringify(unverified) === JSON.stringify(claim.details.unverified ?? [])) return;
     const kept = Object.fromEntries(Object.entries(claim.details).filter(([field]) => field !== 'unverified'));
     try {
