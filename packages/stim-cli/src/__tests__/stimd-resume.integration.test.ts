@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -52,7 +52,7 @@ const RESTARTED = 'Stim: stimd restarted; this command continues with the new st
 
 let dir: string;
 let home: string;
-let tracksDaemon: boolean;
+let retainFixture: boolean;
 
 function stimdPid(): number | null {
   try {
@@ -145,8 +145,12 @@ const leaseParams = (root: string) => ({
 });
 
 beforeEach(() => {
-  tracksDaemon = false;
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-')));
+  retainFixture = false;
+  makeScratch(tmpdir());
+});
+
+function makeScratch(base: string): void {
+  dir = realpathSync(mkdtempSync(join(base, 'stim-resume-')));
   home = join(dir, 'home');
   mkdirSync(home);
   const bin = join(dir, 'bin');
@@ -161,16 +165,16 @@ beforeEach(() => {
   vi.stubEnv('HOME', dir);
   vi.stubEnv('XDG_RUNTIME_DIR', '');
   vi.stubEnv('PATH', [bin, process.env.PATH].join(delimiter));
-});
+}
 
 afterEach(async () => {
   try {
     cancelCliOp();
-    if (!tracksDaemon) await stopStimd();
+    if (!retainFixture) await stopStimd();
   } finally {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (!retainFixture) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -310,6 +314,9 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
   }, 60_000);
 
   test('SIGINT cancels a spawned Android CLI waiting for a lease on the replacement stimd', async () => {
+    rmSync(dir, { recursive: true });
+    // Vitest removes its run root even when it cannot inspect leftover processes.
+    makeScratch(dirname(realpathSync(tmpdir())));
     const other = workspace('other');
     const root = workspace('app');
     const device = 'STIM-TEST-PHONE';
@@ -405,7 +412,7 @@ esac
     const first = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
     const firstExit = once(first, 'exit');
     let command: { child: ChildProcess; exited: Promise<unknown> } | undefined;
-    tracksDaemon = true;
+    retainFixture = true;
     try {
       await vi.waitFor(() => expect(stimdPid()).toBe(first.pid), { timeout: 15_000, interval: 50 });
       const cli = spawn(
@@ -452,10 +459,19 @@ esac
       const cli = command?.child;
       if (cli?.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
       await Promise.all([firstExit, command?.exited]);
-      for (const owner of replacementRecords()) {
-        if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
-        assert(await waitForProcessExit(owner, 15_000), `Replacement stimd ${owner.pid} did not exit in ${home}.`);
-      }
+      await Promise.all(
+        replacementRecords().map(async (owner) => {
+          if (inspectProcessIdentity(owner) === 'same') {
+            try {
+              process.kill(owner.pid, 'SIGKILL');
+            } catch (error) {
+              if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+            }
+          }
+          assert(await waitForProcessExit(owner, 5000), `Replacement stimd ${owner.pid} did not exit in ${home}.`);
+        }),
+      );
+      retainFixture = false;
     }
   }, 80_000);
 
