@@ -205,6 +205,7 @@ export function createMaintenanceLane(
     fields?: Record<string, unknown>,
   ) => void,
   precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
+  dependencyCadence: BigInt64Array = new BigInt64Array(1),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -230,7 +231,7 @@ export function createMaintenanceLane(
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({ config, act, log, ...reading });
+        const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
         taken.push(...deleted);
         const dependenciesMs = lap();
         const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });

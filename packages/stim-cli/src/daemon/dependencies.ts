@@ -376,24 +376,27 @@ export async function wouldDelete(
   return { status: 'would', bytes, detail };
 }
 
-let dormantCheckedAt = -Infinity;
-
 /**
- * The dormant stage's dependency step, at most hourly unless `force`: the node_modules and Pods of linked worktrees
+ * The dormant stage's dependency step, at most hourly with a cadence clock: the node_modules and Pods of linked worktrees
  * idle `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD or are not measured yet, most first, each
  * recorded so the next Stim command restores it. A tree is taken even when `stim worktree warm` could not put the
  * same versions back, since a reinstall does; copy-on-write clones below the threshold stay. Then, as the last
  * step, those of source checkouts idle `idle.sourceDormantDays`, each recorded in the source checkout's workspace.
  */
 export async function runDormantDependencies(
-  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean },
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean; cadence?: BigInt64Array },
 ): Promise<DaemonLadderAction[]> {
-  const { config } = input;
+  const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
   const sourceMs = sourceDormantAfterMs(config);
-  if (!config || (afterMs <= 0 && sourceMs <= 0) || (!input.force && Date.now() - dormantCheckedAt < HOUR_MS))
-    return [];
-  dormantCheckedAt = Date.now();
+  if (!config || (afterMs <= 0 && sourceMs <= 0)) return [];
+  if (cadence) {
+    // Zero means no check yet. Record the start before any awaited work so a failed pass still counts.
+    const now = BigInt(Date.now()) + 1n;
+    const checkedAt = Atomics.load(cadence, 0);
+    if (!input.force && checkedAt !== 0n && now - checkedAt < BigInt(HOUR_MS)) return [];
+    Atomics.store(cadence, 0, now);
+  }
   const actions: DaemonLadderAction[] = [];
   if (afterMs > 0) actions.push(...(await takeIdleDependencies(input, config, afterMs, false)));
   if (sourceMs > 0) actions.push(...(await takeIdleDependencies(input, config, sourceMs, true)));
