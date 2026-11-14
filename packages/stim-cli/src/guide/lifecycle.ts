@@ -497,17 +497,28 @@ bun --version, rustup and git; it never runs the app's code.
 Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
 runs the same ./exact.mjs ios --no-install [--release] in the app's directory,
-with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
-and this Mac installs the .app on its owned or hosted simulator; nothing is cached. The
-worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
-Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
-commit this app uses, set up with Exact's setup. A machine that lacks one is
+with EXACT2 at the worker's exact2 checkout for the app's commit (or at the
+copy it places at the app's relative path to exact2) and no simulator, and this Mac installs the .app on its owned or hosted simulator;
+nothing is cached. For an app whose app.json declares native modules, the worker
+creates and boots a simulator of its own for the build, passes it as EXACT_SIM
+for Exact's module roster read, and deletes it after. The app's relative path to
+exact2 (the one its Cargo manifests use) holds a checkout of that commit inside
+the worker's build area; for an app in a subdirectory of its repository, exact2
+may sit at most one folder above the repository. The worker needs Exact's own toolchain: Bun at
+~/.bun-<version>, rustup with the Rust version exact2 pins and its
+aarch64-apple-ios-sim target, and the exact2 commit this app uses at
+~/.exact/exact2/<commit> or ~/.exact/exact2/<the client's checkout folder
+name>, set up with Exact's setup; the install command clones into
+~/.exact/exact2/<commit> and fetches the commit from
+the remote this Mac's exact2 checkout has it on, so a fork works. A machine that lacks one is
 skipped and the placement line names the missing piece and the command that
 installs it; stim doctor lists the same for each machine in remote.machines. The values of the settings app.json env declares travel with the
 build: this shell's, else .env.local's, else .env's, as Exact reads them. These
-build here: apps whose app.json declares native modules (Exact may read them on
-a simulator), an exact2 checkout with local changes, and a repository-root app
-whose folder name is not a plain ASCII file name.
+build here: an exact2 checkout with local changes, an exact2 checkout that
+shares no top directory with the app or whose folder name is not a plain ASCII
+file name, an app in a subdirectory whose exact2 sits more than one folder
+above its repository, and a repository-root app whose folder name is not a
+plain ASCII file name.
 
 Only iOS simulators, here or hosted, are supported. macOS, web, Android and physical devices
 use Exact's own commands.`,

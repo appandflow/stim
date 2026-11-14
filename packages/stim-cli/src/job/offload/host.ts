@@ -25,6 +25,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
+import { getConcurrencyLimits, getPlatformDeviceLimits } from '../../workspace/config.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import {
   buildWorkerRoot,
@@ -665,8 +666,12 @@ export class BuildHost {
   }
 
   private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
+    const { maxDevices } = getConcurrencyLimits({ env: this.environment() });
+    const { ios } = getPlatformDeviceLimits({ env: this.environment() });
     return {
       ...this.environment(),
+      ...(maxDevices > 0 ? { STIM_MAX_DEVICES: String(maxDevices) } : {}),
+      ...(ios > 0 ? { STIM_MAX_IOS_DEVICES: String(ios) } : {}),
       STIM_HOME: join(area, 'home'),
       CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
       CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),

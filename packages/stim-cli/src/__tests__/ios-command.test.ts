@@ -10126,6 +10126,12 @@ describe('strict remote machine selection', () => {
     const cached = await run({ remoteBuild: 'auto' }, { resolveBuild: () => path, buildIos: build });
     expect(cached.exitCode).toBeNull();
     expect(build).not.toHaveBeenCalled();
+
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', []);
+    const here = await run({ remoteBuild: 'remote', json: true });
+    expect(here.exitCode).toBeNull();
+    expect(here.stderr).toContain('mini: offline -> building here');
+    expect(here.calls.order).toContain('buildIos');
   });
 
   test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {

@@ -721,12 +721,18 @@ never runs the app's code.
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
 runs the same `./exact.mjs ios --no-install` in the app's directory, with
-`EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
-this Mac installs the `.app` on its owned simulator. Nothing is cached. The
-values of the settings `app.json` `env` declares travel with the build: this
-shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
-`app.json` declares native modules, an `exact2` checkout with local changes and
-repository-root apps whose folder name is not a plain ASCII file name build here. See
+`EXACT2` at its exact2 checkout for the app's commit (or at the copy it
+places at the app's relative path to exact2), and
+this Mac installs the `.app` on its owned simulator. Nothing is cached. For an
+app whose `app.json` declares native modules, the worker creates and boots a
+simulator of its own for that build, passes it as `EXACT_SIM` so Exact can read
+the module roster, and deletes it afterwards. The values of the settings
+`app.json` `env` declares travel with the build: this shell's, else
+`.env.local`'s, else `.env`'s, as Exact reads them. These build here: an
+`exact2` checkout with local changes, one that shares no top directory with the
+app or whose folder name is not a plain ASCII file name, an app in a
+subdirectory whose `exact2` sits more than one folder above its repository, and
+repository-root apps whose folder name is not a plain ASCII file name. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
 what the worker needs; `stim doctor` reports what each machine in
 `remote.machines` lacks.

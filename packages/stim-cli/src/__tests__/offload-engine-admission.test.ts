@@ -135,7 +135,16 @@ test.each(['', 'apps/\u5e97'])('build.start admits Exact project %j without fing
         stimBuild: 'b1',
         compat: 6,
         fingerprint: 'a'.repeat(64),
-        exact: { name: project ? 'app' : 'shop-app', exact2: 'b'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: {} },
+        exact: {
+          name: project ? 'app' : 'shop-app',
+          exact2: 'b'.repeat(40),
+          bun: '1.4.2',
+          rust: '1.97.0',
+          checkout: 'exact2',
+          url: null,
+          env: {},
+          link: null,
+        },
       }),
     ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
     expect(launch).toHaveBeenCalledTimes(1);

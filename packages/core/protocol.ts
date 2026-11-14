@@ -1064,11 +1064,16 @@ export interface BuildOfferParams {
   exact?: BuildExactPins;
 }
 
-/** The exact2 commit and the Bun and Rust versions an Exact app builds with. */
+/**
+ * The exact2 commit and the Bun and Rust versions an Exact app builds with, the name of the client's exact2 checkout
+ * folder, and the URL of a remote that has the commit, if the client knows one.
+ */
 export interface BuildExactPins {
   exact2: string;
   bun: string;
   rust: string;
+  checkout: string;
+  url: string | null;
 }
 
 /**
@@ -1322,10 +1327,11 @@ export interface BuildStartParams {
   reuseArtifact?: boolean;
   /**
    * An Exact app's iOS build: the app directory's name (Exact names its generated crates after it), its pins, and the
-   * values of the settings its `app.json` declares that the client's environment or `.env.local` sets. `fingerprint`
-   * is the synced manifest's digest, and no artifact is retained.
+   * values of the settings its `app.json` declares that the client's environment or `.env.local` sets, and the path from
+   * the app directory to its exact2 checkout when that path climbs out of the repository. `fingerprint` is the synced
+   * manifest's digest, and no artifact is retained.
    */
-  exact?: BuildExactPins & { name: string; env: Record<string, string> };
+  exact?: BuildExactPins & { name: string; env: Record<string, string>; link: string | null };
 }
 
 export interface BuildJobParams {

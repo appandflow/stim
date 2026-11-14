@@ -238,16 +238,26 @@ user that runs its Stim service:
 - Bun at `~/.bun-<version>`, the version `exact.mjs` pins.
 - rustup with the Rust version the exact2 checkout pins and its
   `aarch64-apple-ios-sim` target, which Exact's setup does not add.
-- The exact2 commit the app uses, at `~/.exact/exact2/<commit>`, set up with
-  `bun scripts/exact.mjs setup` there. A setup line about Chrome or Android does
-  not matter for iOS builds.
+- The exact2 commit the app uses, at `~/.exact/exact2/<commit>` or in a folder
+  named like the client's exact2 checkout (`~/.exact/exact2/<name>`), set up
+  with `bun scripts/exact.mjs setup` there. The install command clones into
+  `~/.exact/exact2/<commit>` and fetches the commit from the remote the client's
+  exact2 checkout has it on, so an app built against an exact2 fork works. A setup line about Chrome or Android does not
+  matter for iOS builds.
 
 A worker that lacks one is skipped: the placement line, the refusal of a
 named `--remote-build` and `stim doctor` in the app name the missing piece and
 the command that installs it there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
 client sent them, and keep `target/` warm in the checkout's own repository area.
-The worker never gives an Exact build a simulator, so apps whose `app.json`
-declares native modules build on the client.
+An app's Cargo manifests name exact2 by a path relative to the app; the worker
+puts a checkout of the pinned commit at that path inside the repository area,
+sharing its exact2 checkout's git objects and copying its installed packages
+(about 300 MB for exact2 today); for an app in a subdirectory of its repository, exact2 may sit at most
+one folder above the repository. For an app
+whose `app.json` declares native modules, the worker creates a simulator of its
+own for each build, boots it, passes it to Exact as `EXACT_SIM` to read the
+module roster, and deletes it when the build ends. Creating and booting that
+simulator adds about 45 seconds to such a build on a Mac mini.
 
 `stim ios --remote <mac>` also runs an Exact app on a hosted simulator there,
 built on the client or a build Mac; hosting needs no Exact toolchain. Apps that
