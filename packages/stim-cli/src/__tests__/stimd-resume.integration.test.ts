@@ -7,13 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -51,6 +52,7 @@ const RESTARTED = 'Stim: stimd restarted; this command continues with the new st
 
 let dir: string;
 let home: string;
+let retainFixture: boolean;
 
 function stimdPid(): number | null {
   try {
@@ -143,7 +145,12 @@ const leaseParams = (root: string) => ({
 });
 
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-')));
+  retainFixture = false;
+  makeScratch(tmpdir());
+});
+
+function makeScratch(base: string): void {
+  dir = realpathSync(mkdtempSync(join(base, 'stim-resume-')));
   home = join(dir, 'home');
   mkdirSync(home);
   const bin = join(dir, 'bin');
@@ -158,16 +165,16 @@ beforeEach(() => {
   vi.stubEnv('HOME', dir);
   vi.stubEnv('XDG_RUNTIME_DIR', '');
   vi.stubEnv('PATH', [bin, process.env.PATH].join(delimiter));
-});
+}
 
 afterEach(async () => {
   try {
     cancelCliOp();
-    await stopStimd();
+    if (!retainFixture) await stopStimd();
   } finally {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (!retainFixture) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -305,6 +312,168 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
   }, 60_000);
+
+  test('SIGINT cancels a spawned Android CLI waiting for a lease on the replacement stimd', async () => {
+    rmSync(dir, { recursive: true });
+    // Vitest removes its run root even when it cannot inspect leftover processes.
+    makeScratch(dirname(realpathSync(tmpdir())));
+    const other = workspace('other');
+    const root = workspace('app');
+    const device = 'STIM-TEST-PHONE';
+    const sdk = join(dir, 'sdk');
+    const adbDir = join(sdk, 'platform-tools');
+    const trace = join(dir, 'trace.json');
+    const launches = join(dir, 'launches');
+    const daemonGate = join(dir, 'daemon-gate.mjs');
+    const cliPreload = join(dir, 'cli-preload.mjs');
+    mkdirSync(launches);
+    writeFileSync(
+      daemonGate,
+      `import { once } from 'node:events';
+if (!process.connected) process.exit(1);
+process.once('disconnect', () => process.exit(1));
+const [message] = await once(process, 'message');
+if (message !== 'start') process.exit(1);
+process.removeAllListeners('disconnect');
+process.disconnect();
+`,
+    );
+    writeFileSync(
+      cliPreload,
+      `import { renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { getExecutor } from ${JSON.stringify(new URL('../exec.ts', import.meta.url).href)};
+import { captureProcessToken } from ${JSON.stringify(new URL('../process-identity.ts', import.meta.url).href)};
+const executor = getExecutor();
+const spawn = executor.spawn.bind(executor);
+executor.spawn = (command, args, options) => {
+  if (command !== process.execPath || args?.[0] !== ${JSON.stringify(entry)} || args[1] !== '__stimd' ||
+      options?.cwd !== ${JSON.stringify(join(home, 'run'))} || !options.detached) return spawn(command, args, options);
+  const child = spawn(command, ['--import', ${JSON.stringify(daemonGate)}, ...args], {
+    ...options, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  if (!child.pid) return child;
+  const processToken = captureProcessToken(child.pid);
+  if (!processToken) {
+    child.kill();
+    throw new Error('Could not record the replacement stimd identity');
+  }
+  const record = join(${JSON.stringify(launches)}, child.pid + '.json');
+  writeFileSync(record + '.tmp', JSON.stringify({ pid: child.pid, processToken }));
+  renameSync(record + '.tmp', record);
+  child.send('start', (error) => { if (error) child.kill(); });
+  return child;
+};
+`,
+    );
+    const replacementRecords = (): { pid: number; processToken: string }[] =>
+      readdirSync(launches)
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => JSON.parse(readFileSync(join(launches, file), 'utf8')));
+
+    vi.stubEnv('ANDROID_HOME', sdk);
+    vi.stubEnv('ANDROID_SDK_ROOT', sdk);
+    vi.stubEnv('PATH', [adbDir, process.env.PATH].join(delimiter));
+    mkdirSync(adbDir, { recursive: true });
+    mkdirSync(join(sdk, 'build-tools', '35.0.0'), { recursive: true });
+    writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'fixture'\n");
+    writeFileSync(join(root, '.stim.json'), '{"optimizations":{"android":{"compilerCache":"none"}}}');
+    writeFileSync(join(sdk, 'build-tools', '35.0.0', 'apksigner'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(
+      join(root, 'gradlew'),
+      `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+const model = process.argv.find(arg => arg.startsWith('-Pstim.native.model='));
+if (!model) process.exit(0);
+const apk = path.join(__dirname, 'app.apk');
+fs.writeFileSync(apk, 'fixture bytes');
+const output = model.slice('-Pstim.native.model='.length);
+fs.mkdirSync(path.dirname(output), { recursive: true });
+fs.writeFileSync(output, JSON.stringify({ schema: 1, module: ':app', variant: 'debug',
+  applicationId: 'com.fixture.app', sdkDirectory: process.env.ANDROID_HOME, elements: [{ path: apk, filters: [] }] }));
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(adbDir, 'adb'),
+      `#!/bin/sh
+case "$1" in
+  devices) printf 'List of devices attached\\n${device}\\tdevice\\n' ;;
+  -s) case "$5" in
+    ro.product.cpu.abi) echo arm64-v8a ;;
+    ro.product.model) echo 'fixture phone' ;;
+  esac ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const held = takeLease({ root: other, platform: 'android', id: device, kind: 'run', durationMs: 60_000 });
+    assert(held.status === 'taken');
+    const first = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
+    const firstExit = once(first, 'exit');
+    let command: { child: ChildProcess; exited: Promise<unknown> } | undefined;
+    retainFixture = true;
+    try {
+      await vi.waitFor(() => expect(stimdPid()).toBe(first.pid), { timeout: 15_000, interval: 50 });
+      const cli = spawn(
+        process.execPath,
+        ['--import', cliPreload, entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
+        {
+          cwd: root,
+          env: { ...process.env, STIM_TRACE: trace },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      command = { child: cli, exited: once(cli, 'exit') };
+      let output = '';
+      cli.stdout?.on('data', (chunk) => (output += String(chunk)));
+      cli.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
+      await vi.waitFor(() => assert.equal(waitsForHolder(), 1, output), { timeout: 15_000, interval: 25 });
+      assert(first.kill('SIGKILL'));
+      await firstExit;
+      await vi.waitFor(
+        () => {
+          expect(output).toContain(RESTARTED);
+          assert.equal(waitsForHolder(), 2, output);
+        },
+        { timeout: 15_000, interval: 25 },
+      );
+      const [replacement] = replacementRecords();
+      assert(replacement && stimdPid() === replacement.pid);
+      const successor = replacement.pid;
+      assert(cli.kill('SIGINT'));
+      await vi.waitFor(() => assert.equal(cli.exitCode, 130, output), { timeout: 5000, interval: 25 });
+      await vi.waitFor(
+        () =>
+          expect(readFileSync(trace, 'utf8')).toMatch(
+            new RegExp(`"name":"stimd\\.lease\\.acquire"[^\\n]*"pid":${successor}\\}`),
+          ),
+        { timeout: 5000, interval: 25 },
+      );
+      expect(listLeaseFiles().map(({ lease }) => lease?.token)).toEqual([held.lease.token]);
+      releaseRunLease({ root: other, platform: 'android', token: held.lease.token });
+      expect(listLeaseFiles()).toEqual([]);
+    } finally {
+      if (first.exitCode === null && first.signalCode === null) first.kill('SIGKILL');
+      const cli = command?.child;
+      if (cli?.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
+      await Promise.all([firstExit, command?.exited]);
+      await Promise.all(
+        replacementRecords().map(async (owner) => {
+          if (inspectProcessIdentity(owner) === 'same') {
+            try {
+              process.kill(owner.pid, 'SIGKILL');
+            } catch (error) {
+              if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+            }
+          }
+          assert(await waitForProcessExit(owner, 5000), `Replacement stimd ${owner.pid} did not exit in ${home}.`);
+        }),
+      );
+      retainFixture = false;
+    }
+  }, 80_000);
 
   test('a resume that meets the crash hold fails at once with the hold and its remedy', async () => {
     const other = workspace('other');
