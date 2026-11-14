@@ -5353,6 +5353,67 @@ describe('a recorded build', () => {
     },
   );
 
+  test.each([true, false])(
+    'installed-only revival preserves the last build and ledger, launch succeeds=%s',
+    async (launches) => {
+      reserve();
+      const baseline = lastBuildRecord({
+        startedAt: '2026-10-06T12:00:00Z',
+        fingerprint: 'previous',
+        cacheKey: 'previous-key',
+        cacheHit: 'local',
+        status: 'ok',
+        appPath: join(root, 'build', 'Fixture.app'),
+      });
+      writeLastBuild(root, baseline);
+      const previousState = readWorkspaceState(root);
+      const previousLedger = readBuildLedger();
+      expect(previousLedger).toHaveLength(1);
+      const container = join(root, 'device', 'Fixture.app');
+      mkdirSync(container, { recursive: true });
+      const { exitCode, logs } = await run(
+        { json: true, installedApp: { appId: 'dev.fixture.app', kind: 'embedded-js' } },
+        {
+          installedIosApp: async () => container,
+          ...(launches
+            ? {}
+            : {
+                launchIosApp: async () => ({
+                  failed: true,
+                  code: 'STIM_LAUNCH_FAILED',
+                  reason: 'fixture launch failure',
+                }),
+              }),
+        },
+      );
+      expect(exitCode).toBe(launches ? null : 1);
+      expect(parseFirst(logs)).toMatchObject(launches ? { launched: true } : { code: 'STIM_LAUNCH_FAILED' });
+      const state = readWorkspaceState(root);
+      expect(state?.lastBuild).toEqual(previousState?.lastBuild);
+      expect(state?.lastIosBuild).toEqual(previousState?.lastIosBuild);
+      expect(readBuildHistory(state)).toEqual(readBuildHistory(previousState));
+      expect(readBuildLedger()).toEqual(previousLedger);
+    },
+  );
+
+  test('installed-only revival uses the owned simulator instead of installing a newly configured runtime', async () => {
+    reserve();
+    const container = join(root, 'device', 'Fixture.app');
+    mkdirSync(container, { recursive: true });
+    const ensureIosRuntime = vi.fn<NonNullable<IosDeps['ensureIosRuntime']>>();
+    const { exitCode, calls } = await run(
+      { json: true, installedApp: { appId: 'dev.fixture.app', kind: 'embedded-js' }, expectedDevice: UDID },
+      {
+        resolveSettings: () => ({ ios: { runtime: '99.0', autoInstallRuntime: true } }),
+        installedIosApp: async () => container,
+        ensureIosRuntime,
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(ensureIosRuntime).not.toHaveBeenCalled();
+    expect(calls.args.ensureOwnedDevice).toMatchObject({ flags: { expectedDevice: UDID, runtime: null } });
+  });
+
   test('no longer installed on the owned simulator is refused with STIM_NO_RECORDED_BUILD naming stim ios', async () => {
     reserve();
     const { exitCode, logs, calls } = await run(

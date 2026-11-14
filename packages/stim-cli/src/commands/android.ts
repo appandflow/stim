@@ -1115,7 +1115,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const localRefusal = await localRunRefusal(
     budget.refusal,
     target,
-    () => slotKeepsAvd(root, slot),
+    () => Boolean(expectedDevice) || slotKeepsAvd(root, slot),
     () =>
       (options.ensureImage ?? ensureSystemImage)({
         requested: target.kind === 'emulator' ? target.systemImage : null,

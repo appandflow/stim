@@ -5036,6 +5036,37 @@ describe('reviving the installed Android app', () => {
     expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
   });
 
+  test.each([{ missing: true }, { notOwned: true }] as const)(
+    'refuses before fallback if the owned AVD stops resolving (%j)',
+    async (resolved) => {
+      const avdName = 'stim-app-412';
+      const avds = join(root, 'avds');
+      mkdirSync(join(avds, `${avdName}.avd`), { recursive: true });
+      vi.stubEnv('ANDROID_AVD_HOME', avds);
+      const resolveAvd = vi.spyOn(androidDevices, 'resolveOwnedAvdSerialAsync').mockResolvedValue(resolved);
+      const create = vi.spyOn(androidDevices, 'createOwnedAvd').mockImplementation(never('AVD creation'));
+      try {
+        const assignment = { avdName, owned: true, consolePort: 5584 };
+        setDevice(root, 'android', assignment);
+        const h = harness({
+          installedApp: { appId: 'dev.installed', kind: 'process' },
+          expectedDevice: avdName,
+          ensureDevice: ensureOwnedDevice,
+          ensureDeviceBooted: never('a boot'),
+          build: never('a build'),
+        });
+        expect(await h.run()).toMatchObject({ ok: false, error: { code: 'STIM_DEVICE_LOST' } });
+        expect(resolveAvd).toHaveBeenCalledWith(avdName, { preferredSerial: 'emulator-5584' });
+        expect(create).not.toHaveBeenCalled();
+        expect(getProject(root)?.platforms?.android).toEqual(assignment);
+      } finally {
+        create.mockRestore();
+        resolveAvd.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   test('an uninstalled package gives the native launch command', async () => {
     const { result, calls } = await reviveInstalled('process', false);
     expect(result).toMatchObject({

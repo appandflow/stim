@@ -459,6 +459,12 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
   return d;
 }
 
+function iosRunDeviceSelectors(opts: IosCommandOptions, settings: Parameters<typeof resolveDeviceType>[1]) {
+  return opts.installedApp
+    ? { deviceType: null, runtime: null }
+    : { deviceType: resolveDeviceType(opts.deviceType, settings), runtime: resolveRuntime(opts.runtime, settings) };
+}
+
 function iosRunMode(
   opts: IosCommandOptions,
   settings: Parameters<typeof resolveConfiguration>[1],
@@ -585,7 +591,8 @@ async function runIos(
     build: BuildFailureFields,
     errorCode?: string,
     why: { message?: string | null; remedy?: string | null } = {},
-  ) =>
+  ) => {
+    if (opts.installedApp) return;
     writeLastBuild(
       root,
       lastBuildRecord({
@@ -600,6 +607,7 @@ async function runIos(
         durationMs: elapsed(),
       }),
     );
+  };
 
   const fail = ({
     retainedClaimRoots,
@@ -714,8 +722,7 @@ async function runIos(
     integration.runtimeKind(configuration) === 'embedded-js',
   );
 
-  const deviceType = resolveDeviceType(opts.deviceType, settings);
-  const runtime = resolveRuntime(opts.runtime, settings);
+  const { deviceType, runtime } = iosRunDeviceSelectors(opts, settings);
 
   const deviceFlag = opts.device;
   const physical = isPhysicalDeviceRequest(deviceFlag);
@@ -1475,6 +1482,7 @@ async function runIos(
           lanOriginUrl,
           remoteDevice,
           cleanAppState: Boolean(opts.cleanAppState),
+          installedOnly: Boolean(opts.installedApp),
           bootPromise,
           bootDuration: () => bootDuration,
           bootPending: () => bootPending,

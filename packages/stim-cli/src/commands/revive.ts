@@ -517,7 +517,7 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
   return defineOp({
     name: 'revive',
     description:
-      'Resume this workspace after an idle stop: restart its Metro, boot the owned simulator or emulator the app last ran on, and relaunch that app from cold. Never builds, and never starts or boots what the workspace did not have.',
+      'Resume an idle-stopped workspace or relaunch an installed Release React Native or native app. Revive uses the recorded owned device and never builds.',
     options: {
       json: {
         flags: '--json',

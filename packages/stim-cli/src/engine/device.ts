@@ -13,6 +13,10 @@ import type { DeviceSlotWaitPolicy } from './device-capacity.ts';
 import { ensureIosBooted, ensureOwnedIosDevice, type IosBoot } from './device-ios.ts';
 import { ANDROID_BOOT_TIMEOUT_MS, ensureAndroidBooted, ensureOwnedAndroidDevice } from './device-android.ts';
 
+import { RecordedDeviceLostError } from './recorded-device.ts';
+
+export { RecordedDeviceLostError } from './recorded-device.ts';
+
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
   deviceName?: string;
@@ -89,17 +93,6 @@ export interface DeviceFlags {
 }
 
 export type Notify = (msg: string) => void;
-
-export class RecordedDeviceLostError extends Error {
-  readonly code = 'STIM_DEVICE_LOST';
-  readonly remedy: string;
-  constructor(platform: string, expected: string, why: string) {
-    super(
-      `${platform === 'ios' ? 'Simulator' : 'Emulator'} ${expected} ${why}, and this run may not create or adopt another device.`,
-    );
-    this.remedy = `Run \`stim ${platform}\` (with \`--slot\` for a named slot); it boots or creates this workspace's owned device and launches the app.`;
-  }
-}
 
 function recordedDeviceId(platform: string, record: OwnedDeviceRecord | null): string | undefined {
   return platform === 'ios' ? record?.deviceUdid : record?.avdName;

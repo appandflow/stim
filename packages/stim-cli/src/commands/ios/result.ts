@@ -251,6 +251,7 @@ export interface ReportIosResultArgs {
   appPath: string | null;
   bundleId: string;
   installSkipped: boolean;
+  installedOnly?: boolean;
   elapsed: () => number;
   startedAt: string;
   storeHash: string | null;
@@ -295,6 +296,7 @@ export function reportIosResult({
   appPath,
   bundleId,
   installSkipped,
+  installedOnly = false,
   elapsed,
   startedAt,
   storeHash,
@@ -322,31 +324,32 @@ export function reportIosResult({
   const note = (line: string) => output('stderr', `${line}\n`);
   const durationMs = elapsed();
   recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs, offloadedTo });
-  writeLastBuild(
-    root,
-    lastBuildRecord({
-      devicePlacement,
-      fingerprint: storeHash,
-      cacheKey: storeKey,
-      cacheHit,
-      cacheSkipped: !useBuildCache,
-      missReason,
-      durationMs,
-      appPath,
-      bundleId,
-      startedAt,
-      status: 'ok',
-      configuration: configuration ?? 'Debug',
-      buildMachine,
-      builtOn,
-      offloadedTo,
-      offloadFallback,
-      ledger: {
-        scheme: buildScheme,
-        device: iosLedgerDevice(device),
-      },
-    }),
-  );
+  if (!installedOnly)
+    writeLastBuild(
+      root,
+      lastBuildRecord({
+        devicePlacement,
+        fingerprint: storeHash,
+        cacheKey: storeKey,
+        cacheHit,
+        cacheSkipped: !useBuildCache,
+        missReason,
+        durationMs,
+        appPath,
+        bundleId,
+        startedAt,
+        status: 'ok',
+        configuration: configuration ?? 'Debug',
+        buildMachine,
+        builtOn,
+        offloadedTo,
+        offloadFallback,
+        ledger: {
+          scheme: buildScheme,
+          device: iosLedgerDevice(device),
+        },
+      }),
+    );
   closeWriter();
 
   const facts = iosFacts({

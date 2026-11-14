@@ -66,6 +66,17 @@ A byte check is the condition for skipping install.
 [LLP 0010](./0010-hosted-devices.decision.md#resume-the-recorded-session)
 describes hosted parking and adoption.
 
+## Revive an installed app
+
+For a recorded Release React Native or native-process launch, `stim revive`
+boots the same owned local device through normal admission and opens the app
+already installed there. This lets a workspace resume after idle cleanup
+removes its build outputs without reinstalling or starting Metro for that app.
+Revive checks that the same simulator or AVD is still owned; a missing device
+does not trigger creation or adoption. If the app is missing, revive names
+the platform launch command with the recorded slot.
+[Maintainer decision](https://github.com/appandflow/stim/issues/5486#issuecomment-6864811222).
+
 ## Unused runtimes and unavailable simulators
 
 Unused simulator runtimes are the exception to per-home device ownership.
