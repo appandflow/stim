@@ -204,18 +204,23 @@ test('an Exact app that declares native modules builds next to a simulator the b
   ]);
 });
 
-test("the app's relative path to exact2 reaches this machine's checkout from inside the build area", async () => {
-  const exact2 = realpathSync(join(home, '.exact', 'exact2', sha));
+test("the app's relative path to exact2 holds a checkout of the pinned commit inside the build area", async () => {
+  const placed = (dir: string) => {
+    expect(lstatSync(dir).isDirectory()).toBe(true);
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(sha);
+  };
   const { result, area } = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
     { link: '../../.exact/exact2/scroll-zoom' },
   );
   expect(result).toMatchObject({ ok: false, code: 'exact-build-failed' });
-  expect(realpathSync(join(area, 'checkout', 'shop-app', '../../.exact/exact2/scroll-zoom'))).toBe(exact2);
+  const at = join(realpathSync(area), '.exact', 'exact2', 'scroll-zoom');
+  placed(at);
+  expect(readFileSync(join(area, 'checkout', 'shop-app', 'env-seen.txt'), 'utf8')).toContain(`EXACT2=${at}\n`);
 
   const sibling = await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link: '../exact2' });
   expect(sibling.result).toMatchObject({ ok: false, code: 'exact-build-failed' });
-  expect(realpathSync(join(area, 'checkout', 'exact2'))).toBe(exact2);
+  placed(join(area, 'checkout', 'exact2'));
 
   const worktree = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
@@ -224,13 +229,14 @@ test("the app's relative path to exact2 reaches this machine's checkout from ins
   expect(worktree.result).toMatchObject({ ok: false, code: 'exact-build-failed' });
   expect(readlinkSync(join(area, 'src'))).toBe(join('checkout', 'up', 'up', 'shop-app'));
   expect(existsSync(join(area, 'src', 'env-seen.txt'))).toBe(true);
-  expect(realpathSync(join(area, '.exact', 'exact2', 'scroll-zoom'))).toBe(exact2);
+  placed(at);
 
-  for (const link of ['../../src/x', '../../home/exact2'])
+  mkdirSync(join(area, 'checkout', 'stray'));
+  for (const link of ['../../src/x', '../../home/exact2', '../stray'])
     expect((await build({ 'exact.mjs': LAUNCHER, 'app.json': '{}' }, { link })).result).toMatchObject({
       ok: false,
       code: 'exact-tools',
-      message: /cannot place inside its build area/,
+      message: /cannot place inside its build area|not an exact2 checkout this machine made/,
     });
 });
 

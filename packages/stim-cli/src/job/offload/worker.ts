@@ -1148,12 +1148,16 @@ function inside(dir: string, path: string): boolean {
 
 const AREA_ENTRIES = new Set(['src', 'checkout', 'home', 'out', 'cache', 'area.json', 'fingerprint-work']);
 
+const EXACT2_SOURCE = 'stim.exact2-source';
+
 /**
- * Makes the app's relative path to exact2 reach this machine's checkout: Exact's Cargo manifests name exact2's crates by
- * that path, which from a checkout in the build area resolves inside the area. It never lands in the app, on one of the
- * area's own entries, or through a link out of the area. Returns why it cannot.
+ * Puts a checkout of exact2 at the app's relative path to it, inside the build area: Exact's Cargo manifests name
+ * exact2's crates by that path, and Exact names each compiler input by its place under the exact2 directory it runs
+ * from (exact2 `scripts/app.mjs` `nameOf`), which Bun resolves through links, so the path holds a real checkout. It
+ * shares this machine's checkout's objects, and never lands in the app, on one of the area's own entries, or outside
+ * the area. Returns why it cannot.
  */
-function linkExact2(area: string, root: string, link: string, checkout: string): string | null {
+function placeExact2(area: string, root: string, link: string, checkout: string, commit: string): string | null {
   const realArea = realpathSync(area);
   const at = resolvePath(root, link);
   const top = relative(realArea, at).split(sep)[0] ?? '';
@@ -1170,14 +1174,21 @@ function linkExact2(area: string, root: string, link: string, checkout: string):
     inside(join(realArea, 'home'), realParent)
   )
     return `the app names exact2 at ${link}, which this machine cannot place inside its build area`;
-  const stat = lstatSync(at, { throwIfNoEntry: false });
-  const target = stat?.isSymbolicLink() ? readlinkSync(at) : null;
-  if (target === checkout) return null;
-  if (stat && (target === null || !inside(dirname(checkout), target)))
-    return `${at} is not a link to exact2 this machine made`;
-  mkdirSync(dirname(at), { recursive: true });
-  rmSync(at, { force: true });
-  symlinkSync(checkout, at);
+  if (lstatSync(at, { throwIfNoEntry: false })) {
+    const source = gitQuiet(area, ['config', '--file', join(at, '.git', 'config'), '--get', EXACT2_SOURCE]);
+    if (source === null) return `${at} is not an exact2 checkout this machine made`;
+    if (source !== checkout) rmSync(at, { recursive: true, force: true });
+  }
+  if (!existsSync(at)) {
+    mkdirSync(dirname(at), { recursive: true });
+    git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, at], {
+      write: true,
+      timeoutMs: 120_000,
+    });
+    git(at, ['config', EXACT2_SOURCE, checkout], { write: true });
+  }
+  if (gitQuiet(at, ['rev-parse', 'HEAD']) !== commit)
+    git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
   return null;
 }
 
@@ -1258,7 +1269,7 @@ async function compileExact(
       message: `Exact's toolchain is incomplete here: ${missing.map((problem) => problem.reason).join('; ')}.`,
     };
   const checkout = exactCheckoutDir(exact);
-  const unplaced = exact.link ? linkExact2(job.area, root, exact.link, checkout) : null;
+  const unplaced = exact.link ? placeExact2(job.area, root, exact.link, checkout, exact.exact2) : null;
   if (unplaced) return { ok: false, code: 'exact-tools', message: `${unplaced}.` };
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env))
@@ -1271,6 +1282,7 @@ async function compileExact(
     )
       env[key] = value;
   Object.assign(env, exact.env, { EXACT2: checkout });
+  if (exact.link) env.EXACT2 = resolvePath(root, exact.link);
   delete env.EXACT_SIM;
   for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
   let made: string | null = null;
