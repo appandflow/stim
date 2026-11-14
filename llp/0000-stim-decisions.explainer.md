@@ -43,7 +43,8 @@ Keep history in the issue and commits.
 
 The [LLP planned work workflow](../.github/workflows/llp-planned.yml) checks
 these numbers against GitHub weekly and on demand. A failure names the file
-and line to update. For Planned work, local lint checks the marker format.
+and line to update. The workflow is advisory, including when run on a pull
+request branch. For Planned work, local lint checks the marker format.
 Maintainer decision: "yes to rest", 2026-11-12.
 [Decision trial follow-up](https://github.com/appandflow/stim/issues/5532#issuecomment-6819290752).
 
