@@ -16,11 +16,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isJsonObject, stimdRecordFile } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { stopDeviceLogStream } from '../daemon/client.ts';
 import { daemonFindings, daemonStatus, unverifiedLines } from '../daemon/status.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { claimPath, consoleExitFile } from '../stimd/logs/claim.ts';
+import { registerCollector } from '../stimd/logs/state.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as groupStop from '../stimd/metro/group-stop.ts';
@@ -235,6 +236,51 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
     }
   }, 30_000);
 
+  test('an unresolved claim at startup is reported only for a recorded physical console', async () => {
+    const consoleId = 'unknown-console';
+    const ordinaryId = 'unknown-simulator';
+    const consoleRoot = claimPath(root, consoleId);
+    for (const [slot, id] of [
+      ['ios', consoleId],
+      ['ios:qa', ordinaryId],
+    ] as const) {
+      const claim = tryAcquireClaim({
+        root: claimPath(root, id),
+        mode: 'exclusive',
+        details: { streamId: id },
+      }).acquired;
+      assert(claim);
+      writeFileSync(claim.path, JSON.stringify({ ...claim, owner: { ...claim.owner, processToken: 'bad-token' } }));
+      expect(readClaimSet(claimPath(root, id)).unresolved).toHaveLength(1);
+      registerCollector(root, slot, {
+        kind: 'stream',
+        streamId: id,
+        ...(id === ordinaryId
+          ? { spec: { root, platform: 'ios', udid: 'U2', bundleId: 'com.test.app', appName: 'Test' } }
+          : {}),
+      });
+    }
+    const streams = createStreams(() => {});
+    try {
+      streams.resume([root], env);
+      await vi.waitFor(() =>
+        expect(streams.unverifiedConsoles()).toEqual([
+          expect.objectContaining({
+            kind: 'console',
+            message: expect.stringContaining(consoleRoot),
+            remedy: expect.stringContaining('its process identity token does not decode'),
+          }),
+        ]),
+      );
+      expect(readClaimSet(consoleRoot).unresolved).toHaveLength(1);
+      expect(existsSync(launches)).toBe(false);
+      rmSync(consoleRoot, { recursive: true });
+      await vi.waitFor(() => expect(streams.unverifiedConsoles()).toEqual([]), { timeout: 5000 });
+    } finally {
+      await streams.close();
+    }
+  }, 15_000);
+
   test('a console whose predecessor still runs past the wait is refused by name, then taken over once it exits', async () => {
     const stimd = spawn(process.execPath, ['--input-type=module', '-e', STIMD(root)], {
       env,
@@ -248,6 +294,9 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
     const { streamId } = started;
     await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
     const { helper } = claimed(streamId);
+    const holder = readClaimSet(claimPath(root, streamId)).live[0];
+    assert(holder);
+    const claimText = readFileSync(holder.path, 'utf8');
     upsertProject(root, {});
     const before = new Set(process.listeners('SIGTERM'));
     const successor = runStimd({ mode: 'on', tickMs: 60_000 });
@@ -277,6 +326,13 @@ describe.skipIf(process.platform === 'win32')('the physical iPhone console helpe
         error: expect.stringContaining(claimPath(root, streamId)),
         remedy: expect.stringContaining(`pid ${stimd.pid}`),
       });
+      writeFileSync(holder.path, '{');
+      await vi.waitFor(() => expect(daemonStatus().unverified?.[0]?.remedy).toContain('is unresolved'), {
+        timeout: 5000,
+      });
+      expect(daemonStatus().unverified?.[0]?.since).toBe(waiting.unverified?.[0]?.since);
+      expect(inspectProcessIdentity(helper)).toBe('same');
+      writeFileSync(holder.path, claimText);
       const predecessorExit = once(stimd, 'exit');
       stimd.kill('SIGKILL');
       await predecessorExit;

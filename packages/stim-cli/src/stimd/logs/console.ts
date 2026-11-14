@@ -15,6 +15,7 @@ import {
   updateClaimDetails,
   type ClaimHandle,
   type ClaimHolder,
+  type ClaimSurvey,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
@@ -305,8 +306,11 @@ export async function stopConsole(entry: ConsoleStream): Promise<void> {
 }
 
 /** The claim holder of stream `streamId` that names a console helper, or null for any other stream. */
-export function consoleHolder(root: string, streamId: string): ClaimHolder | null {
-  const survey = readClaimSet(claimPath(root, streamId));
+export function consoleHolder(
+  root: string,
+  streamId: string,
+  survey: ClaimSurvey = readClaimSet(claimPath(root, streamId)),
+): ClaimHolder | null {
   return (
     [...survey.live, ...survey.dead].find(
       (holder) => holder.details.streamId === streamId && identityOf(holder.details.helper) !== null,

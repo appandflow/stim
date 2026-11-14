@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import {
   isJsonObject,
   readDevServerStop,
+  workspaceStateFile,
   type DevServerStopRecord,
   type UnverifiedConsole,
 } from '@stim-cli/core/state';
@@ -19,6 +20,7 @@ import {
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
+  readClaimSet,
   releaseClaim,
   setClaimChild,
   type ClaimHandle,
@@ -449,6 +451,10 @@ const streamRecord = (streamId: string, spec: StreamSpec, runId: string | undefi
   spec,
   ...(runId ? { runId } : {}),
 });
+
+// The physical iPhone collector omits its launch spec (LLP 0018). This identifies a diagnostic, never a claim holder.
+const isConsoleRecord = (slotKey: string, record: Record<string, unknown>): boolean =>
+  parseDeviceSlotKey(slotKey)?.platform === 'ios' && record.spec === undefined && record.handover !== true;
 
 const stopStimdRemedy = () =>
   process.platform === 'win32'
@@ -1160,6 +1166,20 @@ export function createStreams(
     sink.writer.write(record);
     await sink.closed();
   };
+  const refuseConsole = (root: string, slotKey: string, id: string, reason: string): void => {
+    const key = `${root}\0${slotKey}`;
+    const pending = untaken.get(key);
+    if (pending?.id === id && pending.reason === reason) return;
+    ownedLog(
+      'warn',
+      'device_log_stream_unverified',
+      `device console ${id} in ${root} was not taken over (claim ${claimPath(root, id)}): ${reason}`,
+    );
+    if (pending?.id === id) pending.reason = reason;
+    else untaken.set(key, { root, slotKey, id, reason, since: new Date().toISOString(), retrying: false });
+    reportConsoleChange();
+    watchConsoles();
+  };
   /**
    * Takes over a physical iPhone console whose helper an earlier stimd started, once that stimd is gone; a predecessor
    * still exiting gets `waitMs`. A console that ended meanwhile is settled from what its helper recorded. A console that
@@ -1170,42 +1190,28 @@ export function createStreams(
     root: string,
     slotKey: string,
     id: string,
-    holder: ClaimHolder,
+    holder: ClaimHolder | null,
     waitMs: number,
   ): Promise<void> => {
-    for (
-      const deadline = Date.now() + waitMs;
-      inspectProcessIdentity(holder.owner) === 'same' && Date.now() < deadline;
-    )
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    if (holder)
+      for (
+        const deadline = Date.now() + waitMs;
+        inspectProcessIdentity(holder.owner) === 'same' && Date.now() < deadline;
+      )
+        await new Promise((resolve) => setTimeout(resolve, 100));
     const key = `${root}\0${slotKey}`;
-    const owner = streamOwnerGone(root, id);
-    const current = consoleHolder(root, id);
+    const survey = readClaimSet(claimPath(root, id));
+    const owner = streamOwnerGone(root, id, survey);
+    const current = consoleHolder(root, id, survey);
+    const record = readCollectors(root)[slotKey];
     const entry = !owner.gone
       ? owner.reason
-      : current
-        ? adoptConsole(root, id, current)
-        : `its claim at ${holder.path} changed`;
-    if (typeof entry === 'string') {
-      const pending = untaken.get(key);
-      if (pending?.reason !== entry)
-        ownedLog(
-          'warn',
-          'device_log_stream_unverified',
-          `device console ${id} in ${root} was not taken over (claim ${claimPath(root, id)}): ${entry}`,
-        );
-      untaken.set(key, {
-        root,
-        slotKey,
-        id,
-        reason: entry,
-        since: pending?.since ?? new Date().toISOString(),
-        retrying: pending?.retrying ?? false,
-      });
-      if (pending?.reason !== entry) reportConsoleChange();
-      watchConsoles();
-      return;
-    }
+      : !current
+        ? `its claim at ${claimPath(root, id)} does not identify a console helper`
+        : isJsonObject(record) && record.streamId === id
+          ? adoptConsole(root, id, current)
+          : `the workspace no longer has a readable record for console ${id}. Inspect the claim at ${claimPath(root, id)}`;
+    if (typeof entry === 'string') return refuseConsole(root, slotKey, id, entry);
     const cleared = untaken.delete(key);
     consoles.set(key, entry);
     if (cleared) reportConsoleChange();
@@ -1225,10 +1231,15 @@ export function createStreams(
    * the record is settled; false leaves the record to the claim recovery of any other stream.
    */
   const stopUntabledConsole = async (root: string, slotKey: string, id: string): Promise<boolean> => {
-    const holder = consoleHolder(root, id);
-    if (!holder) return false;
-    await takeOverConsole(root, slotKey, id, holder, 0);
+    const survey = readClaimSet(claimPath(root, id));
+    const holder = consoleHolder(root, id, survey);
     const key = `${root}\0${slotKey}`;
+    const recorded = readCollectors(root)[slotKey];
+    const unresolvedConsole =
+      survey.unresolved.length > 0 &&
+      (untaken.get(key)?.id === id || (isJsonObject(recorded) && isConsoleRecord(slotKey, recorded)));
+    if (!holder && !unresolvedConsole) return false;
+    await takeOverConsole(root, slotKey, id, holder, 0);
     const entry = consoles.get(key);
     if (entry?.id === id) {
       await settleConsoleAt(key, entry, true);
@@ -1242,21 +1253,29 @@ export function createStreams(
         ),
         { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Resolve this, then run the command again: ${refused.reason}` },
       );
-    const recorded = readCollectors(root)[slotKey];
-    return !(isJsonObject(recorded) && recorded.streamId === id);
+    const remaining = readCollectors(root)[slotKey];
+    return !(isJsonObject(remaining) && remaining.streamId === id);
   };
   /** Tries again to take over a console an earlier attempt could not, while its record still names it. */
   const retakeConsole = async (key: string, pending: { root: string; slotKey: string; id: string }): Promise<void> => {
     if (untaken.get(key)?.id !== pending.id || consoles.has(key)) return;
-    const recorded = readCollectors(pending.root)[pending.slotKey];
-    const holder = consoleHolder(pending.root, pending.id);
-    if (!holder || !(isJsonObject(recorded) && recorded.streamId === pending.id)) {
-      untaken.delete(key);
-      reportConsoleChange();
-      unwatchConsoles();
+    const { root, slotKey, id } = pending;
+    const state = readWorkspaceState(root);
+    const recorded = state?.collectors?.[slotKey];
+    const survey = readClaimSet(claimPath(root, id));
+    if (survey.unresolved.length) {
+      const owner = streamOwnerGone(root, id, survey);
+      if (!owner.gone) refuseConsole(root, slotKey, id, owner.reason);
       return;
     }
-    await takeOverConsole(pending.root, pending.slotKey, pending.id, holder, 0);
+    const holder = consoleHolder(root, id, survey);
+    const gone = !survey.live.length && !survey.dead.length && !survey.orphans.length;
+    const sameRecord = isJsonObject(recorded) && recorded.streamId === id;
+    if (holder && sameRecord) await takeOverConsole(root, slotKey, id, holder, 0);
+    else if (gone && (state !== null || !lstatSync(workspaceStateFile(root), { throwIfNoEntry: false }))) {
+      untaken.delete(key);
+      reportConsoleChange();
+    }
     unwatchConsoles();
   };
   // @ref LLP 0019#a-stream-survives-a-stimd-crash-a-planned-update-and-a-logs-worker-failure -- a stream restarts only when its owner is proven gone
@@ -1285,8 +1304,9 @@ export function createStreams(
       if (live.has(id) || skip.has(id)) continue;
       const handedOver = handedOverStream(record);
       if (!handedOver && typeof record.interruptedAt === 'string') continue;
-      const holder = consoleHolder(root, id);
-      if (holder) {
+      const survey = readClaimSet(claimPath(root, id));
+      const holder = consoleHolder(root, id, survey);
+      if (holder || (survey.unresolved.length > 0 && isConsoleRecord(slotKey, record))) {
         await takeOverConsole(root, slotKey, id, holder, PREDECESSOR_WAIT_MS);
         continue;
       }
@@ -1298,7 +1318,7 @@ export function createStreams(
             ? 'the stimd that captured it exited without stopping it'
             : null;
       if (crashed) {
-        const owner = streamOwnerGone(root, id);
+        const owner = streamOwnerGone(root, id, survey);
         if (!owner.gone) {
           ownedLog(
             'warn',
