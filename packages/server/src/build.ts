@@ -182,6 +182,24 @@ const isMissing = (error: unknown): boolean => error instanceof Error && 'code' 
 
 const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
 
+function areaDevices(area: string): string | null {
+  const home = join(area, 'home');
+  let ledger: unknown;
+  try {
+    ledger = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
+  } catch (error) {
+    if (isMissing(error)) return null;
+    return `its Stim home's device ledger cannot be read: ${String(error)}`;
+  }
+  if (!isJsonObject(ledger)) return "its Stim home's device ledger is malformed";
+  const listed = ['ios', 'android', 'web'].flatMap((kind) => {
+    const ids = ledger[kind];
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  });
+  if (!listed.length) return null;
+  return `its Stim home lists devices it created that are not deleted yet (${listed.join(', ')}); the next Exact build of this repository deletes them; otherwise delete each with xcrun simctl delete <udid>, then delete ${area}`;
+}
+
 async function deletionFailure(dir: string): Promise<string | null> {
   try {
     await rm(dir, { recursive: true, force: true, maxRetries: 10 });
@@ -551,6 +569,13 @@ export class BuildWorkerRoot {
         return;
       }
     }
+    for (const area of areas.filter((name) => !name.endsWith('.claims'))) {
+      const devices = areaDevices(join(clientDir, 'repos', area));
+      if (devices) {
+        console.error(`stim-server: retaining the build area of ${client}; ${area}: ${devices}.`);
+        return;
+      }
+    }
     if (process.platform === 'win32') await this.sweepDaemons(client);
     if (process.platform === 'win32') {
       const repos = join(clientDir, 'repos');
@@ -817,6 +842,11 @@ export class BuildWorkerRoot {
     const claims = `${area}.claims`;
     const claim = this.areaClaim(client, repo);
     if (typeof claim === 'string') return { kept: claim };
+    const devices = areaDevices(area);
+    if (devices) {
+      releaseClaim(claim);
+      return { kept: devices };
+    }
     const uuid = randomUUID();
     const eviction: Eviction = { id: `${repo}-${uuid}`, repo, uuid };
     const parked = join(this.clientDir(client), EVICTED_DIR, eviction.id);

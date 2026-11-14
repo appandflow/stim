@@ -388,6 +388,25 @@ test('retains an area whose claim is held and removes it once released, naming w
   expect(existsSync(path)).toBe(false);
 });
 
+test('keeps an area whose Stim home lists a device it created, through eviction and revocation', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const ledger = join(path, 'home', 'created-devices.json');
+  mkdirSync(dirname(ledger), { recursive: true });
+  writeFileSync(ledger, JSON.stringify({ version: 1, ios: ['SIM-UDID'], android: [], web: [] }));
+  const host = start();
+  await host.evictAreas();
+  expect(existsSync(path)).toBe(true);
+  expect(logs.filter((line) => /retaining the build area a\/subject: .*SIM-UDID/.test(line))).toHaveLength(1);
+  await host.remove('a');
+  expect(existsSync(path)).toBe(true);
+  expect(logs.join('\n')).toMatch(/retaining the build area of a; subject: .*SIM-UDID/);
+
+  writeFileSync(ledger, JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+  await host.remove('a');
+  expect(existsSync(join(root, 'a'))).toBe(false);
+});
+
 test('an eviction pass reuses the process list across refusals and refreshes it after deletion', async () => {
   area('a', 'newest', 0);
   const removedPath = area('a', 'expired', 30);
