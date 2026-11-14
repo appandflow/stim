@@ -29,6 +29,13 @@ creation failure rolls back the new ledger entry and the workspace's own setup
 reservation if the storage is still available, has no AVD data or registration
 for that name, and the creation process cannot still write it.
 
+When `avdmanager` explicitly refuses an existing AVD name before writing, a
+settled creation attempt drops its new ledger entry and reservation. Neither
+entry proves ownership of the AVD that caused the collision. Local recovery
+requires proof that this home owned the AVD before the attempt. Hosted setup
+also clears its own session device record so a later stop cannot delete the
+existing AVD. [Same-name collisions](https://github.com/appandflow/stim/issues/5731)
+
 Scratch homes and the main home use the same naming convention. Name-based ownership previously let a main-home GC delete devices that agents still owned. The per-home record lets cleanup distinguish those devices even when their names look identical. [Cross-home deletion fix](https://github.com/appandflow/stim/pull/1395), [Ownership recheck](https://github.com/appandflow/stim/pull/4693).
 
 ## Park to reuse the installed app

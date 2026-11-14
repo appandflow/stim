@@ -269,6 +269,15 @@ export function systemImageSupportsFold(pkg: string, home: string = androidHome(
   }
 }
 
+export class AvdNameCollisionError extends Error {
+  readonly recordCleared: boolean;
+
+  constructor(message: string, recordCleared: boolean, cause?: Error) {
+    super(message, { cause });
+    this.recordCleared = recordCleared;
+  }
+}
+
 export async function createOwnedAvd(
   label: string,
   {
@@ -355,15 +364,31 @@ export async function createOwnedAvd(
     throw error;
   });
   if (result.code !== 0) {
+    const failure = new Error(
+      `Command failed: ${tool} ${args.join(' ')} (${result.signal ?? result.code})\n${stderr.trim()}`,
+    );
+    let detachedGroupGone = false;
     if (result.code !== null && detached && process.platform !== 'win32' && child.pid !== undefined) {
       // A wrapper can exit while an avdmanager descendant still writes the AVD.
       try {
         process.kill(-child.pid, 0);
       } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') await forgetFailedCreation();
+        detachedGroupGone = error instanceof Error && 'code' in error && error.code === 'ESRCH';
       }
     }
-    throw new Error(`Command failed: ${tool} ${args.join(' ')} (${result.signal ?? result.code})\n${stderr.trim()}`);
+    // avdmanager reports this exact error before writing an AVD when --force is absent.
+    if (
+      result.code === 1 &&
+      stderr.split(/\r?\n/).some((line) => line.trim() === `Error: Android Virtual Device '${avdName}' already exists.`)
+    ) {
+      const cleared =
+        recorded &&
+        (detachedGroupGone || !detached || process.platform === 'win32') &&
+        (await forgetCreatedDeviceAsync('android', avdName).catch(() => false));
+      throw new AvdNameCollisionError(`AVD ${avdName} already exists.`, cleared, failure);
+    }
+    if (detachedGroupGone) await forgetFailedCreation();
+    throw failure;
   }
   return { avdName, systemImage: pick.pkg, deviceProfile };
 }

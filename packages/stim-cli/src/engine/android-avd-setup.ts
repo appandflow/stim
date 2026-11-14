@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
+import { isStimOwnedAvd } from '../devices/device-ownership.ts';
 import { clearDevice, loadConfig, setDevice, withConfigLockAsync } from '../workspace/config.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
@@ -17,6 +18,7 @@ import { getExecutor } from '../exec.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import {
   assertOwnedAvdStoppedAsync,
+  AvdNameCollisionError,
   createOwnedAvd,
   listAvdsAsync,
   ownedAvdDeviceProfile,
@@ -101,14 +103,15 @@ export async function prepareOwnedAvd({
       poolConfiguration: configuration,
     };
     try {
+      const previouslyOwned = isStimOwnedAvd(avdName);
       setDevice(projectPath, 'android', reservation, slot);
-      return { claim, reservation, previous, avdName };
+      return { claim, reservation, previous, avdName, previouslyOwned };
     } catch (error) {
       releaseClaim(claim);
       throw error;
     }
   });
-  const { claim, reservation, previous, avdName } = allocation;
+  const { claim, reservation, previous, avdName, previouslyOwned } = allocation;
   const currentRecord = () => deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
   const assertReservation = () => {
     if (readParked('android').some((entry) => entry.name === avdName)) {
@@ -177,19 +180,28 @@ export async function prepareOwnedAvd({
       if ('error' in creation) throw creation.error;
       prepared = { ...creation.result, created: true };
     } catch (error) {
-      const message = String((error as Error)?.message || error);
       if (creationRecordCleared) {
         await releaseReservation();
         throw error;
       }
-      if (!message.includes('already exists')) {
+      if (!(error instanceof AvdNameCollisionError)) {
         if (!spawnAttempted) await releaseReservation();
         throw error;
+      }
+      if (!previouslyOwned) {
+        if (error.recordCleared) await releaseReservation();
+        throw new AvdRecoveryError(
+          `AVD ${avdName} already exists without prior ownership in this Stim home.`,
+          error.recordCleared
+            ? 'Keep the existing AVD and retry with `npx stim android --slot <name>` to select a different name.'
+            : 'Leave the AVD and its reservation in place. Resolve the creation or ledger state before retrying this slot.',
+          error,
+        );
       }
       try {
         if (!(await listAvdsAsync()).includes(avdName)) {
           throw new AvdRecoveryError(
-            `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
+            `AVD ${avdName} already exists on disk but is not listed by the emulator.`,
             'Run `npx stim gc --dry-run` to inspect orphaned owned AVDs, then `npx stim gc` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
             error,
           );

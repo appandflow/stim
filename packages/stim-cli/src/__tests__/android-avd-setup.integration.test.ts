@@ -82,7 +82,8 @@ beforeEach(() => {
   const run = (command: string): string => {
     if (command.includes('create avd')) {
       beforeCreate();
-      if (existsSync(join(avdRoot, `${avdName}.ini`))) throw new Error(`AVD ${avdName} already exists`);
+      if (existsSync(join(avdRoot, `${avdName}.ini`)))
+        throw new Error(`Error: Android Virtual Device '${avdName}' already exists.`);
       createFiles();
       return '';
     }
@@ -134,6 +135,49 @@ afterEach(() => {
 function prepare(configure: (name: string) => void = () => {}): ReturnType<typeof prepareOwnedAvd> {
   return prepareOwnedAvd({ projectPath: project, label: 'setup', configuration: 'fixture', configure });
 }
+
+test.each(['before', 'during'] as const)(
+  'a foreign AVD registered %s creation stays unowned and untouched',
+  async (when) => {
+    const ini = join(avdRoot, `${avdName}.ini`);
+    const config = join(avdRoot, `${avdName}.avd`, 'config.ini');
+    if (when === 'before') createFiles();
+    else beforeCreate = createFiles;
+
+    const configure = vi.fn<(name: string) => void>();
+    await expect(prepare(configure)).rejects.toThrow(/already exists without prior ownership/);
+    expect(configure).not.toHaveBeenCalled();
+    expect(getProject(project)?.platforms?.android).toBeUndefined();
+    expect(isStimOwnedAvd(avdName)).toBe(false);
+    expect((await teardownOwnedAvd(avdName, { del: true })).kind).toBe('not-owned');
+    expect(readFileSync(ini, 'utf8')).toBe(`path=${join(avdRoot, `${avdName}.avd`)}\n`);
+    expect(readFileSync(config, 'utf8')).toBe('disk.dataPartition.size=10G\n');
+  },
+);
+
+test('a collision can recover an AVD already recorded in this home', async () => {
+  createFiles();
+  recordCreatedDevice('android', avdName);
+  const configure = vi.fn<(name: string) => void>();
+  await expect(prepare(configure)).resolves.toMatchObject({ avdName, created: false });
+  expect(configure).not.toHaveBeenCalled();
+  expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, owned: true });
+  expect(isStimOwnedAvd(avdName)).toBe(true);
+});
+
+test('an error naming a different AVD leaves incomplete creation for reconciliation', async () => {
+  const diagnostic = "Error: Android Virtual Device 'stim-other' already exists.";
+  setExecutor({
+    ...getExecutor(),
+    spawn() {
+      createFiles();
+      return makeExitingChild(1, diagnostic);
+    },
+  });
+  await expect(prepare()).rejects.toThrow(diagnostic);
+  expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
+  expect(readCreatedDevices().android.has(avdName)).toBe(true);
+});
 
 const configWriter = `
 const { upsertProject } = await import(process.argv[1]);

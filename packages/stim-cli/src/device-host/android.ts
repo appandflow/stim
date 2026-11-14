@@ -1,8 +1,10 @@
-import { existsSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withDirLock, withDirLockAsync } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
+  createdDevicesFile,
+  createdDevicesLock,
   hostedConsolePort,
   readHostedDevice,
   type HostedAndroidDevice,
@@ -19,6 +21,7 @@ import {
   resolveOwnedAvdSerialAsync,
   avdPathExists,
   avdStorageRoots,
+  AvdNameCollisionError,
   bootAndroidEmulator,
   createOwnedAvd,
   DEFAULT_AVD_DEVICE_PROFILE,
@@ -32,7 +35,7 @@ import {
   pickDefaultSystemImage,
   waitForBoot,
 } from '../devices/android.ts';
-import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
+import { forgetCreatedDeviceAsync, readCreatedDevices } from '../devices/created-devices.ts';
 import { androidImageInstallPolicy, decideSystemImage, systemImageInstallProblem } from '../devices/android-image.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
@@ -158,6 +161,24 @@ export async function runHostedAndroidDevice(
           device = selected;
           return getExecutor().spawn(file, args, { ...options, detached: false });
         },
+      }).catch(async (error: unknown) => {
+        if (error instanceof AvdNameCollisionError && error.recordCleared) {
+          await withDirLockAsync(join(home, 'hosted-device.lock'), () =>
+            withDirLockAsync(createdDevicesLock(), () => {
+              if (
+                readHostedDevice(home, 'android').avdName !== avdName ||
+                assertHostedDeviceLedger(home, avdName, 'android', { allowEmpty: true }) !== 'empty' ||
+                readCreatedDevices().systemImages.size
+              )
+                throw new Error('Hosted Android ownership changed after the AVD name collision.');
+              rmSync(join(home, 'hosted-device.json'));
+              rmSync(createdDevicesFile(home));
+              creationStarted = false;
+              device = null;
+            }),
+          );
+        }
+        throw error;
       });
       assertHostedDeviceLedger(home, avdName, 'android');
       if (await portIsOccupied(selected.consolePort))

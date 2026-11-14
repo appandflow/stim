@@ -5,7 +5,7 @@ import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-dev
 import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { type Executor } from '../exec.ts';
-import type { BootResult } from '../devices/android.ts';
+import { AvdNameCollisionError, type BootResult } from '../devices/android.ts';
 
 const native = vi.hoisted(() => ({
   create: vi.fn<(_label: string, options: { spawn: Executor['spawn'] }) => Promise<void>>(),
@@ -25,7 +25,8 @@ const native = vi.hoisted(() => ({
   mute: vi.fn<(serial: string, avdName: string) => Promise<void>>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
-vi.mock('../devices/android.ts', () => ({
+vi.mock('../devices/android.ts', async (importOriginal) => ({
+  AvdNameCollisionError: (await importOriginal<typeof import('../devices/android.ts')>()).AvdNameCollisionError,
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
   listInstalledSystemImages: () =>
@@ -126,6 +127,47 @@ test('an occupied console port refuses before any native creation', async () => 
   expect(native.create).not.toHaveBeenCalled();
   expect(native.boot).not.toHaveBeenCalled();
 });
+
+test.each([false, true])(
+  'a confirmed foreign AVD collision never admits deletion (retained ledger data: %s)',
+  async (keepLedger) => {
+    const registration = join(home, `${avd}.ini`);
+    const directory = join(home, `${avd}.avd`);
+    const config = join(directory, 'config.ini');
+    native.create.mockImplementation(async (_label, options) => {
+      recordCreatedDevice('android', avd);
+      const child = options.spawn(process.execPath, ['-e', 'process.exit(1)'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      await new Promise<void>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', () => resolve());
+      });
+      writeFileSync(registration, `path=${directory}\n`);
+      mkdirSync(directory);
+      writeFileSync(config, 'foreign config\n');
+      native.avds.mockReturnValue([avd]);
+      forgetCreatedDevice('android', avd);
+      if (keepLedger) {
+        const ledger = join(home, 'created-devices.json');
+        const records = JSON.parse(readFileSync(ledger, 'utf8'));
+        writeFileSync(ledger, JSON.stringify({ ...records, systemImages: ['another image'] }));
+      }
+      throw new AvdNameCollisionError(`Error: Android Virtual Device '${avd}' already exists.`, true);
+    });
+
+    expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({
+      state: keepLedger ? 'unknown' : 'stopped',
+      device: keepLedger ? { avdName: avd } : null,
+      notice: expect.stringContaining(keepLedger ? 'ownership changed' : 'already exists'),
+    });
+    expect(existsSync(join(home, 'hosted-device.json'))).toBe(keepLedger);
+    expect(existsSync(join(home, 'created-devices.json'))).toBe(keepLedger);
+    await runHostedAndroidDevice('stop', request);
+    expect(native.teardown).not.toHaveBeenCalled();
+    expect(native.boot).not.toHaveBeenCalled();
+    expect(readFileSync(registration, 'utf8')).toBe(`path=${directory}\n`);
+    expect(readFileSync(config, 'utf8')).toBe('foreign config\n');
+  },
+);
 
 test.each(['name', 'abi'] as const)(
   'a successful boot with the wrong %s retains its device and refuses ready',
