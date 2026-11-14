@@ -13,7 +13,7 @@ import {
 } from '../../ownership-claim.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
 
 export const pendingChildRemoveCommand = (holder: string): string =>
   claimRemoveCommand(`${holder.slice(0, -'.claim'.length)}.child`);
@@ -70,7 +70,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
       markClaimChildPending(claim);
       try {
         await getExecutor().runFileAsync(
-          join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          windowsSystemExecutable('taskkill.exe'),
           ['/PID', String(child.pid), '/T', '/F'],
           { timeoutMs: 30_000 },
         );

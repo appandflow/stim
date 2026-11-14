@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
 import { clearNamedPorts, getNamedPort, releaseBrowserPort } from '../named-ports.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -22,6 +22,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -153,19 +154,15 @@ function win32Executor(listening: () => boolean): Argv[] {
       throw new Error('win32 must not look for lsof');
     },
     runFile: (file: string, args: string[] = []) => {
-      if (file !== 'netstat' || args.join(' ') !== '-ano') throw new Error(`unexpected win32 command ${file}`);
+      if (win32.basename(file) !== 'netstat.exe' || args.join(' ') !== '-ano')
+        throw new Error(`unexpected win32 command ${file}`);
       calls.push({ file, args });
       return listening() ? NETSTAT : NETSTAT_IDLE;
     },
-    runQuiet: (cmd: string) => {
-      calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
-      if (cmd === 'netstat -ano') return listening() ? NETSTAT : '';
-      return null;
-    },
     runFileQuiet: (file: string, args: string[] = []) => {
       calls.push({ file, args });
-      if (file === 'tasklist') return '"node.exe","41219","Console","1","84,120 K"';
-      if (file === 'taskkill')
+      if (win32.basename(file) === 'tasklist.exe') return '"node.exe","41219","Console","1","84,120 K"';
+      if (win32.basename(file) === 'taskkill.exe')
         return 'SUCCESS: The process with PID 41219 (child process of PID 8) has been terminated.';
       return null;
     },
@@ -191,13 +188,17 @@ test('win32 dry run reads the listener from netstat and its image from tasklist'
   upsertProject(root, { ports: { web: 8900 } });
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+  vi.stubEnv('SystemRoot', 'D:\\Windows Folder');
   const calls = win32Executor(() => true);
   const log = vi.fn<(line: string) => void>();
   await clearNamedPorts(root, { stop: true, dryRun: true, log, platform: 'win32' });
   expect(kill.mock.calls.filter(([, signal]) => signal && signal !== 0)).toEqual([]);
-  expect(calls).toContainEqual({ file: 'netstat', args: ['-ano'] });
-  expect(calls).toContainEqual({ file: 'tasklist', args: ['/FI', 'PID eq 41219', '/FO', 'CSV', '/NH'] });
-  expect(calls.some((c) => c.file === 'ps' || c.file === 'taskkill')).toBe(false);
+  expect(calls).toContainEqual({ file: 'D:\\Windows Folder\\System32\\netstat.exe', args: ['-ano'] });
+  expect(calls).toContainEqual({
+    file: 'D:\\Windows Folder\\System32\\tasklist.exe',
+    args: ['/FI', 'PID eq 41219', '/FO', 'CSV', '/NH'],
+  });
+  expect(calls.some((c) => c.file === 'ps' || win32.basename(c.file) === 'taskkill.exe')).toBe(false);
   expect(log).toHaveBeenCalledWith('would stop web (8900): pid 41219 node.exe');
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
@@ -216,7 +217,7 @@ test('stops a listener outside the workspace and releases only after it is gone'
   const log = vi.fn<(line: string) => void>();
   await clearNamedPorts(root, { stop: true, log, platform: 'darwin' });
   expect(kill).toHaveBeenCalledWith(41219, 'SIGTERM');
-  expect(calls.some((c) => c.file === 'taskkill')).toBe(false);
+  expect(calls.some((c) => win32.basename(c.file) === 'taskkill.exe')).toBe(false);
   expect(log).toHaveBeenCalledWith('stopped web (8900): pid 41219 node /sibling/api');
   expect(getProject(root)?.ports).toEqual({});
 });

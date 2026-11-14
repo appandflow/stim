@@ -57,6 +57,7 @@ jobs:
               def ignored:
                 (.path == ".github/workflows/e2e-native.yml" and .title == "Native E2E (unrelated label)")
                 or .path == ".github/workflows/merge-gate.yml"
+                or .path == ".github/workflows/llp-planned.yml"
                 or (.event == "workflow_dispatch" and (.path | IN(".github/workflows/windows-full.yml", ".github/workflows/windows-debug.yml")));
               ($r | map(select(ignored | not))) as $runs
               | ($r | map(select(ignored) | .suite)) as $ignored

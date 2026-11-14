@@ -208,10 +208,12 @@ description, each with the same port check.
 **Windows.** The helper is used there too, but not detached, and stimd still
 stops dev servers at its exit and holds an update with `heldBy:
 "dev-servers"`. Whether a detached helper and its dev server outlive stimd on
-Windows is not checked. Planned (#5571): a `ci-full` run of a test where stimd
-exits and the successor stops the helper's dev server; then drop Metro from
-`metroRootsEndingWithStimd` and the hold. Two Stim builds on one home (audit A6)
-are unchanged.
+Windows is not checked. Two Stim builds on one home (audit A6) are unchanged.
+
+Planned: #5571
+
+Run the test where stimd exits and the successor stops the helper's dev server
+in `ci-full`, then drop Metro from `metroRootsEndingWithStimd` and the hold.
 
 **Contracts.** The `status --json` `supervisor` object keeps its shape and
 meaning: `supervisor.pid` is the dev server's pid. The heartbeat, `metro.stop`,

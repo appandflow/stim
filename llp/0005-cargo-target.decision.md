@@ -71,7 +71,7 @@ crate were added by the reviews of #5539. Not decided: whether
 
 ## Never delete what a build took back
 
-Each removal renames a directory into `target/.stim-trimmed/` after the lock
+Each whole profile or incremental removal renames a directory into `target/.stim-trimmed/` after the lock
 check and checks the locks again at the new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
@@ -79,10 +79,22 @@ a person to merge or delete. If that move fails too, it stays in
 `.stim-trimmed` with a marker, and later trims of that `target/` stop until a
 person removes it.
 
-Build units move aside in chunks of 25 and are put back path by path when a
-lock appears after a chunk. A unit path a build has recreated in the meantime
-is left alone and the copy aside is deleted, since the build made its own. A
-unit that cannot be put back stays in `.stim-trimmed` with the marker.
+A unit sweep takes exclusive, non-blocking locks on Exact's ledger lock and the
+profile's `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` before
+each chunk of 25. A busy or unavailable lock stops the sweep of that profile.
+Cargo can hold `.cargo-build-lock` in a separate intermediate build directory,
+and Exact takes `.cargo-lock` while it resets fingerprint access times. Under
+the locks, Stim confirms the ledger has stayed current, rechecks the candidate
+fingerprints, and renames the units aside. It releases the locks before measuring
+or deleting the batch. If a rename fails, it tries to restore the batch while
+locked. If restoration fails, Stim keeps the batch in `.stim-trimmed` and
+attempts to write the marker that protects it from later trims.
+
+This uses Perl to apply `flock` on macOS and Linux. On Windows, Linux NFS, or
+when locking cannot be verified, the profile keeps its units.
+
+The maintainer [approved the locking improvement and kept the existing pressure
+level and age cutoff](https://github.com/appandflow/stim/issues/5542#issuecomment-6864811661).
 
 Reason: a directory a build locked during the move is that build's live output;
 deleting it breaks the build rather than slowing the next one.
@@ -93,7 +105,7 @@ maintainer.
 ## Links
 
 - Issues: #5512, #5516, #5523, #5528, #5530. Pull requests: #5518, #5519,
-  #5527, #5539.
+  #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,

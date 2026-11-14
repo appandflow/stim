@@ -4409,11 +4409,18 @@ describe('the device identity is recorded', () => {
     expect(lastBuild.deviceName).toBe('stim-app-412');
   });
 
-  test('a failure after the device is resolved still records which emulator it was', async () => {
+  test('a failed install records its exact target without a launch marker', async () => {
     const h = harness({ install: () => ({ failed: true, reason: 'adb install failed' }) });
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(readState().lastBuild.avdName).toBe('stim-app-412');
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.find((record) => record.event === 'install_attempt')).toMatchObject({
+      platform: 'android',
+      appId: 'com.example.app',
+      deviceId: 'emulator-5584',
+    });
+    expect(records.some((record) => record.marker === true)).toBe(false);
   });
 });
 

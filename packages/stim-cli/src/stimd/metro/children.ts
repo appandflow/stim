@@ -31,7 +31,7 @@ import {
   type ClaimHandle,
   type ClaimHolder,
 } from '@stim-cli/core/ownership-claim';
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
 import {
   pidExists,
   recordForeignMetro,
@@ -82,7 +82,7 @@ import { devServerStopLevel, devServerStopRecord, describeDevServerStop } from '
 import { trackMetroWatchRoots, type MetroWatchRoots, type MetroWatchState } from './watchman-roots.ts';
 import { injectedDigest, injectedDir } from './injected.ts';
 import { metroStoreRoot, registerMetroStore } from './metro-store.ts';
-import { projectNodeLine, withProjectNode } from './project-node.ts';
+import { devServerNodeLine, withProjectNode } from './project-node.ts';
 import { outputRecord } from './output-records.ts';
 import { commandServerLaunch } from './server-command.ts';
 import { expoServerLaunch, repositoryRoot } from './server-expo.ts';
@@ -522,7 +522,7 @@ async function stopTree(child: MetroChild): Promise<void> {
   const identity = inspectProcessIdentity(child);
   if (identity === 'unknown') throw unconfirmed('its identity reads unknown');
   if (identity !== 'same') return;
-  const taskkill = join(process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+  const taskkill = windowsSystemExecutable('taskkill.exe');
   const failed = await getExecutor()
     .runFileAsync(taskkill, ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000, killSignal: 'SIGKILL' })
     .then(
@@ -666,16 +666,17 @@ function hostLaunch(
   const settings = resolveProjectSettings(root).settings;
   const storeRoot = resolveMetroSharedCache(settings) ? metroStoreRoot(root) : null;
   if (storeRoot) registerMetroStore(storeRoot);
+  const runWithOwnNode = process.platform === 'win32';
   const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned)
     writer.write({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
+      msg: devServerNodeLine('Metro', node.pinned, runWithOwnNode),
     });
   return {
-    command: process.platform === 'win32' ? process.execPath : 'node',
+    command: runWithOwnNode ? process.execPath : 'node',
     args: [
       join(injectedDir() ?? '', 'metro-host.cjs'),
       '--root',

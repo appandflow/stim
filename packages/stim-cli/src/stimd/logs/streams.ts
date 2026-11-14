@@ -7,7 +7,7 @@ import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
 import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
   ClaimUnavailableError,
@@ -263,7 +263,7 @@ function signalChild(stream: Stream): Promise<void> {
         stream.treePending = true;
         stream.pending = true;
         await getExecutor().runFileAsync(
-          join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          windowsSystemExecutable('taskkill.exe'),
           ['/PID', String(child.pid), '/T', '/F'],
           { timeoutMs: 30_000 },
         );

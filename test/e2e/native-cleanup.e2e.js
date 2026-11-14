@@ -3,7 +3,14 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { cleanupTmp, createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
+import {
+  cleanupTmp,
+  createCleanupTracker,
+  createHarness,
+  dumpDiagnostics,
+  verifyCleanup,
+  workspaceLogsDir,
+} from './native/harness.mjs';
 
 function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
   const home = mkdtempSync(join(tmpdir(), 'stim-native-cleanup-'));
@@ -436,4 +443,53 @@ test('a failed JSON command keeps native ownership and diagnostics available to 
   );
   cleanupTmp([worktree, home], failure);
   for (const [path, content] of files) assert.equal(readFileSync(path, 'utf-8'), content);
+});
+
+test('failure diagnostics query the latest Android install or launch target in each workspace', (t) => {
+  const { cwd } = fixture(t, 'android');
+  const tried = {
+    event: 'install_attempt',
+    platform: 'android',
+    appId: 'com.stime2e',
+    deviceId: 'emulator-5554',
+  };
+  const launched = { ...tried, event: 'launch_attempt' };
+  const failed = { ...tried, deviceId: 'emulator-5556', appId: null };
+  const collect = (workspace, records) => {
+    const logs = workspaceLogsDir(workspace);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'build-android.ndjson'), records.map((record) => JSON.stringify(record)).join('\n'));
+    return join(logs, 'android-failure-diagnostics.json');
+  };
+  const launchReport = collect(cwd, [tried, launched]);
+  const other = join(cwd, 'other');
+  const installReport = collect(other, [tried, failed, { event: 'run_failed', phase: 'install' }]);
+
+  const queries = [];
+  dumpDiagnostics(
+    {
+      banner() {},
+      log() {},
+      sh(file, argv) {
+        assert.equal(file, 'adb');
+        queries.push(argv);
+        return { code: 0, stdout: argv.includes('logcat') ? 'PackageManager: verification timed out' : '', stderr: '' };
+      },
+    },
+    [cwd, other],
+  );
+
+  assert.deepEqual(queries, [
+    ['-s', 'emulator-5554', 'get-state'],
+    ['-s', 'emulator-5554', 'shell', 'pm', 'path', 'com.stime2e'],
+    ['-s', 'emulator-5554', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', 'com.stime2e'],
+    ['-s', 'emulator-5554', 'shell', 'pidof', 'com.stime2e'],
+    ['-s', 'emulator-5554', 'logcat', '-b', 'all', '-d', '-t', '2000'],
+    ['-s', 'emulator-5556', 'get-state'],
+    ['-s', 'emulator-5556', 'logcat', '-b', 'all', '-d', '-t', '2000'],
+  ]);
+  assert.deepEqual(JSON.parse(readFileSync(launchReport, 'utf-8')).launch, launched);
+  const report = JSON.parse(readFileSync(installReport, 'utf-8'));
+  assert.deepEqual(report.install, failed);
+  assert.match(report.diagnostics.at(-1).stdout, /verification timed out/);
 });
