@@ -497,8 +497,8 @@ bun --version, rustup and git; it never runs the app's code.
 Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
 runs the same ./exact.mjs ios --no-install [--release] in the app's directory,
-with EXACT2 at the worker's exact2 checkout for the app's commit and no
-simulator, and this Mac installs the .app on its owned or hosted simulator;
+with EXACT2 at the worker's exact2 checkout for the app's commit (or at the
+copy it places at the app's relative path to exact2) and no simulator, and this Mac installs the .app on its owned or hosted simulator;
 nothing is cached. For an app whose app.json declares native modules, the worker
 creates and boots a simulator of its own for the build, passes it as EXACT_SIM
 for Exact's module roster read, and deletes it after. The app's relative path to

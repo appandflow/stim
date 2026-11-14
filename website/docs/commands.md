@@ -721,7 +721,8 @@ never runs the app's code.
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
 runs the same `./exact.mjs ios --no-install` in the app's directory, with
-`EXACT2` at its exact2 checkout for the app's commit, and
+`EXACT2` at its exact2 checkout for the app's commit (or at the copy it
+places at the app's relative path to exact2), and
 this Mac installs the `.app` on its owned simulator. Nothing is cached. For an
 app whose `app.json` declares native modules, the worker creates and boots a
 simulator of its own for that build, passes it as `EXACT_SIM` so Exact can read

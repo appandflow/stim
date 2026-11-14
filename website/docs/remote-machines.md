@@ -251,13 +251,13 @@ the command that installs it there. Exact builds share that user's `~/.cargo` an
 client sent them, and keep `target/` warm in the checkout's own repository area.
 An app's Cargo manifests name exact2 by a path relative to the app; the worker
 puts a checkout of the pinned commit at that path inside the repository area,
-sharing its exact2 checkout's git objects (about 220 MB of files for exact2
-today); for an app in a subdirectory of its repository, exact2 may sit at most
+sharing its exact2 checkout's git objects and copying its installed packages
+(about 300 MB for exact2 today); for an app in a subdirectory of its repository, exact2 may sit at most
 one folder above the repository. For an app
 whose `app.json` declares native modules, the worker creates a simulator of its
 own for each build, boots it, passes it to Exact as `EXACT_SIM` to read the
-module roster, and deletes it when the build ends. Booting a new simulator adds
-about 20 seconds to such a build.
+module roster, and deletes it when the build ends. Creating and booting that
+simulator adds about 45 seconds to such a build on a Mac mini.
 
 `stim ios --remote <mac>` also runs an Exact app on a hosted simulator there,
 built on the client or a build Mac; hosting needs no Exact toolchain. Apps that

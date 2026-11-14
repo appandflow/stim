@@ -81,7 +81,7 @@ checkout, reports what it lacks in the offer with commands that fetch the commit
 an app at the repository root in a checkout folder named like the client's; it shares the worker
 user's `~/.cargo` and `~/.cache/exact` across clients. The app's relative path to exact2, which its Cargo
 manifests use, holds a checkout of the pinned commit inside the build area that shares that checkout's objects (`git
-clone --shared`), never outside the area, in the app, or on one of the area's own entries, and replaced only when the
+clone --shared`) with a copy of its `node_modules`, never outside the area, in the app, or on one of the area's own entries, and replaced only when the
 worker made it; a repository-root app's checkout sits as many folders below the area as that path climbs, and an app in
 a subdirectory whose exact2 sits more than one folder above its repository builds on the client.
 
