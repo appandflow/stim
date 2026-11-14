@@ -106,8 +106,8 @@ test.each(['expo-package', 'expo-shim', 'repack'] as const)(
       const ownNode = mode !== 'expo-shim';
       const command = ownNode ? process.execPath : join(root, 'node_modules', '.bin', 'expo');
       const message = ownNode
-        ? `${server} runs on Stim's Node ${process.versions.node} at ${process.execPath}. Child processes find ${pinned} on PATH.`
-        : `Metro runs on ${pinned}`;
+        ? `${server} runs on Stim's Node ${process.versions.node} at ${process.execPath}. Stim put ${pinned} first on PATH for child processes.`
+        : `Metro launches through ${command} with ${pinned} first on PATH.`;
       expect(launch.command).toBe(command);
       expect(write).toHaveBeenCalledWith(expect.objectContaining({ event: 'project_node', msg: message }));
     } finally {

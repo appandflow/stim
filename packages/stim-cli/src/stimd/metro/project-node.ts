@@ -82,6 +82,6 @@ export function projectNodeLine(pinned: ProjectNodePin): string {
 export function devServerNodeLine(server: string, pinned: ProjectNodePin, runWithOwnNode: boolean): string {
   const pin = projectNodeLine(pinned);
   return runWithOwnNode
-    ? `${server} runs on Stim's Node ${process.versions.node} at ${process.execPath}. Child processes find ${pin} on PATH.`
+    ? `${server} runs on Stim's Node ${process.versions.node} at ${process.execPath}. Stim put ${pin} first on PATH for child processes.`
     : `${server} runs on ${pin}`;
 }
