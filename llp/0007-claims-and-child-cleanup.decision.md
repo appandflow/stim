@@ -102,8 +102,11 @@ claim only when all of these hold:
 
 - the child itself and its process group are proven gone through its recorded
   identity;
-- the child wrote `observing.json` next to the acknowledgement, so its ledger of
-  detached groups was installed;
+- the child bootstrap wrote `observing.json` next to the acknowledgement after
+  reading its request and before importing the evaluator module. The import
+  loads Stim's own code, and the module installs the detached-group observer
+  before any project evaluation. An empty ledger can cover a child killed
+  while the module was loading;
 - every `group-*.json` entry in the owner directory is a complete record whose
   leader started at or after the child did (compared through the start times in
   the two process records); the owner stops each group whose leader identity
@@ -132,9 +135,8 @@ boundary is crossed: the code could send the same signal itself. The start-time
 rule keeps a forged entry from naming a process that was already running when the
 child started.
 
-A child killed before it writes `observing.json` (starved during module load,
-before its signal handler runs) keeps the claim as `{"record":null}`; that is a
-known remaining way to a stuck claim.
+A child killed before its bootstrap writes `observing.json` keeps the claim
+as `{"record":null}`. A dead owner with a pending child also keeps the claim.
 
 The child answers a SIGTERM during its module load itself, because a signal
 before its handler exists would kill it unacknowledged.

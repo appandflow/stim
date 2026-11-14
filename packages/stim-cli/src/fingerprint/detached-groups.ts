@@ -39,10 +39,6 @@ export function recordDetachedGroups(directory: string): DetachedChildObserver {
 const OBSERVING = 'observing.json';
 const SETTLE_POLL_MS = 25;
 
-export function markObserving(directory: string): void {
-  writeFileSync(join(directory, OBSERVING), '{}', { mode: 0o600 });
-}
-
 function groupGone(pid: number, processToken: string): boolean {
   return inspectProcessIdentity({ pid, processToken }) === 'gone' && !processGroupAlive(pid);
 }
