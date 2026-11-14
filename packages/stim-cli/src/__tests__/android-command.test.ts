@@ -5036,6 +5036,41 @@ describe('reviving the installed Android app', () => {
     expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
   });
 
+  test('uses the recorded non-foldable emulator after the workspace sets a foldable profile', async () => {
+    const avdName = 'stim-app-412';
+    const previousImage = `system-images;android-34;google_apis;${hostSystemImageArch()}`;
+    const previousDevice = {
+      avdName,
+      owned: true,
+      consolePort: 5584,
+      systemImage: previousImage,
+      deviceProfile: 'pixel_6',
+    };
+    setDevice(root, 'android', previousDevice);
+    const packageProbe = vi.spyOn(installedArtifact, 'androidPackageInstalled').mockResolvedValue(true);
+    try {
+      const h = harness({
+        installedApp: { appId: 'dev.installed', kind: 'process' },
+        expectedDevice: avdName,
+        remoteDevice: 'local',
+        resolveSettingsFor: () => ({ android: { deviceProfile: 'pixel_fold' } }),
+        listDeviceProfiles: () => ['pixel_6', 'pixel_fold'],
+        listSystemImages: () => [{ api: 34, tag: 'google_apis', arch: hostSystemImageArch(), pkg: previousImage }],
+        ensureImage: never('system image installation'),
+        ensureDevice: async () => previousDevice,
+        build: never('a build'),
+        install: never('an install'),
+      });
+      expect(await h.run()).toMatchObject({
+        ok: true,
+        facts: { installSkipped: true, launched: true, avdName, deviceProfile: 'pixel_6' },
+      });
+      expect(getProject(root)?.platforms?.android).toMatchObject(previousDevice);
+    } finally {
+      packageProbe.mockRestore();
+    }
+  });
+
   test.each([{ missing: true }, { notOwned: true }] as const)(
     'refuses before fallback if the owned AVD stops resolving (%j)',
     async (resolved) => {

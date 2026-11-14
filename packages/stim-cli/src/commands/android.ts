@@ -979,6 +979,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         slot,
         easProfile,
         recordedBuild: recordedBuildRequested,
+        expectedDevice,
         variant: variantFlag ?? (installedApp ? (installedApp.kind === 'embedded-js' ? 'release' : 'debug') : null),
         systemImage: systemImageFlag,
         deviceProfile: deviceProfileFlag,
