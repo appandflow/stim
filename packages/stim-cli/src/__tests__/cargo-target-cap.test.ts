@@ -21,9 +21,15 @@ vi.mock('../workspace/protected-locations.ts', async (original) => {
 });
 
 const DAY = 24 * 3_600_000;
-const candidate = (dir: string, discovered: boolean, measuredAt: number | null): CargoTargetCandidate => ({
+const candidate = (
+  dir: string,
+  discovered: boolean,
+  measuredAt: number | null,
+  identity = dir,
+): CargoTargetCandidate => ({
   root: dir.replace(/\/target$/, ''),
   dir,
+  identity,
   discovered,
   measuredAt,
 });
@@ -31,7 +37,7 @@ const candidate = (dir: string, discovered: boolean, measuredAt: number | null):
 describe('selectCargoTargets', () => {
   it('walks a directory once, prefers the registered owner, and rotates the discovered ones by last measurement', () => {
     const targets = [
-      candidate('/a/target', true, 1),
+      candidate('/alias/target', true, 1, '/a/target'),
       candidate('/a/target', false, 1),
       candidate('/b/target', true, 5),
       candidate('/c/target', true, null),
@@ -43,7 +49,9 @@ describe('selectCargoTargets', () => {
 
     const measured = new Set(first.measured.map(({ dir }) => dir));
     const next = selectCargoTargets(
-      targets.map((entry) => candidate(entry.dir, entry.discovered, measured.has(entry.dir) ? 9 : entry.measuredAt)),
+      targets.map((entry) =>
+        candidate(entry.dir, entry.discovered, measured.has(entry.dir) ? 9 : entry.measuredAt, entry.identity),
+      ),
       2,
     );
     expect(next.measured.map(({ dir }) => dir)).toContain('/b/target');
