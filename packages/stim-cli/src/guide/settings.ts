@@ -1140,16 +1140,16 @@ releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
 
 TEST ACCESS
-\`stim setup --test\` approves the machine holding the ticket to run any
-command it sends on the worker, as the worker's user, with no sandbox. It is
-its own approval with its own Y/n question, in test-clients.json; it never
+\`stim setup --test\` records a separate test approval for the machine holding
+the ticket. Its Y/n question describes the authority intended for the retired
+test command proposal. The record lives in test-clients.json and never
 comes with read, control, build or device-host, and \`stim pairings grant\`
 never grants it. Approval is terminal-only: Stim Desktop's in-app approval
 refuses --test. A Linux worker may approve it; a Windows worker refuses it.
 Setup refuses --test against a running server whose /health has no
 busy.tests, which predates it, and names the update. Agents never run
-\`stim setup\` or approve requests. The stim test command that uses this
-approval is not released yet.
+\`stim setup\` or approve requests. Test clients can request managed worker
+engine updates.
 On a remote Mac that hosts, Stim Desktop > Settings > Connections > Using this
 machine > Running here lists the simulators, emulators and apps approved machines
 run there, below the machines using it. Stop asks for confirmation, ends the session and deletes
