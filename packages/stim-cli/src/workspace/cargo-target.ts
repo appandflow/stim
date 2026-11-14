@@ -1,18 +1,20 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
+import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
-import { cargoUnitPaths, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
+import { withCargoLocks } from './cargo-lock.ts';
+import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
 const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
-/** The lock files Cargo 1.97 writes in a profile; a running build holds all three. */
+/** Cargo 1.97 locks the build and artifact directories separately and takes .cargo-lock for older Cargo. */
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const UNIT_CHUNK = 25;
+const EXACT_LEDGER = '.exact-sweep.json';
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
@@ -153,7 +155,7 @@ function ledgerShowsUse(ledger: Ledger | { refusal: string }, now: number): bool
 }
 
 function readLedger(target: string): Ledger | { refusal: string } {
-  const ledgerPath = join(target, '.exact-sweep.json');
+  const ledgerPath = join(target, EXACT_LEDGER);
   if (!existsSync(ledgerPath)) return EMPTY_LEDGER;
   let text: string;
   try {
@@ -378,7 +380,6 @@ export async function trimCargoTarget(
   let used: string[] = first;
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
-  const ledger = readLedger(target);
   let moved = 0;
   const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));
   const move = async (
@@ -446,6 +447,10 @@ export async function trimCargoTarget(
   };
   const sweepUnits = async (profile: string, key: string): Promise<{ units: number; bytes: number; kept?: string }> => {
     const none = { units: 0, bytes: 0 };
+    const ledgerPath = join(target, EXACT_LEDGER);
+    const snapshot = await lstat(ledgerPath, { bigint: true }).catch(() => null);
+    if (!snapshot?.isFile()) return none;
+    const ledger = readLedger(target);
     if (!ledgerShowsUse(ledger, now) || 'refusal' in ledger) return none;
     const all = readCargoUnits(profile, ledger.units, key, now);
     if (!all) return { ...none, kept: 'its units cannot be listed' };
@@ -455,38 +460,45 @@ export async function trimCargoTarget(
     if (fresh === null) return { ...none, kept: 'the files processes hold open cannot be read' };
     let swept = 0;
     let bytes = 0;
+    // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
+    const locks = [join(target, `${EXACT_LEDGER}.lock`), ...PROFILE_LOCKS.map((name) => join(profile, name))];
     for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
       signal?.throwIfAborted();
       const chunk = candidates
         .slice(at, at + UNIT_CHUNK)
         .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
       if (!chunk.length) continue;
-      const held = await lockOutcome(profile, signal, lowPriority);
-      if (lockHeld(held))
-        return { units: swept, bytes, kept: `a build holds its ${held.file ?? '.cargo-lock'}, so the sweep stopped` };
       const batch = join(aside, `units-${moved++}`);
-      const done: string[] = [];
-      let failure: string | null = null;
-      for (const path of removalOrder(chunk.flatMap(([, paths]) => paths))) {
-        try {
-          await mkdir(dirname(join(batch, path)), { recursive: true });
-          await rename(join(profile, path), join(batch, path));
-          done.push(path);
-        } catch (error) {
-          if (errorCode(error) === 'ENOENT') continue;
-          failure = `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`;
-          break;
-        }
-      }
-      const after = await lockOutcome(profile, undefined, lowPriority);
-      if (failure === null && !renameStands(after))
-        failure = `a build took its ${after.file ?? '.cargo-lock'} during the move, so the sweep stopped`;
-      if (failure !== null) {
-        const stranded = await putBack(profile, batch, done);
-        return { units: swept, bytes, kept: stranded ?? failure };
-      }
-      swept += chunk.length;
-      bytes += await sizeOf(batch, signal, lowPriority);
+      const movedBatch = await withCargoLocks(
+        locks,
+        async () => {
+          // Exact renames the ledger after resetting fingerprint access times under its ledger lock.
+          const current = lstatSync(ledgerPath, { bigint: true, throwIfNoEntry: false });
+          if (current?.ino !== snapshot.ino || current.dev !== snapshot.dev)
+            return { kept: 'Exact updated its ledger, so the sweep stopped' };
+          const idle = chunk.filter(([unit]) => !cargoUnitWasRead(join(profile, '.fingerprint', unit.id)));
+          const done: string[] = [];
+          for (const path of removalOrder(idle.flatMap(([, paths]) => paths))) {
+            try {
+              await mkdir(dirname(join(batch, path)), { recursive: true });
+              await rename(join(profile, path), join(batch, path));
+              done.push(path);
+            } catch (error) {
+              if (errorCode(error) === 'ENOENT') continue;
+              const stranded = await putBack(profile, batch, done);
+              return {
+                kept: stranded ?? `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`,
+              };
+            }
+          }
+          return { units: idle.length };
+        },
+        signal,
+      );
+      if ('kept' in movedBatch) return { units: swept, bytes, kept: movedBatch.kept };
+      if ('kept' in movedBatch.value) return { units: swept, bytes, kept: movedBatch.value.kept };
+      swept += movedBatch.value.units;
+      if (movedBatch.value.units) bytes += await sizeOf(batch, signal, lowPriority);
     }
     return { units: swept, bytes };
   };
