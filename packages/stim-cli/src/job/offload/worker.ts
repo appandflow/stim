@@ -1180,14 +1180,20 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
     if (source !== checkout) rmSync(at, { recursive: true, force: true });
   }
   if (!existsSync(at)) {
+    const making = `${at}.stim-clone`;
     mkdirSync(dirname(at), { recursive: true });
-    git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, at], {
+    rmSync(making, { recursive: true, force: true });
+    git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
       write: true,
       timeoutMs: 120_000,
     });
-    git(at, ['config', EXACT2_SOURCE, checkout], { write: true });
+    git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
+    renameSync(making, at);
   }
-  if (gitQuiet(at, ['rev-parse', 'HEAD']) !== commit)
+  if (
+    gitQuiet(at, ['rev-parse', 'HEAD']) !== commit ||
+    git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== ''
+  )
     git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
   return null;
 }

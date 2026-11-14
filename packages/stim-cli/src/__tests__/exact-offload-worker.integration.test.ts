@@ -208,6 +208,7 @@ test("the app's relative path to exact2 holds a checkout of the pinned commit in
   const placed = (dir: string) => {
     expect(lstatSync(dir).isDirectory()).toBe(true);
     expect(git(dir, 'rev-parse', 'HEAD')).toBe(sha);
+    expect(existsSync(join(dir, 'scripts', 'app-cli.mjs'))).toBe(true);
   };
   const { result, area } = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': '{}' },
