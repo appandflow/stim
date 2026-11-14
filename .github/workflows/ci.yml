@@ -284,6 +284,7 @@ jobs:
           packages/stim-cli/src/__tests__/engine-build-lock.integration.test.ts
           packages/stim-cli/src/__tests__/metro.test.ts
           packages/stim-cli/src/__tests__/stimd-metro.integration.test.ts
+          packages/stim-cli/src/__tests__/stimd-metro-cleanup.test.ts
           packages/stim-cli/src/__tests__/daemon-metro-stop.test.ts
           packages/stim-cli/src/__tests__/daemon-cadence.test.ts
           packages/stim-cli/src/__tests__/stimd.integration.test.ts
