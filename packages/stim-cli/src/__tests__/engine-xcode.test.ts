@@ -5,7 +5,9 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { processContext } from '../cli-operation.ts';
+import { operationState } from '../engine/operation-state.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
@@ -392,10 +394,11 @@ describe('buildIos with a mocked executor', () => {
     const spawnCalls = harness(tmp, { child });
     setExecutor({
       run: () => '',
-      runFileQuietAsync: async (cmd) =>
+      runFileAsync: async (cmd) =>
         cmd === 'xcrun'
           ? 'Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\n'
-          : 'Xcode 26.1\nBuild version 17B55\n',
+          : '{"project":{"name":"App","schemes":["App"]}}',
+      runFileQuietAsync: async () => 'Xcode 26.1\nBuild version 17B55\n',
       runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
       spawn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
@@ -451,10 +454,11 @@ describe('buildIos with a mocked executor', () => {
     stubReactNative(tmp, '0.86.3');
     setExecutor({
       run: () => '',
-      runFileQuietAsync: async (cmd) =>
+      runFileAsync: async (cmd) =>
         cmd === 'xcrun'
           ? 'Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)\n'
-          : 'Xcode 27.0\nBuild version 18A100\n',
+          : '{"project":{"name":"App","schemes":["App"]}}',
+      runFileQuietAsync: async () => 'Xcode 27.0\nBuild version 18A100\n',
       runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
       spawn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
@@ -488,10 +492,11 @@ describe('buildIos with a mocked executor', () => {
     stubReactNative(tmp, '0.88.0-rc.0');
     setExecutor({
       run: () => '',
-      runFileQuietAsync: async (cmd) =>
+      runFileAsync: async (cmd) =>
         cmd === 'xcrun'
           ? 'Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)\n'
-          : 'Xcode 27.0\nBuild version 18A100\n',
+          : '{"project":{"name":"App","schemes":["App"]}}',
+      runFileQuietAsync: async () => 'Xcode 27.0\nBuild version 18A100\n',
       runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
       spawn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
@@ -520,6 +525,90 @@ describe('buildIos with a mocked executor', () => {
         ? `SWIFT_OTHER_PREFIX_MAPPINGS=${JSON.stringify(`${tmp}=/^src`)} ${JSON.stringify(`${workspaceDerivedData(tmp)}=/^derived-data`)}`
         : `SWIFT_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`,
     );
+  });
+
+  test.each([
+    { name: 'Swift times out twice', output: [], rn: '0.88.0', reason: 'timed out twice', timeouts: [10_000, 20_000] },
+    {
+      name: 'Swift returns no version',
+      output: [''],
+      rn: '0.88.0',
+      reason: 'reported no Swift version',
+      timeouts: [10_000],
+    },
+    {
+      name: 'React Native has no version',
+      output: ['Apple Swift version 6.4'],
+      rn: null,
+      reason: 'could not read the installed react-native version',
+      timeouts: [10_000],
+    },
+    {
+      name: 'the retry reports Swift 6.4',
+      output: [null, 'Apple Swift version 6.4'],
+      rn: '0.88.0',
+      reason: 'Swift on',
+      timeouts: [10_000, 20_000],
+    },
+  ])('$name', async ({ output, rn, reason, timeouts }) => {
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    if (rn) stubReactNative(tmp, rn);
+    const base = getExecutor();
+    const probes: Array<number | 'unbounded'> = [];
+    setExecutor({
+      ...base,
+      runFileQuietAsync: async () => 'Xcode 27.0',
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'xcrun') return base.runFileAsync(file, args, options);
+        expect(args).toEqual(['swift', '--version']);
+        probes.push(options.timeoutMs);
+        const value = output[probes.length - 1];
+        if (value === null || value === undefined) throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+        return value;
+      },
+    });
+    const notes: string[] = [];
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      onNote: (line) => notes.push(line),
+    });
+    await child.started;
+    makeProduct(workspaceDerivedData(tmp));
+    child.emit('close', 0, null);
+    await promise;
+    expect(probes).toEqual(timeouts);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(reason);
+    expect(spawnCalls[0]?.args).toContain(`SWIFT_ENABLE_COMPILE_CACHE=${reason === 'Swift on' ? 'YES' : 'NO'}`);
+  });
+
+  test('native run cancellation stops Swift probing without retrying or starting the build', async () => {
+    const spawnCalls = harness(tmp);
+    const base = getExecutor();
+    const stopped = new AbortController();
+    const context = processContext(tmp);
+    operationState(context).runSignal = stopped.signal;
+    let probes = 0;
+    setExecutor({
+      ...base,
+      runFileQuietAsync: async () => 'Xcode 27.0',
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'xcrun') return base.runFileAsync(file, args, options);
+        probes++;
+        expect(options.signal).toBe(stopped.signal);
+        stopped.abort(new Error('fixture native run stopped'));
+        throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+      },
+    });
+    await expect(
+      buildIos({ context, root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() }),
+    ).rejects.toThrow('fixture native run stopped');
+    expect(probes).toBe(1);
+    expect(spawnCalls).toEqual([]);
   });
 
   test('counts the Swift targets Xcode excluded from caching for lack of explicit modules', async () => {

@@ -3,10 +3,12 @@ import { join, relative } from 'node:path';
 import type { AndroidLayout } from '../workspace/settings.ts';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { killOnAbort } from '../workspace/git-read.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { phaseLine } from '../command-output.ts';
-import { getExecutor, type Executor } from '../exec.ts';
+import { getExecutor, isTimeoutError, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
@@ -235,6 +237,29 @@ export function reactNativeCompilationCacheSettings({
   });
 }
 
+async function swiftCacheVersion(
+  context: StimContext | undefined,
+  executor: Executor,
+): Promise<{
+  version: ReturnType<typeof parseSwiftVersion>;
+  reason?: string;
+}> {
+  const signal = runCancellationSignal(context) ?? context?.signal ?? executor.reportSignal?.();
+  for (const timeoutMs of [10_000, 20_000]) {
+    signal?.throwIfAborted();
+    try {
+      const output = await runOperationFile(context, executor, 'xcrun', ['swift', '--version'], { timeoutMs, signal });
+      const version = parseSwiftVersion(output);
+      return version ? { version } : { version: null, reason: '`xcrun swift --version` reported no Swift version' };
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
+      if (!isTimeoutError(error)) return { version: null, reason: '`xcrun swift --version` failed' };
+    }
+  }
+  return { version: null, reason: '`xcrun swift --version` timed out twice' };
+}
+
 async function resolveCompilationCacheSettings({
   context,
   root,
@@ -266,10 +291,9 @@ async function resolveCompilationCacheSettings({
     !ccache &&
     optimizations.compilationCache &&
     optimizations.swiftCompilationCache !== false;
-  const swiftVersion = probe
-    ? parseSwiftVersion(await executor.runFileQuietAsync('xcrun', ['swift', '--version'], probeOptions))
-    : null;
+  const swift = probe ? await swiftCacheVersion(context, executor) : null;
   context?.signal.throwIfAborted();
+  const swiftVersion = swift?.version ?? null;
   const reactNativeVersion = probe ? detectReactNativeVersion(root) : null;
   const settings = reactNativeCompilationCacheSettings({
     workspaceRoot: root,
@@ -289,7 +313,7 @@ async function resolveCompilationCacheSettings({
       prune: 'atomic',
       note: 'shared Xcode compilation cache',
     });
-    const swift = settings.includes('SWIFT_ENABLE_COMPILE_CACHE=YES')
+    const swiftStatus = settings.includes('SWIFT_ENABLE_COMPILE_CACHE=YES')
       ? settings.includes('SWIFT_ENABLE_PREFIX_MAPPING=YES')
         ? 'Swift on'
         : 'Swift on, unmapped'
@@ -297,8 +321,12 @@ async function resolveCompilationCacheSettings({
         ? `Swift off, ${swiftVersion.major}.${swiftVersion.minor} < ${SWIFT_PREFIX_MAPPING_MIN_SWIFT.major}.${SWIFT_PREFIX_MAPPING_MIN_SWIFT.minor}`
         : swiftVersion && reactNativeVersion && !reactNativeSupportsSwiftCache(reactNativeVersion)
           ? `Swift off, react-native ${reactNativeVersion.major}.${reactNativeVersion.minor} < ${SWIFT_CACHE_MIN_REACT_NATIVE.major}.${SWIFT_CACHE_MIN_REACT_NATIVE.minor}`
-          : 'Swift off';
-    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath}, ${swift})`)));
+          : swift?.reason
+            ? `Swift off, ${swift.reason}`
+            : probe && !reactNativeVersion
+              ? 'Swift off, could not read the installed react-native version'
+              : 'Swift off';
+    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath}, ${swiftStatus})`)));
   }
   return settings;
 }
