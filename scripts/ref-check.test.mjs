@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { checkPlannedWork } from './ref-check.mjs';
 
 const script = fileURLToPath(new URL('./ref-check.mjs', import.meta.url));
 const ref = (target) => ['@ref', target].join(' ');
@@ -129,4 +130,55 @@ test('reports duplicate document numbers and invalid metadata', () => {
   expect(result.stdout).toContain('duplicate LLP number 0001');
   expect(result.stdout).toContain('missing required metadata field **Systems:**');
   expect(result.stdout).toContain("filename type '.explainer.md' != **Type:** Decision");
+});
+
+test('checks Planned marker syntax without looking up the issue number during lint', () => {
+  const path = 'llp/0001-workspace.decision.md';
+  write(
+    path,
+    [
+      doc,
+      '````md',
+      '```',
+      'Planned: intentionally invalid inside a longer fence',
+      '````',
+      '~~~md',
+      'Planned: intentionally invalid inside a tilde fence',
+      '~~~',
+      'Planned: #9999999999',
+    ].join('\n'),
+  );
+  expect(check()).toMatchObject({ status: 0, stdout: expect.stringContaining('ref-check: ok') });
+
+  write(path, [doc, 'Planned: owner/repo#123'].join('\n'));
+  expect(check()).toMatchObject({
+    status: 1,
+    stdout: expect.stringContaining(`${path}:12: expected Planned: #N for a same-repository issue or pull request`),
+  });
+});
+
+test('reports closed, merged and unverified items, and looks up a shared issue once', async () => {
+  const path = 'llp/0001-workspace.decision.md';
+  const planned = ['123', '124', '125', '124', '126', '127'].map((number, index) => ({
+    path,
+    line: index + 10,
+    number,
+  }));
+  const lookup = vi.fn(async (number) => {
+    if (number === '127') throw new Error('GitHub returned HTTP 404');
+    return {
+      123: { state: 'open' },
+      124: { state: 'closed' },
+      125: { state: 'closed', pull_request: { merged_at: '2026-11-12T20:00:00Z' } },
+      126: {},
+    }[number];
+  });
+  expect(await checkPlannedWork(planned, lookup)).toEqual([
+    `${path}:11: #124 is closed; update or remove this Planned marker`,
+    `${path}:12: #125 is merged; update or remove this Planned marker`,
+    `${path}:13: #124 is closed; update or remove this Planned marker`,
+    `${path}:14: could not verify #126: GitHub returned no valid issue or pull request state`,
+    `${path}:15: could not verify #127: GitHub returned HTTP 404`,
+  ]);
+  expect(lookup.mock.calls.flat()).toEqual(['123', '124', '125', '126', '127']);
 });
