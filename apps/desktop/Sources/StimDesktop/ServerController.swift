@@ -83,6 +83,7 @@ final class ServerController: ObservableObject {
     }
   }
   @Published private(set) var devices: [PairedDevice] = []
+  @Published private(set) var unreadablePairings: [UnreadablePairing] = []
   private var hasDeviceList = false
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
@@ -527,18 +528,19 @@ final class ServerController: ObservableObject {
     Task {
       let cli = await cli()
       guard epoch == devicesEpoch, current == generation else { return }
-      let result = await Result.awaiting { try await cli.devices() }
+      let result = await Result.awaiting { try await cli.pairings() }
       guard epoch == devicesEpoch, current == generation else { return }
       switch result {
-      case .success(let devices):
+      case .success(let pairings):
         hasDeviceList = running
-        self.devices = devices.map { device in
+        devices = pairings.devices.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
           device.capabilities = Self.capabilities(control: control)
           return device
         }
         .sorted { $0.pairedAt > $1.pairedAt }
+        unreadablePairings = pairings.unreadable ?? []
         devicesError = nil
         FeatureFlags.seed(servesPhones: false, pairedPhones: self.devices.filter(\.isPhone).count)
       case .failure(let error):

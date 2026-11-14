@@ -27,7 +27,7 @@ struct IncomingConnectionsView: View {
   var body: some View {
     IncomingConnectionsContent(
       allowsConnections: $allowsConnections, problem: problem, phoneApp: flags.phoneApp,
-      connections: Connections.incoming(server.devices),
+      connections: Connections.incoming(server.devices), unreadablePairings: server.unreadablePairings, stimHome: stimHome,
       changing: Set(server.pendingGrants.keys), errors: [server.devicesError, server.changeError].compactMap { $0 },
       keepsAwake: keepsAwake, shares: shares.shares, stopsOneShare: shares.stopsOneShare, stoppingShares: shares.stopping,
       workspaceTitle: { store.names(ofPath: $0).title }, sessions: hosted.sessions ?? [], stoppingSessions: hosted.stopping,
@@ -200,6 +200,8 @@ struct IncomingConnectionsContent<Server: View>: View {
   var problem: ConnectionProblem?
   var phoneApp: Bool
   var connections: [IncomingConnection]
+  var unreadablePairings: [UnreadablePairing]
+  var stimHome: String
   var changing: Set<String> = []
   var errors: [String] = []
   var keepsAwake: Binding<Bool>?
@@ -234,7 +236,7 @@ struct IncomingConnectionsContent<Server: View>: View {
           }
         }
         ForEach(errors, id: \.self) { Text(abbreviatingHome($0)).foregroundStyle(Palette.error).textSelection(.enabled) }
-        if connections.isEmpty {
+        if connections.isEmpty && unreadablePairings.isEmpty {
           Text("Nothing else uses this machine yet.")
             .foregroundStyle(Palette.secondary)
         }
@@ -243,6 +245,9 @@ struct IncomingConnectionsContent<Server: View>: View {
             connection: connection, changing: connection.pairing.map { changing.contains($0.id) } ?? false,
             setAccess: { control in connection.pairing.map { setAccess($0, control) } },
             rename: { rename(connection) }, revoke: { revoke(connection) })
+        }
+        ForEach(unreadablePairings, id: \.self) { pairing in
+          UnreadablePairingRow(pairing: pairing, stimHome: stimHome)
         }
       } header: {
         HStack {
@@ -325,6 +330,37 @@ struct IncomingConnectionsContent<Server: View>: View {
 }
 
 /// One phone or machine that uses this machine, with every record its key holds.
+private struct UnreadablePairingRow: View {
+  var pairing: UnreadablePairing
+  var stimHome: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.xxs) {
+      if let version = pairing.version {
+        Label(
+          "Unreadable pairing registry (version \(version, format: .number.grouping(.never)))",
+          systemImage: "exclamationmark.triangle.fill"
+        )
+        .foregroundStyle(Palette.warning)
+        Text("Update Stim on this machine to read this registry.").foregroundStyle(Palette.secondary)
+      } else {
+        Label("Unreadable pairing entry", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+        Text("A newer version of Stim may have written this entry.").foregroundStyle(Palette.secondary)
+      }
+      Text(verbatim: location).foregroundStyle(Palette.secondary).textSelection(.enabled)
+    }
+    .font(.stim(.footnote))
+    .padding(.vertical, Space.xxs)
+    .accessibilityElement(children: .contain)
+  }
+
+  private var location: String {
+    let path = abbreviatingHome("\(stimHome)/server/\(pairing.file)")
+    let parts = [path, pairing.index.map { "Entry \($0)" }, pairing.id].compactMap { $0 }
+    return parts.joined(separator: " \u{00B7} ")
+  }
+}
+
 private struct IncomingConnectionRow: View {
   var connection: IncomingConnection
   var changing: Bool
