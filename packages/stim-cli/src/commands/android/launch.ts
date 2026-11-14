@@ -890,6 +890,17 @@ export async function finishAndroidRun({
   let installTimer = stepTimer(now);
   const installApk = (target: string) => {
     installTimer = stepTimer(now);
+    writer.write({
+      src: 'build',
+      level: 'info',
+      event: 'install_attempt',
+      platform: 'android',
+      appId: androidPackage,
+      deviceId: target,
+      remote: Boolean(remoteDevice),
+      physical,
+      msg: `installing APK on ${target}`,
+    });
     return install({
       serial: target,
       apkPath: apkPath!,
