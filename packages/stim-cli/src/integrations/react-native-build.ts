@@ -252,9 +252,10 @@ async function swiftCacheVersion(
       const version = parseSwiftVersion(output);
       return version ? { version } : { version: null, reason: '`xcrun swift --version` reported no Swift version' };
     } catch (error) {
-      signal?.throwIfAborted();
       if (error instanceof Error && 'reportCleanup' in error) throw error;
+      signal?.throwIfAborted();
       if (!isTimeoutError(error)) return { version: null, reason: '`xcrun swift --version` failed' };
+      if (!signal) return { version: null, reason: '`xcrun swift --version` timed out' };
     }
   }
   return { version: null, reason: '`xcrun swift --version` timed out twice' };

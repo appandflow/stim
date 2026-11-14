@@ -530,6 +530,14 @@ describe('buildIos with a mocked executor', () => {
   test.each([
     { name: 'Swift times out twice', output: [], rn: '0.88.0', reason: 'timed out twice', timeouts: [10_000, 20_000] },
     {
+      name: 'Swift times out without a scoped executor signal',
+      output: [],
+      rn: '0.88.0',
+      reason: 'timed out',
+      timeouts: [10_000],
+      scoped: false,
+    },
+    {
       name: 'Swift returns no version',
       output: [''],
       rn: '0.88.0',
@@ -550,7 +558,7 @@ describe('buildIos with a mocked executor', () => {
       reason: 'Swift on',
       timeouts: [10_000, 20_000],
     },
-  ])('$name', async ({ output, rn, reason, timeouts }) => {
+  ])('$name', async ({ output, rn, reason, timeouts, scoped = true }) => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
     if (rn) stubReactNative(tmp, rn);
@@ -570,6 +578,7 @@ describe('buildIos with a mocked executor', () => {
     });
     const notes: string[] = [];
     const promise = buildIos({
+      ...(scoped ? { context: processContext(tmp) } : {}),
       root: tmp,
       iosDir: join(tmp, 'ios'),
       udid: 'u',
@@ -586,30 +595,41 @@ describe('buildIos with a mocked executor', () => {
     expect(spawnCalls[0]?.args).toContain(`SWIFT_ENABLE_COMPILE_CACHE=${reason === 'Swift on' ? 'YES' : 'NO'}`);
   });
 
-  test('native run cancellation stops Swift probing without retrying or starting the build', async () => {
-    const spawnCalls = harness(tmp);
-    const base = getExecutor();
-    const stopped = new AbortController();
-    const context = processContext(tmp);
-    operationState(context).runSignal = stopped.signal;
-    let probes = 0;
-    setExecutor({
-      ...base,
-      runFileQuietAsync: async () => 'Xcode 27.0',
-      runFileAsync: async (file, args, options) => {
-        if (file !== 'xcrun') return base.runFileAsync(file, args, options);
-        probes++;
-        expect(options.signal).toBe(stopped.signal);
-        stopped.abort(new Error('fixture native run stopped'));
-        throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
-      },
-    });
-    await expect(
-      buildIos({ context, root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() }),
-    ).rejects.toThrow('fixture native run stopped');
-    expect(probes).toBe(1);
-    expect(spawnCalls).toEqual([]);
-  });
+  test.each([
+    ['a timeout', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), false],
+    [
+      'unverified cleanup',
+      Object.assign(new Error('fixture Swift child cleanup unverified'), { reportCleanup: true }),
+      true,
+    ],
+  ])(
+    'native run cancellation with %s stops Swift probing before a retry or build',
+    async (_name, probeError, cleanupFailed) => {
+      const spawnCalls = harness(tmp);
+      const base = getExecutor();
+      const stopped = new AbortController();
+      const cancellation = new Error('fixture native run stopped');
+      const context = processContext(tmp);
+      operationState(context).runSignal = stopped.signal;
+      let probes = 0;
+      setExecutor({
+        ...base,
+        runFileQuietAsync: async () => 'Xcode 27.0',
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'xcrun') return base.runFileAsync(file, args, options);
+          probes++;
+          expect(options.signal).toBe(stopped.signal);
+          stopped.abort(cancellation);
+          throw probeError;
+        },
+      });
+      await expect(
+        buildIos({ context, root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() }),
+      ).rejects.toBe(cleanupFailed ? probeError : cancellation);
+      expect(probes).toBe(1);
+      expect(spawnCalls).toEqual([]);
+    },
+  );
 
   test('counts the Swift targets Xcode excluded from caching for lack of explicit modules', async () => {
     const child = fakeChild();
