@@ -146,6 +146,8 @@ three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
 day, a daemon claim it cannot
 resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
+Both `stim status` and `stim doctor` show the claim and remedy when stimd cannot
+recover a physical iPhone console.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against

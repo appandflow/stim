@@ -10,6 +10,7 @@ import {
   releaseClaim,
   tryAcquireClaim,
   type ClaimHandle,
+  type ClaimSurvey,
 } from '../../ownership-claim.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
@@ -161,14 +162,17 @@ export async function takeStreamClaim(root: string, streamId: string): Promise<C
  * Whether the stimd that owned stream `streamId` is provably gone: its claim names the stream, is resolved, and every
  * holder's owner identity reads gone or recycled. A live child it left behind does not change that.
  */
-export function streamOwnerGone(root: string, streamId: string): { gone: true } | { gone: false; reason: string } {
+export function streamOwnerGone(
+  root: string,
+  streamId: string,
+  survey: ClaimSurvey = readClaimSet(claimPath(root, streamId)),
+): { gone: true } | { gone: false; reason: string } {
   const path = claimPath(root, streamId);
-  const survey = readClaimSet(path);
   const issue = survey.unresolved[0];
   if (issue)
     return {
       gone: false,
-      reason: `its claim at ${path} is unresolved. ${issue.pendingChild ? pendingRemedy(issue.path) : `Inspect the ownership at ${path}`}`,
+      reason: `its claim at ${path} is unresolved: ${issue.reason}. ${issue.pendingChild ? pendingRemedy(issue.path) : `Inspect the ownership at ${path}`}`,
     };
   const holders = [...survey.live, ...survey.dead].filter((holder) => holder.details.streamId === streamId);
   if (!holders.length)

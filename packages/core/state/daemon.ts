@@ -135,6 +135,27 @@ export function parseUnverifiedCleanups(value: unknown): UnverifiedCleanup[] {
     : [];
 }
 
+/** A physical iPhone console the running daemon could not take over or settle. */
+export interface UnverifiedConsole {
+  since: string;
+  message: string;
+  remedy: string;
+}
+
+/** The well-formed entries of a daemon claim's `unverifiedConsoles` details. */
+export function parseUnverifiedConsoles(value: unknown): UnverifiedConsole[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
+}
+
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
 export interface DaemonStatus {
   /** The running daemon's mode, else the mode `daemon.mode` resolves to here. */
@@ -160,6 +181,8 @@ export interface DaemonStatus {
   recent?: DaemonRecentAction[];
   /** The children the running daemon stays up for, from its claim. */
   unverified?: UnverifiedCleanup[];
+  /** Physical iPhone console recoveries the daemon could not verify. */
+  unverifiedConsoles?: UnverifiedConsole[];
   /** Set while stimd refuses to start after three abnormal exits in 10 minutes. */
   crashHold?: { build: string; count: number; until: string; remedy: string };
   /** The last abnormal stimd exits of the last day, oldest first. */

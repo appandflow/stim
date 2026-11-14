@@ -961,21 +961,36 @@ async function runStimdInner(
     desktopKey: key,
     script,
   });
-  const logs = createStreams((message) => log('warn', 'device_logs', message), log);
+  const logs = createStreams(
+    (message) => log('warn', 'device_logs', message),
+    log,
+    () => reportUnverified(),
+  );
   const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
+    if (!claim) return;
+    const { unverified: previous, unverifiedConsoles: previousConsoles, ...kept } = claim.details;
     const unverified = cleanups.entries();
-    if (!claim || JSON.stringify(unverified) === JSON.stringify(claim.details.unverified ?? [])) return;
-    const kept = Object.fromEntries(Object.entries(claim.details).filter(([field]) => field !== 'unverified'));
+    const unverifiedConsoles = logs.unverifiedConsoles();
+    if (
+      JSON.stringify(unverified) === JSON.stringify(previous ?? []) &&
+      JSON.stringify(unverifiedConsoles) === JSON.stringify(previousConsoles ?? [])
+    )
+      return;
     try {
-      claim = updateClaimDetails(claim, unverified.length ? { ...kept, unverified } : kept) ?? claim;
+      claim =
+        updateClaimDetails(claim, {
+          ...kept,
+          ...(unverified.length ? { unverified } : {}),
+          ...(unverifiedConsoles.length ? { unverifiedConsoles } : {}),
+        }) ?? claim;
     } catch (error) {
       log(
         'warn',
         'daemon_cleanup_report_failed',
-        `could not record the children stimd waits for in its claim: ${error instanceof Error ? error.message : String(error)}`,
+        `could not record unverified cleanup in the daemon claim: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   };

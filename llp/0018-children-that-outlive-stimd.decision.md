@@ -322,7 +322,13 @@ waits up to 30 s for a console's stop.
   its remove commands, retried every second while its record names it, and
   holds idle exit meanwhile. A stop or start in that slot tries the takeover
   again without the 10 s wait, then falls back to the claim recovery of any
-  other stream.
+  other stream. The current daemon claim reports any refused takeover or settle
+  to `stim status` and `stim doctor`, with the same claim and remedy. A takeover
+  refusal stays while the matching claim is unreadable. An iOS stream record
+  without a launch spec identifies the console for diagnostics while its claim
+  is unresolved. Taking over still requires a claim that identifies the helper.
+  The takeover refusal clears when stimd takes over or verifies the claim set is
+  empty. A settle refusal clears when a stop or start settles the console.
 - Idle exit: stimd does not idle-exit while it supervises a console, as before.
 - Logs worker failure: the console does not use the worker and is not
   affected.

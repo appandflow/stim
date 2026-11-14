@@ -299,6 +299,7 @@
 [*] interface DaemonStatus { @@1 setting?: DaemonMode;
 [*] interface DaemonStatus { @@1 testWaiting?: DaemonTestWaiter[];
 [*] interface DaemonStatus { @@1 unverified?: UnverifiedCleanup[];
+[*] interface DaemonStatus { @@1 unverifiedConsoles?: UnverifiedConsole[];
 [*] interface DaemonStatus { @@1 waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { @@1 } | null;
 [*] interface DaemonStatus { @@1 }[];
@@ -1413,6 +1414,10 @@
 [*] interface UnverifiedCleanup { @@1 message: string;
 [*] interface UnverifiedCleanup { @@1 remedy: string;
 [*] interface UnverifiedCleanup { @@1 since: string;
+[*] interface UnverifiedConsole {
+[*] interface UnverifiedConsole { @@1 message: string;
+[*] interface UnverifiedConsole { @@1 remedy: string;
+[*] interface UnverifiedConsole { @@1 since: string;
 [*] interface WatchmanRoot {
 [*] interface WatchmanRoot { @@1 detail: string | null;
 [*] interface WatchmanRoot { @@1 path: string;
