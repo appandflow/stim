@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -24,13 +25,7 @@ import {
   stimdRecordFile,
   stimdSocket,
 } from '@stim-cli/core/state';
-import {
-  processGroupAlive,
-  readClaimSet,
-  releaseClaim,
-  tryAcquireClaim,
-  type ClaimOwner,
-} from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
   acquireDeviceTicket,
@@ -57,7 +52,7 @@ const RESTARTED = 'Stim: stimd restarted; this command continues with the new st
 
 let dir: string;
 let home: string;
-let cleanup: 'default' | 'settled' | 'unverified';
+let tracksDaemon: boolean;
 
 function stimdPid(): number | null {
   try {
@@ -150,7 +145,7 @@ const leaseParams = (root: string) => ({
 });
 
 beforeEach(() => {
-  cleanup = 'default';
+  tracksDaemon = false;
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-')));
   home = join(dir, 'home');
   mkdirSync(home);
@@ -171,12 +166,11 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     cancelCliOp();
-    if (cleanup === 'default') await stopStimd();
+    if (!tracksDaemon) await stopStimd();
   } finally {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    // A detached stimd can start before taking its claim. The run sweep can find it by its scratch cwd.
-    if (cleanup !== 'unverified') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -322,6 +316,54 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     const sdk = join(dir, 'sdk');
     const adbDir = join(sdk, 'platform-tools');
     const trace = join(dir, 'trace.json');
+    const launches = join(dir, 'launches');
+    const daemonGate = join(dir, 'daemon-gate.mjs');
+    const cliPreload = join(dir, 'cli-preload.mjs');
+    mkdirSync(launches);
+    writeFileSync(
+      daemonGate,
+      `import { once } from 'node:events';
+if (!process.connected) process.exit(1);
+process.once('disconnect', () => process.exit(1));
+const [message] = await once(process, 'message');
+if (message !== 'start') process.exit(1);
+process.removeAllListeners('disconnect');
+process.disconnect();
+`,
+    );
+    writeFileSync(
+      cliPreload,
+      `import { renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { getExecutor } from ${JSON.stringify(new URL('../exec.ts', import.meta.url).href)};
+import { captureProcessToken } from ${JSON.stringify(new URL('../process-identity.ts', import.meta.url).href)};
+const executor = getExecutor();
+const spawn = executor.spawn.bind(executor);
+executor.spawn = (command, args, options) => {
+  if (command !== process.execPath || args?.[0] !== ${JSON.stringify(entry)} || args[1] !== '__stimd' ||
+      options?.cwd !== ${JSON.stringify(join(home, 'run'))} || !options.detached) return spawn(command, args, options);
+  const child = spawn(command, ['--import', ${JSON.stringify(daemonGate)}, ...args], {
+    ...options, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  if (!child.pid) return child;
+  const processToken = captureProcessToken(child.pid);
+  if (!processToken) {
+    child.kill();
+    throw new Error('Could not record the replacement stimd identity');
+  }
+  const record = join(${JSON.stringify(launches)}, child.pid + '.json');
+  writeFileSync(record + '.tmp', JSON.stringify({ pid: child.pid, processToken }));
+  renameSync(record + '.tmp', record);
+  child.send('start', (error) => { if (error) child.kill(); });
+  return child;
+};
+`,
+    );
+    const replacementRecords = (): { pid: number; processToken: string }[] =>
+      readdirSync(launches)
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => JSON.parse(readFileSync(join(launches, file), 'utf8')));
+
     vi.stubEnv('ANDROID_HOME', sdk);
     vi.stubEnv('ANDROID_SDK_ROOT', sdk);
     vi.stubEnv('PATH', [adbDir, process.env.PATH].join(delimiter));
@@ -362,16 +404,13 @@ esac
     assert(held.status === 'taken');
     const first = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
     const firstExit = once(first, 'exit');
-    const replacementOwner = () =>
-      readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid !== first.pid)?.owner;
     let command: { child: ChildProcess; exited: Promise<unknown> } | undefined;
-    let replacement: ClaimOwner | undefined;
-    cleanup = 'unverified';
+    tracksDaemon = true;
     try {
       await vi.waitFor(() => expect(stimdPid()).toBe(first.pid), { timeout: 15_000, interval: 50 });
       const cli = spawn(
         process.execPath,
-        [entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
+        ['--import', cliPreload, entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
         {
           cwd: root,
           env: { ...process.env, STIM_TRACE: trace },
@@ -393,7 +432,7 @@ esac
         },
         { timeout: 15_000, interval: 25 },
       );
-      replacement = replacementOwner();
+      const [replacement] = replacementRecords();
       assert(replacement && stimdPid() === replacement.pid);
       const successor = replacement.pid;
       assert(cli.kill('SIGINT'));
@@ -413,13 +452,9 @@ esac
       const cli = command?.child;
       if (cli?.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
       await Promise.all([firstExit, command?.exited]);
-      const owner = replacement ?? replacementOwner();
-      if (owner) {
+      for (const owner of replacementRecords()) {
         if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
         assert(await waitForProcessExit(owner, 15_000), `Replacement stimd ${owner.pid} did not exit in ${home}.`);
-        cleanup = 'settled';
-      } else if (!command) {
-        cleanup = 'settled';
       }
     }
   }, 80_000);
