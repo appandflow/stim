@@ -175,6 +175,9 @@ test("a machine reports each missing piece of Exact's toolchain with the command
   expect(exactToolProblems(pins, { HOME: home }).map((each) => each.reason)).toContain(
     `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}`,
   );
+  expect(exactToolProblems({ ...pins, url: null }, { HOME: home }).map((each) => each.reason)).toContain(
+    `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}; the client's exact2 checkout has ${sha.slice(0, 10)} on no remote branch, so push it where this machine can fetch it`,
+  );
   execFileSync('git', ['clone', '-q', exact2, join(root, 'clone')]);
   execFileSync('mv', [join(root, 'clone', '.git'), join(checkout, '.git')]);
   git(checkout, 'checkout', '-q', '--', '.');

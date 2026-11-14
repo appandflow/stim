@@ -311,10 +311,13 @@ function exact2Problem(pins: ExactPins, home: string, cargoHome: string): ExactT
       `git -C ${shown} fetch ${source} ${pins.exact2}`,
       `git -C ${shown} checkout --detach ${pins.exact2}`,
     ];
+    const unpushed = pins.url
+      ? ''
+      : `; the client's exact2 checkout has ${short} on no remote branch, so push it where this machine can fetch it`;
     return present.length
-      ? { reason: `${shown} is not at commit ${short}`, commands: [...checkout, setup(shown)] }
+      ? { reason: `${shown} is not at commit ${short}${unpushed}`, commands: [...checkout, setup(shown)] }
       : {
-          reason: `no exact2 ${short} at ${shown}`,
+          reason: `no exact2 ${short} at ${shown}${unpushed}`,
           commands: [`git clone ${source} ${shown}`, ...checkout, setup(shown)],
         };
   }
