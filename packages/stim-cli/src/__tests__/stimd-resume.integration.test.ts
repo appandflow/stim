@@ -24,7 +24,13 @@ import {
   stimdRecordFile,
   stimdSocket,
 } from '@stim-cli/core/state';
-import { processGroupAlive, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import {
+  processGroupAlive,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimOwner,
+} from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
   acquireDeviceTicket,
@@ -51,6 +57,7 @@ const RESTARTED = 'Stim: stimd restarted; this command continues with the new st
 
 let dir: string;
 let home: string;
+let cleanup: 'default' | 'settled' | 'unverified';
 
 function stimdPid(): number | null {
   try {
@@ -143,6 +150,7 @@ const leaseParams = (root: string) => ({
 });
 
 beforeEach(() => {
+  cleanup = 'default';
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-')));
   home = join(dir, 'home');
   mkdirSync(home);
@@ -163,11 +171,12 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     cancelCliOp();
-    await stopStimd();
+    if (cleanup === 'default') await stopStimd();
   } finally {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // A detached stimd can start before taking its claim. The run sweep can find it by its scratch cwd.
+    if (cleanup !== 'unverified') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -351,23 +360,29 @@ esac
     );
     const held = takeLease({ root: other, platform: 'android', id: device, kind: 'run', durationMs: 60_000 });
     assert(held.status === 'taken');
-    const first = await startStimd();
+    const first = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
     const firstExit = once(first, 'exit');
-    const cli = spawn(
-      process.execPath,
-      [entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
-      {
-        cwd: root,
-        env: { ...process.env, STIM_TRACE: trace },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
-    const exited = once(cli, 'exit');
-    let output = '';
-    cli.stdout?.on('data', (chunk) => (output += String(chunk)));
-    cli.stderr?.on('data', (chunk) => (output += String(chunk)));
-    const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
+    const replacementOwner = () =>
+      readClaimSet(stimdClaimRoot(home)).live.find(({ owner }) => owner.pid !== first.pid)?.owner;
+    let command: { child: ChildProcess; exited: Promise<unknown> } | undefined;
+    let replacement: ClaimOwner | undefined;
+    cleanup = 'unverified';
     try {
+      await vi.waitFor(() => expect(stimdPid()).toBe(first.pid), { timeout: 15_000, interval: 50 });
+      const cli = spawn(
+        process.execPath,
+        [entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
+        {
+          cwd: root,
+          env: { ...process.env, STIM_TRACE: trace },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      command = { child: cli, exited: once(cli, 'exit') };
+      let output = '';
+      cli.stdout?.on('data', (chunk) => (output += String(chunk)));
+      cli.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
       await vi.waitFor(() => assert.equal(waitsForHolder(), 1, output), { timeout: 15_000, interval: 25 });
       assert(first.kill('SIGKILL'));
       await firstExit;
@@ -378,9 +393,9 @@ esac
         },
         { timeout: 15_000, interval: 25 },
       );
-      const successor = stimdPid();
-      expect(successor).toEqual(expect.any(Number));
-      expect(successor).not.toBe(first.pid);
+      replacement = replacementOwner();
+      assert(replacement && stimdPid() === replacement.pid);
+      const successor = replacement.pid;
       assert(cli.kill('SIGINT'));
       await vi.waitFor(() => assert.equal(cli.exitCode, 130, output), { timeout: 5000, interval: 25 });
       await vi.waitFor(
@@ -394,10 +409,20 @@ esac
       releaseRunLease({ root: other, platform: 'android', token: held.lease.token });
       expect(listLeaseFiles()).toEqual([]);
     } finally {
-      if (cli.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
-      await exited;
+      if (first.exitCode === null && first.signalCode === null) first.kill('SIGKILL');
+      const cli = command?.child;
+      if (cli?.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
+      await Promise.all([firstExit, command?.exited]);
+      const owner = replacement ?? replacementOwner();
+      if (owner) {
+        if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGTERM');
+        assert(await waitForProcessExit(owner, 15_000), `Replacement stimd ${owner.pid} did not exit in ${home}.`);
+        cleanup = 'settled';
+      } else if (!command) {
+        cleanup = 'settled';
+      }
     }
-  }, 45_000);
+  }, 80_000);
 
   test('a resume that meets the crash hold fails at once with the hold and its remedy', async () => {
     const other = workspace('other');
