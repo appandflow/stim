@@ -33,7 +33,7 @@ if (port) {
       port.postMessage({ type: 'done', result });
     } catch (error) {
       report();
-      port.postMessage({ type: 'failed', message: (error as Error).message });
+      port.postMessage({ type: 'failed', message: error instanceof Error ? error.message : String(error) });
     }
   });
 }
