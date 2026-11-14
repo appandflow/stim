@@ -608,7 +608,26 @@ exports.runServer = (config) => new Promise((resolve) => {
     const root = bareProject();
     const other = join(dir, 'other-holder');
     mkdirSync(other);
+    const preload = join(dir, 'fail-daemon-write.mjs');
+    write(
+      preload,
+      `import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const write = fs.writeSync;
+let fail = true;
+fs.writeSync = function (fd, line, ...args) {
+  if (fail && typeof line === 'string' && line.includes('"event":"device_lease_acquire"')) {
+    fail = false;
+    throw Object.assign(new Error('fixture daemon write failed'), { code: 'ENOSPC' });
+  }
+  return write.call(this, fd, line, ...args);
+};
+syncBuiltinESMExports();`,
+    );
+    env = { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, `--import ${JSON.stringify(preload)}`].filter(Boolean).join(' ') };
     await startStimd();
+    const daemonLog = join(home, 'daemon', 'daemon.ndjson');
+    await vi.waitFor(() => expect(readFileSync(daemonLog, 'utf8')).toContain('"event":"daemon_started"'));
     const { socket: path, build } = record()!;
     const owner = connect(path);
     const connected = once(owner, 'connect');
@@ -632,37 +651,55 @@ exports.runServer = (config) => new Promise((resolve) => {
       const params = { workspace: root, forwarded: { cwd: root, env: { APP_ENV: secret, STIM_RUN_ID: secret } } };
       owner.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params })}\n`);
       await vi.waitFor(() => expect(token).toEqual(expect.any(String)));
-      const reply = await ask(
-        'lease.prepare',
-        {
-          root,
-          platform: 'ios',
-          slot: 'default',
-          id,
-          deviceName: 'private phone',
-          idLabel: 'udid',
-          waitSeconds: 0,
-          noWait: false,
-          installBoundMs: 60_000,
-          appId: null,
-        },
-        token,
-      );
-      const request = { ticket: reply.ticket };
+      const leaseParams = {
+        root,
+        platform: 'ios',
+        slot: 'default',
+        id,
+        deviceName: 'private phone',
+        idLabel: 'udid',
+        waitSeconds: 0,
+        noWait: false,
+        installBoundMs: 60_000,
+        appId: null,
+      };
+      const reply = await ask('lease.prepare', leaseParams, token);
+      expect(await ask('lease.acquire', { ticket: reply.ticket }, token)).toMatchObject({
+        op: 'lease.acquired',
+        result: { status: 'refused' },
+      });
+      const next = await ask('lease.prepare', leaseParams, token);
+      const request = { ticket: next.ticket };
       for (let i = 0; i < 2; i++) {
         expect(await ask('lease.acquire', request, token)).toMatchObject({
           op: 'lease.acquired',
           result: { status: 'refused' },
         });
       }
-      const diagnostics = readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8')
+      const records = readFileSync(daemonLog, 'utf8')
         .trim()
         .split('\n')
-        .map((line) => JSON.parse(line))
-        .filter((line) => line.event === 'device_lease_acquire');
-      expect(diagnostics).toMatchObject([{ operation: 'lease.acquire', waitMs: 0, outcome: 'refused' }]);
+        .map((line) => JSON.parse(line));
+      const runId = records.find((entry) => entry.event === 'daemon_started')?.runId;
+      expect(runId).toEqual(expect.any(String));
+      const diagnostics = records.filter((entry) =>
+        ['device_lease_acquire', 'log_writer_dropped'].includes(entry.event),
+      );
+      expect(diagnostics).toMatchObject([
+        { event: 'device_lease_acquire', runId, operation: 'lease.acquire', waitMs: 0, outcome: 'refused' },
+        { event: 'log_writer_dropped', runId, dropped: 1, lastError: 'fixture daemon write failed' },
+      ]);
       const text = JSON.stringify(diagnostics);
-      for (const value of [secret, id, root, other, 'private phone', String(token), String(reply.ticket)])
+      for (const value of [
+        secret,
+        id,
+        root,
+        other,
+        'private phone',
+        String(token),
+        String(reply.ticket),
+        String(next.ticket),
+      ])
         expect(text).not.toContain(value);
     } finally {
       owner.destroy();

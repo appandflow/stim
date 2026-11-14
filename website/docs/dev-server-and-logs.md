@@ -532,9 +532,9 @@ codes, build versions, and the run IDs needed to join those records.
 
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts
-time spent waiting on the lease, and `outcome` records how the acquisition
-ended. The event uses the daemon's run ID and omits the workspace, device,
-and ticket details.
+time spent waiting for another holder to release the lease. `outcome` records
+how the acquisition ended. The event uses the daemon's run ID and omits the
+workspace, device, and ticket details.
 
 For a startup failure, check the last lines of `run/stimd.log` if present. The
 latest tick is in `daemon/snapshot.json`, the current daemon record is in
