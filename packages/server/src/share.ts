@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -140,10 +140,7 @@ export interface ShareDeps {
   gaveUp?: (request: ShareTarget, link: string) => Promise<void>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
-  /**
-   * Called when the last share has ended and its route is gone. Its presence marks the hub of a share-only server,
-   * where a share a restart restored gives way to a new start of its link or of its target.
-   */
+  /** Called when the last share has ended and its route is gone. */
   idle?: () => void;
   /**
    * Holds the workspace's native-run claim while a share reads its device and registers, so an automatic shutdown or
@@ -252,6 +249,10 @@ function closeServer(server: Server): void {
 
 function token(): string {
   return randomBytes(32).toString('base64url');
+}
+
+function samePassword(given: string | undefined, saved: Buffer | null): boolean {
+  return given !== undefined && saved !== null && timingSafeEqual(digest(given), saved);
 }
 
 function password(): string {
@@ -495,35 +496,30 @@ export class ShareHub {
     this.retrying.unref?.();
   }
 
-  /** Whether the request's link is live or being released; a restored share does not count for a start that replaces it. */
-  private reusedLive(request: ShareRequest, strict = true): boolean {
-    if (request.token === undefined) return false;
-    const key = digest(request.token).toString('hex');
-    const holder = this.shares.get(key);
-    if (holder && !strict && this.replaces(holder, request)) return false;
-    return holder !== undefined || this.marking.has(key);
-  }
-
   private replaces(holder: Share, request: ShareRequest): boolean {
-    return this.deps.idle !== undefined && holder.restored && holder.request.workspace === request.workspace;
-  }
-
-  private async endRestored(workspace: string, matches: (share: Share) => boolean): Promise<void> {
-    if (this.deps.idle === undefined) return;
-    const ending = [...this.shares.values()].filter(
-      (share) => share.restored && share.request.workspace === workspace && matches(share),
+    return (
+      holder.restored &&
+      holder.request.workspace === request.workspace &&
+      shareLinkKey(holder.request) === shareLinkKey(request) &&
+      holder.request.control === request.control &&
+      (request.passwordless ? holder.passwordDigest === null : samePassword(request.password, holder.passwordDigest)) &&
+      (request.view ? samePassword(request.view.password, holder.viewDigest) : holder.viewDigest === null)
     );
-    await Promise.all(ending.map((share) => this.end(share, 'The saved link was started again.')));
   }
 
   /**
-   * In a share-only server, ends the shares a restore started for the target of `request` other than `keep`, the
-   * share just saved in their place: the saved file names one link per target, and a restored one it no longer names
-   * must not stay public until its expiry.
+   * Ends restored shares for the target of `request` after `keep` was saved in their place.
    */
-  endReplaced(request: ShareTarget, keep: string): Promise<void> {
+  async endReplaced(request: ShareTarget, keep: string): Promise<void> {
     const target = shareLinkKey(request);
-    return this.endRestored(request.workspace, (share) => share.id !== keep && shareLinkKey(share.request) === target);
+    const ending = [...this.shares.values()].filter(
+      (share) =>
+        share.restored &&
+        share.id !== keep &&
+        share.request.workspace === request.workspace &&
+        shareLinkKey(share.request) === target,
+    );
+    await Promise.all(ending.map((share) => this.end(share, 'The saved link was started again.')));
   }
 
   private async begin(request: ShareRequest, restore: boolean, origin?: string): Promise<StartedShare | Refusal> {
@@ -546,12 +542,11 @@ export class ShareHub {
     if (request.slug !== undefined && request.passwordless) {
       return { code: 'bad-request', message: 'A share with a slug needs a password: anyone can guess a slug.' };
     }
-    const taken = this.slugTaken(request.slug);
+    const taken = this.linkTaken(request, restore);
     if (taken) return taken;
     if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
       return { code: 'bad-request', message: 'That link has expired.' };
     }
-    if (this.reusedLive(request, restore)) return { code: 'bad-request', message: 'That link is live now.' };
     const held = this.deps.holdWorkspace ? await this.deps.holdWorkspace(request.workspace, () => this.closed) : null;
     if (held && 'code' in held) return held;
     try {
@@ -567,11 +562,6 @@ export class ShareHub {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     const resolved = this.resolve(status, request, null);
     if (typeof resolved === 'string' && !restore) return { code: 'action-failed', message: resolved };
-    if (!restore && request.token !== undefined) {
-      const link = digest(request.token).toString('hex');
-      await this.endRestored(request.workspace, (share) => share.key === link);
-      if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    }
     const bound = typeof resolved === 'string' ? null : resolved;
     const source = bound ? bound.open(request) : null;
     let base: string;
@@ -596,18 +586,13 @@ export class ShareHub {
         message: `The share listener serves ${base}, not the address ${origin} the saved share was made under.`,
       };
     }
-    const late = this.slugTaken(request.slug);
+    const late = this.linkTaken(request, restore);
     if (late) {
       source?.close();
       void this.teardown();
       return late;
     }
     const { password: chosen, view, token: given, expiresAt: until, ...kept } = request;
-    if (this.reusedLive(request)) {
-      source?.close();
-      void this.teardown();
-      return { code: 'bad-request', message: 'That link is live now.' };
-    }
     const auth: ShareAuth = request.passwordless ? 'none' : chosen !== undefined ? 'set' : 'generated';
     const shown = auth === 'generated' ? password() : null;
     const viewAuth: ViewAuth = view ? (view.password !== undefined ? 'set' : 'generated') : null;
@@ -657,6 +642,7 @@ export class ShareHub {
       ended: false,
     };
     share.timer.unref?.();
+    const replaced = this.shares.get(share.key);
     this.shares.set(share.key, share);
     void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
@@ -666,6 +652,7 @@ export class ShareHub {
     if (!bound) {
       this.arm(share);
     }
+    if (replaced) await this.end(replaced, 'The saved link was started again.');
     return {
       ...this.row(share),
       url: `${base}/s/${secret}/`,
@@ -675,14 +662,19 @@ export class ShareHub {
     };
   }
 
-  /** The refusal for a slug a live share already uses: a share never takes over another's link. */
-  private slugTaken(slug: string | undefined): Refusal | null {
-    if (slug === undefined) return null;
-    const key = digest(slug).toString('hex');
-    if (this.marking.has(key))
-      return { code: 'action-failed', message: `The slug ${slug} is still being released. Try again.` };
+  private linkTaken(request: ShareRequest, restore: boolean): Refusal | null {
+    const { slug } = request;
+    const link = slug ?? request.token;
+    if (link === undefined) return null;
+    const key = digest(link).toString('hex');
+    if (this.marking.has(key)) {
+      return slug === undefined
+        ? { code: 'bad-request', message: 'That link is live now.' }
+        : { code: 'action-failed', message: `The slug ${slug} is still being released. Try again.` };
+    }
     const holder = this.shares.get(key);
-    if (!holder) return null;
+    if (!holder || (!restore && this.replaces(holder, request))) return null;
+    if (slug === undefined) return { code: 'bad-request', message: 'That link is live now.' };
     return {
       code: 'action-failed',
       message: `The slug ${slug} is in use by live share ${holder.id} of ${holder.request.workspace}. Stop that share or choose another slug.`,
@@ -948,7 +940,7 @@ export class ShareHub {
     clearTimeout(share.timer);
     if (share.retry) clearTimeout(share.retry);
     share.unwatch();
-    this.shares.delete(share.key);
+    if (this.shares.get(share.key) === share) this.shares.delete(share.key);
     console.error(`stim-server: web share ${share.id} ended: ${message}`);
     for (const viewer of share.viewers) {
       viewer.detach?.();

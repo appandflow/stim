@@ -393,6 +393,119 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await listed()).toEqual([]);
   });
 
+  it.each([
+    ['token', 'A'.repeat(43)],
+    ['slug', 'saved-demo'],
+  ])('reuses or replaces a restored %s in a full server', async (kind, secret) => {
+    const link = { [kind]: secret };
+    const probe = createNetServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    assert(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}/s/`;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({ projects: { [workspace]: {} }, share: { exposure: 'proxy', port: address.port } }),
+    );
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const saved = {
+      platform: 'ios',
+      physical: false,
+      control: true,
+      auth: 'generated',
+      password: 'saved-password',
+      viewAuth: 'generated',
+      viewPassword: 'view-password',
+      origin,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      state: 'live',
+    };
+    const other = { ...saved, slot: 'tablet', token: 'B'.repeat(43) };
+    writeFileSync(
+      workspaceShareLinksFile(workspace),
+      JSON.stringify({ version: 1, links: { ios: { ...saved, slot: 'default', ...link }, 'ios@tablet': other } }),
+    );
+    const statusEnv = {
+      FAKE_STIM_PAYLOADS: JSON.stringify([
+        { environments: [{ path: workspace, ios: { udid: 'SIM-1', owned: true, state: 'Booted' } }] },
+      ]),
+    };
+    const fixture = await routeServer({}, statusEnv);
+    const client = await desktop();
+    const path = `${origin}${secret}/`;
+    const otherPath = `${origin}${other.token}/`;
+    await vi.waitFor(async () => expect((await fetch(path)).status).toBe(200));
+    await vi.waitFor(async () => expect((await fetch(otherPath)).status).toBe(200));
+    const request = {
+      workspace,
+      platform: 'ios',
+      control: true,
+      password: saved.password,
+      view: { password: saved.viewPassword },
+      expiresAt,
+      ...link,
+    };
+    for (const change of [
+      { slot: 'tablet' },
+      { password: 'other-password' },
+      { password: saved.viewPassword, view: { password: saved.password } },
+      { control: false, view: undefined },
+      { view: undefined },
+      ...(kind === 'token' ? [{ passwordless: true, password: undefined, view: undefined }] : []),
+    ]) {
+      expect(await client.request('share.start', { ...request, ...change })).toMatchObject({
+        error: { message: expect.stringMatching(/live now|in use by live share/) },
+      });
+    }
+    const reused = await client.request('share.start', request);
+    expect(reused).toMatchObject({ result: { url: path, expiresAt, saved: true } });
+    expect(await client.request('share.start', request)).toMatchObject({
+      error: { message: expect.stringMatching(/live now|in use by live share/) },
+    });
+    const login = (password: string) =>
+      fetch(`${path}login`, {
+        method: 'POST',
+        redirect: 'manual',
+        body: new URLSearchParams({ password }),
+      });
+    for (const [password, canControl] of [
+      [saved.password, true],
+      [saved.viewPassword, false],
+    ] as const) {
+      const session = await login(password);
+      expect(session.status).toBe(303);
+      const cookie = session.headers.get('set-cookie')?.split(';')[0];
+      assert(cookie);
+      const viewer = await fetch(path, { headers: { cookie } });
+      expect(await viewer.text()).toContain(`data-control="${canControl}"`);
+    }
+    expect((await login('other-password')).status).toBe(401);
+
+    assert(server);
+    await server.close();
+    const successor = await routeServer({}, statusEnv);
+    const restartedClient = await desktop();
+    await vi.waitFor(async () => expect((await fetch(path)).status).toBe(200));
+    await vi.waitFor(async () => expect((await fetch(otherPath)).status).toBe(200));
+    const fresh = await restartedClient.request('share.start', { workspace, platform: 'ios' });
+    expect(fresh).toMatchObject({ result: { url: expect.stringMatching(/\/s\/[a-zA-Z0-9_-]{43}\/$/), saved: true } });
+    assert('result' in fresh && fresh.result && 'url' in fresh.result && typeof fresh.result.url === 'string');
+    const freshUrl = fresh.result.url;
+    expect((await fetch(freshUrl)).status).toBe(200);
+    expect((await fetch(path)).status).toBe(404);
+    expect((await fetch(otherPath)).status).toBe(200);
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toMatchObject({
+      ios: { token: new URL(freshUrl).pathname.split('/')[2], state: 'live' },
+      'ios@tablet': { token: other.token },
+    });
+    expect(fixture.commands()).toEqual([]);
+    expect(successor.commands()).toEqual([]);
+  });
+
   it('leaves a saved share stopped, and runs no Funnel or serve command, when it was shared under another address', async () => {
     const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
     writeFileSync(

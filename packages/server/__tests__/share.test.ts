@@ -2095,10 +2095,14 @@ describe('a web share', () => {
       const restored = await f.hub.start(saved, { restore: true });
       if ('code' in restored) throw new Error(restored.message);
       const { expiresAt: _expires, ...rest } = saved;
+      const port = f.hub.port;
       const again = await f.hub.start({ ...rest, expiresMinutes: 30 });
       if ('code' in again) throw new Error(again.message);
       expect(again.id).not.toBe(restored.id);
       expect(again.url).toBe(restored.url);
+      expect(f.hub.port).toBe(port);
+      expect(f.routeOpens).toHaveLength(1);
+      expect(f.routeCloses).toBe(0);
       expect(f.hub.list().map((row) => row.id)).toEqual([again.id]);
       expect(Date.parse(again.expiresAt) - Date.now()).toBeGreaterThan(29 * 60_000);
       expect(await login(local(again, f.hub.port ?? 0), 'saved-password')).toContain('stim_share=');
