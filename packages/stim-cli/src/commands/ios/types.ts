@@ -1,3 +1,4 @@
+import type { InstalledLaunch } from '../native-runtime.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
@@ -69,7 +70,7 @@ export interface IosCommandOptions {
   easProfile?: string;
   recordedBuild?: RecordedBuildRequest;
   /** Launch this bundle id as already installed on the owned simulator: no build and no install. */
-  installedApp?: string;
+  installedApp?: InstalledLaunch;
   expectedDevice?: string;
   cleanAppState?: boolean;
   deviceType?: string;

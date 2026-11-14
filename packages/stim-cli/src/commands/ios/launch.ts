@@ -602,6 +602,7 @@ interface FinishIosRunArgs {
   lanOriginUrl: string | null;
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   cleanAppState: boolean;
+  installedOnly?: boolean;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
   /** Whether the run's own simulator or emulator boot is still running. */
@@ -908,6 +909,7 @@ export async function finishIosRun({
   lanOriginUrl,
   remoteDevice,
   cleanAppState,
+  installedOnly,
   bootPromise,
   bootDuration,
   bootPending,
@@ -1392,6 +1394,7 @@ export async function finishIosRun({
     appPath,
     bundleId: bundleId!,
     installSkipped,
+    installedOnly,
     elapsed,
     startedAt,
     storeHash,

@@ -25,6 +25,7 @@ import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
 import * as iosDevices from '../devices/ios.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import * as installedArtifact from '../engine/installed-artifact.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
@@ -5003,6 +5004,118 @@ describe('a recorded build', () => {
       cacheKey: 'f1-debug',
       cacheHit: 'local',
     });
+  });
+});
+
+describe('reviving the installed Android app', () => {
+  async function reviveInstalled(kind: 'embedded-js' | 'process', installed: boolean) {
+    const packageProbe = vi.spyOn(installedArtifact, 'androidPackageInstalled').mockResolvedValue(installed);
+    try {
+      const h = harness({
+        installedApp: { appId: 'dev.installed', kind },
+        expectedDevice: 'stim-app-412',
+        build: never('a build'),
+        install: never('an install'),
+      });
+      const result = await h.run();
+      expect(packageProbe).toHaveBeenCalledWith('emulator-5584', 'dev.installed', expect.anything());
+      expect(h.calls.fingerprint).toHaveLength(0);
+      expect(h.calls.metro).toHaveLength(0);
+      return { result, calls: h.calls };
+    } finally {
+      packageProbe.mockRestore();
+    }
+  }
+
+  test.each(['embedded-js', 'process'] as const)('launches and verifies an installed %s app', async (kind) => {
+    const { result } = await reviveInstalled(kind, true);
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { bundleId: 'dev.installed', launched: true, installSkipped: true, metroPort: null },
+    });
+    expect(readWorkspaceLaunches(root).android).toMatchObject({
+      appId: 'dev.installed',
+      metroPort: null,
+      release: kind === 'embedded-js',
+      avdName: 'stim-app-412',
+      artifact: { configuration: kind === 'embedded-js' ? 'release' : 'debug' },
+    });
+    expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
+  });
+
+  test('uses the recorded non-foldable emulator after the workspace sets a foldable profile', async () => {
+    const avdName = 'stim-app-412';
+    const previousImage = `system-images;android-34;google_apis;${hostSystemImageArch()}`;
+    const previousDevice = {
+      avdName,
+      owned: true,
+      consolePort: 5584,
+      systemImage: previousImage,
+      deviceProfile: 'pixel_6',
+    };
+    setDevice(root, 'android', previousDevice);
+    const packageProbe = vi.spyOn(installedArtifact, 'androidPackageInstalled').mockResolvedValue(true);
+    try {
+      const h = harness({
+        installedApp: { appId: 'dev.installed', kind: 'process' },
+        expectedDevice: avdName,
+        remoteDevice: 'local',
+        resolveSettingsFor: () => ({ android: { deviceProfile: 'pixel_fold' } }),
+        listDeviceProfiles: () => ['pixel_6', 'pixel_fold'],
+        listSystemImages: () => [{ api: 34, tag: 'google_apis', arch: hostSystemImageArch(), pkg: previousImage }],
+        ensureImage: never('system image installation'),
+        ensureDevice: async () => previousDevice,
+        build: never('a build'),
+        install: never('an install'),
+      });
+      expect(await h.run()).toMatchObject({
+        ok: true,
+        facts: { installSkipped: true, launched: true, avdName, deviceProfile: 'pixel_6' },
+      });
+      expect(getProject(root)?.platforms?.android).toMatchObject(previousDevice);
+    } finally {
+      packageProbe.mockRestore();
+    }
+  });
+
+  test.each([{ missing: true }, { notOwned: true }] as const)(
+    'refuses before fallback if the owned AVD stops resolving (%j)',
+    async (resolved) => {
+      const avdName = 'stim-app-412';
+      const avds = join(root, 'avds');
+      mkdirSync(join(avds, `${avdName}.avd`), { recursive: true });
+      vi.stubEnv('ANDROID_AVD_HOME', avds);
+      const resolveAvd = vi.spyOn(androidDevices, 'resolveOwnedAvdSerialAsync').mockResolvedValue(resolved);
+      const create = vi.spyOn(androidDevices, 'createOwnedAvd').mockImplementation(never('AVD creation'));
+      try {
+        const assignment = { avdName, owned: true, consolePort: 5584 };
+        setDevice(root, 'android', assignment);
+        const h = harness({
+          installedApp: { appId: 'dev.installed', kind: 'process' },
+          expectedDevice: avdName,
+          ensureDevice: ensureOwnedDevice,
+          ensureDeviceBooted: never('a boot'),
+          build: never('a build'),
+        });
+        expect(await h.run()).toMatchObject({ ok: false, error: { code: 'STIM_DEVICE_LOST' } });
+        expect(resolveAvd).toHaveBeenCalledWith(avdName, { preferredSerial: 'emulator-5584' });
+        expect(create).not.toHaveBeenCalled();
+        expect(getProject(root)?.platforms?.android).toEqual(assignment);
+      } finally {
+        create.mockRestore();
+        resolveAvd.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  test('an uninstalled package gives the native launch command', async () => {
+    const { result, calls } = await reviveInstalled('process', false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'STIM_NO_RECORDED_BUILD', remedy: expect.stringContaining('`stim android`') },
+    });
+    expect(calls.launchRelease).toHaveLength(0);
   });
 });
 

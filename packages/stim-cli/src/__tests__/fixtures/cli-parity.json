@@ -185,7 +185,7 @@
     "exitCode": 0
   },
   "[\"revive\",\"--help\"]": {
-    "out": "Usage: stim revive [options]\n\nResume this workspace after an idle stop: restart its Metro, boot the owned\nsimulator or emulator the app last ran on, and relaunch that app from cold.\nNever builds, and never starts or boots what the workspace did not have.\n\nOptions:\n  --json      Emit the revived facts as one JSON line; every other line goes to\n              stderr\n  -h, --help  display help for command\n",
+    "out": "Usage: stim revive [options]\n\nResume an idle-stopped workspace or relaunch an installed Release React Native\nor native app. Revive uses the recorded owned device and never builds.\n\nOptions:\n  --json      Emit the revived facts as one JSON line; every other line goes to\n              stderr\n  -h, --help  display help for command\n",
     "err": "",
     "exitCode": 0
   },

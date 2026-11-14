@@ -1060,25 +1060,27 @@ export async function acquireAndroidArtifactOrRecorded(
   request: AndroidArtifactRequest,
   deps: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  return recorded ? recordedAndroidArtifact(recorded) : acquireAndroidArtifact(request, deps);
+  return recorded
+    ? { ok: true, artifact: existingAndroidArtifact(recorded.bundleId, recorded.appPath) }
+    : acquireAndroidArtifact(request, deps);
 }
 
-function recordedAndroidArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedAndroidArtifact } {
+export function existingAndroidArtifact(
+  packageName: string | null,
+  apkPath: string | null = null,
+): PreparedAndroidArtifact {
   return {
-    ok: true,
-    artifact: {
-      apkPath: recorded.appPath,
-      androidPackage: recorded.bundleId,
-      apkPackage: recorded.bundleId,
-      fingerprintCheck: null,
-      release: () => {},
-      waitedForBuild: null,
-      ccache: CCACHE_NOT_RUN,
-      uploadPending: null,
-      providerUpload: null,
-      providerName: null,
-      remote: null,
-      abandonedRemote: false,
-    },
+    apkPath,
+    androidPackage: packageName,
+    apkPackage: packageName,
+    fingerprintCheck: null,
+    release: () => {},
+    waitedForBuild: null,
+    ccache: CCACHE_NOT_RUN,
+    uploadPending: null,
+    providerUpload: null,
+    providerName: null,
+    remote: null,
+    abandonedRemote: false,
   };
 }
