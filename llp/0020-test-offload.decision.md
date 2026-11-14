@@ -59,8 +59,9 @@ refusal over the local socket, and terminal-only approval are coordinator propos
 
 ## Planned (#5529): the stim test command
 
-Planned in [#5529](https://github.com/appandflow/stim/issues/5529); none of it is
-on `main` yet. `stim test -- <argv>` runs one whole test command, given as an
+Planned: #5529
+
+`stim test -- <argv>` runs one whole test command, given as an
 argument vector with no shell and nothing read from project scripts, in the
 caller's checkout or on one approved worker. The worker's stimd checks the
 test approval and counts test work in its own slot class.

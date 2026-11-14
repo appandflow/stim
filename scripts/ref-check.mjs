@@ -24,8 +24,9 @@
  * SOFTWARE.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs, TextDecoder } from 'node:util';
 
 const FIELDS = ['Type', 'Status', 'Systems', 'Author', 'Date'];
@@ -45,6 +46,8 @@ const SKIP_DIRS = new Set([
 ]);
 const SKIP_LLP = new Set(['reviews', 'current', 'foundation']);
 const DOC_NAME = /^(\d{4})-[a-z0-9-]+\.([a-z0-9]+)\.md$/;
+const PLANNED = /^Planned: #([1-9]\d*)$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const FIELD = /^\*\*(\w+):\*\*\s*(.+)$/;
 const HEADING = /^#{1,6}\s+(.+?)\s*$/;
 const LLP_TARGET = /^LLP\s+(\d{1,4})(?:#(\S+))?$/;
@@ -66,17 +69,69 @@ function readText(path) {
   }
 }
 
-function headings(text) {
-  let fenced = false;
-  return lines(text).flatMap((line) => {
-    if (line.trimStart().startsWith('```')) {
-      fenced = !fenced;
+function markdownBodyLines(text) {
+  let fence;
+  return lines(text).flatMap((line, index) => {
+    const marker = FENCE.exec(line);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+        fence = undefined;
+      }
       return [];
     }
-    if (fenced) return [];
+    if (marker) {
+      fence = marker[1];
+      return [];
+    }
+    return [[line, index + 1]];
+  });
+}
+
+function headings(text) {
+  return markdownBodyLines(text).flatMap(([line]) => {
     const heading = HEADING.exec(line)?.[1];
     return heading ? [heading] : [];
   });
+}
+
+export async function checkPlannedWork(planned, lookup) {
+  const results = new Map();
+  const errors = [];
+  for (const { number, path, line } of planned) {
+    if (!results.has(number)) {
+      try {
+        const item = await lookup(number);
+        if (item?.state === 'closed') {
+          const state = item.pull_request?.merged_at ? 'merged' : 'closed';
+          results.set(number, `#${number} is ${state}; update or remove this Planned marker`);
+        } else if (item?.state === 'open') {
+          results.set(number, null);
+        } else {
+          results.set(number, `could not verify #${number}: GitHub returned no valid issue or pull request state`);
+        }
+      } catch (error) {
+        results.set(number, `could not verify #${number}: ${error.message}`);
+      }
+    }
+    const problem = results.get(number);
+    if (problem) errors.push(`${path}:${line}: ${problem}`);
+  }
+  return errors;
+}
+
+async function readGithubIssue(number) {
+  const repository = process.env.GITHUB_REPOSITORY || 'appandflow/stim';
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('GITHUB_REPOSITORY must be owner/repo');
+  const response = await fetch(`https://api.github.com/repos/${repository}/issues/${number}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      ...(process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {}),
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
+  return response.json();
 }
 
 function hasAnchor(anchor, sections) {
@@ -148,6 +203,7 @@ function checkRef(raw, docs, root) {
 function check(root) {
   const docs = new Map();
   const errors = [];
+  const planned = [];
   const info = [];
   const files = [];
   const listed = entries(root);
@@ -172,6 +228,14 @@ function check(root) {
     const [, number, type] = doc;
     if (docs.has(number)) errors.push(`${path}: duplicate LLP number ${number} (also ${docs.get(number).path})`);
     else docs.set(number, { path, sections: headings(text) });
+    if (type === 'decision') {
+      for (const [bodyLine, line] of markdownBodyLines(text)) {
+        if (!bodyLine.startsWith('Planned:')) continue;
+        const item = PLANNED.exec(bodyLine.trimEnd());
+        if (item) planned.push({ number: item[1], path, line });
+        else errors.push(`${path}:${line}: expected Planned: #N for a same-repository issue or pull request`);
+      }
+    }
     const fields = new Map();
     for (const line of lines(text).slice(1, 40)) {
       const field = FIELD.exec(line.trim());
@@ -192,14 +256,24 @@ function check(root) {
       if (result.error) errors.push(`${path}:${line}: ${result.error}`);
       if (result.info) info.push(`${path}:${line}: ${result.info}`);
     }
-  return { docs: docs.size, files: files.length, refs: count, errors, info };
+  return { docs: docs.size, files: files.length, refs: count, errors, info, planned };
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
-    options: { root: { type: 'string', default: '.' }, verbose: { type: 'boolean', default: false } },
+    options: {
+      root: { type: 'string', default: '.' },
+      verbose: { type: 'boolean', default: false },
+      'check-planned': { type: 'boolean', default: false },
+    },
   });
   const result = check(resolve(values.root));
+  if (values['check-planned']) {
+    result.errors.push(...(await checkPlannedWork(result.planned, readGithubIssue)));
+    console.log(
+      `ref-check: queried GitHub for ${new Set(result.planned.map(({ number }) => number)).size} planned items`,
+    );
+  }
   for (const error of result.errors) console.log(`ERROR ${error}`);
   if (values.verbose) for (const message of result.info) console.log(`INFO  ${message}`);
   const status = result.errors.length ? 'FAIL' : 'ok';
@@ -209,4 +283,4 @@ function main() {
   process.exitCode = Number(Boolean(result.errors.length));
 }
 
-main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

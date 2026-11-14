@@ -36,9 +36,16 @@ decision document is edited whenever its rule changes, so it always describes
 `main`. When a document and the code disagree, the code is the fact and the
 document is the bug, unless the document marks the rule as planned.
 
-A rule decided but not yet on `main` sits under a heading that says planned and
-names its issue. History stays in issues and commits: when a decision changes,
-edit the document; do not append to it.
+For a rule decided but not yet on `main`, add a line like `Planned: #123`
+next to the description. Use one line per issue or pull request in this
+repository. When the work closes, update the rule and remove the marker.
+Keep history in the issue and commits.
+
+The [LLP planned work workflow](../.github/workflows/llp-planned.yml) checks
+these numbers against GitHub weekly and on demand. A failure names the file
+and line to update. For Planned work, local lint checks the marker format.
+Maintainer decision: "yes to rest", 2026-11-12.
+[Decision trial follow-up](https://github.com/appandflow/stim/issues/5532#issuecomment-6819290752).
 
 ## How to read them
 
