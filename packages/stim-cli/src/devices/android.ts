@@ -25,7 +25,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
-import { type Executor, getExecutor } from '../exec.ts';
+import { type Executor, getExecutor, windowsSystemExecutable } from '../exec.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
@@ -1605,7 +1605,7 @@ async function emulatorCrashHandlerPids(qemuPid: number, operation?: StimContext
   const out = await runOperationFileQuiet(
     operation,
     getExecutor(),
-    'powershell.exe',
+    windowsSystemExecutable('powershell.exe'),
     [
       '-NoProfile',
       '-NonInteractive',

@@ -15,6 +15,7 @@ const fixtures = vi.hoisted(() => ({
   groupAlive: true,
   answers: true,
   helper: 'same' as 'same' | 'gone' | 'different' | 'unknown',
+  leaderGone: false,
   helperReads: new Array<'same' | 'gone' | 'different' | 'unknown'>(),
   report: 'registered' as 'registered' | 'failed' | 'killed',
   extraEnv: new Array<Record<string, string>>(),
@@ -39,7 +40,9 @@ vi.mock('../process-identity.ts', async (importOriginal) => {
       record?.pid === 515151
         ? (fixtures.helperReads.shift() ?? fixtures.helper)
         : record?.pid === 424242
-          ? 'same'
+          ? fixtures.leaderGone
+            ? 'gone'
+            : 'same'
           : real.inspectProcessIdentity(record),
   };
 });
@@ -111,6 +114,7 @@ beforeEach(() => {
   fixtures.groupAlive = true;
   fixtures.answers = true;
   fixtures.helper = 'same';
+  fixtures.leaderGone = false;
   fixtures.helperReads = [];
   fixtures.report = 'registered';
   fixtures.extraEnv = [];
@@ -208,6 +212,29 @@ test.skipIf(process.platform === 'win32')(
       op: 'metro.stopped',
       state: 'not-owned',
     });
+  },
+);
+
+test.skipIf(process.platform !== 'win32')(
+  'managed Metro stop releases its claim when the leader exits before taskkill finishes unsuccessfully',
+  async () => {
+    expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
+    const taskkill = vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
+      fixtures.leaderGone = true;
+      fixtures.helper = 'gone';
+      throw Object.assign(new Error('The process no longer exists.'), { status: 128 });
+    });
+
+    await expect(stopManagedMetro({ root, pid: SERVER, processToken: 'test-token' }, log)).resolves.toMatchObject({
+      op: 'metro.stopped',
+      state: 'stopped',
+    });
+    expect(taskkill).toHaveBeenCalledWith(
+      expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+      ['/PID', String(SERVER), '/T', '/F'],
+      expect.any(Object),
+    );
+    expect(claims().live).toEqual([]);
   },
 );
 
