@@ -375,7 +375,7 @@ const SCOPE_TEXT: Record<Scope, string> = {
   control: 'run actions',
   build: 'run its project code on this machine to build',
   'device-host': 'request session-owned device hosting on this machine',
-  test: 'run any command it sends on this machine, as this user, with no sandbox',
+  test: 'request managed engine updates',
 };
 
 export async function pair(port: number, json: boolean, control: boolean): Promise<void> {

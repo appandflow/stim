@@ -492,7 +492,7 @@ export function readDeviceHostClients(): PairedDevice[] {
   return recordsOrNone(clientsFile('device-host'));
 }
 
-/** Test approvals live apart from every other record, so no other approval ever runs a client's commands here. */
+/** Test approvals live apart from the other worker grants. */
 export function readTestClients(): PairedDevice[] {
   return recordsOrNone(clientsFile('test'));
 }
