@@ -502,8 +502,8 @@ simulator, and this Mac installs the .app on its owned or hosted simulator;
 nothing is cached. For an app whose app.json declares native modules, the worker
 creates and boots a simulator of its own for the build, passes it as EXACT_SIM
 for Exact's module roster read, and deletes it after. The app's relative path to
-exact2 (the one its Cargo manifests use) is linked inside the worker's build
-area to that checkout; for an app in a subdirectory of its repository, exact2
+exact2 (the one its Cargo manifests use) holds a checkout of that commit inside
+the worker's build area; for an app in a subdirectory of its repository, exact2
 may sit at most one folder above the repository. The worker needs Exact's own toolchain: Bun at
 ~/.bun-<version>, rustup with the Rust version exact2 pins and its
 aarch64-apple-ios-sim target, and the exact2 commit this app uses at

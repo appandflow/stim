@@ -80,9 +80,10 @@ and exact2 for the app's pins, at `~/.exact/exact2/<commit>` or in a folder name
 checkout, reports what it lacks in the offer with commands that fetch the commit from the client's remote, and builds
 an app at the repository root in a checkout folder named like the client's; it shares the worker
 user's `~/.cargo` and `~/.cache/exact` across clients. The app's relative path to exact2, which its Cargo
-manifests use, is linked inside the build area to that checkout, never outside the area, into the app, or onto one of
-the area's own entries; a repository-root app's checkout sits as many folders below the area as that path climbs, and
-an app in a subdirectory whose exact2 sits more than one folder above its repository builds on the client.
+manifests use, holds a checkout of the pinned commit inside the build area that shares that checkout's objects (`git
+clone --shared`), never outside the area, in the app, or on one of the area's own entries, and replaced only when the
+worker made it; a repository-root app's checkout sits as many folders below the area as that path climbs, and an app in
+a subdirectory whose exact2 sits more than one folder above its repository builds on the client.
 
 For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it
 through device boot admission, passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build
@@ -90,7 +91,9 @@ ends or the job is stopped; every Exact build starts by deleting any simulator t
 
 Exact can run an app on a simulator during the build to resolve native modules, and without `EXACT_SIM` it takes any
 booted simulator or boots one itself. An offload has no access to the client's owned simulator, and a simulator kept
-in a build area's home would outlive that home when the area is evicted. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
+in a build area's home would outlive that home when the area is evicted. Exact names each compiler input by its place
+under the exact2 directory it runs from, which Bun resolves through links while Cargo reports the linked path, so a link
+at the app's path fails the build. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
 
 ## Run the client build
 

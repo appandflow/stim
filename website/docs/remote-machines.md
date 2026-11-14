@@ -250,9 +250,10 @@ named `--remote-build` and `stim doctor` in the app name the missing piece and
 the command that installs it there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
 client sent them, and keep `target/` warm in the checkout's own repository area.
 An app's Cargo manifests name exact2 by a path relative to the app; the worker
-links that path inside the repository area to its exact2 checkout; for an app in
-a subdirectory of its repository, exact2 may sit at most one folder above the
-repository. For an app
+puts a checkout of the pinned commit at that path inside the repository area,
+sharing its exact2 checkout's git objects (about 220 MB of files for exact2
+today); for an app in a subdirectory of its repository, exact2 may sit at most
+one folder above the repository. For an app
 whose `app.json` declares native modules, the worker creates a simulator of its
 own for each build, boots it, passes it to Exact as `EXACT_SIM` to read the
 module roster, and deletes it when the build ends. Booting a new simulator adds
