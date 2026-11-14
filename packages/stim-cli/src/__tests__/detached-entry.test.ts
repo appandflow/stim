@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test } from 'vitest';
 import { relaunchWithLogFile, windowsLauncherArgs, windowsShellLaunchArgs } from '../detached-entry.ts';
 import { makeChildProcess } from './_factories.ts';
 
@@ -13,7 +13,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -47,9 +46,6 @@ test('the Windows launcher escapes a trailing backslash so the closing quote sur
 });
 
 test('the Windows launcher passes paths through the environment without parsing them as PowerShell source', () => {
-  vi.stubEnv('SYSTEMROOT', undefined);
-  vi.stubEnv('SystemRoot', undefined);
-  vi.stubEnv('sYsTeMrOoT', 'D:\\Windows Folder');
   const launcher = windowsLauncherArgs({
     entry: 'C:\\Program Files\\stim\\supervisor-run.mjs',
     args: ['--root', "D:\\it's here\\app", '--port', '8082'],
@@ -57,7 +53,6 @@ test('the Windows launcher passes paths through the environment without parsing 
     logFile: 'D:\\home\\logs\\supervisor.log',
     execPath: 'C:\\Program Files\\nodejs\\node.exe',
   });
-  expect(launcher.file).toBe('D:\\Windows Folder\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   expect(launcher.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
   expect(launcher.args[3]).toContain('[System.Diagnostics.Process]::Start($start)');
   expect(launcher.args[3]).not.toContain("it's here");
@@ -69,10 +64,20 @@ test('the Windows launcher passes paths through the environment without parsing 
   });
 });
 
-test('the Windows child launcher resolves system PowerShell when SystemRoot is empty', () => {
-  vi.stubEnv('SystemRoot', '');
-  vi.stubEnv('SYSTEMROOT', '');
-  const launcher = windowsShellLaunchArgs({ file: 'D:\\tools\\node.exe', args: [], cwd: 'D:\\' });
-  expect(launcher.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-  expect(launcher.env.STIM_WINDOWS_LAUNCH_FILE).toBe('D:\\tools\\node.exe');
+test.each([
+  ['D:\\Windows Folder', 'D:\\Windows Folder'],
+  ['', 'C:\\Windows'],
+])('the Windows child launcher resolves system PowerShell with SystemRoot %j', (systemRoot, expectedRoot) => {
+  const originalEnv = process.env;
+  process.env = {
+    ...Object.fromEntries(Object.entries(originalEnv).filter(([key]) => key.toUpperCase() !== 'SYSTEMROOT')),
+    sYsTeMrOoT: systemRoot,
+  };
+  try {
+    const launcher = windowsShellLaunchArgs({ file: 'D:\\tools\\node.exe', args: [], cwd: 'D:\\' });
+    expect(launcher.file).toBe(`${expectedRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`);
+    expect(launcher.env.STIM_WINDOWS_LAUNCH_FILE).toBe('D:\\tools\\node.exe');
+  } finally {
+    process.env = originalEnv;
+  }
 });
