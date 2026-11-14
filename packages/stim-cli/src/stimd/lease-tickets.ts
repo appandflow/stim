@@ -35,13 +35,18 @@ type Ticket = {
   pending?: Promise<AcquireRunLeaseResult>;
   disconnected?: boolean;
 };
+type LeaseDiagnostic = { waitMs: number; outcome: AcquireRunLeaseResult['status'] | 'cancelled' | 'failed' };
+const SLOW_LEASE_WAIT_MS = 5000;
 
 const key = (request: LeaseRequest, token: string) => `${request.root}\0${request.platform}\0${request.slot}\0${token}`;
 
 const device = (request: LeaseRequest) => `${request.platform}\0${request.id}`;
 const scope = (request: LeaseRequest) => `${request.root}\0${request.platform}\0${request.slot}`;
 
-export function createLeaseTickets(log: (message: string) => void = () => {}) {
+export function createLeaseTickets(
+  log: (message: string) => void = () => {},
+  diagnostic?: (event: LeaseDiagnostic) => void,
+) {
   const tickets = new Map<string, Ticket>();
   const references = new Map<string, number>();
   const inflight = new Map<string, number>();
@@ -135,26 +140,42 @@ export function createLeaseTickets(log: (message: string) => void = () => {}) {
       ticket.signal.throwIfAborted();
       if (!ticket.pending) {
         const deviceKey = scope(ticket.request);
+        let waitMs = 0;
+        const report = (outcome: LeaseDiagnostic['outcome']) => {
+          if (outcome === 'refused' || waitMs >= SLOW_LEASE_WAIT_MS)
+            diagnostic?.({ outcome, waitMs: Math.round(waitMs) });
+        };
         inflight.set(deviceKey, (inflight.get(deviceKey) ?? 0) + 1);
         ticket.pending = acquireRunLease({
           ...ticket.request,
           signal: ticket.signal,
-          sleep: (ms) => sleep(ticket.request, ticket.signal, ms),
+          sleep: async (ms) => {
+            const started = performance.now();
+            await sleep(ticket.request, ticket.signal, ms);
+            waitMs += performance.now() - started;
+          },
           warn,
           holderAppId: (holder) => {
             const project = loadConfig()?.projects?.[holder];
             return ticket.request.platform === 'ios' ? (project?.bundleId ?? null) : (project?.androidPackage ?? null);
           },
         })
-          .then((result) => {
-            ticket.result = result;
-            if (result.status === 'leased' && result.kind === 'run' && result.token) {
-              const ref = key(ticket.request, result.token);
-              references.set(ref, (references.get(ref) ?? 0) + 1);
-            }
-            if (ticket.signal.aborted || !tickets.has(id)) release(ticket);
-            return result;
-          })
+          .then(
+            (result) => {
+              ticket.result = result;
+              if (result.status === 'leased' && result.kind === 'run' && result.token) {
+                const ref = key(ticket.request, result.token);
+                references.set(ref, (references.get(ref) ?? 0) + 1);
+              }
+              if (ticket.signal.aborted || !tickets.has(id)) release(ticket);
+              report(result.status);
+              return result;
+            },
+            (error: unknown) => {
+              report(ticket.signal.aborted ? 'cancelled' : 'failed');
+              throw error;
+            },
+          )
           .finally(() => {
             const remaining = (inflight.get(deviceKey) ?? 1) - 1;
             if (remaining) inflight.set(deviceKey, remaining);

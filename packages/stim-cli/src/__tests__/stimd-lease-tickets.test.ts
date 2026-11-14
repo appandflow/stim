@@ -135,7 +135,9 @@ test('disconnecting a pending ticket does not take another workspace lease', asy
   vi.stubEnv('STIM_HOME', home);
   const owner = new Socket();
   const controller = new AbortController();
-  const tickets = createLeaseTickets();
+  const diagnostic = vi.fn<(event: { waitMs: number; outcome: string }) => void>();
+  const tickets = createLeaseTickets(undefined, diagnostic);
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(10_000);
   try {
     expect(takeLease({ root: other, platform: 'ios', id: 'phone', kind: 'run' }).status).toBe('taken');
     const ticket = tickets.prepare(
@@ -155,11 +157,14 @@ test('disconnecting a pending ticket does not take another workspace lease', asy
       controller.signal,
     );
     const pending = tickets.acquire(ticket, owner, () => {});
+    clock.mockReturnValue(16_000);
     controller.abort();
     tickets.drop(owner);
     await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ waitMs: 6_000, outcome: 'cancelled' });
     expect(parseLease(readFileSync(deviceLeasePath('ios', 'phone'), 'utf8'))?.holder).toBe(other);
   } finally {
+    clock.mockRestore();
     owner.destroy();
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
@@ -199,6 +204,52 @@ test('releasing the last ticket wakes a waiting workspace without a polling dela
     expect(Date.now() - start).toBeLessThan(1_000);
     tickets.release(b, ownerB);
   } finally {
+    ownerA.destroy();
+    ownerB.destroy();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test('a slow device lease records contention time once across repeated acquisitions', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-ticket-home-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ticket-app-'));
+  const other = mkdtempSync(join(tmpdir(), 'stim-ticket-other-'));
+  vi.stubEnv('STIM_HOME', home);
+  const ownerA = new Socket();
+  const ownerB = new Socket();
+  const diagnostic = vi.fn<(event: { waitMs: number; outcome: string }) => void>();
+  const tickets = createLeaseTickets(undefined, diagnostic);
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(20_000);
+  const request = {
+    root,
+    platform: 'ios' as const,
+    slot: 'default',
+    id: 'phone',
+    deviceName: null,
+    idLabel: 'udid',
+    waitSeconds: 60,
+    noWait: false,
+    installBoundMs: 60_000,
+    appId: null,
+  };
+  try {
+    const a = tickets.prepare(ownerA, request, new AbortController().signal);
+    const b = tickets.prepare(ownerB, { ...request, root: other }, new AbortController().signal);
+    expect(await tickets.acquire(a, ownerA, () => {})).toMatchObject({ status: 'leased' });
+    expect(diagnostic).not.toHaveBeenCalled();
+
+    const waiting = tickets.acquire(b, ownerB, () => clock.mockReturnValue(30_000));
+    const retry = tickets.acquire(b, ownerB, () => {});
+    clock.mockReturnValue(36_000);
+    tickets.release(a, ownerA);
+    await expect(Promise.all([waiting, retry])).resolves.toMatchObject([{ status: 'leased' }, { status: 'leased' }]);
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ waitMs: 6_000, outcome: 'leased' });
+    tickets.release(b, ownerB);
+  } finally {
+    clock.mockRestore();
     ownerA.destroy();
     ownerB.destroy();
     vi.unstubAllEnvs();
