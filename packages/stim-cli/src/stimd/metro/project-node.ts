@@ -69,10 +69,19 @@ export function unmetNodePin(
   return `Node ${current} on PATH does not satisfy ${pin.file} ${pin.spec}, and no installed Node does.`;
 }
 
+type ProjectNodePin = NonNullable<ReturnType<typeof withProjectNode>['pinned']>;
+
 /** The log line naming the Node `withProjectNode` put first on `PATH` and the pin it stands for. */
-export function projectNodeLine(pinned: NonNullable<ReturnType<typeof withProjectNode>['pinned']>): string {
+export function projectNodeLine(pinned: ProjectNodePin): string {
   const line = `Node ${pinned.version} from ${pinned.bin}, for ${pinned.pin} ${pinned.spec}`;
   return pinned.match === 'major'
     ? `${line} (no install has ${pinned.spec}; the newest ${pinned.version.split('.')[0]}.x not older than it)`
     : line;
+}
+
+export function devServerNodeLine(server: string, pinned: ProjectNodePin, runWithOwnNode: boolean): string {
+  const pin = projectNodeLine(pinned);
+  return runWithOwnNode
+    ? `${server} runs on Stim's Node ${process.versions.node} at ${process.execPath}. Child processes find ${pin} on PATH.`
+    : `${server} runs on ${pin}`;
 }

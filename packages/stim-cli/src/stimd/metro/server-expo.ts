@@ -14,7 +14,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-import { projectNodeLine, withProjectNode } from './project-node.ts';
+import { devServerNodeLine, withProjectNode } from './project-node.ts';
 
 function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
@@ -317,7 +317,7 @@ export async function expoServerLaunch({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
+      msg: devServerNodeLine('Metro', node.pinned, runWithOwnNode),
     });
   }
   return {

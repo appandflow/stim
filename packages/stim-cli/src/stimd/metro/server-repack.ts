@@ -5,7 +5,7 @@ import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../
 import { type RepackConfig, detectRepackConfig, resolvePackageJson } from '../../workspace/project-files.ts';
 import type { ServerLaunch } from './child-server.ts';
 import { supervisorError } from './errors.ts';
-import { projectNodeLine, withProjectNode } from './project-node.ts';
+import { devServerNodeLine, withProjectNode } from './project-node.ts';
 import { expoBinFromPackage, recordFromLine, repositoryRoot } from './server-expo.ts';
 
 /** Rock's or the React Native CLI's `start` with Stim's fixed Re.Pack flags, run with the project's Node. */
@@ -46,14 +46,15 @@ export function repackServerLaunch({
     ...(resetCache ? ['--reset-cache'] : []),
   ];
   // Windows shims run the package bin through another node, so Stim runs it with its own (see expoServerLaunch).
-  const [command, commandArgs] = platform === 'win32' ? [process.execPath, [bin, ...args]] : [bin, args];
+  const runWithOwnNode = platform === 'win32';
+  const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
   const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Re.Pack runs on ${projectNodeLine(node.pinned)}`,
+      msg: devServerNodeLine('Re.Pack', node.pinned, runWithOwnNode),
     });
   }
   return {
