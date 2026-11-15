@@ -790,13 +790,7 @@ export async function uninstallService(label: string): Promise<string[]> {
   return notes;
 }
 
-async function requireUninstallPortReleased(label: string, installed: InstalledService, routeOff: number | null) {
-  const { port, stimHome } = installed;
-  if (port === null) return;
-  const home = stimHome && isAbsolute(stimHome) ? stimHome : join(homedir(), '.stim');
-  const daemon = readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive')?.owner;
-  if (!daemon) return;
-
+async function uninstallPortListeners(port: number): Promise<string[] | null> {
   let listeners = await listenerPids(port);
   if (listeners.length === 0 && process.platform === 'linux') {
     const listed = await run('ss', ['-H', '-ltnp', `sport = :${port}`]);
@@ -805,9 +799,24 @@ async function requireUninstallPortReleased(label: string, installed: InstalledS
         (pid) => pid !== undefined,
       );
   }
+  return listeners.length === 0 && (await portFree(port)) ? null : listeners;
+}
+
+async function requireUninstallPortReleased(label: string, installed: InstalledService, routeOff: number | null) {
+  const { port, stimHome } = installed;
+  if (port === null) return;
+  const home = stimHome && isAbsolute(stimHome) ? stimHome : join(homedir(), '.stim');
+  const owner = () => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive')?.owner;
+  const previous = owner();
+  let listeners = await uninstallPortListeners(port);
+  let daemon = owner();
+  if (daemon && daemon.processToken !== previous?.processToken && !listeners?.includes(String(daemon.pid))) {
+    listeners = await uninstallPortListeners(port);
+    daemon = owner();
+  }
+  if (!listeners || !daemon || inspectProcessIdentity(daemon) !== 'same') return;
   const owned = listeners.includes(String(daemon.pid));
-  if (!owned && (listeners.length > 0 || (await portFree(port)))) return;
-  if (inspectProcessIdentity(daemon) !== 'same') return;
+  if (!owned && listeners.length > 0) return;
 
   const kept = `Kept the ${label} ${fileNoun()}${routeOff === null ? '' : ` and its Tailscale route on HTTPS port ${routeOff}`}.`;
   const retry = `Then retry \`stim service uninstall --label ${label}\`.`;

@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { stimBuildDigest, stimdClaimRoot } from '@stim-cli/core/state';
 import {
   installJob,
@@ -38,6 +38,7 @@ const launchd = vi.hoisted(() => ({
   healthUnavailable: false,
   unrelatedPort: null as number | null,
   listenerOutput: '456\n',
+  onListenerProbe: () => {},
   replaceListener: false,
   spawnDelay: 0,
   spawnUntil: 0,
@@ -108,6 +109,7 @@ vi.mock('node:child_process', async (importOriginal) => {
         }
       }
       if (file === 'lsof') {
+        launchd.onListenerProbe();
         const port = Number(args[1]!.slice('-iTCP:'.length));
         const listening =
           port === launchd.unrelatedPort ||
@@ -179,6 +181,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       healthUnavailable: false,
       unrelatedPort: null,
       listenerOutput: '456\n',
+      onListenerProbe: () => {},
       replaceListener: false,
       spawnDelay: 0,
       spawnUntil: 0,
@@ -484,6 +487,25 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       expect(existsSync(plist)).toBe(false);
     } finally {
       releaseClaim(claim);
+    }
+  });
+
+  it('recognizes a successor that takes the installed home during the listener probe', async () => {
+    let claim: ClaimHandle | undefined;
+    launchd.stopDelay = Infinity;
+    launchd.onListenerProbe = () => {
+      if (claim) {
+        launchd.listenerOutput = `${process.pid}\n`;
+        return;
+      }
+      claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' }).acquired;
+      assert(claim);
+    };
+    try {
+      await expect(uninstallService(label)).rejects.toThrow('is still listening on port 7787');
+      expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
+    } finally {
+      if (claim) releaseClaim(claim);
     }
   });
 
