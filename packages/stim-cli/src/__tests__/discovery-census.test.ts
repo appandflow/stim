@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StimContext } from '@stim-cli/core';
 import { readDiscoveryCensusFile } from '@stim-cli/core/state';
@@ -169,6 +169,7 @@ describe('runDiscoveryCensusIfDue', () => {
     const real = {
       readNames: (path: string) => readdir(path),
       isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
+      realpath: (path: string) => realpath(path),
       lstat: async (path: string) => {
         const info = await lstat(path);
         return {
@@ -267,6 +268,7 @@ describe('runDiscoveryCensusIfDue', () => {
     const real = {
       readNames: (path: string) => readdir(path),
       isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
+      realpath: (path: string) => realpath(path),
       lstat: async (path: string) => {
         const info = await lstat(path);
         return {
@@ -303,8 +305,35 @@ describe('runDiscoveryCensusIfDue', () => {
     it('follows a linked worktree to its git directory under .git/worktrees', async () => {
       const gitDir = join(base, 'main', '.git', 'worktrees', 'fresh');
       touch(join(gitDir, 'HEAD'), at('2026-04-01T00:00:00Z'));
+      writeFileSync(join(gitDir, 'gitdir'), `${join(home, 'dev', 'fresh', '.git')}\n`);
       writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${gitDir}\n`);
       expect((await git())['/dev/fresh']).toBe(at('2026-04-01T00:00:00Z').getTime());
+    });
+
+    it('accepts a relative gitdir that validates', async () => {
+      const gitDir = join(base, 'main', '.git', 'worktrees', 'fresh');
+      touch(join(gitDir, 'HEAD'), at('2026-05-01T00:00:00Z'));
+      writeFileSync(join(gitDir, 'gitdir'), `${join(home, 'dev', 'fresh', '.git')}\n`);
+      writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${relative(join(home, 'dev', 'fresh'), gitDir)}\n`);
+      expect((await git())['/dev/fresh']).toBe(at('2026-05-01T00:00:00Z').getTime());
+    });
+
+    it('is unknown for a .git/worktrees directory that does not name this checkout back, however it is named', async () => {
+      const foreign = join(base, 'main', '.git', 'worktrees', 'foreign');
+      touch(join(foreign, 'HEAD'), at('2026-04-01T00:00:00Z'));
+      writeFileSync(join(foreign, 'gitdir'), `${join(base, 'somewhere', 'else', '.git')}\n`);
+      writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${foreign}\n`);
+      expect((await git())['/dev/fresh']).toBeNull();
+    });
+
+    it('is unknown when a component of the git directory is a symlink', async () => {
+      const target = join(base, 'real', '.git', 'worktrees', 'fresh');
+      touch(join(target, 'HEAD'), at('2026-04-01T00:00:00Z'));
+      writeFileSync(join(target, 'gitdir'), `${join(home, 'dev', 'fresh', '.git')}\n`);
+      symlinkSync(join(base, 'real'), join(base, 'link'));
+      const viaLink = join(base, 'link', '.git', 'worktrees', 'fresh');
+      writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${viaLink}\n`);
+      expect((await git())['/dev/fresh']).toBeNull();
     });
 
     it('is unknown for a .git file that names a directory outside a .git/worktrees directory', async () => {
@@ -354,11 +383,68 @@ describe('runDiscoveryCensusIfDue', () => {
     });
   });
 
+  describe('finds whose validity could not be established', () => {
+    it('are kept as unchecked with their earlier measurement and age, and make the census retry within the hour', async () => {
+      const { census: first } = await run(t0);
+      expect(first?.pending).toBe(false);
+      const scanRules = await import('../workspace/scan-rules.ts');
+      const real = scanRules.scanEntryValid;
+      vi.spyOn(scanRules, 'scanEntryValid').mockImplementation(async (path, options) =>
+        path.endsWith(join('dev', 'fresh')) || path.endsWith('.mytool') ? 'pending' : real(path, options),
+      );
+      const { census } = await run(t0 + day);
+      const unchecked = census?.finds.filter(({ kind }) => kind === 'unchecked') ?? [];
+      expect(unchecked.map(({ path }) => path.slice(home.length)).toSorted()).toEqual(['/.mytool', '/dev/fresh']);
+      for (const find of unchecked) expect(find).toMatchObject({ evaluatedAt: t0, measuredDirs: 1 });
+      expect(census?.pending).toBe(true);
+      expect(census?.finds.some(({ path }) => path.endsWith('/dev/old'))).toBe(true);
+    });
+
+    it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {
+      const denied = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      const { census } = await run(t0, {
+        io: {
+          readNames: async (path) => {
+            if (path.endsWith(join('dev', 'old', 'android'))) throw denied;
+            return readdir(path);
+          },
+          isDirectory: async (path) => (await lstat(path)).isDirectory(),
+          realpath: (path) => realpath(path),
+          lstat: async (path) => {
+            const info = await lstat(path);
+            return { kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other', mtimeMs: info.mtimeMs };
+          },
+          head: async () => null,
+        },
+      });
+      expect(census?.finds.find(({ path }) => path.endsWith('/dev/old'))?.unreadable).toBe(true);
+      expect(census?.pending).toBe(true);
+      expect(censusDue(census, census?.scanRanAt ?? 0, census?.roots ?? [], t0 + hour)).toBe(true);
+    });
+  });
+
   describe('errors from measuring', () => {
     it('lets an unverified child cleanup propagate as the same object', async () => {
       const failure = Object.assign(new Error('unverified'), { reportCleanup: true });
       vi.spyOn(diskUsage, 'refreshMeasure').mockRejectedValue(failure);
       await expect(run(t0)).rejects.toBe(failure);
+    });
+
+    it('lets an unverified child cleanup propagate even when the operation was aborted, as the same object', async () => {
+      const failure = Object.assign(new Error('unverified'), { reportCleanup: true });
+      const controller = new AbortController();
+      vi.spyOn(diskUsage, 'refreshMeasure').mockImplementation(async () => {
+        controller.abort();
+        throw failure;
+      });
+      await expect(run(t0, {}, testContext({ signal: controller.signal }))).rejects.toBe(failure);
+    });
+
+    it('passes every measured directory to refreshMeasure as known to exist, so no synchronous probe runs on it', async () => {
+      const refresh = vi.spyOn(diskUsage, 'refreshMeasure');
+      await run(t0);
+      expect(refresh).toHaveBeenCalled();
+      for (const [, options] of refresh.mock.calls) expect(options.knownToExist).toBe(true);
     });
 
     it('contains any other error, returns its message and writes nothing', async () => {

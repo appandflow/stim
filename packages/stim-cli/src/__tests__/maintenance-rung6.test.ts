@@ -196,13 +196,99 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
   errors.length = 0;
   writeFileSync(
     census,
-    JSON.stringify({ version: 1, at: ranAt, scanRanAt: ranAt, roots: [], pending: false, finds: [find] }),
+    JSON.stringify({
+      version: 1,
+      at: ranAt,
+      scanRanAt: ranAt,
+      roots: [],
+      canonicalRoots: [],
+      pending: false,
+      finds: [find],
+    }),
   );
   warnCriticalDisk(['ios']);
   expect(errors).toHaveLength(2);
   expect(errors[1]).toBe(
     `Stim: checkouts it does not fully manage hold 3.0 GB of build output. Adding the largest folder, /Users/x/dev (3.0 GB), lets Stim apply its full rules there, finished linked worktree removal included: stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine; stim doctor lists the rest and what changes.`,
   );
+});
+
+test('the critical-disk warning lists nothing once maintenance.discoverRoots changed since the census, and reads no folder to decide', () => {
+  mkdirSync(join(home, 'daemon'), { recursive: true });
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  writeFileSync(
+    join(home, 'daemon', 'snapshot.json'),
+    JSON.stringify({
+      version: 1,
+      pid: 1,
+      startedAt: new Date().toISOString(),
+      mode: 'on',
+      tickAt: new Date().toISOString(),
+      tickMs: 1,
+      intervalMs: 60_000,
+      measurement: {},
+      workspaces: [],
+      pressure: {
+        level: 'critical',
+        disk: 'critical',
+        memory: 'normal',
+        reasons: ['4.0 GB free on /'],
+        memoryWarningSince: null,
+      },
+    }),
+  );
+  const ranAt = Date.now();
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-scan.json'),
+    JSON.stringify({
+      version: 2,
+      ranAt,
+      completedAt: ranAt,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    }),
+  );
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-census.json'),
+    JSON.stringify({
+      version: 1,
+      at: ranAt,
+      scanRanAt: ranAt,
+      roots: [],
+      canonicalRoots: [],
+      pending: false,
+      finds: [
+        {
+          path: '/nowhere/dev/app',
+          kind: 'reduce-only',
+          folder: '/nowhere/dev',
+          adoptable: true,
+          evaluatedAt: ranAt,
+          dirs: 1,
+          measuredDirs: 1,
+          failedDirs: 0,
+          bytes: 1024 ** 3,
+          unreadable: false,
+          gitActivityAt: null,
+        },
+      ],
+    }),
+  );
+  const errors: string[] = [];
+  vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(2);
+  errors.length = 0;
+  saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: ['/nowhere/stalled-mount'] } });
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(1);
 });
 
 const DAEMON_ROW =

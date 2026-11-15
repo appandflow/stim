@@ -3,11 +3,12 @@ import { discoveryCensusFile } from './paths.ts';
 
 /**
  * A checkout the last full scan found that Stim does not fully manage: `reduce-only` ones are reduced and never removed,
- * `dot-folder` ones lie under a home dot-folder, where Stim does nothing with them.
+ * `dot-folder` ones lie under a home dot-folder, where Stim does nothing with them, and `unchecked` ones could not be
+ * revalidated this time because a read did not answer (neither managed nor gone; any measurement is from an earlier run).
  */
 export interface CensusFind {
   path: string;
-  kind: 'reduce-only' | 'dot-folder';
+  kind: 'reduce-only' | 'dot-folder' | 'unchecked';
   /** The folder whose direct children include the checkout, the one `maintenance.discoverRoots` would take. */
   folder: string;
   /** Whether `maintenance.discoverRoots` can name `folder`: the home folder and the folders holding it cannot. */
@@ -42,6 +43,8 @@ export interface DiscoveryCensus {
   scanRanAt: number;
   /** The `maintenance.discoverRoots` entries it was classified under, as absolute paths. */
   roots: string[];
+  /** The existing, non-broad folders of `roots` with symlinks resolved, as the classification used; commands compare strings only. */
+  canonicalRoots: string[];
   /** Some find has a directory not measured yet, so another run continues. */
   pending: boolean;
   finds: CensusFind[];
@@ -55,7 +58,7 @@ function parseFind(value: unknown): CensusFind | null {
   if (
     !isJsonObject(value) ||
     typeof value.path !== 'string' ||
-    (value.kind !== 'reduce-only' && value.kind !== 'dot-folder') ||
+    (value.kind !== 'reduce-only' && value.kind !== 'dot-folder' && value.kind !== 'unchecked') ||
     typeof value.folder !== 'string' ||
     typeof value.adoptable !== 'boolean' ||
     !finite(value.evaluatedAt) ||
@@ -90,6 +93,7 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     !finite(value.at) ||
     !finite(value.scanRanAt) ||
     !strings(value.roots) ||
+    !strings(value.canonicalRoots) ||
     typeof value.pending !== 'boolean' ||
     !Array.isArray(value.finds)
   )
@@ -105,6 +109,7 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     at: value.at,
     scanRanAt: value.scanRanAt,
     roots: value.roots,
+    canonicalRoots: value.canonicalRoots,
     pending: value.pending,
     finds,
   };

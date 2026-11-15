@@ -119,6 +119,11 @@ export interface RefreshOptions {
   valid?: (measure: DiskMeasure) => boolean;
   /** Records a failed walk, and leaves the folder alone for `maxAgeMs` after it. */
   failures?: boolean;
+  /**
+   * The caller has established, through a bounded read, that `path` exists: do not probe it. Without it the folder is
+   * probed with a synchronous `existsSync`, which a stalled mount can block.
+   */
+  knownToExist?: true;
 }
 
 export type RefreshOutcome = 'fresh' | 'measured' | 'failed' | 'busy';
@@ -156,7 +161,7 @@ export async function refreshMeasure(
     writeCacheFile(diskUsageCacheFile(path), { path, ...measure });
     return measure;
   };
-  if (!existsSync(path)) {
+  if (options.knownToExist !== true && !existsSync(path)) {
     if (!dependency) return { outcome: 'fresh', measure: null };
     return { outcome: 'measured', measure: record(0, 0, ABSENT, now()) };
   }

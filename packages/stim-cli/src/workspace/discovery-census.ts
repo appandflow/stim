@@ -1,7 +1,7 @@
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryCensusFile,
@@ -77,6 +77,7 @@ export interface CensusIo {
   isDirectory: (path: string) => Promise<boolean>;
   /** What the path is, without following a symlink, and when it was last modified. */
   lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number }>;
+  realpath: (path: string) => Promise<string>;
   /** Null unless it is a regular file; else its first `bytes` bytes as text. */
   head: (path: string, bytes: number) => Promise<string | null>;
 }
@@ -84,6 +85,7 @@ export interface CensusIo {
 const REAL_IO: CensusIo = {
   readNames: (path) => readdir(path),
   isDirectory: async (path) => (await lstat(path)).isDirectory(),
+  realpath: (path) => realpath(path),
   lstat: async (path) => {
     const info = await lstat(path);
     return { kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other', mtimeMs: info.mtimeMs };
@@ -117,6 +119,8 @@ interface Reader {
   /** Null when the path does not exist. */
   info: (path: string) => Promise<Awaited<ReturnType<CensusIo['lstat']>> | null>;
   head: (path: string, bytes: number) => Promise<string | null>;
+  /** The canonical path, or null when it does not exist. */
+  real: (path: string) => Promise<string | null>;
   answer: (read: DirRead) => Promise<string[] | boolean>;
 }
 
@@ -146,7 +150,9 @@ function boundedReader(io: CensusIo, deadline: number, signal: AbortSignal, time
   };
   const info = (path: string) => read<Awaited<ReturnType<CensusIo['lstat']>> | null>(path, null, () => io.lstat(path));
   const head = (path: string, bytes: number) => read<string | null>(path, null, () => io.head(path, bytes));
+  const real = (path: string) => read<string | null>(path, null, () => io.realpath(path));
   return {
+    real,
     names,
     directory,
     signature,
@@ -187,34 +193,43 @@ const GIT_POINTER_BYTES = 512;
 const WORKTREE_GIT_DIR = /[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/;
 
 /**
- * The git directory of a checkout without running git: `<c>/.git` when it is a directory, or the directory a linked
- * worktree's `.git` file names after `gitdir:`, accepted only when it is absolute and ends in `.git/worktrees/<name>`.
- * Symlinks are never followed. Null when it cannot be told.
+ * The git directory of a checkout, established the way git records it and without running git. For a main checkout it
+ * is `<c>/.git`, a directory. For a linked worktree it is the directory the `.git` file names after `gitdir:` (a relative
+ * name is resolved against the checkout), which must end in `.git/worktrees/<name>` and hold a regular file `gitdir`
+ * naming this checkout's `.git` file. Either way its canonical path must equal its normalised path, so no component is a
+ * symlink. Every read is bounded. Null when any of that fails.
  */
 async function gitDirOf(path: string, reader: Reader): Promise<string | null> {
   const dotGit = join(path, '.git');
   const info = await reader.info(dotGit);
   if (!info) return null;
-  if (info.kind === 'directory') return dotGit;
-  if (info.kind !== 'file') return null;
-  const text = await reader.head(dotGit, GIT_POINTER_BYTES);
-  const named = text === null ? null : /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text)?.[1];
-  if (!named || !isAbsolute(named)) return null;
-  const gitDir = resolve(named);
-  if (!WORKTREE_GIT_DIR.test(gitDir)) return null;
-  return (await reader.info(gitDir))?.kind === 'directory' ? gitDir : null;
+  let gitDir: string;
+  if (info.kind === 'directory') gitDir = dotGit;
+  else if (info.kind === 'file') {
+    const text = await reader.head(dotGit, GIT_POINTER_BYTES);
+    const named = text === null ? null : /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text)?.[1];
+    if (!named) return null;
+    gitDir = resolve(path, named);
+    if (!WORKTREE_GIT_DIR.test(gitDir)) return null;
+    const back = await reader.head(join(gitDir, 'gitdir'), GIT_POINTER_BYTES);
+    if (back === null || resolve(gitDir, back.trim()) !== dotGit) return null;
+  } else return null;
+  return (await reader.real(gitDir)) === gitDir ? gitDir : null;
 }
 
 /**
  * When git last wrote in a checkout: the newest modification time of the git directory's `HEAD`, `index` and `logs/HEAD`
  * (commits, checkouts, staging and reflog writes change them; editing files without touching git does not). A file that
- * does not exist is skipped, and a git directory with none of them, a file that is not a regular file, a failed or timed
- * out read or a spent budget gives null: unknown, never old. No git process runs and no source is read.
+ * does not exist is skipped, and a git directory with none of them, a file that is not a regular file, a `logs` that is
+ * not a real directory, a failed or timed out read or a spent budget gives null: unknown, never old. No git process runs
+ * and no source is read.
  */
 async function lastGitActivity(path: string, reader: Reader): Promise<number | null> {
   try {
     const gitDir = await gitDirOf(path, reader);
     if (!gitDir) return null;
+    const logs = await reader.info(join(gitDir, 'logs'));
+    if (logs && logs.kind !== 'directory') return null;
     let newest: number | null = null;
     for (const name of GIT_FILES) {
       const info = await reader.info(join(gitDir, name));
@@ -277,6 +292,7 @@ async function measureBuildOutput(
       operation,
       private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)),
       failures: true,
+      knownToExist: true,
     });
     if (measure) {
       result.measuredDirs++;
@@ -308,7 +324,7 @@ export function isUnverifiedCleanup(error: unknown): boolean {
  * no bound the census could apply.
  *
  * Aborts and errors with `reportCleanup` (or STIM_CLAIM_UNAVAILABLE) propagate unchanged, for the daemon's cleanup
- * containment. Any other error is contained and returned as its message for the caller to log; nothing is written.
+ * containment. An unverified cleanup is tested first, so it survives an abort; any other error is contained and returned as its message for the caller to log; nothing is written.
  */
 export async function runDiscoveryCensusIfDue(
   tick: { operation: StimContext } | undefined,
@@ -344,19 +360,20 @@ export async function runDiscoveryCensusIfDue(
     attempted.at = now;
     const finds = await unmanagedScanFinds(config, listedRoots(), operation);
     if (!finds) return;
-    const previous = new Map((last?.finds ?? []).map((find) => [`${find.kind}\0${find.path}`, find]));
+    const previous = new Map((last?.finds ?? []).map((find) => [find.path, find]));
     const deadline = Date.now() + budgetMs;
     let looked = 0;
     const entries: CensusFind[] = [];
     const groups: Array<[CensusFind['kind'], string[]]> = [
       ['reduce-only', finds.reduceOnly],
       ['dot-folder', finds.dotFolder],
+      ['unchecked', finds.unchecked],
     ];
     for (const [kind, paths] of groups)
       for (const path of paths) {
         operation.signal.throwIfAborted();
         const folder = dirname(path);
-        const earlier = previous.get(`${kind}\0${path}`);
+        const earlier = previous.get(path);
         const placement = { path, kind, folder, adoptable: !isBroadFolder(folder) };
         const kept: CensusFind = earlier
           ? { ...earlier, ...placement }
@@ -370,6 +387,10 @@ export async function runDiscoveryCensusIfDue(
               unreadable: false,
               gitActivityAt: null,
             };
+        if (kind === 'unchecked') {
+          entries.push(kept);
+          continue;
+        }
         const complete =
           earlier &&
           earlier.evaluatedAt > 0 &&
@@ -394,14 +415,19 @@ export async function runDiscoveryCensusIfDue(
       at: now,
       scanRanAt: finds.scanRanAt,
       roots,
+      canonicalRoots: finds.canonicalRoots,
       pending: entries.some(
-        (find) => find.evaluatedAt === 0 || (!find.unreadable && find.measuredDirs + find.failedDirs < find.dirs),
+        (find) =>
+          find.kind === 'unchecked' ||
+          find.unreadable ||
+          find.evaluatedAt === 0 ||
+          find.measuredDirs + find.failedDirs < find.dirs,
       ),
       finds: entries,
     });
   } catch (error) {
-    operation.signal.throwIfAborted();
     if (isUnverifiedCleanup(error)) throw error;
+    operation.signal.throwIfAborted();
     return error instanceof Error ? error.message : String(error);
   }
 }

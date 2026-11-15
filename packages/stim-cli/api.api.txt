@@ -366,6 +366,7 @@
 [*] interface DiscoveryReport { @@1 censusAt: number | null;
 [*] interface DiscoveryReport { @@1 censusCurrent: boolean;
 [*] interface DiscoveryReport { @@1 groups: UnmanagedGroup[];
+[*] interface DiscoveryReport { @@1 rootsChangedSinceCensus: boolean;
 [*] interface DiscoveryReport { @@1 scan: ScanSummary;
 [*] interface DoctorReport {
 [*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
@@ -1421,10 +1422,10 @@
 [*] interface UnmanagedGroup { @@1 bytes: number;
 [*] interface UnmanagedGroup { @@1 checkouts: number;
 [*] interface UnmanagedGroup { @@1 command: string | null;
-[*] interface UnmanagedGroup { @@1 commandProblem: "too-broad" | "setting-unreadable" | null;
+[*] interface UnmanagedGroup { @@1 commandProblem: "too-broad" | "setting-unreadable" | "unchecked" | null;
 [*] interface UnmanagedGroup { @@1 failed: number;
 [*] interface UnmanagedGroup { @@1 folder: string;
-[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder";
+[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder" | "unchecked";
 [*] interface UnmanagedGroup { @@1 measured: number;
 [*] interface UnmanagedGroup { @@1 members: Array<{
 [*] interface UnmanagedGroup { @@1 notMeasuredYet: number;

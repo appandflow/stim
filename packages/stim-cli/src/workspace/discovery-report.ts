@@ -1,4 +1,3 @@
-import { realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScanFile, ScanTruncation } from '@stim-cli/core/state';
 
@@ -8,8 +7,11 @@ export const DISCOVER_ROOTS_KEY = 'maintenance.discoverRoots';
 /** One folder of checkouts Stim does not fully manage, and what adopting it would take. */
 interface UnmanagedGroup {
   folder: string;
-  /** `reduce-only`: Stim reduces their build output and never removes them. `dot-folder`: Stim does nothing with them. */
-  kind: 'reduce-only' | 'dot-folder';
+  /**
+   * `reduce-only`: Stim reduces their build output and never removes them. `dot-folder`: Stim does nothing with them.
+   * `unchecked`: a read did not answer, so whether they are still checkouts, and managed, is not known this time.
+   */
+  kind: 'reduce-only' | 'dot-folder' | 'unchecked';
   checkouts: number;
   /** The bytes of the build directories that were measured; a lower bound while `failed` or `notMeasuredYet` is above 0. */
   bytes: number;
@@ -21,7 +23,7 @@ interface UnmanagedGroup {
   notMeasuredYet: number;
   /** The command that adds `folder` to the machine's `maintenance.discoverRoots`; null with `commandProblem` set. */
   command: string | null;
-  commandProblem: 'too-broad' | 'setting-unreadable' | null;
+  commandProblem: 'too-broad' | 'setting-unreadable' | 'unchecked' | null;
   /**
    * Each checkout with when git last wrote in it (ISO time; null is unknown, never old), oldest first, unknown last. It
    * is the newest modification time of the git directory's HEAD, index and logs/HEAD, and says nothing about edits.
@@ -51,6 +53,11 @@ export interface DiscoveryReport {
   censusAt: number | null;
   /** Whether the census was made from the scan the scan file holds now; when false its sizes are not shown. */
   censusCurrent: boolean;
+  /**
+   * Only when the caller cannot canonicalise roots (the per-command hook): `maintenance.discoverRoots` changed since the
+   * census, so no group is listed.
+   */
+  rootsChangedSinceCensus: boolean;
   groups: UnmanagedGroup[];
 }
 
@@ -72,19 +79,6 @@ export function rootsOf(setting: DiscoverRootsValue, home: string): string[] {
   return setting.value.map((entry) => resolve(expandHome(entry, home))).toSorted();
 }
 
-function canonical(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/** The configured roots with symlinks resolved, as the census names its folders. */
-function canonicalRoots(setting: DiscoverRootsValue, home: string): Set<string> {
-  return new Set(rootsOf(setting, home).flatMap((root) => [root, canonical(root)]));
-}
-
 function shellQuote(text: string): string {
   return `'${text.replaceAll("'", `'\\''`)}'`;
 }
@@ -95,7 +89,10 @@ export function adoptCommand(setting: DiscoverRootsValue, folder: string): strin
   return `stim settings set ${DISCOVER_ROOTS_KEY} ${shellQuote(JSON.stringify([...setting.value, folder]))} --scope machine`;
 }
 
+const KIND_ORDER = { 'reduce-only': 0, 'dot-folder': 1, unchecked: 2 };
+
 function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: DiscoverRootsValue): UnmanagedGroup {
+  const unchecked = first.kind === 'unchecked';
   let bytes = 0;
   let measured = 0;
   let failed = 0;
@@ -110,7 +107,7 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
     if (find.evaluatedAt > 0 && (oldestMeasuredAt === null || find.evaluatedAt < oldestMeasuredAt))
       oldestMeasuredAt = find.evaluatedAt;
   }
-  const command = first.adoptable ? adoptCommand(setting, first.folder) : null;
+  const command = first.adoptable && !unchecked ? adoptCommand(setting, first.folder) : null;
   return {
     folder: first.folder,
     kind: first.kind,
@@ -120,7 +117,13 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
     failed,
     notMeasuredYet,
     command,
-    commandProblem: !first.adoptable ? 'too-broad' : command === null ? 'setting-unreadable' : null,
+    commandProblem: unchecked
+      ? 'unchecked'
+      : !first.adoptable
+        ? 'too-broad'
+        : command === null
+          ? 'setting-unreadable'
+          : null,
     oldestMeasuredAt,
     members: finds
       .map((find) => ({ path: find.path, at: find.gitActivityAt }))
@@ -140,11 +143,17 @@ export function discoveryReport({
   census,
   setting,
   home,
+  canonical,
 }: {
   scan: DiscoveryScanFile;
   census: DiscoveryCensusFile;
   setting: DiscoverRootsValue;
   home: string;
+  /**
+   * Resolves symlinks of a configured root, which `stim doctor` may do. The per-command hook passes null and so makes no
+   * filesystem call: it compares strings with the roots the census recorded, and lists nothing once the setting changed.
+   */
+  canonical: ((path: string) => string) | null;
 }): DiscoveryReport {
   const summary: ScanSummary =
     scan.status === 'read'
@@ -159,11 +168,16 @@ export function discoveryReport({
           }
         : { status: 'unusable' }
       : { status: scan.status };
-  const base = { scan: summary, censusCurrent: false, groups: [] };
+  const base = { scan: summary, censusCurrent: false, rootsChangedSinceCensus: false, groups: [] };
   if (summary.status !== 'read') return { ...base, census: 'none', censusAt: null };
   if (census.status !== 'read') return { ...base, census: census.status, censusAt: null };
   if (!census.census) return { ...base, census: 'unusable', censusAt: null };
-  const roots = canonicalRoots(setting, home);
+  const lexical = rootsOf(setting, home);
+  const recorded = census.census.roots;
+  const unchanged = recorded.length === lexical.length && recorded.every((root, at) => root === lexical[at]);
+  if (canonical === null && !unchanged)
+    return { ...base, census: 'read', censusAt: census.census.at, rootsChangedSinceCensus: true };
+  const roots = new Set([...lexical, ...census.census.canonicalRoots, ...(canonical ? lexical.map(canonical) : [])]);
   const current = summary.ranAt === census.census.scanRanAt;
   const byFolder = new Map<string, { first: CensusFind; finds: CensusFind[] }>();
   for (const listed of census.census.finds) {
@@ -187,8 +201,15 @@ export function discoveryReport({
   }
   const groups = [...byFolder.values()]
     .map(({ first, finds }) => groupOf(first, finds, setting))
-    .toSorted((a, b) => (a.kind === b.kind ? b.bytes - a.bytes : a.kind === 'reduce-only' ? -1 : 1));
-  return { scan: summary, census: 'read', censusAt: census.census.at, censusCurrent: current, groups };
+    .toSorted((a, b) => (a.kind === b.kind ? b.bytes - a.bytes : KIND_ORDER[a.kind] - KIND_ORDER[b.kind]));
+  return {
+    scan: summary,
+    census: 'read',
+    censusAt: census.census.at,
+    censusCurrent: current,
+    rootsChangedSinceCensus: false,
+    groups,
+  };
 }
 
 const gb = (bytes: number): string =>
@@ -245,7 +266,15 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
       ...lines,
       'The list of what it found is unusable (corrupt or from another Stim version); the daemon rewrites it.',
     ];
-  if (!report.groups.length) return [...lines, 'Every checkout it found is managed.'];
+  if (!report.groups.length) {
+    const finished = scan.truncation === 'none' && scan.unreadable.length === 0 && report.censusCurrent;
+    return [
+      ...lines,
+      finished
+        ? 'Every checkout it found is managed.'
+        : 'No unmanaged checkout is listed, but that scan or its list is incomplete, so checkouts may be missing.',
+    ];
+  }
   if (report.censusAt !== null)
     lines.push(`Listed and measured by the daemon on ${day(report.censusAt)}; commands never walk the disk.`);
   if (!report.censusCurrent)
@@ -254,6 +283,17 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
     );
   for (const group of report.groups) {
     lines.push('');
+    if (group.kind === 'unchecked') {
+      lines.push(
+        `${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')} could not be checked this time because a read did not answer; they are neither listed as managed nor gone, and the daemon checks again within the hour. Any measurement below is from an earlier run.`,
+      );
+      lines.push(`  ${sizeText(group)}`);
+      for (const { path, gitActivityAt } of group.members)
+        lines.push(
+          `  ${shorten(path, home)}: last git activity ${gitActivityAt === null ? 'unknown' : gitActivityAt.slice(0, 10)}`,
+        );
+      continue;
+    }
     lines.push(`${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')}, ${sizeText(group)}`);
     lines.push(
       group.kind === 'reduce-only'
@@ -286,8 +326,10 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
  */
 export function lowDiskLine(report: DiscoveryReport, home: string): string | null {
   const total = report.groups.reduce((sum, group) => sum + group.bytes, 0);
-  const measuring = report.groups.some((group) => group.failed + group.notMeasuredYet > 0);
-  if (total === 0) return null;
+  const measuring = report.groups.some(
+    (group) => group.failed + group.notMeasuredYet > 0 || group.kind === 'unchecked',
+  );
+  if (total === 0 || report.rootsChangedSinceCensus) return null;
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
   const holding = `Stim: checkouts it does not fully manage hold ${measuring ? 'at least ' : ''}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;

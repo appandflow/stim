@@ -568,3 +568,14 @@ test('a census failure that was contained is recorded in the maintenance log', a
     .filter((record) => record.event === 'maintenance_failure' && record.target === 'discovery census');
   expect(failures).toEqual([expect.objectContaining({ error: 'disk exploded' })]);
 });
+
+test('an unverified child cleanup from the census reaches the caller even when the pass was aborted meanwhile', async () => {
+  const failure = Object.assign(new Error('unverified cleanup'), { reportCleanup: true });
+  const controller = new AbortController();
+  vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  vi.spyOn(await import('../workspace/discovery-census.ts'), 'runDiscoveryCensusIfDue').mockImplementation(async () => {
+    controller.abort();
+    throw failure;
+  });
+  await expect(runMaintenance('daemon', { tick: quietTick(controller.signal) })).rejects.toBe(failure);
+});

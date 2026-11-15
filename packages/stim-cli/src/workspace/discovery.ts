@@ -197,6 +197,8 @@ export function worktreeInScope(
 
 interface Discovery {
   found: DiscoveredCheckout[];
+  /** Scan finds whose validity could not be established this time: neither selected nor dropped. */
+  scanPending: string[];
   /** Worktrees and folders the discovery reached that Stim does not manage: listed, never acted on. */
   outside: { path: string; from: string }[];
 }
@@ -237,15 +239,19 @@ function discovery(config: Config | null, known: readonly string[], operation?: 
 }
 
 /** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
-async function revalidatedScan(scan: DiscoveryScan | null): Promise<DiscoveryChild[]> {
+async function revalidatedScan(scan: DiscoveryScan | null): Promise<{ valid: DiscoveryChild[]; pending: string[] }> {
   const home = canonicalPath(homedir());
   const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
   const valid: DiscoveryChild[] = [];
+  const pending: string[] = [];
   const ancestors = new Map();
-  for (const path of scan?.found ?? [])
-    if (isAbsolute(path) && (await scanEntryValid(path, { ...rules, ancestors })) === 'valid')
-      valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
-  return valid;
+  for (const path of scan?.found ?? []) {
+    if (!isAbsolute(path)) continue;
+    const state = await scanEntryValid(path, { ...rules, ancestors });
+    if (state === 'valid') valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
+    else if (state === 'pending') pending.push(path);
+  }
+  return { valid, pending };
 }
 
 async function computeDiscovered(
@@ -312,7 +318,7 @@ async function computeDiscovered(
       else outside.push({ path, from: main });
     }
   }
-  const scanned: DiscoveryChild[] = scoped ? [] : await revalidatedScan(scan);
+  const { valid: scanned, pending: scanPending } = scoped ? { valid: [], pending: [] } : await revalidatedScan(scan);
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
@@ -322,6 +328,7 @@ async function computeDiscovered(
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {
     found: everything,
+    scanPending,
     outside: outside.filter(({ path }) => !listed.has(path) && !coveredByKnown(path)),
   };
 }
@@ -334,6 +341,10 @@ export interface UnmanagedScanFinds {
   reduceOnly: string[];
   /** Scan finds under a home dot-folder that no route reaches: Stim does nothing with them. */
   dotFolder: string[];
+  /** Finds, of either kind, whose validity a read that did not answer left unestablished: neither managed nor gone. */
+  unchecked: string[];
+  /** The existing, non-broad `maintenance.discoverRoots` folders with symlinks resolved, as this classification used. */
+  canonicalRoots: string[];
 }
 
 const touches = (path: string, other: string): boolean =>
@@ -343,8 +354,9 @@ const touches = (path: string, other: string): boolean =>
  * The scan finds that are not managed through another route, classified from the complete discovery list: the finds
  * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
  * is unmanaged unless a registered project, a folder of `maintenance.discoverRoots`, a tool folder or any discovered
- * checkout covers it. Each dot-folder find is revalidated like a scan find, and one that does not answer is left out.
- * A scoped STIM_HOME scans nothing and so finds nothing. Null when there is no usable scan result.
+ * checkout covers it. Each dot-folder find is revalidated like a scan find. A find of either kind whose revalidation did
+ * not answer is `unchecked` (when no route covers it), never dropped. A scoped STIM_HOME scans nothing and so finds
+ * nothing. Null when there is no usable scan result.
  *
  * It computes discovery anew from the one scan result it reads and returns that result's `ranAt`, not through the
  * per-operation memo the passes share: the memo can hold a discovery computed from an older scan result, and the census
@@ -357,26 +369,35 @@ export async function unmanagedScanFinds(
 ): Promise<UnmanagedScanFinds | null> {
   const scan = readDiscoveryScan();
   if (!scan) return null;
-  const { found } = await computeDiscovered(config, known, scan, operation);
+  const { found, scanPending } = await computeDiscovered(config, known, scan, operation);
   const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
-  if (isScopedHome(operation.env)) return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [] };
+  if (isScopedHome(operation.env))
+    return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [], unchecked: [], canonicalRoots: [] };
   const home = canonicalPath(homedir());
   const roots = canonicalDiscoverRoots(config, operation.env);
   const knownRoots = known.map(canonicalPath);
   const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
   const ancestors = new Map();
+  const covered = (path: string): boolean =>
+    !isAbsolute(path) ||
+    roots.some((root) => inside(path, root)) ||
+    inToolFolder(path, home) ||
+    knownRoots.some((root) => touches(path, root)) ||
+    found.some((checkout) => touches(path, checkout.path));
   const dotFolder: string[] = [];
+  const unchecked = scanPending.filter((path) => !covered(path));
   for (const path of scan.dotFolderFound) {
     operation.signal.throwIfAborted();
-    if (
-      !isAbsolute(path) ||
-      roots.some((root) => inside(path, root)) ||
-      inToolFolder(path, home) ||
-      knownRoots.some((root) => touches(path, root)) ||
-      found.some((checkout) => touches(path, checkout.path))
-    )
-      continue;
-    if ((await scanEntryValid(path, { ...rules, ancestors })) === 'valid') dotFolder.push(path);
+    if (covered(path)) continue;
+    const state = await scanEntryValid(path, { ...rules, ancestors });
+    if (state === 'valid') dotFolder.push(path);
+    else if (state === 'pending') unchecked.push(path);
   }
-  return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: dotFolder.toSorted() };
+  return {
+    scanRanAt: scan.ranAt,
+    reduceOnly,
+    dotFolder: dotFolder.toSorted(),
+    unchecked: unchecked.toSorted(),
+    canonicalRoots: roots,
+  };
 }

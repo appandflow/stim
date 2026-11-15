@@ -54,11 +54,20 @@ const census = (finds: CensusFind[]): DiscoveryCensusFile => ({
     at: now,
     scanRanAt: scan.ranAt,
     roots: [],
+    canonicalRoots: [],
     pending: false,
     finds,
   },
 });
 
+const realpathOrSelf = (path: string): string => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+const same = (path: string) => path;
 const noRoots: DiscoverRootsValue = { value: [], error: null };
 
 function report(
@@ -71,6 +80,7 @@ function report(
     census: census(finds),
     setting,
     home,
+    canonical: realpathOrSelf,
   });
 }
 
@@ -154,6 +164,7 @@ describe('discoveryReport', () => {
       census: census([find({ path: '/Users/me/dev/a', bytes: 5 * GB })]),
       setting: noRoots,
       home,
+      canonical: same,
     });
     expect(result.censusCurrent).toBe(false);
     expect(result.groups[0]).toMatchObject({ bytes: 0, measured: 0, notMeasuredYet: 1 });
@@ -182,7 +193,7 @@ describe('discoveryReport', () => {
   });
 
   it('keeps an unreadable, absent and unusable scan or census apart', () => {
-    const base = { setting: noRoots, home };
+    const base = { setting: noRoots, home, canonical: same };
     const missing: DiscoveryCensusFile = { status: 'absent' };
     expect(discoveryReport({ ...base, scan: { status: 'absent' }, census: missing }).scan).toEqual({
       status: 'absent',
@@ -198,6 +209,59 @@ describe('discoveryReport', () => {
     expect(discoveryReport({ ...withScan, census: missing }).census).toBe('absent');
     expect(discoveryReport({ ...withScan, census: { status: 'unreadable' } }).census).toBe('unreadable');
     expect(discoveryReport({ ...withScan, census: { status: 'read', census: null } }).census).toBe('unusable');
+  });
+});
+
+describe('what the listing may claim', () => {
+  it('says every checkout is managed only for a finished scan, a census made from it and no unchecked find', () => {
+    const lines = (scanOver: Partial<DiscoveryScan>, finds: CensusFind[] = []) =>
+      discoveryLines(report(finds, noRoots, { status: 'read', scan: { ...scan, ...scanOver } }), home);
+    expect(lines({}).join('\n')).toContain('Every checkout it found is managed.');
+    expect(lines({ truncated: true, truncation: 'budget' }).join('\n')).not.toContain(
+      'Every checkout it found is managed.',
+    );
+    expect(lines({ unreadable: ['/Users/me/Documents/x'] }).join('\n')).not.toContain(
+      'Every checkout it found is managed.',
+    );
+    expect(lines({ ranAt: scan.ranAt + 1 }).join('\n')).not.toContain('Every checkout it found is managed.');
+  });
+
+  it('lists a find that could not be checked as its own group, with no command, never as managed', () => {
+    const result = report([
+      find({ path: '/Users/me/dev/a', kind: 'unchecked', evaluatedAt: now - 3 * day, gitActivityAt: now - 9 * day }),
+    ]);
+    expect(result.groups).toMatchObject([
+      { kind: 'unchecked', checkouts: 1, command: null, commandProblem: 'unchecked', oldestMeasuredAt: now - 3 * day },
+    ]);
+    expect(lowDiskLine(result, home)).toContain('at least');
+  });
+
+  it('makes no filesystem call without a canonicaliser: it masks by the recorded roots and lists nothing once the setting changed', () => {
+    const recorded = (roots: string[]): DiscoveryCensusFile => ({
+      status: 'read',
+      census: {
+        version: 1,
+        at: now,
+        scanRanAt: scan.ranAt,
+        roots,
+        canonicalRoots: ['/real/dev'],
+        pending: false,
+        finds: [find({ path: '/real/dev/a', folder: '/real/dev' })],
+      },
+    });
+    const through = (file: DiscoveryCensusFile, value: string[]) =>
+      discoveryReport({
+        scan: { status: 'read', scan },
+        census: file,
+        setting: { value, error: null },
+        home,
+        canonical: null,
+      });
+    expect(through(recorded(['/Users/me/link']), ['/Users/me/link']).groups).toEqual([]);
+    const changed = through(recorded(['/Users/me/link']), ['/Users/me/other']);
+    expect(changed.rootsChangedSinceCensus).toBe(true);
+    expect(changed.groups).toEqual([]);
+    expect(lowDiskLine(changed, home)).toBeNull();
   });
 });
 
@@ -228,6 +292,7 @@ describe('members', () => {
       census: census(finds),
       setting: noRoots,
       home,
+      canonical: same,
     });
     expect(stale.groups[0]?.members.every(({ gitActivityAt }) => gitActivityAt === null)).toBe(true);
   });
@@ -252,6 +317,7 @@ describe('discoveryLines', () => {
         ]),
         setting: noRoots,
         home,
+        canonical: same,
       }),
       home,
     ).join('\n');

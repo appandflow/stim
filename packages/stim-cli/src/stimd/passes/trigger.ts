@@ -41,6 +41,7 @@ export function warnCriticalDisk(argv: readonly string[] = process.argv.slice(2)
         census: readDiscoveryCensusFile(),
         setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env: process.env }),
         home,
+        canonical: null,
       }),
       home,
     );

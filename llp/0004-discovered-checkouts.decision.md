@@ -358,6 +358,31 @@ maintainer:
   JSON, with no threshold and without the word idle: the date is the fact and the
   person judges. Chosen by the implementing lane and the coordinator, not by the
   maintainer.
+- The git directory is tied to the checkout the way git records it: a linked
+  worktree's `.git` file names a directory (a relative name resolves against the
+  checkout) ending in `.git/worktrees/<name>` that holds a regular `gitdir` file
+  naming this checkout's `.git` file, and its canonical path (bounded
+  `realpath`) equals its normalised path, so no component is a symlink; a `logs`
+  that is not a real directory gives unknown.
+- A scan find whose revalidation did not answer is neither managed nor gone: the
+  census carries it as `unchecked` with any earlier measurement and its age,
+  stays pending (retried within the hour, as is a checkout whose layout read
+  failed), and doctor prints "every checkout it found is managed" only for a
+  finished scan, a census made from it and no unchecked find.
+- The measuring walk is told the directory exists (`knownToExist`), because the
+  census established that through the bounded reader; `refreshMeasure` makes no
+  other synchronous call on the measured path (its cache, failure and claim files
+  are under the Stim home). Discovery's own reads of configured roots and
+  registered projects (`existsSync`, `realpath`) are the ones the passes already
+  make.
+- The per-command critical-disk hook makes no filesystem call on a configured
+  root or a find. It reads the daemon snapshot, the scan file, the census file and
+  the config (all under the Stim home), compares strings with the canonical roots
+  the census recorded, and adds no line once `maintenance.discoverRoots` changed
+  since the census. `stim doctor`, which a person runs on purpose and which already
+  canonicalises roots elsewhere, resolves symlinks of the configured roots with
+  `realpath`. The census writes its file under a directory lock in the state
+  directory.
 - The census classifies a discovery computed from the scan result it records
   (not the per-operation memo the passes share) and records that `ranAt`; a census
   from an older scan than the scan file shows its checkouts as not measured yet.

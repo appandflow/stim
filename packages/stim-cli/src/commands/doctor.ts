@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
   daemonNdjsonFile,
@@ -226,6 +227,14 @@ function toolchainLines(report: ToolchainReport): string[] {
         ]
       : []),
   ];
+}
+
+function canonicalOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 const DISCOVERY_TITLE = 'Checkouts Stim does not fully manage';
@@ -787,6 +796,7 @@ async function assembleDoctorReport(
       census: readDiscoveryCensusFile(),
       setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env }),
       home: homedir(),
+      canonical: canonicalOrSelf,
     }),
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),

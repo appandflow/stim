@@ -265,7 +265,7 @@ DISK PRESSURE
   measured), that adopting a folder gives it the full rules (finished linked
   worktree removal included), and the command that adds the largest reduce-only
   folder to maintenance.discoverRoots; a dot-folder group counts in the total and is never
-  the one named. It reads the scan file, the census file and the config, never walks the disk, and goes to
+  the one named. It reads the daemon snapshot, the scan file, the census file and the config (all under the Stim home) and makes no call on a configured folder or a checkout (it compares strings with the roots the census recorded, and lists nothing once the setting changed since the census), never walks the disk, and goes to
   stderr only, never into a JSON payload. It appears at critical only.
 
   stim status                     last checks, plan and running pass
@@ -1319,7 +1319,15 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   gc worktree report sizes with private bytes is measured with them too), at most
   25 checkouts and 90 seconds per run; a checkout measured within a day is
   carried over without a read, and what a run leaves keeps its earlier entry or
-  is "not measured yet" and the next run, an hour later, continues. A walk that
+  is "not measured yet" and the next run, an hour later, continues; so does a
+  checkout whose layout could not be read. A find whose revalidation did not
+  answer (a read pending) is kept as its own kind, unchecked: neither listed as
+  managed nor dropped, with any earlier measurement and its age, and the census
+  stays pending so it is retried within the hour. Doctor prints that every
+  checkout it found is managed only for a finished scan, a census made from it
+  and no unchecked find. The measuring walk is told the directory exists
+  (refreshMeasure knownToExist), so it makes no synchronous probe of the
+  measured path. A walk that
   fails or times out is "could not be measured", never zero; a total with any
   unknown is "at least"; a group shows its oldest measurement date. The census
   is written again after a new scan, when the machine's maintenance.discoverRoots
@@ -1327,16 +1335,20 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   result it records, not the per-operation discovery the passes share, and
   records that result's ranAt; doctor shows no size from a census made from an
   older scan than the scan file holds (those checkouts read "not measured yet").
-  An unverified child cleanup from a walk (reportCleanup, or
-  STIM_CLAIM_UNAVAILABLE) propagates out of the pass unchanged for the daemon's
-  cleanup containment (stim guide lifecycle); any other census error is
+  An error that carries reportCleanup (a measuring child whose cleanup could not
+  be verified, or the STIM_CLAIM_UNAVAILABLE errors the operation's spawn claims
+  raise; a walk claim held elsewhere is only "busy", not an error) propagates out
+  of the pass unchanged for the daemon's cleanup containment (stim guide
+  lifecycle), and does so before an abort is considered; any other census error is
   contained, writes nothing and is one maintenance_failure record (target
   discovery census) in the cleanup log. The census reads no idle evidence: that
   evidence walks the source of a checkout with no bound it could apply. It
   records one cheap fact instead, the last git activity: the newest
   modification time of HEAD, index and logs/HEAD in the checkout's git
-  directory (its .git directory, or for a linked worktree the absolute
-  .git/worktrees/<name> directory its .git file names), by bounded lstat
+  directory (its .git directory, or for a linked worktree the .git/worktrees/<name>
+  directory its .git file names, relative names resolved against the checkout,
+  which must hold a gitdir file naming this checkout's .git file and whose
+  canonical path must equal its path, so no component is a symlink), by bounded
   reads that never follow a symlink and run no git. Commits, checkouts, staging
   and reflog writes change it; editing files without touching git does not. A
   missing git directory, a name outside .git/worktrees, a read that fails or
