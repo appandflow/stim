@@ -180,8 +180,9 @@ interface Discovery {
  * The checkouts this Stim home discovers beyond its registered workspaces: linked worktrees of the repositories of its
  * projects (`git worktree list`) inside the folders Stim manages, recognised direct children of the folders holding
  * those checkouts, and recognised direct children of `maintenance.discoverRoots`. Nothing under the system temporary
- * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots` folder. A scoped STIM_HOME discovers only from that
- * setting, so a scratch home never reaches the repositories of another. Nothing is registered, written or persisted.
+ * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots`
+ * folder. A scoped STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of
+ * another. Nothing is registered, written or persisted.
  */
 export async function discoverCheckouts(
   config: Config | null,
