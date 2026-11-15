@@ -165,8 +165,8 @@ export function worktreeInScope(
   isProtected: (path: string) => boolean = isProtectedLocation,
 ): boolean {
   return (
-    (roots.some((folder) => inside(path, folder)) || !isProtected(path)) &&
-    [main, ...folders, ...roots].some((folder) => inside(path, folder))
+    roots.some((folder) => inside(path, folder)) ||
+    (!isProtected(path) && [main, ...folders].some((folder) => inside(path, folder)))
   );
 }
 

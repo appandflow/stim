@@ -51,7 +51,8 @@ need. A scratch home must not reach the repositories of the real one.
 Maintainer decision: "Def need to fix it if its the case, paths added to
 discover root need to always be considered", 2026-11-14 (#5757), for a folder
 named in `maintenance.discoverRoots` under a home dot-folder or the temporary
-directory. The exception covers both kinds of protected location.
+directory. Applying it to the temporary directory as well as home dot-folders
+was the coordinator's reading of "always", not the maintainer's words.
 
 Everything else in this section was chosen by the coordinator and the review of
 #5519, not by the maintainer.
