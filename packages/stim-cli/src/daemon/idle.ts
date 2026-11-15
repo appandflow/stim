@@ -49,6 +49,7 @@ import {
   resolveProjectSettingsAsync,
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import type { DaemonLog } from './step-timing.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -69,7 +70,7 @@ export interface IdlePassInput {
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
   operation?: StimContext;
-  log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
+  log: DaemonLog;
 }
 
 type Candidate =

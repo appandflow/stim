@@ -1,8 +1,14 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { diskUsageWalkClaims, readDiskUsage, readDiskUsageFailure } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  diskUsageWalkClaims,
+  readDiskUsage,
+  readDiskUsageFailure,
+  readDiskUsageWalkMs,
+} from '@stim-cli/core/state';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
@@ -129,4 +135,31 @@ test('a claimed walk whose child exits before its identity can be recorded is st
   const result = await refreshMeasure(tree, { ...options, claim: true });
 
   expect(result.outcome).toBe('measured');
+});
+
+test('a walk records how long it took, and an entry written without it still reads', async () => {
+  const plain = join(scratch, 'timed');
+  mkdirSync(plain);
+  writeFileSync(join(plain, 'blob'), Buffer.alloc(10_000));
+  let clock = Date.parse('2026-11-04T10:00:00.000Z');
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: (file, args, opts) => {
+      if (file === 'nice') clock += 1234;
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+
+  const walked = await refreshMeasure(plain, { ...options, now: () => clock, claim: true });
+
+  expect(walked.outcome).toBe('measured');
+  expect(readDiskUsageWalkMs(plain)).toBe(1234);
+  expect(readDiskUsage(plain)).toEqual(walked.measure);
+
+  const { walkMs: _walkMs, ...legacy } = JSON.parse(readFileSync(diskUsageCacheFile(plain), 'utf8'));
+  writeFileSync(diskUsageCacheFile(plain), JSON.stringify(legacy));
+  expect(readDiskUsageWalkMs(plain)).toBeNull();
+  expect(readDiskUsage(plain)).toEqual(walked.measure);
+  expect((await refreshMeasure(plain, { ...options, now: () => clock })).outcome).toBe('fresh');
 });

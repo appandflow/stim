@@ -24,6 +24,7 @@ import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/sta
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import * as android from '../devices/android.ts';
+import * as simPool from '../devices/sim-pool.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
@@ -1226,3 +1227,77 @@ describe.skipIf(process.platform === 'win32')(
     }, 20_000);
   },
 );
+
+describe('rung timing records', () => {
+  const steps = () =>
+    log.mock.calls
+      .filter(([, event]) => event === 'daemon_step')
+      .map(([logLevel, , , fields]) => Object.assign({ logLevel }, fields));
+  const run = (operation?: ReturnType<typeof testContext>) => {
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    return runLadder(
+      {
+        config,
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('high'),
+        fromRung: 2,
+        lastRung: 2,
+        ...(operation ? { operation } : {}),
+      },
+      pressure('high'),
+    );
+  };
+
+  beforeEach(() => {
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
+  });
+
+  test('a rung that finishes records its start, duration, actions and outcome', async () => {
+    vi.spyOn(simPool, 'readParked').mockReturnValue([]);
+
+    await run();
+
+    expect(steps()).toEqual([
+      {
+        logLevel: 'debug',
+        step: 'rung',
+        rung: 2,
+        level: 'high',
+        startedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+        durationMs: 100,
+        items: 0,
+        outcome: 'finished',
+      },
+    ]);
+  });
+
+  test('a rung that throws records the failure, and the ladder goes on as before', async () => {
+    vi.spyOn(simPool, 'readParked').mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const { actions } = await run();
+
+    expect(steps()).toMatchObject([{ step: 'rung', rung: 2, outcome: 'threw', error: 'boom' }]);
+    expect(actions).toMatchObject([{ rung: 2, kind: 'rung', outcome: 'failed', detail: 'boom' }]);
+    expect(log).toHaveBeenCalledWith('warn', 'pressure_rung_failed', 'rung 2 failed: boom');
+  });
+
+  test('a rung stopped by an abort records it and the abort still reaches the caller', async () => {
+    const controller = new AbortController();
+    vi.spyOn(simPool, 'readParked').mockImplementation(() => {
+      controller.abort();
+      throw new Error('stopped');
+    });
+
+    await expect(run(testContext({ signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(steps()).toMatchObject([{ step: 'rung', rung: 2, outcome: 'aborted' }]);
+    expect(steps()[0]).not.toHaveProperty('error');
+  });
+});

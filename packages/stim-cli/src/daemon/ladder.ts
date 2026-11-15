@@ -23,6 +23,7 @@ import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
 import { launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { timedStep } from './step-timing.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -578,7 +579,15 @@ async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const { take, kept } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation), 'take');
+  const { take, kept } = selectDependencies(
+    await timedStep(
+      context.log,
+      'rank_dependencies',
+      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
+      { signal: context.operation?.signal, items: (ranked) => ranked?.length },
+    ),
+    'take',
+  );
   for (const { dependency, detail } of kept)
     recordAction(
       context,
@@ -667,12 +676,18 @@ async function dependenciesRung(context: RungContext): Promise<void> {
  * worktree trash. At normal the daily sweep runs the same plan.
  */
 async function sweepRung(context: RungContext, causes: readonly Cause[]): Promise<void> {
-  const plan = await planRung6(context.settings, {
-    disk: causes.includes('disk'),
-    memory: causes.includes('memory'),
-    everyGradleVersion: context.level === 'critical',
-    operation: context.operation,
-  });
+  const plan = await timedStep(
+    context.log,
+    'plan_rung6',
+    () =>
+      planRung6(context.settings, {
+        disk: causes.includes('disk'),
+        memory: causes.includes('memory'),
+        everyGradleVersion: context.level === 'critical',
+        operation: context.operation,
+      }),
+    { signal: context.operation?.signal, items: (planned) => planned?.actions.length },
+  );
   for (const action of plan.actions) {
     if (!(await context.stillShort())) return;
     await run(context, action);
@@ -690,19 +705,26 @@ async function worktreesRung(context: RungContext): Promise<void> {
   if (!context.settings.removeFinishedWorktrees) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const pins = new Map<string, boolean>();
-  const planned = await planWorktrees({
-    protectedRoot,
-    pinned: (workspace) => {
-      let value = pins.get(workspace);
-      if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
-      return value;
-    },
-    now: Date.now(),
-    ...(context.level === 'critical' ? { graceMs: 0 } : {}),
-    refresh: context.act && Boolean(context.force),
-    idleDays: context.level === 'critical' && context.settings.removeIdleWorktrees ? DEFAULT_WORKTREE_IDLE_DAYS : null,
-    operation: context.operation,
-  });
+  const planned = await timedStep(
+    context.log,
+    'plan_worktrees',
+    () =>
+      planWorktrees({
+        protectedRoot,
+        pinned: (workspace) => {
+          let value = pins.get(workspace);
+          if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
+          return value;
+        },
+        now: Date.now(),
+        ...(context.level === 'critical' ? { graceMs: 0 } : {}),
+        refresh: context.act && Boolean(context.force),
+        idleDays:
+          context.level === 'critical' && context.settings.removeIdleWorktrees ? DEFAULT_WORKTREE_IDLE_DAYS : null,
+        operation: context.operation,
+      }),
+    { signal: context.operation?.signal, items: (result) => result?.sweep.worktrees.length },
+  );
   const clean = planned.sweep.worktrees.filter((worktree) => !worktree.dirty);
   const sweep = { ...planned.sweep, worktrees: clean };
   for (const worktree of planned.sweep.worktrees)
@@ -739,18 +761,28 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
     onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
   });
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const { ranked, kept } = await rankSourceDependencies(
-    idle,
-    keeps,
-    protectedRoot,
+  const { ranked, kept } = await timedStep(
+    context.log,
+    'rank_source_dependencies',
+    () =>
+      rankSourceDependencies(
+        idle,
+        keeps,
+        protectedRoot,
+        {
+          level: 'critical',
+          dormantMs: 0,
+          criticalIdleMs: PRESSURE_IDLE_MS,
+          thresholdMs: PRESSURE_IDLE_MS,
+          setting: 'the pressure idle threshold',
+        },
+        context.operation,
+        context.log,
+      ),
     {
-      level: 'critical',
-      dormantMs: 0,
-      criticalIdleMs: PRESSURE_IDLE_MS,
-      thresholdMs: PRESSURE_IDLE_MS,
-      setting: 'the pressure idle threshold',
+      signal: context.operation?.signal,
+      items: (found) => (found ? found.ranked.length + found.kept.length : undefined),
     },
-    context.operation,
   );
   if (!context.act || context.force)
     for (const entry of kept)
@@ -843,7 +875,11 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
 async function historyRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
   await sourceDependenciesStep(context);
-  for (const action of await planHistory(context.operation)) {
+  const history = await timedStep(context.log, 'plan_history', () => planHistory(context.operation), {
+    signal: context.operation?.signal,
+    items: (planned) => planned?.length,
+  });
+  for (const action of history) {
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -959,8 +995,13 @@ export async function runLadder(
   const settings = resolveMaintenanceSettings(input.config);
   const { force } = input;
   const runRung = async (rung: Rung, context: RungContext, causes: Cause[]) => {
+    const before = actions.length;
     try {
-      await RUNG_ACTS[rung](context, causes);
+      await timedStep(input.log, 'rung', () => RUNG_ACTS[rung](context, causes), {
+        signal: input.operation?.signal,
+        fields: { rung, level: context.level },
+        items: () => actions.length - before,
+      });
     } catch (error) {
       if (isClaimUnavailable(error)) throw error;
       input.operation?.signal.throwIfAborted();

@@ -530,6 +530,18 @@ rotated during it, look in `daemon.ndjson.1` too. Include records from both
 sides of a restart or engine switch. Preserve timestamps, event names, error
 codes, build versions, and the run IDs needed to join those records.
 
+Each step of the daemon's cleanup passes writes one `daemon_step` record when
+it ends: every pressure ladder rung, and the loops that read evidence for a
+checkout (`idle_stage_candidates`, `stopped_output_candidates`,
+`dormant_candidates`, `collect_artifacts`, `rank_dependencies`,
+`rank_source_dependencies`, `plan_rung6`, `plan_worktrees`, `plan_history`,
+`dormant_dependencies`). A record has `step`, `startedAt`, `durationMs`, `items`
+(the items it visited or returned, when it counts any), and `outcome`
+(`finished`, `threw` or `aborted`); a rung adds `rung` and `level`, and a step
+that threw adds `error`. A tick at normal writes one, up to 16 at high and up
+to 22 at critical. Use them to see which step a slow tick or maintenance run
+spent its time in. The records change nothing a pass does.
+
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts
 time spent waiting for another holder to release the lease. `outcome` records
