@@ -250,6 +250,10 @@ export function discoveryScanFile(): string {
   return join(maintenanceDir(), 'discovery-scan.json');
 }
 
+export function discoveryCensusFile(): string {
+  return join(maintenanceDir(), 'discovery-census.json');
+}
+
 export function gcLogDir(): string {
   return join(configDir(), 'gc');
 }

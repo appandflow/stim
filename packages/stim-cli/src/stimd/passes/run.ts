@@ -38,6 +38,7 @@ import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { runDiscoveryCensusIfDue } from '../../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
@@ -752,13 +753,14 @@ export async function runMaintenance(
 }
 
 /**
- * The discovery scan, after the pass has released its claim. Not after a failed pass or a cancellation, and nothing it
+ * The discovery scan and the census of what it found, after the pass has released its claim. Not after a failed pass or a cancellation, and nothing it
  * throws can reach the caller: the pass's own error, such as an unverified child cleanup, is the one that must surface.
  */
 async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean): Promise<void> {
   if (passFailed || tick?.operation.signal.aborted) return;
   try {
     await runDiscoveryScanIfDue(tick);
+    await runDiscoveryCensusIfDue(tick);
   } catch {}
 }
 

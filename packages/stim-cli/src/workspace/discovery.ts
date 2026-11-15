@@ -143,6 +143,14 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): { roots
   };
 }
 
+/** The existing `maintenance.discoverRoots` folders discovery uses: symlinks resolved, too broad ones left out. */
+function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
+  return configuredRoots(config, env)
+    .roots.filter((root) => existsSync(root))
+    .map(canonicalPath)
+    .filter((root) => !isBroadFolder(root));
+}
+
 /** The `maintenance.discoverRoots` entries that do not name a folder, for doctor to report. */
 export function missingDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
   return configuredRoots(config, env).roots.filter((root) => {
@@ -247,11 +255,7 @@ async function computeDiscovered(
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
-  const { roots } = configuredRoots(config, env);
-  const canonicalRoots = roots
-    .filter((root) => existsSync(root))
-    .map(canonicalPath)
-    .filter((root) => !isBroadFolder(root));
+  const canonicalRoots = canonicalDiscoverRoots(config, env);
   const repositories: { entries: { path: string }[]; main: string }[] = [];
   const folders = new Map<string, string>();
   const children: DiscoveryChild[] = [];
@@ -319,4 +323,51 @@ async function computeDiscovered(
     found: everything,
     outside: outside.filter(({ path }) => !listed.has(path) && !coveredByKnown(path)),
   };
+}
+
+/** What the last full scan found that this Stim home does not fully manage. */
+export interface UnmanagedScanFinds {
+  /** Scan finds discovery selects and no other route reaches: Stim reduces their outputs and never removes them. */
+  reduceOnly: string[];
+  /** Scan finds under a home dot-folder that no route reaches: Stim does nothing with them. */
+  dotFolder: string[];
+}
+
+const touches = (path: string, other: string): boolean =>
+  path === other || path.startsWith(`${other}${sep}`) || other.startsWith(`${path}${sep}`);
+
+/**
+ * The scan finds that are not managed through another route, classified from the complete discovery list: the finds
+ * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
+ * is unmanaged unless a registered project, a folder of `maintenance.discoverRoots`, a tool folder or any discovered
+ * checkout covers it. Each dot-folder find is revalidated like a scan find, and one that does not answer is left out.
+ * A scoped STIM_HOME scans nothing and so finds nothing.
+ */
+export async function unmanagedScanFinds(
+  config: Config | null,
+  known: readonly string[],
+  operation: StimContext,
+): Promise<UnmanagedScanFinds> {
+  const { found } = await discovery(config, known, operation);
+  const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
+  if (isScopedHome(operation.env)) return { reduceOnly, dotFolder: [] };
+  const home = canonicalPath(homedir());
+  const roots = canonicalDiscoverRoots(config, operation.env);
+  const knownRoots = known.map(canonicalPath);
+  const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
+  const ancestors = new Map();
+  const dotFolder: string[] = [];
+  for (const path of readDiscoveryScan()?.dotFolderFound ?? []) {
+    operation.signal.throwIfAborted();
+    if (
+      !isAbsolute(path) ||
+      roots.some((root) => inside(path, root)) ||
+      inToolFolder(path, home) ||
+      knownRoots.some((root) => touches(path, root)) ||
+      found.some((checkout) => touches(path, checkout.path))
+    )
+      continue;
+    if ((await scanEntryValid(path, { ...rules, ancestors })) === 'valid') dotFolder.push(path);
+  }
+  return { reduceOnly, dotFolder: dotFolder.toSorted() };
 }
