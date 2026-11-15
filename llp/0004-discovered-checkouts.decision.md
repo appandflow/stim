@@ -131,7 +131,7 @@ command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
 A scan find outside a home dot-folder can also be an installed tool. Discovery
-keeps a discovered checkout, and so its outputs, while an executable reachable
+keeps a reduce-only checkout (a tool folder or scan find), and so its outputs, while an executable reachable
 through a PATH directory (and `~/.local/bin`, `~/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`) is a symlink that resolves into it. A wrapper script that
 only names a path is not followed.

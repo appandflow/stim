@@ -147,7 +147,14 @@ async function idleVerdict(
     operation,
     reads = discoveredReads(operation?.signal, operation?.env),
     full = false,
-  }: { locked?: boolean; operation?: StimContext; reads?: DiscoveredReads; full?: boolean } = {},
+    reduceOnly = false,
+  }: {
+    locked?: boolean;
+    operation?: StimContext;
+    reads?: DiscoveredReads;
+    full?: boolean;
+    reduceOnly?: boolean;
+  } = {},
 ): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
@@ -155,7 +162,7 @@ async function idleVerdict(
   const evidence =
     !full && (getProject(path) || existsSync(workspaceMetadataFile(path)))
       ? stim
-      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation }));
+      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation, reduceOnly }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return { kept: decision.reason };
   try {
@@ -201,9 +208,11 @@ export async function discoveredKeepReason(
   thresholdMs: number,
   operation?: StimContext,
   reads?: DiscoveredReads,
+  reduceOnly = false,
 ): Promise<string | null> {
   const verdict = await idleVerdict(path, thresholdMs, 'idle.dormantDays', {
     operation,
+    reduceOnly,
     ...(reads ? { reads } : {}),
   });
   return 'kept' in verdict ? verdict.kept : null;
@@ -231,11 +240,11 @@ async function idleWorkspaces(
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation?.env);
-  const discovered = discover
-    ? (await discoverCheckouts(config, listedRoots(), reading.operation))
-        .filter(({ deferred }) => !deferred)
-        .map(({ path }): [string, ProjectRecord] => [path, {}])
+  const found = discover
+    ? (await discoverCheckouts(config, listedRoots(), reading.operation)).filter(({ deferred }) => !deferred)
     : [];
+  const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
+  const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
@@ -247,7 +256,12 @@ async function idleWorkspaces(
       let idleMs: number | null = null;
       if (await runsSomething(path, project, reading)) onKept?.(path, 'something of it runs');
       else {
-        const verdict = await idleVerdict(path, thresholdMs, setting, { operation: reading.operation, reads, full });
+        const verdict = await idleVerdict(path, thresholdMs, setting, {
+          operation: reading.operation,
+          reads,
+          full,
+          reduceOnly: reduceOnly.has(path),
+        });
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
       }
