@@ -149,7 +149,7 @@ const XCODE_CONTAINER = /\.(xcodeproj|xcworkspace)$/i;
 const OWNED_ROOTS = new Set(['ios', 'android']);
 const folded = (name: string): string => name.toLowerCase();
 /** The entry is not there: the only read failure that is not unsafe, and only for an entry a successful listing showed. */
-const absent = (error: unknown): boolean =>
+export const absent = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 
 interface Entry {

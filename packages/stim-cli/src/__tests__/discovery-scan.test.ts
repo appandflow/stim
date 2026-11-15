@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testContext } from './_context.ts';
@@ -593,6 +593,43 @@ describe('runDiscoveryScanIfDue', () => {
         },
       });
       expect(readDiscoveryScan()).toMatchObject({ found: [app], unreadable: [app], truncation: 'none' });
+    });
+
+    const failure = (code: string) => Object.assign(new Error(code), { code });
+
+    it('lists a folder unreadable and keeps the finds beneath it when its listing fails with EIO, without truncating', async () => {
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      const dev = join(base, 'home', 'dev');
+      await runDiscoveryScanIfDue(tick(), {
+        ...later(),
+        scanOptions: {
+          entries: async (path: string) => {
+            if (path === dev) throw failure('EIO');
+            return readdir(path, { withFileTypes: true });
+          },
+        },
+      });
+      expect(readDiscoveryScan()).toMatchObject({ unreadable: [dev], truncated: false, truncation: 'none' });
+      expect(readDiscoveryScan()?.found).toEqual([join(dev, 'app')]);
+    });
+
+    it('does the same when the lstat of a child fails with ESTALE, and records nothing when the child is absent', async () => {
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      const dev = join(base, 'home', 'dev');
+      const failing = (code: string) => ({
+        ...later(),
+        scanOptions: {
+          stat: async (path: string) => {
+            if (path === dev) throw failure(code);
+            return lstat(path);
+          },
+        },
+      });
+      await runDiscoveryScanIfDue(tick(), failing('ESTALE'));
+      expect(readDiscoveryScan()).toMatchObject({ unreadable: [dev], truncation: 'none' });
+      expect(readDiscoveryScan()?.found).toEqual([join(dev, 'app')]);
+      await runDiscoveryScanIfDue(tick(), { ...failing('ENOENT'), now: t0 + 16 * 24 * hour });
+      expect(readDiscoveryScan()).toMatchObject({ unreadable: [], truncation: 'none', found: [] });
     });
 
     it('keeps the previous find and lists its folder unreadable when a nested listing is denied', async () => {

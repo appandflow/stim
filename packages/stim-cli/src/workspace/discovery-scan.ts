@@ -23,6 +23,7 @@ import {
   nestedSafety,
   scanDescends,
   scanSkipper,
+  absent,
   type RecognitionIo,
 } from './scan-rules.ts';
 
@@ -40,10 +41,6 @@ interface ScanOutcome {
   /** Why it stopped early, for the schedule and the doctor listing. */
   truncation: Exclude<ScanTruncation, 'failed'>;
 }
-
-const errorCode = (error: unknown) => (error instanceof Error && 'code' in error ? String(error.code) : '');
-
-const refused = (error: unknown) => ['EACCES', 'EPERM'].includes(errorCode(error));
 
 /**
  * A pruned walk below `home` (`scanDescends`, `skip`): folders for which `isCheckout` holds are results and are not
@@ -92,6 +89,10 @@ export async function scanForCheckouts(
     else if (outcome.visited >= MAX_FOLDERS) stop('folders');
     return outcome.truncated;
   };
+  /**
+   * A read of `folder` failed. A timeout ends the scan (true). Anything but "it does not exist" means the scan could not
+   * look, so the folder is recorded unreadable and its earlier finds are kept; the walk carries on (false).
+   */
   const stopAt = (folder: string, error: unknown): boolean => {
     signal?.throwIfAborted();
     if (error instanceof Unanswered) {
@@ -99,7 +100,7 @@ export async function scanForCheckouts(
       stop('read');
       return true;
     }
-    if (refused(error)) outcome.unreadable.push(folder);
+    if (!absent(error)) outcome.unreadable.push(folder);
     return false;
   };
   if (hungRead() !== null) {
@@ -110,7 +111,7 @@ export async function scanForCheckouts(
   try {
     volume = (await answered(home, () => statOf(home), readTimeoutMs)).dev;
   } catch (error) {
-    if (!stopAt(home, error)) throw error;
+    if (!stopAt(home, error) && absent(error)) throw error;
     return outcome;
   }
   const walk = async (folder: string, depth: number, unsafeAbove: boolean): Promise<void> => {
