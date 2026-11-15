@@ -5,7 +5,7 @@ import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim
 import { rm } from 'node:fs/promises';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
@@ -220,7 +220,12 @@ test.each([true])('failed initial birth capture never signals the unverifiable c
     await ready;
     controller.abort(new Error('cancel fixture'));
     const failure = await Promise.race([reading, new Promise((resolve) => setTimeout(() => resolve('pending'), 1800))]);
-    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(failure).toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      message: expect.stringContaining(
+        `report child ${owned?.pid} running \`${basename(process.execPath)} -e setTimeout(() => {}, 5000)\` (its identity was not captured at spawn: ACCESS_DENIED)`,
+      ),
+    });
     expect(inspectProcessIdentity(owned)).toBe('same');
   } finally {
     capture.mockRestore();
