@@ -1,5 +1,7 @@
 import { readdirSync, readlinkSync, realpathSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { lstat, readdir, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { delimiter, join, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { getExecutor } from '../exec.ts';
 import { serviceRunningFrom } from './service-guard.ts';
@@ -129,6 +131,46 @@ export async function readRunningProcessesAsync(
 export function processReader(signal?: AbortSignal): () => Promise<RunningProcesses | null> {
   let table: Promise<RunningProcesses | null> | undefined;
   return () => (table ??= readRunningProcessesAsync(signal).then((running) => othersRunningAsync(running, signal)));
+}
+
+/**
+ * Where the executables a person installs by linking them live: the PATH directories of this process, and the usual
+ * user bin folders a daemon's minimal PATH leaves out.
+ */
+function launcherDirectories(env: NodeJS.ProcessEnv): string[] {
+  const home = homedir();
+  const extra = [join(home, '.local', 'bin'), join(home, 'bin'), '/usr/local/bin', '/opt/homebrew/bin'];
+  return [...new Set([...(env.PATH ?? '').split(delimiter).filter(Boolean), ...extra])];
+}
+
+/**
+ * Reads the entries of each launcher directory and resolves the symlinks among them, once per reader: where each
+ * executable reachable through PATH really lives. A wrapper script that merely names a path is not followed.
+ */
+export function launcherReader(signal?: AbortSignal, env: NodeJS.ProcessEnv = {}): () => Promise<string[]> {
+  let targets: Promise<string[]> | undefined;
+  const read = async (): Promise<string[]> => {
+    const found: string[] = [];
+    for (const directory of launcherDirectories(env)) {
+      signal?.throwIfAborted();
+      const names = await readdir(directory).catch(() => []);
+      for (const name of names) {
+        const entry = join(directory, name);
+        if (!(await lstat(entry).catch(() => null))?.isSymbolicLink()) continue;
+        const target = await realpath(entry).catch(() => null);
+        if (target) found.push(target);
+      }
+    }
+    return found;
+  };
+  return () => (targets ??= read());
+}
+
+/** Why an executable on PATH, as `targets` lists them, keeps `folder`: one resolves to a path inside it, or null. */
+export function launcherReason(folder: string, targets: readonly string[]): string | null {
+  const root = canonicalPath(folder);
+  const target = targets.find((path) => path.startsWith(`${root}${sep}`));
+  return target ? `an executable on PATH runs from it (${target})` : null;
 }
 
 function stimOnPath(): string | null {

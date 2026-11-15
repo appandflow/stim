@@ -28,7 +28,8 @@ const HOME_SKIPPED = new Set([
  * runtimes, editor state and other tools' own state. Counted on one machine (entries to depth four): .gradle 67k,
  * .agent-device 45k, .member-app-metro-cache 25k, .dartwords-metro-cache 17k, .npm 16k, .bun 16k, .rvm 15k, .yarn 15k,
  * .android 7k, .vscode 6k, .cursor 5k, .claude 3k, .cache 2k, .ivy2 2k, .cargo 2k. `.codex` is reached through its
- * worktrees folder. Every other home dot-folder is entered, such as `.exact`, except those starting with `.stim`: the
+ * worktrees folder. `.volta`, `.asdf`, `.mise`, `.fnm`, `.pyenv`, `.rbenv`, `.sdkman`, `.deno`, `.pub-cache` and `.fvm` are
+ * version managers and package caches whose installs hold thousands of files and no checkouts of the user's. Every other home dot-folder is entered, such as `.exact`, except those starting with `.stim`: the
  * Stim home and every other Stim state folder (`.stim-agent`, `.stim-release`, `.stim-npm`) hold no checkouts the user owns,
  * and the build worker's client checkouts must never become reduce-only.
  */
@@ -66,6 +67,16 @@ const HOME_DOT_PRUNED = new Set([
   '.foundry',
   '.pw-profiles',
   '.swiftpm',
+  '.volta',
+  '.asdf',
+  '.mise',
+  '.fnm',
+  '.pyenv',
+  '.rbenv',
+  '.sdkman',
+  '.deno',
+  '.pub-cache',
+  '.fvm',
 ]);
 
 /** Folders at any depth that hold many files and no projects: dependencies, build output and tool caches. */
@@ -125,7 +136,7 @@ export function scanEntryValid(
   try {
     if (!within(path, home) || path === home || lstatSync(path).isSymbolicLink() || !statSync(path).isDirectory())
       return false;
-    if (realpathSync(path) !== path || statSync(path).dev !== statSync(home).dev || skip(path)) return false;
+    if (realpathSync.native(path) !== path || statSync(path).dev !== statSync(home).dev || skip(path)) return false;
     const names = relative(home, path).split(sep);
     if (names.length > MAX_DEPTH) return false;
     return names.every((name, i) => scanDescends(name, i + 1)) && isCheckout(path);

@@ -601,7 +601,7 @@ async function discoveredHold(candidate: WorktreeCandidate, operation?: StimCont
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),
-    reads: discoveredReads(operation?.signal),
+    reads: discoveredReads(operation?.signal, operation?.env),
     reduceOnly: candidate.reduceOnly === true,
     operation,
   });
@@ -981,7 +981,7 @@ export async function collectWorktreeSweep({
   const handed = worktrees.filter((candidate) => candidate.discovered && candidate.skipped === null);
   if (handed.length) {
     const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
-    const reads = discoveredReads(operation?.signal);
+    const reads = discoveredReads(operation?.signal, operation?.env);
     for (const candidate of handed) {
       const hold = await discoveredRemovalHold(candidate.path, {
         main: candidate.source ?? null,

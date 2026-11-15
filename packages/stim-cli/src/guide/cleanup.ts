@@ -1229,7 +1229,12 @@ never walks the disk. A scan that fails or stops early keeps the previous finds,
 and a finished one keeps those under a folder it could not read. Discovery checks
 each recorded checkout again before using it: still a real folder (not a
 symlink), on the home volume, below no skipped folder and still a project;
-anything else is dropped. Reduce-only checkouts have their build outputs and, in
+anything else is dropped. Checkouts the scan finds under a dot-folder of the
+home folder are recorded in the result and never acted on, because an installed
+tool cannot be told from a checkout there; maintenance.discoverRoots is the way
+to manage one. A discovered checkout that an executable on PATH (a symlink in a
+PATH directory, ~/.local/bin, ~/bin, /usr/local/bin or /opt/homebrew/bin)
+resolves into is kept whole. Reduce-only checkouts have their build outputs and, in
 a linked worktree, node_modules and Pods reduced by the rules below. Passes
 evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
 stim gc --dry-run lists all of them and says which are left for a later pass. A

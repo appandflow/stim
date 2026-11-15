@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testContext } from './_context.ts';
@@ -30,21 +31,12 @@ describe('scanDescends', () => {
     expect(scanDescends('dev', 1)).toBe(true);
   });
 
-  it('enters a dot-folder of the home folder unless it is a tool home or cache, and no deeper dot-folder', () => {
+  it('enters a dot-folder directly in the home folder, but not a Stim one, a cache, or a deeper one', () => {
     expect(scanDescends('.exact', 1)).toBe(true);
-    for (const name of [
-      '.git',
-      '.npm',
-      '.gradle',
-      '.cache',
-      '.stim',
-      '.stim-agent',
-      '.stim-release',
-      '.codex',
-      '.member-app-metro-cache',
-    ])
-      expect(scanDescends(name, 1)).toBe(false);
-    for (const name of ['.worktrees', '.exact', '.claude']) expect(scanDescends(name, 2)).toBe(false);
+    expect(scanDescends('.stim-agent', 1)).toBe(false);
+    expect(scanDescends('.npm', 1)).toBe(false);
+    expect(scanDescends('.some-tool-cache', 1)).toBe(false);
+    expect(scanDescends('.exact', 2)).toBe(false);
   });
 });
 
@@ -103,6 +95,26 @@ describe('scanForCheckouts', () => {
     } finally {
       chmodSync(join(home, 'Documents', 'locked'), 0o700);
     }
+  });
+
+  it('stops reading siblings at once when its budget is spent, as repeated timed-out stats spend it', async () => {
+    for (let i = 0; i < 100; i++) project(`p${String(i).padStart(3, '0')}`);
+    let stats = 0;
+    const hung = async (path: string) => {
+      if (path === home) return lstat(path);
+      stats++;
+      return new Promise<never>(() => {});
+    };
+    const pending = scanForCheckouts(home, marked, { budgetMs: 40, readTimeoutMs: 10, stat: hung });
+    const state = { done: false };
+    void pending.then(() => (state.done = true));
+    while (!state.done) {
+      if (stats > 0) await vi.advanceTimersByTimeAsync(10);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const scan = await pending;
+    expect(scan.truncated).toBe(true);
+    expect(stats).toBeLessThan(10);
   });
 
   it('stops at its time budget and says so', async () => {
@@ -188,7 +200,7 @@ describe('runDiscoveryScanIfDue', () => {
   });
   const hour = 3_600_000;
   const t0 = Date.UTC(2026, 10, 14);
-  const options = (now: number) => ({ home: join(base, 'home'), now });
+  const options = (now: number) => ({ home: join(base, 'home'), now, attempted: { at: 0 } });
 
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-scan-run-')));
@@ -214,6 +226,19 @@ describe('runDiscoveryScanIfDue', () => {
     vi.stubEnv('STIM_HOME', join(base, 'state'));
     await runDiscoveryScanIfDue(tick(normal, { STIM_HOME: join(base, 'state') }), options(t0));
     expect(existsSync(join(base, 'state'))).toBe(false);
+  });
+
+  it('records finds under a home dot-folder apart from the others', async () => {
+    mkdirSync(join(base, 'home', '.exact', 'exact2'), { recursive: true });
+    writeFileSync(
+      join(base, 'home', '.exact', 'exact2', 'package.json'),
+      JSON.stringify({ dependencies: { expo: '*' } }),
+    );
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    expect(readDiscoveryScan()).toMatchObject({
+      found: [join(base, 'home', 'dev', 'app')],
+      dotFolderFound: [join(base, 'home', '.exact', 'exact2')],
+    });
   });
 
   it('stores the result and its schedule under the Stim home, and not again until due', async () => {

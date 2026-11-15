@@ -23,7 +23,6 @@ const fail = (): never => {
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
-  isTemporaryLocation: () => false,
 }));
 
 describe('a discovered checkout in the idle stages', () => {

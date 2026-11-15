@@ -28,7 +28,6 @@ vi.mock('../workspace/protected-locations.ts', async (original) => {
   return {
     ...real,
     isProtectedLocation: (path: string) => real.isProtectedLocation(path, { home: homedir(), temps: [] }),
-    isTemporaryLocation: () => false,
   };
 });
 
@@ -99,7 +98,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
     ]);
   });
 
-  const writeScan = (found: string[]) => {
+  const writeScan = (found: string[], dotFolderFound: string[] = []) => {
     mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
     const scan = {
       version: 2,
@@ -110,22 +109,50 @@ describe('checkouts found through a tool folder or the full scan', () => {
       trigger: 'weekly',
       visited: 1,
       found,
+      dotFolderFound,
       unreadable: [],
       truncated: false,
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
   };
 
-  it('discovers a checkout under a home dot-folder only when the scan result names it, as reduce-only', async () => {
+  it('never selects a checkout under a home dot-folder from the scan result, only through maintenance.discoverRoots', async () => {
     const exact = join(base, 'home', '.exact', 'exact2');
     mkdirSync(exact, { recursive: true });
     writeFileSync(join(exact, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     const config = { projects: { [main]: {} }, repos: {} };
+    writeScan([], [exact]);
     expect(await discoverCheckouts(config, [main])).toEqual([]);
-    writeScan([exact]);
+    writeScan([exact], [exact]);
+    expect(await discoverCheckouts(config, [main])).toEqual([]);
+    const rooted = { ...config, maintenance: { discoverRoots: [join(base, 'home', '.exact')] } };
     expect(
-      (await discoverCheckouts(config, [main])).map(({ path, origin, reduceOnly }) => [path, origin, reduceOnly]),
-    ).toEqual([[exact, 'scan', true]]);
+      (await discoverCheckouts(rooted, [main])).map(({ path, origin, reduceOnly }) => [path, origin, reduceOnly]),
+    ).toEqual([[exact, 'root', undefined]]);
+  });
+
+  it('keeps the output of a scan-found checkout that an executable on PATH runs from', async () => {
+    const tool = join(base, 'home', 'tools', 'mytool');
+    mkdirSync(join(tool, 'android', 'app', 'build', 'bin'), { recursive: true });
+    writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(tool, 'android', 'app', 'build', 'bin', 'mytool'), '#!/bin/sh\n');
+    execFileSync('git', ['-C', tool, 'init', '-q']);
+    writeFileSync(join(tool, '.gitignore'), 'build/\n');
+    execFileSync('git', ['-C', tool, 'add', '-A']);
+    execFileSync('git', ['-C', tool, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x'], {
+      env: { ...process.env, GIT_AUTHOR_DATE: old.toISOString(), GIT_COMMITTER_DATE: old.toISOString() },
+    });
+    age(tool);
+    const gitdir = join(tool, '.git');
+    for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitdir, file), old, old);
+    writeScan([tool]);
+    const config = { projects: { [main]: {} }, repos: {} };
+    const reading = { devices: [], simsFailed: false };
+    expect((await stoppedOutputCandidates(config, reading, day)).map((entry) => entry.path)).toEqual([tool]);
+    const bin = join(base, 'home', 'bin');
+    mkdirSync(bin);
+    symlinkSync(join(tool, 'android', 'app', 'build', 'bin', 'mytool'), join(bin, 'mytool'));
+    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
   });
 
   it('drops a cached checkout that was replaced by a symlink to a folder the scan never enters, and plans nothing under it', async () => {

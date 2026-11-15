@@ -28,26 +28,10 @@ function real(path: string): string | null {
  * resolve counts as protected. Discovery lists the worktrees in `~/.codex/worktrees` anyway, as reduce-only.
  */
 export function isProtectedLocation(path: string, roots: Roots = defaultRoots()): boolean {
-  return isTemporaryLocation(path, roots) || isHomeDotFolder(path, roots);
-}
-
-/** Whether a path lies under the system temporary directory; a path that does not resolve counts as temporary. */
-export function isTemporaryLocation(path: string, roots: Roots = defaultRoots()): boolean {
   const target = real(path);
   if (target === null) return true;
-  return roots.temps.some((folder) => {
-    const temp = real(folder) ?? folder;
-    return target === temp || target.startsWith(`${temp}${sep}`);
-  });
-}
-
-/** Whether a path lies under a dot-folder directly inside the home directory; a path that does not resolve counts. */
-function isHomeDotFolder(path: string, roots: Roots = defaultRoots()): boolean {
-  const target = real(path);
-  if (target === null) return true;
+  const inside = (folder: string) => target === folder || target.startsWith(`${folder}${sep}`);
+  if (roots.temps.some((folder) => inside(real(folder) ?? folder))) return true;
   const home = real(roots.home) ?? roots.home;
-  return (
-    (target === home || target.startsWith(`${home}${sep}`)) &&
-    relative(home, target).split(sep)[0]?.startsWith('.') === true
-  );
+  return inside(home) && relative(home, target).split(sep)[0]?.startsWith('.') === true;
 }

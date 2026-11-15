@@ -6,7 +6,7 @@ import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { isProtectedLocation, isTemporaryLocation } from './protected-locations.ts';
+import { isProtectedLocation } from './protected-locations.ts';
 import { scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
@@ -339,9 +339,7 @@ async function computeDiscovered(
   }
   const scanned: DiscoveryChild[] = scoped ? [] : revalidatedScan();
   const allowed = [...children, ...scanned].filter(
-    (child) =>
-      canonicalRoots.some((root) => inside(child.path, root)) ||
-      (child.origin === 'scan' ? !isTemporaryLocation(child.path) : !isProtectedLocation(child.path)),
+    (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });

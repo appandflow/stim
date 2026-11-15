@@ -1,7 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryScanFile,
@@ -32,13 +32,13 @@ interface ScanOutcome {
 const errorCode = (error: unknown) => (error instanceof Error && 'code' in error ? String(error.code) : '');
 
 /** `read`'s result, or an ETIMEDOUT rejection when it has not answered in time, as a hung mount or a permission prompt would not. */
-async function answered<T>(read: Promise<T>): Promise<T> {
+async function answered<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       read,
       new Promise<never>((_, fail) => {
-        timer = setTimeout(() => fail(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), READ_TIMEOUT_MS);
+        timer = setTimeout(() => fail(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), timeoutMs);
       }),
     ]);
   } finally {
@@ -61,22 +61,30 @@ export async function scanForCheckouts(
     budgetMs = BUDGET_MS,
     signal,
     skip = () => false,
-  }: { budgetMs?: number; signal?: AbortSignal; skip?: (path: string) => boolean } = {},
+    readTimeoutMs = READ_TIMEOUT_MS,
+    stat: statOf = (path) => lstat(path),
+  }: {
+    budgetMs?: number;
+    signal?: AbortSignal;
+    skip?: (path: string) => boolean;
+    readTimeoutMs?: number;
+    stat?: (path: string) => Promise<{ dev: number }>;
+  } = {},
 ): Promise<ScanOutcome> {
   const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false };
   const deadline = Date.now() + budgetMs;
-  const volume = (await lstat(home)).dev;
-  const walk = async (folder: string, depth: number): Promise<void> => {
+  const volume = (await statOf(home)).dev;
+  const exhausted = (): boolean => {
     signal?.throwIfAborted();
-    if (outcome.truncated) return;
-    if (Date.now() > deadline || outcome.visited >= MAX_FOLDERS) {
-      outcome.truncated = true;
-      return;
-    }
+    if (!outcome.truncated && (Date.now() > deadline || outcome.visited >= MAX_FOLDERS)) outcome.truncated = true;
+    return outcome.truncated;
+  };
+  const walk = async (folder: string, depth: number): Promise<void> => {
+    if (exhausted()) return;
     outcome.visited++;
     let entries;
     try {
-      entries = await answered(readdir(folder, { withFileTypes: true }));
+      entries = await answered(readdir(folder, { withFileTypes: true }), readTimeoutMs);
     } catch (error) {
       signal?.throwIfAborted();
       if (unanswered(error)) outcome.unreadable.push(folder);
@@ -88,18 +96,19 @@ export async function scanForCheckouts(
     }
     if (depth >= MAX_DEPTH) return;
     for (const entry of entries) {
+      if (exhausted()) return;
       if (!entry.isDirectory() || entry.isSymbolicLink() || !scanDescends(entry.name, depth + 1)) continue;
       const path = join(folder, entry.name);
       if (skip(path)) continue;
-      let stat;
+      let info;
       try {
-        stat = await answered(lstat(path));
+        info = await answered(statOf(path), readTimeoutMs);
       } catch (error) {
         signal?.throwIfAborted();
         if (unanswered(error)) outcome.unreadable.push(path);
         continue;
       }
-      if (stat.dev === volume) await walk(path, depth + 1);
+      if (info.dev === volume) await walk(path, depth + 1);
     }
   };
   await walk(home, 0);
@@ -133,7 +142,7 @@ export function discoveryScanDue(
 }
 
 /** When this process last tried a scan, so a result that cannot be stored does not start a walk on every tick. */
-let attemptedHere = 0;
+const attempts = { at: 0 };
 
 function writeScan(scan: DiscoveryScan): void {
   mkdirSync(maintenanceDir(), { recursive: true });
@@ -159,15 +168,25 @@ function writeScan(scan: DiscoveryScan): void {
  */
 export async function runDiscoveryScanIfDue(
   tick: { operation: StimContext; measured: { measurement: Pick<DaemonMeasurement, 'disk'> } } | undefined,
-  { home = homedir(), now = Date.now() }: { home?: string; now?: number } = {},
+  {
+    home = homedir(),
+    now = Date.now(),
+    attempted = attempts,
+  }: { home?: string; now?: number; attempted?: { at: number } } = {},
 ): Promise<void> {
   if (!tick || isScopedHome(tick.operation.env)) return;
   const { operation } = tick;
-  const thresholds = diskThresholds(loadConfig(), operation.env).thresholds;
-  const low = diskPressure(tick.measured.measurement.disk, thresholds).level !== 'normal';
-  const last = readDiscoveryScan();
-  if (!discoveryScanDue(last, now, low) || (now >= attemptedHere && now - attemptedHere < HOUR_MS)) return;
-  attemptedHere = now;
+  let last: DiscoveryScan | null;
+  let low: boolean;
+  try {
+    const thresholds = diskThresholds(loadConfig(), operation.env).thresholds;
+    low = diskPressure(tick.measured.measurement.disk, thresholds).level !== 'normal';
+    last = readDiscoveryScan();
+  } catch {
+    return;
+  }
+  if (!discoveryScanDue(last, now, low) || (now >= attempted.at && now - attempted.at < HOUR_MS)) return;
+  attempted.at = now;
   const attempt = {
     version: 2,
     ranAt: now,
@@ -175,8 +194,9 @@ export async function runDiscoveryScanIfDue(
     trigger: low ? 'low-disk' : 'weekly',
   } as const;
   const failed = { ...attempt, completedAt: last?.completedAt ?? 0, durationMs: 0, visited: 0, truncated: true };
+  const realHome = canonicalPath(home);
+  const dotFolder = (path: string) => relative(realHome, path).startsWith('.');
   try {
-    const realHome = canonicalPath(home);
     const outcome = await scanForCheckouts(realHome, recognises, {
       signal: operation.signal,
       skip: scanSkipper(realHome),
@@ -186,16 +206,21 @@ export async function runDiscoveryScanIfDue(
       completedAt: now,
       durationMs: Date.now() - now,
       ...outcome,
-      found: mergeFound(last?.found ?? [], outcome),
-      unreadable: outcome.unreadable,
+      found: mergeFound(last?.found ?? [], { ...outcome, found: outcome.found.filter((p) => !dotFolder(p)) }),
+      dotFolderFound: mergeFound(last?.dotFolderFound ?? [], { ...outcome, found: outcome.found.filter(dotFolder) }),
     });
   } catch {
     if (operation.signal.aborted) {
-      attemptedHere = 0;
+      attempted.at = 0;
       operation.signal.throwIfAborted();
     }
     try {
-      writeScan({ ...failed, found: last?.found ?? [], unreadable: last?.unreadable ?? [] });
+      writeScan({
+        ...failed,
+        found: last?.found ?? [],
+        dotFolderFound: last?.dotFolderFound ?? [],
+        unreadable: last?.unreadable ?? [],
+      });
     } catch {}
   }
 }

@@ -145,7 +145,7 @@ async function idleVerdict(
   {
     locked = false,
     operation,
-    reads = discoveredReads(operation?.signal),
+    reads = discoveredReads(operation?.signal, operation?.env),
     full = false,
   }: { locked?: boolean; operation?: StimContext; reads?: DiscoveredReads; full?: boolean } = {},
 ): Promise<{ idleMs: number } | { kept: string }> {
@@ -230,7 +230,7 @@ async function idleWorkspaces(
   { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
-  const reads = discoveredReads(reading.operation?.signal);
+  const reads = discoveredReads(reading.operation?.signal, reading.operation?.env);
   const discovered = discover
     ? (await discoverCheckouts(config, listedRoots(), reading.operation))
         .filter(({ deferred }) => !deferred)

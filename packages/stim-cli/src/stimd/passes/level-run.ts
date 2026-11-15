@@ -205,7 +205,7 @@ export async function runMaintenanceAtLevel({
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
   const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
-  const reads = discoveredReads(operation?.signal);
+  const reads = discoveredReads(operation?.signal, operation?.env);
   const discovered: LevelRun['discovered'] = [];
   const ownerOf = (path: string) =>
     found

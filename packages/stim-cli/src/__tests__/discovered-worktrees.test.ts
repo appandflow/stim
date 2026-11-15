@@ -19,7 +19,6 @@ import { worktreeInScope } from '../workspace/discovery.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
-  isTemporaryLocation: () => false,
 }));
 
 const day = 86_400_000;
@@ -185,6 +184,7 @@ describe('a discovered worktree on the removal path', () => {
   it('keeps a worktree a process runs from or an agent session works in', async () => {
     worktree('held');
     vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
+      launchers: async () => [],
       processes: async () => ({
         commands: [{ pid: 1, line: `node ${join(base, 'roots', 'held')}/server.js` }],
         cwds: [],

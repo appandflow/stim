@@ -24,7 +24,6 @@ import {
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
-  isTemporaryLocation: () => false,
 }));
 
 describe('isBroadFolder', () => {
@@ -170,6 +169,7 @@ describe('discoverCheckouts', () => {
       trigger: 'weekly',
       visited: 1,
       found: [docs, join(base, 'gone')],
+      dotFolderFound: [],
       unreadable: [],
       truncated: false,
     };

@@ -22,6 +22,11 @@ export interface DiscoveryScan {
    * not reach, and a scan keeps those under a folder it could not read; discovery revalidates each before using it.
    */
   found: string[];
+  /**
+   * Canonical paths of recognised checkouts under a dot-folder of the home folder, recorded for the doctor listing and
+   * never used by discovery: Stim cannot tell an installed tool from a checkout there.
+   */
+  dotFolderFound: string[];
   /** Folders the system refused or that did not answer, skipped without error. */
   unreadable: string[];
   /** The scan stopped at its time or folder limit before it finished. */
@@ -44,6 +49,7 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
     (value.trigger !== 'weekly' && value.trigger !== 'low-disk') ||
     !finite(value.visited) ||
     !strings(value.found) ||
+    !strings(value.dotFolderFound) ||
     !strings(value.unreadable) ||
     typeof value.truncated !== 'boolean'
   )
@@ -57,6 +63,7 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
     trigger: value.trigger,
     visited: value.visited,
     found: value.found,
+    dotFolderFound: value.dotFolderFound,
     unreadable: value.unreadable,
     truncated: value.truncated,
   };

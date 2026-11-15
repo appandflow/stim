@@ -12,7 +12,7 @@ import {
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
-import { runMaintenance } from '../stimd/passes/run.ts';
+import { runMaintenance, type MaintenanceTick } from '../stimd/passes/run.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import * as preview from '../stimd/passes/preview.ts';
@@ -25,6 +25,7 @@ import { runCli } from '../cli/define-op.ts';
 import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
+import { testContext } from './_context.ts';
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
 vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
@@ -501,4 +502,38 @@ test('an invalid cache cap falls back only that cap while report mode remains en
   } finally {
     delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
   }
+});
+
+test('an unverified child cleanup in a pass surfaces as that failure, not as the abort of a due discovery scan', async () => {
+  const failure = Object.assign(new Error('unverified cleanup'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const controller = new AbortController();
+  vi.spyOn(measurements, 'pressureFromMeasurement').mockImplementation(() => {
+    controller.abort();
+    throw failure;
+  });
+  const scan = vi
+    .spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue')
+    .mockImplementation(async () => controller.signal.throwIfAborted());
+  const tick: MaintenanceTick = {
+    operation: testContext({ signal: controller.signal }),
+    measured: {
+      measurement: {
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
+        load1: 0,
+        cores: 1,
+        bootedSimulators: null,
+        runningEmulators: null,
+        interaction: null,
+      },
+      sims: null,
+      simsError: null,
+      devices: [],
+    },
+  };
+  await expect(runMaintenance('daemon', { tick })).rejects.toBe(failure);
+  expect(scan).not.toHaveBeenCalled();
 });

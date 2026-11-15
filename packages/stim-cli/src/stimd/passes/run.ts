@@ -403,6 +403,7 @@ export async function runMaintenance(
     return;
   }
   let scanAfter = false;
+  let passFailed = false;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {
@@ -726,6 +727,7 @@ export async function runMaintenance(
     }
     writeState(state);
   } catch (error) {
+    passFailed = true;
     throwUnverifiedCleanup(error);
     const message = error instanceof Error ? error.message : String(error);
     try {
@@ -739,8 +741,19 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
-    if (scanAfter) await runDiscoveryScanIfDue(tick);
+    if (scanAfter) await scanAfterPass(tick, passFailed);
   }
+}
+
+/**
+ * The discovery scan, after the pass has released its claim. Not after a failed pass or a cancellation, and nothing it
+ * throws can reach the caller: the pass's own error, such as an unverified child cleanup, is the one that must surface.
+ */
+async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean): Promise<void> {
+  if (passFailed || tick?.operation.signal.aborted) return;
+  try {
+    await runDiscoveryScanIfDue(tick);
+  } catch {}
 }
 
 function crashLine(error: unknown): void {

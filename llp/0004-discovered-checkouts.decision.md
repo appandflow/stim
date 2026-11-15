@@ -111,11 +111,34 @@ The list comes from entry counts to depth four on one machine, led by `.gradle`
 (67 thousand), `.agent-device` (45 thousand), the two Metro cache folders
 (25 and 17 thousand), `.npm`, `.bun`, `.rvm` and `.yarn` (15 thousand each).
 `.codex` is reached through its worktrees folder, and the Stim home is never
-scanned. Dot-folders deeper down (`.worktrees`, `.claude/worktrees`) are
-skipped because git reaches their worktrees. The scan's finds under a home
-dot-folder pass the protection rule for the system temporary directory only:
-the scan itself decides which dot-folders to enter, so the dot-folder part of
-`isProtectedLocation` does not apply to them, and they stay reduce-only.
+scanned. The version managers and package caches `.volta`, `.asdf`, `.mise`,
+`.fnm`, `.pyenv`, `.rbenv`, `.sdkman`, `.deno`, `.pub-cache` and `.fvm` are
+pruned too: their installs hold thousands of files and no checkouts, and one
+large one could truncate the walk on every run. Dot-folders deeper down
+(`.worktrees`, `.claude/worktrees`) are skipped because git reaches their
+worktrees.
+
+The coordinator's decision following the review of #5764, not the maintainer's
+words: what the scan finds under a home dot-folder is recorded in the result
+(`dotFolderFound`) and never selected by discovery, so no pass acts on it. The
+protection rule for home dot-folders applies to scan finds in full; the only
+ways into a home dot-folder stay `maintenance.discoverRoots` and the tool folder
+list. Reason: Stim cannot tell an installed tool from a checkout there, for
+example a Swift CLI cloned under `~/.mytool` whose launcher on PATH points into
+its ignored `.build/release`; clearing that output once idle would break the
+installed command. The record lets doctor report what the folder holds and the
+command that adds it to `maintenance.discoverRoots`; that listing is not part of
+this change.
+
+A scan find outside a home dot-folder can also be an installed tool. Discovery
+keeps a discovered checkout, and so its outputs, while an executable reachable
+through a PATH directory (and `~/.local/bin`, `~/bin`, `/usr/local/bin`,
+`/opt/homebrew/bin`) is a symlink that resolves into it. A wrapper script that
+only names a path is not followed.
+
+A scan-found source checkout follows the existing discovered rule and loses
+`node_modules` and Pods after `idle.sourceDormantDays` (7); the maintainer has
+not confirmed that consequence.
 
 Reason: on one MacBook `~/.codex/worktrees` held 53 worktrees and 12 GB that
 Stim listed once as outside the folders it manages, with no size and no way
