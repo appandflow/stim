@@ -17,6 +17,8 @@ export interface TreeSize {
   bytes: number;
   /** What deleting the tree would free; null when the volume or the machine cannot tell. */
   privateBytes: number | null;
+  /** `du` exited with status 1: the bytes are those of what it could read, a lower bound. Absent otherwise. */
+  partial?: true;
 }
 
 function parseHelper(output: string): TreeSize | null {
@@ -89,7 +91,8 @@ export async function measureTree(
     return parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
   } catch (error) {
     const { status, stdout } = failed(error);
-    return status === 1 && typeof stdout === 'string' ? parseDu(stdout) : null;
+    const size = status === 1 && typeof stdout === 'string' ? parseDu(stdout) : null;
+    return size ? { ...size, partial: true } : null;
   }
 }
 

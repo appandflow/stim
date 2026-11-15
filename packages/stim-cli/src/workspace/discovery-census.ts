@@ -246,7 +246,10 @@ async function lastGitActivity(path: string, reader: Reader): Promise<number | n
 
 const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
 
-type Measurement = Pick<CensusFind, 'dirs' | 'measuredDirs' | 'failedDirs' | 'bytes' | 'unreadable' | 'gitActivityAt'>;
+type Measurement = Pick<
+  CensusFind,
+  'dirs' | 'measuredDirs' | 'failedDirs' | 'partialDirs' | 'bytes' | 'unreadable' | 'gitActivityAt'
+>;
 
 /**
  * The recognised build output of a checkout, measured one directory at a time through `refreshMeasure`: the disk usage
@@ -271,13 +274,22 @@ async function measureBuildOutput(
   } catch (error) {
     if (error instanceof OutOfBudget) return null;
     if (error instanceof Unreadable)
-      return { dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: true, gitActivityAt: null };
+      return {
+        dirs: 0,
+        measuredDirs: 0,
+        failedDirs: 0,
+        partialDirs: 0,
+        bytes: 0,
+        unreadable: true,
+        gitActivityAt: null,
+      };
     throw error;
   }
   const result: Measurement = {
     dirs: dirs.length,
     measuredDirs: 0,
     failedDirs: 0,
+    partialDirs: 0,
     bytes: 0,
     unreadable: false,
     gitActivityAt: await lastGitActivity(path, reader),
@@ -285,7 +297,7 @@ async function measureBuildOutput(
   for (const dir of dirs) {
     operation.signal.throwIfAborted();
     if (Date.now() > deadline) continue;
-    const { outcome, measure } = await refreshMeasure(dir, {
+    const { outcome, measure, partial } = await refreshMeasure(dir, {
       timeoutMs: WALK_TIMEOUT_MS,
       maxAgeMs: DAY_MS,
       claim: true,
@@ -296,6 +308,7 @@ async function measureBuildOutput(
     });
     if (measure) {
       result.measuredDirs++;
+      if (partial) result.partialDirs++;
       result.bytes += measure.bytes;
     } else if (outcome !== 'busy') result.failedDirs++;
   }
@@ -383,6 +396,7 @@ export async function runDiscoveryCensusIfDue(
               dirs: 0,
               measuredDirs: 0,
               failedDirs: 0,
+              partialDirs: 0,
               bytes: 0,
               unreadable: false,
               gitActivityAt: null,

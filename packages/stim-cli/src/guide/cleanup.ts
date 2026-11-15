@@ -1314,7 +1314,17 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   pending) and checks the abort and the run's budget first; the directory rules
   are the ones the deleting passes use, driven by that reader. A path that does
   not exist is absent; a denied or timed-out read makes the checkout "could not
-  be measured", never a measured zero. Sizes go through the disk-usage cache, one
+  be measured", never a measured zero. Not bounded on this path: project
+  recognition, which ends the revalidation of every scan find (it runs
+  projectRegistry.selectDoctor and a synchronous readdirSync of apps, examples and
+  packages on the find, after the bounded reads of that folder answered), discovery's
+  protected-location check (realpathSync) on ordinary scan finds, and canonicalPath
+  on children of sibling folders and configured roots. They run so for every scan
+  find in the passes; the census adds that recognition now also runs on finds under
+  home dot-folders. A revalidation metadata read that fails for anything but proven
+  absence (a denied lstat, for one) leaves the find pending, never dropped. A du that
+  exits non-zero is a measured lower bound: the bytes count and the totals read "at
+  least"; the cache entry records it, and no other reader of the cache sees it. Sizes go through the disk-usage cache, one
   walk at a time on the machine, 10 seconds per directory (a build directory the
   gc worktree report sizes with private bytes is measured with them too), at most
   25 checkouts and 90 seconds per run; a checkout measured within a day is

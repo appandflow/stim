@@ -19,6 +19,8 @@ interface UnmanagedGroup {
   measured: number;
   /** Checkouts with a build directory that was tried and could not be measured in time. */
   failed: number;
+  /** Checkouts measured, but with a directory whose walk could not read everything: their bytes are a lower bound. */
+  partial: number;
   /** Checkouts the daemon has not measured yet, wholly or in part. */
   notMeasuredYet: number;
   /** The command that adds `folder` to the machine's `maintenance.discoverRoots`; null with `commandProblem` set. */
@@ -97,13 +99,17 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
   let measured = 0;
   let failed = 0;
   let notMeasuredYet = 0;
+  let partial = 0;
   let oldestMeasuredAt: number | null = null;
   for (const find of finds) {
     bytes += find.bytes;
     if (find.evaluatedAt === 0 || (!find.unreadable && find.failedDirs === 0 && find.measuredDirs < find.dirs))
       notMeasuredYet++;
     else if (find.unreadable || find.failedDirs > 0) failed++;
-    else measured++;
+    else {
+      measured++;
+      if (find.partialDirs > 0) partial++;
+    }
     if (find.evaluatedAt > 0 && (oldestMeasuredAt === null || find.evaluatedAt < oldestMeasuredAt))
       oldestMeasuredAt = find.evaluatedAt;
   }
@@ -115,6 +121,7 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
     bytes,
     measured,
     failed,
+    partial,
     notMeasuredYet,
     command,
     commandProblem: unchecked
@@ -190,6 +197,7 @@ export function discoveryReport({
           dirs: 0,
           measuredDirs: 0,
           failedDirs: 0,
+          partialDirs: 0,
           bytes: 0,
           unreadable: false,
           gitActivityAt: null,
@@ -213,7 +221,11 @@ export function discoveryReport({
 }
 
 const gb = (bytes: number): string =>
-  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+  bytes === 0
+    ? '0 B'
+    : bytes >= 1024 ** 3
+      ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+      : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
 
 const shorten = (path: string, home: string): string =>
   path === home ? '~' : path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path;
@@ -223,12 +235,13 @@ const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' :
 const day = (at: number): string => new Date(at).toISOString().slice(0, 10);
 
 function sizeText(group: UnmanagedGroup): string {
-  const unknown = group.failed + group.notMeasuredYet;
+  const unknown = group.failed + group.notMeasuredYet + group.partial;
   if (group.checkouts === unknown && group.bytes === 0) return 'build output not measured';
   const prefix = unknown ? 'at least ' : '';
   const rest = [
     group.failed ? `${count(group.failed, 'checkout')} could not be measured` : '',
     group.notMeasuredYet ? `${count(group.notMeasuredYet, 'checkout')} not measured yet` : '',
+    group.partial ? `${count(group.partial, 'checkout')} partly read, so only a lower bound` : '',
   ].filter(Boolean);
   const age = group.oldestMeasuredAt === null ? [] : [`oldest measurement ${day(group.oldestMeasuredAt)}`];
   const notes = [...rest, ...age];
@@ -327,7 +340,7 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
 export function lowDiskLine(report: DiscoveryReport, home: string): string | null {
   const total = report.groups.reduce((sum, group) => sum + group.bytes, 0);
   const measuring = report.groups.some(
-    (group) => group.failed + group.notMeasuredYet > 0 || group.kind === 'unchecked',
+    (group) => group.failed + group.notMeasuredYet + group.partial > 0 || group.kind === 'unchecked',
   );
   if (total === 0 || report.rootsChangedSinceCensus) return null;
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);

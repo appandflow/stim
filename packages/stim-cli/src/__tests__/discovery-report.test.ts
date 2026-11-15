@@ -40,6 +40,7 @@ function find(over: Partial<CensusFind> & Pick<CensusFind, 'path'>): CensusFind 
     dirs: 1,
     measuredDirs: 1,
     failedDirs: 0,
+    partialDirs: 0,
     bytes: GB,
     unreadable: false,
     gitActivityAt: null,
@@ -209,6 +210,20 @@ describe('discoveryReport', () => {
     expect(discoveryReport({ ...withScan, census: missing }).census).toBe('absent');
     expect(discoveryReport({ ...withScan, census: { status: 'unreadable' } }).census).toBe('unreadable');
     expect(discoveryReport({ ...withScan, census: { status: 'read', census: null } }).census).toBe('unusable');
+  });
+});
+
+describe('sizes', () => {
+  it('prints a group measured with no build output as zero, not as a megabyte', () => {
+    const text = discoveryLines(report([find({ path: '/Users/me/dev/a', bytes: 0 })]), home).join('\n');
+    expect(text).toContain('0 B of build output');
+  });
+
+  it('reads a checkout whose du was partial as at least, never as exact', () => {
+    const result = report([find({ path: '/Users/me/dev/a', partialDirs: 1 })]);
+    expect(result.groups[0]).toMatchObject({ measured: 1, partial: 1 });
+    expect(discoveryLines(result, home).join('\n')).toContain('at least 1.0 GB');
+    expect(lowDiskLine(result, home)).toContain('at least');
   });
 });
 

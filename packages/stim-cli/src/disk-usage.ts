@@ -16,6 +16,7 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
+  readDiskUsagePartial,
   type DiskMeasure,
 } from '@stim-cli/core/state';
 import { writeCacheFile } from './cache-file.ts';
@@ -138,7 +139,7 @@ export type RefreshOutcome = 'fresh' | 'measured' | 'failed' | 'busy';
 export async function refreshMeasure(
   path: string,
   options: RefreshOptions,
-): Promise<{ outcome: RefreshOutcome; measure: DiskMeasure | null }> {
+): Promise<{ outcome: RefreshOutcome; measure: DiskMeasure | null; partial?: true }> {
   const { operation } = options;
   operation?.signal.throwIfAborted();
   const now = options.now ?? Date.now;
@@ -149,7 +150,14 @@ export async function refreshMeasure(
     return failedAt !== null && now() - Date.parse(failedAt) < maxAgeMs;
   };
   const skip = () => freshMeasure(path, options) !== null || failedRecently();
-  const fresh = () => ({ outcome: 'fresh' as const, measure: freshMeasure(path, options) });
+  const fresh = () => {
+    const measure = freshMeasure(path, options);
+    return {
+      outcome: 'fresh' as const,
+      measure,
+      ...(measure && readDiskUsagePartial(path) ? { partial: true as const } : {}),
+    };
+  };
   if (skip()) return fresh();
   const record = (
     bytes: number,
@@ -157,6 +165,7 @@ export async function refreshMeasure(
     signature: string | null,
     at: number,
     walkMs: number | null,
+    partial?: true,
   ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
@@ -164,7 +173,12 @@ export async function refreshMeasure(
       ...(privateBytes !== null ? { privateBytes } : {}),
       ...(signature ? { signature } : {}),
     };
-    writeCacheFile(diskUsageCacheFile(path), { path, ...measure, ...(walkMs !== null ? { walkMs } : {}) });
+    writeCacheFile(diskUsageCacheFile(path), {
+      path,
+      ...measure,
+      ...(walkMs !== null ? { walkMs } : {}),
+      ...(partial ? { partial } : {}),
+    });
     return measure;
   };
   if (options.knownToExist !== true && !existsSync(path)) {
@@ -179,7 +193,7 @@ export async function refreshMeasure(
     const startedAt = now();
     const signature = dependency ? treeSignature(path) : null;
     const targets = options.targets?.();
-    let size: { bytes: number; privateBytes: number | null } | null;
+    let size: { bytes: number; privateBytes: number | null; partial?: true } | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
     else {
       if (claim) {
@@ -203,7 +217,15 @@ export async function refreshMeasure(
     }
     return {
       outcome: 'measured',
-      measure: record(size.bytes, size.privateBytes, signature, startedAt, Math.max(0, now() - startedAt)),
+      measure: record(
+        size.bytes,
+        size.privateBytes,
+        signature,
+        startedAt,
+        Math.max(0, now() - startedAt),
+        size.partial,
+      ),
+      ...(size.partial ? { partial: true as const } : {}),
     };
   } catch (error) {
     cleanupUnverified = error instanceof Error && 'reportCleanup' in error;

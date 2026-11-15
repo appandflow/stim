@@ -4,8 +4,10 @@ import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StimContext } from '@stim-cli/core';
-import { readDiscoveryCensusFile } from '@stim-cli/core/state';
+import { readDiscoveryCensusFile, readDiscoveryScanFile, readDiskUsage } from '@stim-cli/core/state';
 import * as diskUsage from '../disk-usage.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { discoveryLines, discoveryReport, lowDiskLine } from '../workspace/discovery-report.ts';
 import { censusDue, runDiscoveryCensusIfDue } from '../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../workspace/discovery-scan.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
@@ -400,6 +402,33 @@ describe('runDiscoveryCensusIfDue', () => {
       expect(census?.finds.some(({ path }) => path.endsWith('/dev/old'))).toBe(true);
     });
 
+    it('list a find whose metadata read was denied as unchecked, keep the census pending, and never print that everything is managed', async () => {
+      const { REAL_RECOGNITION_IO } = await import('../workspace/scan-rules.ts');
+      const real = REAL_RECOGNITION_IO.lstat;
+      vi.spyOn(REAL_RECOGNITION_IO, 'lstat').mockImplementation(async (path) => {
+        if (path.endsWith('.mytool') || path.endsWith(join('dev', 'fresh')))
+          throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        return real(path);
+      });
+      const { census } = await run(t0);
+      expect(
+        census?.finds
+          .filter(({ kind }) => kind === 'unchecked')
+          .map(({ path }) => path.slice(home.length))
+          .toSorted(),
+      ).toEqual(['/.mytool', '/dev/fresh']);
+      expect(census?.pending).toBe(true);
+      const report = discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [join(home, 'dev', 'tools')], error: null },
+        home,
+        canonical: null,
+      });
+      expect(report.groups.some(({ kind }) => kind === 'unchecked')).toBe(true);
+      expect(discoveryLines(report, home).join('\n')).not.toContain('Every checkout it found is managed.');
+    });
+
     it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {
       const denied = Object.assign(new Error('EACCES'), { code: 'EACCES' });
       const { census } = await run(t0, {
@@ -420,6 +449,43 @@ describe('runDiscoveryCensusIfDue', () => {
       expect(census?.finds.find(({ path }) => path.endsWith('/dev/old'))?.unreadable).toBe(true);
       expect(census?.pending).toBe(true);
       expect(censusDue(census, census?.scanRanAt ?? 0, census?.roots ?? [], t0 + hour)).toBe(true);
+    });
+  });
+
+  describe('a walk whose du exited with status 1', () => {
+    afterEach(() => resetExecutor());
+
+    it('is recorded as measured with a lower bound, read back as partial, and worded as at least', async () => {
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'du' || args.includes('du'))
+            throw Object.assign(new Error('du: Permission denied'), { status: 1, stdout: '12\t/walked\n' });
+          return real.runFileAsync(file, args, options);
+        },
+      });
+      const { census } = await run(t0);
+      const find = census?.finds.find(({ path }) => path.endsWith('/dev/old'));
+      expect(find).toMatchObject({ measuredDirs: 1, failedDirs: 0, partialDirs: 1, bytes: 12 * 1024 });
+      const dir = join(home, 'dev', 'old', 'android', 'build');
+      expect(
+        await diskUsage.refreshMeasure(dir, { timeoutMs: 1000, maxAgeMs: 86_400_000, knownToExist: true }),
+      ).toMatchObject({
+        outcome: 'fresh',
+        partial: true,
+      });
+      expect(readDiskUsage(dir)).not.toHaveProperty('partial');
+      const report = discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [join(home, 'dev', 'tools')], error: null },
+        home,
+        canonical: null,
+      });
+      expect(report.groups[0]).toMatchObject({ partial: 2 });
+      expect(discoveryLines(report, home).join('\n')).toContain('at least');
+      expect(lowDiskLine(report, home)).toContain('at least');
     });
   });
 

@@ -20,6 +20,8 @@ export interface CensusFind {
   /** How many of them were measured, and how many were tried and failed or timed out (the rest are not measured yet). */
   measuredDirs: number;
   failedDirs: number;
+  /** How many of the measured directories were walked by a `du` that exited non-zero: their bytes are a lower bound. */
+  partialDirs: number;
   /** The bytes of the measured directories; never an estimate of the others. */
   bytes: number;
   /** Listing its build directories failed or did not answer, so nothing about its output is known. */
@@ -65,6 +67,7 @@ function parseFind(value: unknown): CensusFind | null {
     !finite(value.dirs) ||
     !finite(value.measuredDirs) ||
     !finite(value.failedDirs) ||
+    !finite(value.partialDirs) ||
     !finite(value.bytes) ||
     typeof value.unreadable !== 'boolean' ||
     (value.gitActivityAt !== null && !finite(value.gitActivityAt))
@@ -79,6 +82,7 @@ function parseFind(value: unknown): CensusFind | null {
     dirs: value.dirs,
     measuredDirs: value.measuredDirs,
     failedDirs: value.failedDirs,
+    partialDirs: value.partialDirs,
     bytes: value.bytes,
     unreadable: value.unreadable,
     gitActivityAt: value.gitActivityAt,

@@ -1430,6 +1430,7 @@
 [*] interface UnmanagedGroup { @@1 members: Array<{
 [*] interface UnmanagedGroup { @@1 notMeasuredYet: number;
 [*] interface UnmanagedGroup { @@1 oldestMeasuredAt: number | null;
+[*] interface UnmanagedGroup { @@1 partial: number;
 [*] interface UnmanagedGroup { @@2 gitActivityAt: string | null;
 [*] interface UnmanagedGroup { @@2 path: string;
 [*] interface UnverifiedCleanup {

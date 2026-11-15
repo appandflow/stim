@@ -343,6 +343,18 @@ maintainer:
   source with no bound the census could apply without changing code the deleting
   passes use, so doctor says Stim has not checked whether a checkout is in use or
   holds uncommitted or unpushed work, and leaves deleting one to the person.
+- What is and is not bounded on the census path. Bounded (`answered`): the scan's
+  safety gate for each folder (`folderSafety`, `nestedSafety`), the census's own
+  layout reads and the git activity reads. Not bounded: `scanEntryValid` ends in
+  project recognition (`recognises`: `projectRegistry.selectDoctor(path)` and a
+  synchronous `readdirSync` of the folder's `apps`, `examples` and `packages`),
+  which runs on the find after the bounded reads of that same folder have
+  answered; for ordinary scan finds outside a configured root, discovery's
+  protected-location check (`isProtectedLocation`, `realpathSync`); and
+  `canonicalPath` on children of sibling folders and configured roots. Those run
+  this way for every scan find in the passes on main, and this change adds only
+  that project recognition now also runs on finds under home dot-folders, through
+  `unmanagedScanFinds`.
 - Instead of idle, the census records one bounded fact per checkout, the last git
   activity: the newest modification time of `HEAD`, `index` and `logs/HEAD` in the
   checkout's git directory. That is `<checkout>/.git` for a main checkout, and for a
@@ -436,6 +448,14 @@ person's work: a hand-written `.env`, a project file edited by hand, an edit
 hidden from `git status`.
 
 Chosen by the coordinator and the reviews of #5519, not by the maintainer.
+
+## Known limits of the listing
+
+A find whose read is permanently denied or unreadable takes one of the 25 slots of
+each census run, every run, until it is fixed or leaves the scan result. The census
+file is read without a lock (it is replaced atomically under a lock, so a reader
+sees the old or the new file). A `du` that exits non-zero (denied files) is recorded
+as a measured lower bound: its bytes count and the totals read "at least".
 
 ## Links
 
