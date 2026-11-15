@@ -21,12 +21,8 @@ export interface CensusFind {
   failedDirs: number;
   /** The bytes of the measured directories; never an estimate of the others. */
   bytes: number;
-  /**
-   * The newest activity in it by the idle stage's full evidence, epoch ms, set only when that evidence was complete,
-   * nothing used the checkout, and the newest activity was older than `idleDays` at `evaluatedAt`. Null otherwise,
-   * which is not "active": it is "not known to be idle". Always null for `dot-folder`.
-   */
-  lastActivityAt: number | null;
+  /** Listing its build directories failed or did not answer, so nothing about its output is known. */
+  unreadable: boolean;
 }
 
 /**
@@ -41,8 +37,6 @@ export interface DiscoveryCensus {
   scanRanAt: number;
   /** The `maintenance.discoverRoots` entries it was classified under, as absolute paths. */
   roots: string[];
-  /** The days without activity (`maintenance.olderThanDays`) the idle evidence was taken for; null when it was not. */
-  idleDays: number | null;
   /** Some find has a directory not measured yet, so another run continues. */
   pending: boolean;
   finds: CensusFind[];
@@ -64,7 +58,7 @@ function parseFind(value: unknown): CensusFind | null {
     !finite(value.measuredDirs) ||
     !finite(value.failedDirs) ||
     !finite(value.bytes) ||
-    (value.lastActivityAt !== null && !finite(value.lastActivityAt))
+    typeof value.unreadable !== 'boolean'
   )
     return null;
   return {
@@ -77,7 +71,7 @@ function parseFind(value: unknown): CensusFind | null {
     measuredDirs: value.measuredDirs,
     failedDirs: value.failedDirs,
     bytes: value.bytes,
-    lastActivityAt: value.lastActivityAt,
+    unreadable: value.unreadable,
   };
 }
 
@@ -89,7 +83,6 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     !finite(value.at) ||
     !finite(value.scanRanAt) ||
     !strings(value.roots) ||
-    (value.idleDays !== null && !finite(value.idleDays)) ||
     typeof value.pending !== 'boolean' ||
     !Array.isArray(value.finds)
   )
@@ -105,7 +98,6 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     at: value.at,
     scanRanAt: value.scanRanAt,
     roots: value.roots,
-    idleDays: value.idleDays,
     pending: value.pending,
     finds,
   };

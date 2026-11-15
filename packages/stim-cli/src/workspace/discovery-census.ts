@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryCensusFile,
@@ -13,26 +14,32 @@ import {
 } from '@stim-cli/core/state';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
-import { appRoots } from '../stimd/passes/artifacts.ts';
+import { answered, hungRead } from './bounded-read.ts';
 import { loadConfig } from './config.ts';
-import { discoveredEvidence } from './discovered-activity.ts';
-import { discoveredReads, type DiscoveredReads } from './discovered-reads.ts';
 import { DISCOVER_ROOTS_KEY, rootsOf } from './discovery-report.ts';
 import { isBroadFolder, unmanagedScanFinds } from './discovery.ts';
-import { existingBuildDirsAsync } from './regenerable-dirs.ts';
+import {
+  ARTIFACT_DIRS,
+  existingBuildDirsReads,
+  signatureHeads,
+  type DirRead,
+  type DirReads,
+} from './regenerable-dirs.ts';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
 /** Per build directory: the walk of the one disk-usage walk the machine allows at a time. */
 const WALK_TIMEOUT_MS = 10_000;
-/** The most checkouts one run measures, and the longest it starts new walks for; the rest wait for the next run. */
+/** Per filesystem read of a checkout's layout. */
+const READ_TIMEOUT_MS = 3000;
+const TAG_PREFIX_BYTES = 64;
+/** The most checkouts one run measures, and the longest it starts new reads or walks for; the rest wait for the next run. */
 const MAX_CHECKOUTS = 25;
 const BUDGET_MS = 90_000;
 
 /** When this process last tried a run, so a census that cannot be stored does not start walks on every tick. */
 const attempts = { at: 0 };
 
-// @ref LLP 0004#the-doctor-listing-and-the-low-disk-line -- the daemon measures, commands read
 /**
  * Whether a census run is due: none exists, the scan it came from is not the last one, `maintenance.discoverRoots`
  * changed, some directory is still waiting for a measurement and an hour passed, or a day passed.
@@ -64,33 +71,143 @@ function writeCensus(census: DiscoveryCensus): void {
   });
 }
 
-interface Budget {
-  deadline: number;
-  checkouts: number;
+/** The filesystem the census reads a checkout's layout through; tests inject it. */
+export interface CensusIo {
+  readNames: (path: string) => Promise<string[]>;
+  isDirectory: (path: string) => Promise<boolean>;
+  /** Whether it is a regular file, and its first bytes as text. */
+  tagHead: (path: string) => Promise<string | null>;
 }
 
-type Measurement = Pick<CensusFind, 'dirs' | 'measuredDirs' | 'failedDirs' | 'bytes'>;
+const REAL_IO: CensusIo = {
+  readNames: (path) => readdir(path),
+  isDirectory: async (path) => (await lstat(path)).isDirectory(),
+  tagHead: async (path) => {
+    if (!(await lstat(path)).isFile()) return null;
+    const file = await open(path, 'r');
+    try {
+      const buffer = Buffer.alloc(TAG_PREFIX_BYTES);
+      const { bytesRead } = await file.read(buffer, 0, TAG_PREFIX_BYTES, 0);
+      return buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      await file.close();
+    }
+  },
+};
+
+/** The budget ran out or the run was aborted before a read; nothing is known about the checkout yet. */
+class OutOfBudget extends Error {}
+
+/** A read failed (permission, I/O) or did not answer in time, so the layout of the checkout is not known. */
+class Unreadable extends Error {}
+
+const absent = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+
+interface Reader {
+  names: (path: string) => Promise<string[]>;
+  directory: (path: string) => Promise<boolean>;
+  signature: (path: string) => Promise<boolean>;
+  answer: (read: DirRead) => Promise<string[] | boolean>;
+}
 
 /**
- * The build output Stim recognises in a checkout, measured one directory at a time through `refreshMeasure`: the disk
- * usage cache while an entry is under a day old, else one walk under the machine's walk claim, with the walk timeout.
- * A walk that failed or timed out counts as failed, never as zero; a directory not reached before the budget ran out, or
- * while another walk held the claim, is not measured yet.
+ * Every read of a checkout's layout the census makes: asynchronous, through the shared bounded reader (3 seconds, one
+ * outstanding timed-out read per isolate, none started while one is pending), with the abort and the run's budget
+ * checked before each. A path that does not exist is absent (`[]` or false); any other failure, a timeout or a pending
+ * hung read raises `Unreadable`, never an empty answer, so a checkout the census could not read is not a measured zero.
  */
-async function measureBuildOutput(path: string, operation: StimContext, budget: Budget): Promise<Measurement> {
+function boundedReader(io: CensusIo, deadline: number, signal: AbortSignal, timeoutMs: number): Reader {
+  const read = async <T>(path: string, missing: T, start: () => Promise<T>): Promise<T> => {
+    signal.throwIfAborted();
+    if (Date.now() > deadline) throw new OutOfBudget();
+    try {
+      return await answered(path, start, timeoutMs);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (absent(error)) return missing;
+      throw new Unreadable(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const names = (path: string) => read<string[]>(path, [], () => io.readNames(path));
+  const directory = (path: string) => read(path, false, () => io.isDirectory(path));
+  const signature = async (path: string) => {
+    const head = await read<string | null>(path, null, () => io.tagHead(path));
+    return head !== null && signatureHeads(head);
+  };
+  return {
+    names,
+    directory,
+    signature,
+    answer: (request) =>
+      'names' in request
+        ? names(request.names)
+        : 'directory' in request
+          ? directory(request.directory)
+          : signature(request.signature),
+  };
+}
+
+async function drive<T>(reads: DirReads<T>, reader: Reader): Promise<T> {
+  let step = reads.next();
+  while (!step.done) step = reads.next(await reader.answer(step.value));
+  return step.value;
+}
+
+/**
+ * The build directories Stim recognises in a checkout: those `existingBuildDirsReads` lists (the same directory rules the
+ * deleting passes use, driven here by the bounded reader) for the checkout and each folder directly in its `apps` and
+ * `packages`. A tag file is read only when the listing shows a regular file, and only its first 64 bytes.
+ */
+async function buildDirsOf(path: string, reader: Reader): Promise<string[]> {
+  const roots = [path];
+  for (const parent of ['apps', 'packages'])
+    for (const name of await reader.names(join(path, parent)))
+      if (await reader.directory(join(path, parent, name))) roots.push(join(path, parent, name));
   const dirs = new Set<string>();
-  for (const root of appRoots({ path, keys: [], linked: false, locked: false, reduceOnly: true }, 'build'))
-    for (const dir of await existingBuildDirsAsync(root)) dirs.add(dir);
-  const result: Measurement = { dirs: dirs.size, measuredDirs: 0, failedDirs: 0, bytes: 0 };
+  for (const root of roots) for (const dir of await drive(existingBuildDirsReads(root), reader)) dirs.add(dir);
+  return [...dirs];
+}
+
+const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
+
+type Measurement = Pick<CensusFind, 'dirs' | 'measuredDirs' | 'failedDirs' | 'bytes' | 'unreadable'>;
+
+/**
+ * The recognised build output of a checkout, measured one directory at a time through `refreshMeasure`: the disk usage
+ * cache while an entry is under a day old, else one walk under the machine's walk claim, with the walk timeout. A
+ * walk that failed or timed out counts as failed, never as zero; a directory not reached before the budget ran out, or
+ * while another walk held the claim, is not measured yet; a checkout whose layout could not be read is `unreadable`.
+ * Null when the budget ran out before its layout was known. A directory the gc worktree report sizes with its private
+ * bytes (a discovered build directory, not a fixed `ARTIFACT_DIRS.build` name) is measured with them too, so the cache
+ * entry the report reads carries what it expects. Errors that carry `reportCleanup`, and aborts, propagate.
+ */
+async function measureBuildOutput(
+  path: string,
+  operation: StimContext,
+  deadline: number,
+  io: CensusIo,
+  timeoutMs: number,
+): Promise<Measurement | null> {
+  const reader = boundedReader(io, deadline, operation.signal, timeoutMs);
+  let dirs: string[];
+  try {
+    dirs = await buildDirsOf(path, reader);
+  } catch (error) {
+    if (error instanceof OutOfBudget) return null;
+    if (error instanceof Unreadable) return { dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: true };
+    throw error;
+  }
+  const result: Measurement = { dirs: dirs.length, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
   for (const dir of dirs) {
     operation.signal.throwIfAborted();
-    if (Date.now() > budget.deadline || !existsSync(dir)) continue;
+    if (Date.now() > deadline) continue;
     const { outcome, measure } = await refreshMeasure(dir, {
       timeoutMs: WALK_TIMEOUT_MS,
       maxAgeMs: DAY_MS,
       claim: true,
       operation,
-      private: false,
+      private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)),
       failures: true,
     });
     if (measure) {
@@ -101,69 +218,67 @@ async function measureBuildOutput(path: string, operation: StimContext, budget: 
   return result;
 }
 
-/**
- * The newest activity of a reduce-only checkout when the idle stage's own evidence proves it idle for `idleMs` and nothing
- * uses it, else null. The evidence stops at the first activity newer than the threshold, so a value is always the
- * checkout's real newest activity, never a bound.
- */
-async function idleSince(
-  path: string,
-  idleMs: number,
-  now: number,
-  reads: DiscoveredReads,
-  operation: StimContext,
-): Promise<number | null> {
-  const { activity, keep } = await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly: true });
-  if (keep.length || !activity.length) return null;
-  const newest = Math.max(...activity.map(({ at }) => at));
-  return newest <= now - idleMs ? newest : null;
+/** An error the daemon's cleanup containment must see: a child whose cleanup could not be verified, or no claim. */
+export function isUnverifiedCleanup(error: unknown): boolean {
+  return (
+    error instanceof Error && ('reportCleanup' in error || ('code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'))
+  );
 }
 
+// @ref LLP 0004#the-doctor-listing-and-the-low-disk-line -- the daemon measures, commands read
 /**
  * Classifies the finds of the last full scan that Stim does not fully manage, and measures their recognised build
  * output, for the doctor listing and the low-disk line. It runs in the daemon after the scan, never in a command, and
- * a scoped STIM_HOME never does. It reads the scan result the daemon wrote and writes `maintenance/discovery-census.json`.
+ * a scoped STIM_HOME never does. It classifies the scan result it reads, records that result's `ranAt`, and writes
+ * `maintenance/discovery-census.json`.
  *
- * Bounds: at most `MAX_CHECKOUTS` checkouts are measured per run, none after `BUDGET_MS`, one walk at a time machine-wide
- * (`refreshMeasure` with a claim), each with `WALK_TIMEOUT_MS`. A checkout measured within a day is carried over without a
- * walk; one left over stays unmeasured and the next run, within the hour, continues. Only an abort escapes.
+ * Bounds: every read of a checkout's layout goes through the bounded reader (`CensusIo`); at most `MAX_CHECKOUTS`
+ * checkouts are looked at per run and none after `BUDGET_MS`; walks are one at a time machine-wide (`refreshMeasure`
+ * with a claim), each with `WALK_TIMEOUT_MS`; nothing starts while a timed-out read is pending. A checkout measured
+ * within a day is carried over without a read; one left over keeps its earlier entry, or is not measured yet, and the
+ * next run, within the hour, continues. The idle evidence of a checkout is not read: it walks the checkout's source with
+ * no bound the census could apply.
+ *
+ * Aborts and errors with `reportCleanup` (or STIM_CLAIM_UNAVAILABLE) propagate unchanged, for the daemon's cleanup
+ * containment. Any other error is contained and returned as its message for the caller to log; nothing is written.
  */
 export async function runDiscoveryCensusIfDue(
   tick: { operation: StimContext } | undefined,
   {
     now = Date.now(),
     attempted = attempts,
-    reads,
+    io = REAL_IO,
+    readTimeoutMs = READ_TIMEOUT_MS,
     maxCheckouts = MAX_CHECKOUTS,
     budgetMs = BUDGET_MS,
   }: {
     now?: number;
     attempted?: { at: number };
-    /** The process and agent-session readers; tests inject them. */
-    reads?: DiscoveredReads;
+    /** The reads of a checkout's layout; tests inject them. */
+    io?: CensusIo;
+    readTimeoutMs?: number;
     maxCheckouts?: number;
     budgetMs?: number;
   } = {},
-): Promise<void> {
+): Promise<string | void> {
   if (!tick || isScopedHome(tick.operation.env)) return;
   const { operation } = tick;
   try {
     const scanFile = readDiscoveryScanFile();
     const file = readDiscoveryCensusFile();
-    if (scanFile.status !== 'read' || !scanFile.scan || file.status === 'unreadable') return;
-    const { scan } = scanFile;
+    if (scanFile.status !== 'read' || !scanFile.scan || file.status === 'unreadable' || hungRead() !== null) return;
     const config = loadConfig();
     const setting = machineSettingValue(DISCOVER_ROOTS_KEY, { config, env: operation.env });
     const roots = rootsOf(setting, homedir());
     const last = file.status === 'read' ? file.census : null;
-    if (!censusDue(last, scan.ranAt, roots, now) || (now >= attempted.at && now - attempted.at < HOUR_MS)) return;
+    if (!censusDue(last, scanFile.scan.ranAt, roots, now) || (now >= attempted.at && now - attempted.at < HOUR_MS))
+      return;
     attempted.at = now;
-    const { value: days, error } = machineSettingValue('maintenance.olderThanDays', { config, env: operation.env });
-    const idleDays = !error && typeof days === 'number' && days > 0 ? days : null;
     const finds = await unmanagedScanFinds(config, listedRoots(), operation);
+    if (!finds) return;
     const previous = new Map((last?.finds ?? []).map((find) => [`${find.kind}\0${find.path}`, find]));
-    const budget: Budget = { deadline: Date.now() + budgetMs, checkouts: 0 };
-    const sharedReads = reads ?? discoveredReads(operation.signal, operation);
+    const deadline = Date.now() + budgetMs;
+    let looked = 0;
     const entries: CensusFind[] = [];
     const groups: Array<[CensusFind['kind'], string[]]> = [
       ['reduce-only', finds.reduceOnly],
@@ -175,51 +290,41 @@ export async function runDiscoveryCensusIfDue(
         const folder = dirname(path);
         const earlier = previous.get(`${kind}\0${path}`);
         const placement = { path, kind, folder, adoptable: !isBroadFolder(folder) };
+        const kept: CensusFind = earlier
+          ? { ...earlier, ...placement }
+          : { ...placement, evaluatedAt: 0, dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
         const complete =
-          earlier && earlier.measuredDirs === earlier.dirs && earlier.failedDirs === 0 && earlier.evaluatedAt > 0;
-        if (earlier && complete && now - earlier.evaluatedAt < DAY_MS && last?.idleDays === idleDays) {
-          entries.push({ ...earlier, ...placement });
+          earlier &&
+          earlier.evaluatedAt > 0 &&
+          !earlier.unreadable &&
+          earlier.measuredDirs === earlier.dirs &&
+          earlier.failedDirs === 0;
+        if (complete && now - earlier.evaluatedAt < DAY_MS) {
+          entries.push(kept);
           continue;
         }
-        if (budget.checkouts >= maxCheckouts || Date.now() > budget.deadline) {
-          entries.push(
-            earlier
-              ? { ...earlier, ...placement }
-              : {
-                  ...placement,
-                  evaluatedAt: 0,
-                  dirs: 0,
-                  measuredDirs: 0,
-                  failedDirs: 0,
-                  bytes: 0,
-                  lastActivityAt: null,
-                },
-          );
+        if (looked >= maxCheckouts || Date.now() > deadline || hungRead() !== null) {
+          entries.push(kept);
           continue;
         }
-        budget.checkouts++;
-        const measured = await measureBuildOutput(path, operation, budget);
-        entries.push({
-          ...placement,
-          ...measured,
-          evaluatedAt: now,
-          lastActivityAt:
-            kind === 'reduce-only' && idleDays !== null
-              ? await idleSince(path, idleDays * DAY_MS, now, sharedReads, operation)
-              : null,
-        });
+        looked++;
+        const measured = await measureBuildOutput(path, operation, deadline, io, readTimeoutMs);
+        entries.push(measured ? { ...placement, ...measured, evaluatedAt: now } : kept);
       }
     operation.signal.throwIfAborted();
     writeCensus({
       version: 1,
       at: now,
-      scanRanAt: scan.ranAt,
+      scanRanAt: finds.scanRanAt,
       roots,
-      idleDays,
-      pending: entries.some((find) => find.evaluatedAt === 0 || find.measuredDirs + find.failedDirs < find.dirs),
+      pending: entries.some(
+        (find) => find.evaluatedAt === 0 || (!find.unreadable && find.measuredDirs + find.failedDirs < find.dirs),
+      ),
       finds: entries,
     });
-  } catch {
+  } catch (error) {
     operation.signal.throwIfAborted();
+    if (isUnverifiedCleanup(error)) throw error;
+    return error instanceof Error ? error.message : String(error);
   }
 }

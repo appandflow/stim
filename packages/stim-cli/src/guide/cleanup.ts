@@ -262,9 +262,10 @@ DISK PRESSURE
   minutes old, found the disk critical. When the daemon's census (DISCOVERED
   CHECKOUTS NOT FULLY MANAGED) holds checkouts with measured build output, a
   second stderr line says how much they hold ("at least" while some are not
-  measured) and gives the command that adds the largest reduce-only folder to
-  maintenance.discoverRoots; a dot-folder group counts in the total and is never
-  the one named. It reads two small files, never walks the disk, and goes to
+  measured), that adopting a folder gives it the full rules (finished linked
+  worktree removal included), and the command that adds the largest reduce-only
+  folder to maintenance.discoverRoots; a dot-folder group counts in the total and is never
+  the one named. It reads the scan file, the census file and the config, never walks the disk, and goes to
   stderr only, never into a JSON payload. It appears at critical only.
 
   stim status                     last checks, plan and running pass
@@ -1306,39 +1307,51 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   packages (Android build and .gradle, .build, android .cxx, a .dd laid out as
   DerivedData, a Cargo target that Exact owns or that carries CACHEDIR.TAG).
   node_modules and Pods are not counted, and the size is not proof that the
-  directory could be deleted. It goes through the disk-usage cache, one walk at
-  a time on the machine, 10 seconds per directory, at most 25 checkouts and 90
-  seconds per run; a checkout measured within a day is carried over without a
-  walk, and what a run leaves is measured by the next one, an hour later. A walk
-  that fails or times out is "could not be measured", never zero; a directory not
-  reached is "not measured yet"; a total with either is "at least". The census
+  directory could be deleted. Every read of a checkout's layout (listings, a
+  directory check, the first 64 bytes of a CACHEDIR.TAG that the listing shows as
+  a regular file) is asynchronous, goes through the shared bounded reader (3
+  seconds, one timed-out read outstanding per thread, none started while one is
+  pending) and checks the abort and the run's budget first; the directory rules
+  are the ones the deleting passes use, driven by that reader. A path that does
+  not exist is absent; a denied or timed-out read makes the checkout "could not
+  be measured", never a measured zero. Sizes go through the disk-usage cache, one
+  walk at a time on the machine, 10 seconds per directory (a build directory the
+  gc worktree report sizes with private bytes is measured with them too), at most
+  25 checkouts and 90 seconds per run; a checkout measured within a day is
+  carried over without a read, and what a run leaves keeps its earlier entry or
+  is "not measured yet" and the next run, an hour later, continues. A walk that
+  fails or times out is "could not be measured", never zero; a total with any
+  unknown is "at least"; a group shows its oldest measurement date. The census
   is written again after a new scan, when the machine's maintenance.discoverRoots
-  changes, and after a day. A reduce-only checkout also gets the idle stage's
-  evidence (newest source write, git write and commit, process, agent session and
-  PATH launcher) with maintenance.olderThanDays as the threshold: the census
-  records its newest activity only when the evidence is complete and older than
-  that, and records nothing (not known to be idle) otherwise. A dot-folder find
-  gets no idle evidence and no delete suggestion, since an installed tool cannot
-  be told from a checkout there.
+  changes, and after a day. It classifies a discovery computed from the scan
+  result it records, not the per-operation discovery the passes share, and
+  records that result's ranAt; doctor shows no size from a census made from an
+  older scan than the scan file holds (those checkouts read "not measured yet").
+  An unverified child cleanup from a walk (reportCleanup, or
+  STIM_CLAIM_UNAVAILABLE) propagates out of the pass unchanged for the daemon's
+  cleanup containment (stim guide lifecycle); any other census error is
+  contained, writes nothing and is one maintenance_failure record (target
+  discovery census) in the cleanup log. The census reads no idle evidence: that
+  evidence walks the source of a checkout with no bound it could apply, so
+  doctor says Stim has not checked whether a checkout is in use or holds
+  uncommitted or unpushed work, and leaves deleting one to the person.
   stim doctor prints it as the section "Checkouts Stim does not fully manage"
   and carries it in --json as discovery (internal, no compatibility promise):
   scan { status: read | absent | unreadable | unusable, ranAt, trigger,
   truncation, visited, unreadable }, census (read | absent | unreadable |
-  unusable | none), censusAt, idleAfterDays, and groups, one per containing
+  unusable | none), censusAt, censusCurrent, and groups, one per containing
   folder and kind, each { folder, kind, checkouts, bytes, measured, failed,
-  notMeasuredYet, command, commandProblem, idle: [{ path, idleDays }] }. Doctor
-  reads the two files and the setting and walks nothing; a group whose folder
-  maintenance.discoverRoots names now is left out, though the daemon has not
-  classified again yet. The section shows only where doctor runs, which is inside
-  a project. command is stim settings set maintenance.discoverRoots '<json>'
-  --scope machine with the current value plus the folder, quoted for the shell;
-  it is null for the home folder or a folder holding it (discoverRoots refuses
-  those) and when the current value does not read. Adding a folder gives its
-  checkouts the full discovered-checkout rules, finished-worktree removal
-  included; for a dot-folder find it also lets Stim act where it did not.
-  A reduce-only checkout idle at least maintenance.olderThanDays (0 turns this
-  off) is listed with its path as words for the person to delete it; Stim offers
-  no command for that and never removes it.
+  notMeasuredYet, command, commandProblem, oldestMeasuredAt }. Doctor reads the
+  two files and the setting and walks nothing; a group whose folder
+  maintenance.discoverRoots names now (symlinks resolved) is left out, though the
+  daemon has not classified again yet. The section shows only where doctor runs,
+  which is inside a project. command is stim settings set
+  maintenance.discoverRoots '<json>' --scope machine with the current value plus
+  the folder, quoted for the shell; it is null for the home folder or a folder
+  holding it (discoverRoots refuses those) and when the current value does not
+  read. Adding a folder gives its checkouts the full discovered-checkout rules,
+  finished-worktree removal included; for a dot-folder find it also lets Stim act
+  where it did not. The critical-disk line says so before the command.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes
 (git-ignored files included; node_modules, Pods and nested worktrees skipped,

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
-import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/core/state';
+import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { isProtectedLocation } from './protected-locations.ts';
@@ -230,19 +230,19 @@ export async function discoveredOutside(
 const memo = new WeakMap<StimContext, Promise<Discovery>>();
 
 function discovery(config: Config | null, known: readonly string[], operation?: StimContext): Promise<Discovery> {
-  if (!operation) return computeDiscovered(config, known, operation);
+  if (!operation) return computeDiscovered(config, known, readDiscoveryScan(), operation);
   let found = memo.get(operation);
-  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation)));
+  if (!found) memo.set(operation, (found = computeDiscovered(config, known, readDiscoveryScan(), operation)));
   return found;
 }
 
 /** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
-async function revalidatedScan(): Promise<DiscoveryChild[]> {
+async function revalidatedScan(scan: DiscoveryScan | null): Promise<DiscoveryChild[]> {
   const home = canonicalPath(homedir());
   const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
   const valid: DiscoveryChild[] = [];
   const ancestors = new Map();
-  for (const path of readDiscoveryScan()?.found ?? [])
+  for (const path of scan?.found ?? [])
     if (isAbsolute(path) && (await scanEntryValid(path, { ...rules, ancestors })) === 'valid')
       valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
   return valid;
@@ -251,6 +251,7 @@ async function revalidatedScan(): Promise<DiscoveryChild[]> {
 async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
+  scan: DiscoveryScan | null,
   operation?: StimContext,
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
@@ -311,7 +312,7 @@ async function computeDiscovered(
       else outside.push({ path, from: main });
     }
   }
-  const scanned: DiscoveryChild[] = scoped ? [] : await revalidatedScan();
+  const scanned: DiscoveryChild[] = scoped ? [] : await revalidatedScan(scan);
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
@@ -327,6 +328,8 @@ async function computeDiscovered(
 
 /** What the last full scan found that this Stim home does not fully manage. */
 export interface UnmanagedScanFinds {
+  /** The `ranAt` of the scan result these were classified from. */
+  scanRanAt: number;
   /** Scan finds discovery selects and no other route reaches: Stim reduces their outputs and never removes them. */
   reduceOnly: string[];
   /** Scan finds under a home dot-folder that no route reaches: Stim does nothing with them. */
@@ -341,23 +344,29 @@ const touches = (path: string, other: string): boolean =>
  * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
  * is unmanaged unless a registered project, a folder of `maintenance.discoverRoots`, a tool folder or any discovered
  * checkout covers it. Each dot-folder find is revalidated like a scan find, and one that does not answer is left out.
- * A scoped STIM_HOME scans nothing and so finds nothing.
+ * A scoped STIM_HOME scans nothing and so finds nothing. Null when there is no usable scan result.
+ *
+ * It computes discovery anew from the one scan result it reads and returns that result's `ranAt`, not through the
+ * per-operation memo the passes share: the memo can hold a discovery computed from an older scan result, and the census
+ * must classify the scan it records. The passes' own use of the memo is unchanged.
  */
 export async function unmanagedScanFinds(
   config: Config | null,
   known: readonly string[],
   operation: StimContext,
-): Promise<UnmanagedScanFinds> {
-  const { found } = await discovery(config, known, operation);
+): Promise<UnmanagedScanFinds | null> {
+  const scan = readDiscoveryScan();
+  if (!scan) return null;
+  const { found } = await computeDiscovered(config, known, scan, operation);
   const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
-  if (isScopedHome(operation.env)) return { reduceOnly, dotFolder: [] };
+  if (isScopedHome(operation.env)) return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [] };
   const home = canonicalPath(homedir());
   const roots = canonicalDiscoverRoots(config, operation.env);
   const knownRoots = known.map(canonicalPath);
   const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
   const ancestors = new Map();
   const dotFolder: string[] = [];
-  for (const path of readDiscoveryScan()?.dotFolderFound ?? []) {
+  for (const path of scan.dotFolderFound) {
     operation.signal.throwIfAborted();
     if (
       !isAbsolute(path) ||
@@ -369,5 +378,5 @@ export async function unmanagedScanFinds(
       continue;
     if ((await scanEntryValid(path, { ...rules, ancestors })) === 'valid') dotFolder.push(path);
   }
-  return { reduceOnly, dotFolder: dotFolder.toSorted() };
+  return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: dotFolder.toSorted() };
 }

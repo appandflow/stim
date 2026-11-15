@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScan, DiscoveryScanFile } from '@stim-cli/core/state';
 import {
@@ -38,7 +41,7 @@ function find(over: Partial<CensusFind> & Pick<CensusFind, 'path'>): CensusFind 
     measuredDirs: 1,
     failedDirs: 0,
     bytes: GB,
-    lastActivityAt: null,
+    unreadable: false,
     ...over,
   };
 }
@@ -50,7 +53,6 @@ const census = (finds: CensusFind[]): DiscoveryCensusFile => ({
     at: now,
     scanRanAt: scan.ranAt,
     roots: [],
-    idleDays: 3,
     pending: false,
     finds,
   },
@@ -67,9 +69,7 @@ function report(
     scan: scanFile,
     census: census(finds),
     setting,
-    idleAfterDays: 3,
     home,
-    now,
   });
 }
 
@@ -139,21 +139,49 @@ describe('discoveryReport', () => {
     ).toContain('build output not measured');
   });
 
-  it('lists a reduce-only checkout idle at least the setting, never a dot-folder one', () => {
+  it('counts a checkout whose layout could not be read as could not be measured, never as a measured zero', () => {
     const [group] = report([
-      find({ path: '/Users/me/dev/old', lastActivityAt: now - 40 * day }),
-      find({ path: '/Users/me/dev/recent', lastActivityAt: now - 1 * day }),
-      find({ path: '/Users/me/dev/unknown', lastActivityAt: null }),
+      find({ path: '/Users/me/dev/a', bytes: 0, dirs: 0, measuredDirs: 0, unreadable: true }),
     ]).groups;
-    expect(group?.idle).toEqual([{ path: '/Users/me/dev/old', idleDays: 40 }]);
-    const [dot] = report([
-      find({ path: '/Users/me/.t/x', kind: 'dot-folder', folder: '/Users/me/.t', lastActivityAt: now - 40 * day }),
+    expect(group).toMatchObject({ measured: 0, failed: 1, notMeasuredYet: 0 });
+  });
+
+  it('shows no measurement of a census made from an older scan than the scan file holds', () => {
+    const older = { ...scan, ranAt: scan.ranAt + 1 };
+    const result = discoveryReport({
+      scan: { status: 'read', scan: older },
+      census: census([find({ path: '/Users/me/dev/a', bytes: 5 * GB })]),
+      setting: noRoots,
+      home,
+    });
+    expect(result.censusCurrent).toBe(false);
+    expect(result.groups[0]).toMatchObject({ bytes: 0, measured: 0, notMeasuredYet: 1 });
+    expect(lowDiskLine(result, home)).toBeNull();
+  });
+
+  it('shows the age of the oldest measurement, and leaves out a folder the setting names through a symlink', () => {
+    const [group] = report([
+      find({ path: '/Users/me/dev/a', evaluatedAt: now - 5 * day }),
+      find({ path: '/Users/me/dev/b' }),
     ]).groups;
-    expect(dot?.idle).toEqual([]);
+    expect(group?.oldestMeasuredAt).toBe(now - 5 * day);
+    const dir = mkdtempSync(join(tmpdir(), 'stim-report-'));
+    try {
+      const real = realpathSync(dir);
+      mkdirSync(join(real, 'target'));
+      symlinkSync(join(real, 'target'), join(real, 'link'));
+      const result = report([find({ path: `${real}/target/app`, folder: join(real, 'target') })], {
+        value: [join(real, 'link')],
+        error: null,
+      });
+      expect(result.groups).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('keeps an unreadable, absent and unusable scan or census apart', () => {
-    const base = { setting: noRoots, idleAfterDays: 3, home, now };
+    const base = { setting: noRoots, home };
     const missing: DiscoveryCensusFile = { status: 'absent' };
     expect(discoveryReport({ ...base, scan: { status: 'absent' }, census: missing }).scan).toEqual({
       status: 'absent',
@@ -187,12 +215,10 @@ describe('discoveryLines', () => {
             folder: '/Users/me/.exact/exact2',
             bytes: 80 * GB,
           }),
-          find({ path: '/Users/me/dev/old', bytes: 2 * GB, lastActivityAt: now - 40 * day }),
+          find({ path: '/Users/me/dev/old', bytes: 2 * GB }),
         ]),
         setting: noRoots,
-        idleAfterDays: 3,
         home,
-        now,
       }),
       home,
     ).join('\n');
@@ -204,9 +230,7 @@ describe('discoveryLines', () => {
     expect(lines).toContain('Stim reduces their build output when idle and never removes them');
     expect(lines).toContain('Stim cannot tell a checkout from an installed tool, so it does nothing with them');
     expect(lines).toContain(`'["/Users/me/.exact/exact2"]'`);
-    expect(lines).toContain(
-      'Idle for at least 40 days and nothing uses it: ~/dev/old. Stim never removes it; delete it yourself',
-    );
+    expect(lines).toContain('Stim has not checked whether they are in use or hold uncommitted or unpushed work');
   });
 });
 
@@ -225,7 +249,7 @@ describe('lowDiskLine', () => {
       home,
     );
     expect(line).toBe(
-      `Stim: checkouts it does not fully manage hold 82.0 GB of build output. Add the largest folder, ~/dev (2.0 GB), to what Stim manages with: stim settings set maintenance.discoverRoots '["/Users/me/dev"]' --scope machine; stim doctor lists the rest.`,
+      `Stim: checkouts it does not fully manage hold 82.0 GB of build output. Adding the largest folder, ~/dev (2.0 GB), lets Stim apply its full rules there, finished linked worktree removal included: stim settings set maintenance.discoverRoots '["/Users/me/dev"]' --scope machine; stim doctor lists the rest and what changes.`,
     );
   });
 

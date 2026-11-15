@@ -565,12 +565,12 @@ leased until <time>" for each one.`,
   discovery       the checkouts the last home folder scan found that Stim does
                   not fully manage, from the daemon's cached result (internal,
                   no compatibility promise; see \`guide cleanup\`): { scan, census,
-                  censusAt, idleAfterDays, groups }, one group per containing
+                  censusAt, censusCurrent, groups }, one group per containing
                   folder and kind (reduce-only or dot-folder) with checkouts,
                   bytes of recognised build output, how many checkouts were
                   measured, failed or not measured yet, the command that adds
                   the folder to maintenance.discoverRoots (null with
-                  commandProblem when it cannot), and idle paths
+                  commandProblem when it cannot), and the oldest measurement
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",

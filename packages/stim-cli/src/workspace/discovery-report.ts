@@ -1,7 +1,6 @@
+import { realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScanFile, ScanTruncation } from '@stim-cli/core/state';
-
-const DAY_MS = 24 * 60 * 60_000;
 
 export const DISCOVER_ROOTS_KEY = 'maintenance.discoverRoots';
 
@@ -23,8 +22,8 @@ interface UnmanagedGroup {
   /** The command that adds `folder` to the machine's `maintenance.discoverRoots`; null with `commandProblem` set. */
   command: string | null;
   commandProblem: 'too-broad' | 'setting-unreadable' | null;
-  /** Reduce-only checkouts idle at least `idleAfterDays` that nothing uses, for the person to delete; never `dot-folder`. */
-  idle: Array<{ path: string; idleDays: number }>;
+  /** The oldest measurement among the checkouts that have one, epoch ms; null when none was measured. */
+  oldestMeasuredAt: number | null;
 }
 
 type ScanSummary =
@@ -45,8 +44,8 @@ export interface DiscoveryReport {
   census: 'read' | 'absent' | 'unreadable' | 'unusable' | 'none';
   /** When the daemon last classified and measured the finds, epoch ms. */
   censusAt: number | null;
-  /** `maintenance.olderThanDays` when idle checkouts are listed; null when it is 0 or does not read. */
-  idleAfterDays: number | null;
+  /** Whether the census was made from the scan the scan file holds now; when false its sizes are not shown. */
+  censusCurrent: boolean;
   groups: UnmanagedGroup[];
 }
 
@@ -68,6 +67,19 @@ export function rootsOf(setting: DiscoverRootsValue, home: string): string[] {
   return setting.value.map((entry) => resolve(expandHome(entry, home))).toSorted();
 }
 
+function canonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/** The configured roots with symlinks resolved, as the census names its folders. */
+function canonicalRoots(setting: DiscoverRootsValue, home: string): Set<string> {
+  return new Set(rootsOf(setting, home).flatMap((root) => [root, canonical(root)]));
+}
+
 function shellQuote(text: string): string {
   return `'${text.replaceAll("'", `'\\''`)}'`;
 }
@@ -78,27 +90,20 @@ export function adoptCommand(setting: DiscoverRootsValue, folder: string): strin
   return `stim settings set ${DISCOVER_ROOTS_KEY} ${shellQuote(JSON.stringify([...setting.value, folder]))} --scope machine`;
 }
 
-function groupOf(
-  first: CensusFind,
-  finds: readonly CensusFind[],
-  setting: DiscoverRootsValue,
-  idleAfterDays: number | null,
-  now: number,
-): UnmanagedGroup {
+function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: DiscoverRootsValue): UnmanagedGroup {
   let bytes = 0;
   let measured = 0;
   let failed = 0;
   let notMeasuredYet = 0;
-  const idle: UnmanagedGroup['idle'] = [];
+  let oldestMeasuredAt: number | null = null;
   for (const find of finds) {
     bytes += find.bytes;
-    if (find.evaluatedAt === 0 || (find.failedDirs === 0 && find.measuredDirs < find.dirs)) notMeasuredYet++;
-    else if (find.failedDirs > 0) failed++;
+    if (find.evaluatedAt === 0 || (!find.unreadable && find.failedDirs === 0 && find.measuredDirs < find.dirs))
+      notMeasuredYet++;
+    else if (find.unreadable || find.failedDirs > 0) failed++;
     else measured++;
-    if (find.kind === 'reduce-only' && idleAfterDays !== null && find.lastActivityAt !== null) {
-      const idleDays = Math.floor((now - find.lastActivityAt) / DAY_MS);
-      if (idleDays >= idleAfterDays) idle.push({ path: find.path, idleDays });
-    }
+    if (find.evaluatedAt > 0 && (oldestMeasuredAt === null || find.evaluatedAt < oldestMeasuredAt))
+      oldestMeasuredAt = find.evaluatedAt;
   }
   const command = first.adoptable ? adoptCommand(setting, first.folder) : null;
   return {
@@ -111,7 +116,7 @@ function groupOf(
     notMeasuredYet,
     command,
     commandProblem: !first.adoptable ? 'too-broad' : command === null ? 'setting-unreadable' : null,
-    idle: idle.toSorted((a, b) => b.idleDays - a.idleDays),
+    oldestMeasuredAt,
   };
 }
 
@@ -123,16 +128,12 @@ export function discoveryReport({
   scan,
   census,
   setting,
-  idleAfterDays,
   home,
-  now,
 }: {
   scan: DiscoveryScanFile;
   census: DiscoveryCensusFile;
   setting: DiscoverRootsValue;
-  idleAfterDays: number | null;
   home: string;
-  now: number;
 }): DiscoveryReport {
   const summary: ScanSummary =
     scan.status === 'read'
@@ -147,23 +148,27 @@ export function discoveryReport({
           }
         : { status: 'unusable' }
       : { status: scan.status };
-  const base = { scan: summary, idleAfterDays, groups: [] };
+  const base = { scan: summary, censusCurrent: false, groups: [] };
   if (summary.status !== 'read') return { ...base, census: 'none', censusAt: null };
   if (census.status !== 'read') return { ...base, census: census.status, censusAt: null };
   if (!census.census) return { ...base, census: 'unusable', censusAt: null };
-  const roots = new Set(rootsOf(setting, home));
+  const roots = canonicalRoots(setting, home);
+  const current = summary.ranAt === census.census.scanRanAt;
   const byFolder = new Map<string, { first: CensusFind; finds: CensusFind[] }>();
-  for (const find of census.census.finds) {
-    if (roots.has(find.folder)) continue;
+  for (const listed of census.census.finds) {
+    if (roots.has(listed.folder)) continue;
+    const find = current
+      ? listed
+      : { ...listed, evaluatedAt: 0, dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
     const key = `${find.kind}\0${find.folder}`;
     const group = byFolder.get(key) ?? { first: find, finds: [] };
     group.finds.push(find);
     byFolder.set(key, group);
   }
   const groups = [...byFolder.values()]
-    .map(({ first, finds }) => groupOf(first, finds, setting, idleAfterDays, now))
+    .map(({ first, finds }) => groupOf(first, finds, setting))
     .toSorted((a, b) => (a.kind === b.kind ? b.bytes - a.bytes : a.kind === 'reduce-only' ? -1 : 1));
-  return { scan: summary, census: 'read', censusAt: census.census.at, idleAfterDays, groups };
+  return { scan: summary, census: 'read', censusAt: census.census.at, censusCurrent: current, groups };
 }
 
 const gb = (bytes: number): string =>
@@ -181,10 +186,12 @@ function sizeText(group: UnmanagedGroup): string {
   if (group.checkouts === unknown && group.bytes === 0) return 'build output not measured';
   const prefix = unknown ? 'at least ' : '';
   const rest = [
-    group.failed ? `${count(group.failed, 'checkout')} could not be measured in time` : '',
+    group.failed ? `${count(group.failed, 'checkout')} could not be measured` : '',
     group.notMeasuredYet ? `${count(group.notMeasuredYet, 'checkout')} not measured yet` : '',
   ].filter(Boolean);
-  return `${prefix}${gb(group.bytes)} of build output${rest.length ? ` (${rest.join(', ')})` : ''}`;
+  const age = group.oldestMeasuredAt === null ? [] : [`oldest measurement ${day(group.oldestMeasuredAt)}`];
+  const notes = [...rest, ...age];
+  return `${prefix}${gb(group.bytes)} of build output${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
 
 /** The doctor lines for the listing; empty when there is nothing to say. */
@@ -221,6 +228,10 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
   if (!report.groups.length) return [...lines, 'Every checkout it found is managed.'];
   if (report.censusAt !== null)
     lines.push(`Listed and measured by the daemon on ${day(report.censusAt)}; commands never walk the disk.`);
+  if (!report.censusCurrent)
+    lines.push(
+      'That list was made from an earlier scan than the last one, so its sizes are not shown until the daemon lists again.',
+    );
   for (const group of report.groups) {
     lines.push('');
     lines.push(`${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')}, ${sizeText(group)}`);
@@ -236,9 +247,9 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
           ? '  This folder is the home folder or holds it, which maintenance.discoverRoots cannot name.'
           : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
     );
-    for (const { path, idleDays } of group.idle)
+    if (group.kind === 'reduce-only')
       lines.push(
-        `  Idle for at least ${count(idleDays, 'day')} and nothing uses it: ${shorten(path, home)}. Stim never removes it; delete it yourself if you no longer need it.`,
+        '  Stim has not checked whether they are in use or hold uncommitted or unpushed work; delete a checkout you no longer need yourself, after checking that.',
       );
   }
   return lines;
@@ -256,5 +267,5 @@ export function lowDiskLine(report: DiscoveryReport, home: string): string | nul
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
   const holding = `Stim: checkouts it does not fully manage hold ${measuring ? 'at least ' : ''}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;
-  return `${holding}. Add the largest folder, ${shorten(largest.folder, home)} (${gb(largest.bytes)}), to what Stim manages with: ${largest.command}; stim doctor lists the rest.`;
+  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
 }

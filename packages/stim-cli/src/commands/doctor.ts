@@ -228,12 +228,6 @@ function toolchainLines(report: ToolchainReport): string[] {
   ];
 }
 
-/** `maintenance.olderThanDays`, the age the doctor listing calls idle; null when it is 0 or does not read. */
-function idleAfterDays(env: NodeJS.ProcessEnv): number | null {
-  const { value, error } = machineSettingValue('maintenance.olderThanDays', { config: loadConfig(), env });
-  return !error && typeof value === 'number' && value > 0 ? value : null;
-}
-
 const DISCOVERY_TITLE = 'Checkouts Stim does not fully manage';
 
 function discoverySection(report: DiscoveryReport, env: NodeJS.ProcessEnv): string[] {
@@ -792,9 +786,7 @@ async function assembleDoctorReport(
       scan: readDiscoveryScanFile(),
       census: readDiscoveryCensusFile(),
       setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env }),
-      idleAfterDays: idleAfterDays(env),
       home: homedir(),
-      now: Date.now(),
     }),
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),

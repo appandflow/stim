@@ -12,8 +12,8 @@ const WARNING_FRESH_MS = 10 * 60_000;
 
 /**
  * Warns on a command's stderr while the stim-daemon's last tick found the disk level critical, and, on a second line,
- * what the checkouts Stim does not fully manage hold when the daemon's cached census measured any. It reads two small
- * files and walks nothing; a census it cannot read adds no line.
+ * what the checkouts Stim does not fully manage hold when the daemon's cached census measured any. It reads the scan
+ * file, the census file and the config, and walks nothing; a census it cannot read adds no line.
  */
 export function warnCriticalDisk(argv: readonly string[] = process.argv.slice(2)): void {
   try {
@@ -40,9 +40,7 @@ export function warnCriticalDisk(argv: readonly string[] = process.argv.slice(2)
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env: process.env }),
-        idleAfterDays: null,
         home,
-        now: Date.now(),
       }),
       home,
     );

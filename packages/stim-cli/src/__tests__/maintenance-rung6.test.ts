@@ -182,7 +182,7 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
     measuredDirs: 1,
     failedDirs: 0,
     bytes: 3 * 1024 ** 3,
-    lastActivityAt: null,
+    unreadable: false,
   };
   const census = join(home, 'maintenance', 'discovery-census.json');
   const errors: string[] = [];
@@ -195,12 +195,12 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
   errors.length = 0;
   writeFileSync(
     census,
-    JSON.stringify({ version: 1, at: ranAt, scanRanAt: ranAt, roots: [], idleDays: 3, pending: false, finds: [find] }),
+    JSON.stringify({ version: 1, at: ranAt, scanRanAt: ranAt, roots: [], pending: false, finds: [find] }),
   );
   warnCriticalDisk(['ios']);
   expect(errors).toHaveLength(2);
   expect(errors[1]).toBe(
-    `Stim: checkouts it does not fully manage hold 3.0 GB of build output. Add the largest folder, /Users/x/dev (3.0 GB), to what Stim manages with: stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine; stim doctor lists the rest.`,
+    `Stim: checkouts it does not fully manage hold 3.0 GB of build output. Adding the largest folder, /Users/x/dev (3.0 GB), lets Stim apply its full rules there, finished linked worktree removal included: stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine; stim doctor lists the rest and what changes.`,
   );
 });
 

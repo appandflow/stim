@@ -298,8 +298,9 @@ smt", then "could be part of that", then "smt like low disk space, found project
 not managed by stim taking x space , command to add to discover roots". On the
 first of the two points it records for doctor, the decision above says: "doctor
 lists them and suggest adding as managed path or delete if idle for long time".
-Relayed by the coordinator, not on the issue: "like maybe not part of doctor since
-it could be slow", said about the scan, so doctor never walks the disk.
+Maintainer statement, 2026-11-14, as the issue records it (comment of 2026-11-15),
+verbatim: "like maybe not part of doctor since it could be slow". It was said about the
+scan itself, so doctor never walks the disk.
 
 What these words state: doctor lists the finds Stim does not fully manage and
 suggests adding the folder as a managed path, or deleting what has been idle a
@@ -333,14 +334,20 @@ maintainer:
   next one an hour later. A walk that failed or timed out is "could not be
   measured" and a directory not reached is "not measured yet", never zero; a total
   with either is "at least".
-- Idle uses `maintenance.olderThanDays` (default 3, "Days unused before the age
-  sweep removes it"; 0 turns the listing off) as the threshold, with the idle
-  stage's own evidence for a reduce-only checkout (`discoveredEvidence`): the
-  daemon records the newest activity only when that evidence is complete, older
-  than the threshold and nothing uses the checkout. Doctor lists such a checkout by
-  path, as words for the person; Stim offers no command that deletes. A dot-folder
-  find gets no idle evidence and no suggestion to delete, since an installed tool
-  cannot be told from a checkout there.
+- Every read of a checkout's layout goes through the shared bounded reader
+  (`answered`: 3 seconds, one outstanding timed-out read, none while one is
+  pending) with the abort and the run's budget checked first, driving the same
+  directory rules the deleting passes use. A path that does not exist is absent; a
+  denied or timed-out read is "could not be measured", never zero. Walks and their
+  bounds are the ones above. Idle evidence is not read: it walks a checkout's
+  source with no bound the census could apply without changing code the deleting
+  passes use, so doctor says Stim has not checked whether a checkout is in use or
+  holds uncommitted or unpushed work, and leaves deleting one to the person.
+- The census classifies a discovery computed from the scan result it records
+  (not the per-operation memo the passes share) and records that `ranAt`; a census
+  from an older scan than the scan file shows its checkouts as not measured yet.
+  An unverified child cleanup propagates out of the pass unchanged (LLP 0007);
+  any other census error is contained and logged once as `maintenance_failure`.
 - The low-disk line is a second stderr line after the existing one, at critical
   only, never on stdout or in JSON. It gives the total (with "at least" while some
   is unmeasured) and the command for the largest reduce-only folder; a dot-folder
@@ -351,8 +358,9 @@ maintainer:
 - The worktrees in `~/.codex/worktrees` reach discovery through git as reduce-only
   worktrees and are not scan finds, so they are not listed.
 
-Open for the maintainer: how long idle is "a long time" (the threshold borrows an
-existing three-day setting, which is short for a deletion suggestion); whether
+Open for the maintainer: how Stim should tell that a checkout has been idle "a
+long time" (the doctor listing does not, since the evidence cannot be bounded);
+whether
 the low-disk line also appears at the high level; whether listing the
 `~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
 Desktop show the listing.

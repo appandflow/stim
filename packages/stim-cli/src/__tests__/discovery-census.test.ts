@@ -1,12 +1,16 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { StimContext } from '@stim-cli/core';
 import { readDiscoveryCensusFile } from '@stim-cli/core/state';
 import * as diskUsage from '../disk-usage.ts';
 import { censusDue, runDiscoveryCensusIfDue } from '../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../workspace/discovery-scan.ts';
-import { saveConfig } from '../workspace/config.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
+import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { discoverCheckouts } from '../workspace/discovery.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
@@ -20,11 +24,6 @@ vi.mock('../workspace/protected-locations.ts', async (original) => {
 const hour = 3_600_000;
 const day = 24 * hour;
 const t0 = Date.UTC(2026, 10, 14);
-const reads = {
-  processes: async () => ({ commands: [], cwds: [] }),
-  launchers: async () => ({ targets: [], incomplete: [] }),
-  sessions: async () => [],
-};
 
 describe('censusDue', () => {
   const last = { at: t0, scanRanAt: 5, roots: ['/a'], pending: false };
@@ -42,8 +41,8 @@ describe('censusDue', () => {
 describe('runDiscoveryCensusIfDue', () => {
   let base: string;
   let home: string;
-  const tick = (env: NodeJS.ProcessEnv = {}) => ({
-    operation: testContext({ env }),
+  const tick = (env: NodeJS.ProcessEnv = {}, operation = testContext({ env })) => ({
+    operation,
     measured: { measurement: { disk: [{ volume: '/', freeMb: 500_000 }] } },
   });
 
@@ -53,20 +52,17 @@ describe('runDiscoveryCensusIfDue', () => {
     writeFileSync(join(path, 'android', 'build', 'out.bin'), Buffer.alloc(output));
   }
 
-  function age(path: string, at: number) {
-    const date = new Date(at);
-    utimesSync(join(path, 'package.json'), date, date);
-    utimesSync(join(path, 'android', 'build', 'out.bin'), date, date);
-    utimesSync(join(path, 'android', 'build'), date, date);
-    utimesSync(join(path, 'android'), date, date);
-    utimesSync(path, date, date);
+  async function run(
+    now: number,
+    options: Parameters<typeof runDiscoveryCensusIfDue>[1] = {},
+    operation?: StimContext,
+  ) {
+    const result = await runDiscoveryCensusIfDue(tick({}, operation), { now, attempted: { at: 0 }, ...options });
+    const file = readDiscoveryCensusFile();
+    return { result, census: file.status === 'read' ? file.census : null };
   }
 
-  async function run(now: number, options: Parameters<typeof runDiscoveryCensusIfDue>[1] = {}) {
-    await runDiscoveryCensusIfDue(tick(), { now, attempted: { at: 0 }, reads, ...options });
-    const file = readDiscoveryCensusFile();
-    return file.status === 'read' ? file.census : null;
-  }
+  const scanAt = (now: number) => runDiscoveryScanIfDue(tick(), { home, now, attempted: { at: 0 } });
 
   beforeEach(async () => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-census-')));
@@ -82,8 +78,7 @@ describe('runDiscoveryCensusIfDue', () => {
     checkout(join(home, '.exact', 'exact2', 'a'), 16384);
     checkout(join(home, '.exact', 'exact2', 'b'));
     checkout(join(home, '.mytool'));
-    age(join(home, 'dev', 'old'), t0 - 40 * day);
-    await runDiscoveryScanIfDue(tick(), { home, now: t0, attempted: { at: 0 } });
+    await scanAt(t0);
   });
 
   afterEach(() => {
@@ -93,7 +88,7 @@ describe('runDiscoveryCensusIfDue', () => {
   });
 
   it('lists what no other route manages, with each folder, and measures the build output of both kinds', async () => {
-    const census = await run(t0);
+    const { census } = await run(t0);
     expect(census?.scanRanAt).toBe(t0);
     const found = (census?.finds ?? []).map(({ path, kind, folder, adoptable }) => [
       path.slice(home.length),
@@ -108,37 +103,17 @@ describe('runDiscoveryCensusIfDue', () => {
       ['/.exact/exact2/b', 'dot-folder', '/.exact/exact2', true],
       ['/.mytool', 'dot-folder', '', false],
     ]);
-    for (const find of census?.finds ?? []) expect(find).toMatchObject({ dirs: 1, measuredDirs: 1, failedDirs: 0 });
+    for (const find of census?.finds ?? [])
+      expect(find).toMatchObject({ dirs: 1, measuredDirs: 1, failedDirs: 0, unreadable: false });
     expect(census?.finds.find(({ path }) => path.endsWith('/a'))?.bytes).toBeGreaterThanOrEqual(16384);
     expect(census?.pending).toBe(false);
   });
 
-  it('records the newest activity only of a reduce-only checkout proven idle past maintenance.olderThanDays', async () => {
-    const census = await run(t0);
-    const activity = Object.fromEntries(
-      (census?.finds ?? []).map(({ path, lastActivityAt }) => [path.slice(home.length), lastActivityAt]),
-    );
-    expect(activity['/dev/old']).toBe(t0 - 40 * day);
-    expect(activity['/dev/fresh']).toBeNull();
-    expect(activity['/.exact/exact2/a']).toBeNull();
-  });
-
-  it('keeps a checkout that something runs from out of the idle list', async () => {
-    const census = await run(t0, {
-      reads: {
-        ...reads,
-        processes: async () => ({ commands: [{ pid: 7, line: `${join(home, 'dev', 'old')}/bin/tool` }], cwds: [] }),
-      },
-    });
-    expect(census?.finds.find(({ path }) => path.endsWith('/old'))?.lastActivityAt).toBeNull();
-  });
-
-  it('never reports a walk that failed as zero bytes, and a walk that waits as unmeasured yet', async () => {
-    const refresh = vi.spyOn(diskUsage, 'refreshMeasure');
-    refresh.mockImplementation(async (path) =>
+  it('never reports a walk that failed as zero bytes, and a walk that waits as not measured yet', async () => {
+    vi.spyOn(diskUsage, 'refreshMeasure').mockImplementation(async (path) =>
       path.includes('/old/') ? { outcome: 'failed', measure: null } : { outcome: 'busy', measure: null },
     );
-    const census = await run(t0);
+    const { census } = await run(t0);
     const of = (name: string) => census?.finds.find(({ path }) => path.endsWith(name));
     expect(of('/dev/old')).toMatchObject({ dirs: 1, measuredDirs: 0, failedDirs: 1, bytes: 0 });
     expect(of('/dev/fresh')).toMatchObject({ dirs: 1, measuredDirs: 0, failedDirs: 0, bytes: 0 });
@@ -146,15 +121,21 @@ describe('runDiscoveryCensusIfDue', () => {
   });
 
   it('measures at most the bound per run, leaves the rest not measured, and the next run continues without repeating', async () => {
-    const first = await run(t0, { maxCheckouts: 2 });
+    const { census: first } = await run(t0, { maxCheckouts: 2 });
     expect(first?.finds.filter(({ evaluatedAt }) => evaluatedAt === 0)).toHaveLength(3);
     expect(first?.pending).toBe(true);
     const refresh = vi.spyOn(diskUsage, 'refreshMeasure');
-    const second = await run(t0 + hour, { maxCheckouts: 2 });
+    const { census: second } = await run(t0 + hour, { maxCheckouts: 2 });
     expect(second?.finds.filter(({ evaluatedAt }) => evaluatedAt === 0)).toHaveLength(1);
     expect(refresh).toHaveBeenCalledTimes(2);
-    const third = await run(t0 + 2 * hour, { maxCheckouts: 2 });
+    const { census: third } = await run(t0 + 2 * hour, { maxCheckouts: 2 });
     expect(third?.pending).toBe(false);
+  });
+
+  it('starts no read once the budget is spent, and keeps every checkout not measured yet', async () => {
+    const { census } = await run(t0, { budgetMs: -1 });
+    expect(census?.finds).toHaveLength(5);
+    expect(census?.finds.every(({ evaluatedAt, dirs }) => evaluatedAt === 0 && dirs === 0)).toBe(true);
   });
 
   it('classifies again after the roots change, so a folder just added is no longer listed', async () => {
@@ -165,12 +146,127 @@ describe('runDiscoveryCensusIfDue', () => {
       repos: {},
       maintenance: { discoverRoots: [join(home, 'dev', 'tools'), join(home, 'dev')] },
     });
-    const census = await run(t0 + hour);
+    const { census } = await run(t0 + hour);
     expect(census?.finds.filter(({ kind }) => kind === 'reduce-only')).toEqual([]);
   });
 
+  it('classifies the scan it records, not a discovery the same operation computed from an older scan', async () => {
+    const operation = testContext();
+    await discoverCheckouts(loadConfig(), [], operation);
+    checkout(join(home, 'dev', 'added'));
+    await scanAt(t0 + 8 * day);
+    const { census } = await run(t0 + 8 * day, {}, operation);
+    expect(census?.scanRanAt).toBe(t0 + 8 * day);
+    expect(census?.finds.map(({ path }) => path.slice(home.length))).toContain('/dev/added');
+  });
+
   it('is never run in a scoped home and writes nothing', async () => {
-    await runDiscoveryCensusIfDue(tick({ STIM_HOME: join(base, 'state') }), { now: t0, attempted: { at: 0 }, reads });
+    await runDiscoveryCensusIfDue(tick({ STIM_HOME: join(base, 'state') }), { now: t0, attempted: { at: 0 } });
     expect(readDiscoveryCensusFile()).toEqual({ status: 'absent' });
+  });
+
+  describe('reads of a checkout', () => {
+    const real = {
+      readNames: (path: string) => readdir(path),
+      isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
+      tagHead: async () => null,
+    };
+    const denied = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+
+    it('reads a denied listing as a checkout that could not be measured, never as a measured zero', async () => {
+      const { census } = await run(t0, {
+        io: {
+          ...real,
+          readNames: async (path) => {
+            if (path.endsWith(join('dev', 'old', 'android'))) throw denied();
+            return real.readNames(path);
+          },
+        },
+      });
+      const old = census?.finds.find(({ path }) => path.endsWith('/dev/old'));
+      expect(old).toMatchObject({ unreadable: true, bytes: 0, measuredDirs: 0 });
+      expect(census?.finds.find(({ path }) => path.endsWith('/dev/fresh'))).toMatchObject({
+        unreadable: false,
+        measuredDirs: 1,
+      });
+    });
+
+    it('takes a path that does not exist as absent, not as a failure', async () => {
+      const { census } = await run(t0, {
+        io: {
+          ...real,
+          readNames: async (path) => {
+            if (path.endsWith(join('dev', 'old', 'apps'))) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+            return real.readNames(path);
+          },
+        },
+      });
+      expect(census?.finds.find(({ path }) => path.endsWith('/dev/old'))).toMatchObject({
+        unreadable: false,
+        measuredDirs: 1,
+      });
+    });
+
+    describe.each([
+      ['a listing that never answers', 'readNames'],
+      ['a tag file read that never answers', 'tagHead'],
+    ] as const)('%s', (_name, which) => {
+      let release: () => void = () => {};
+      afterEach(() => release());
+
+      it('ends the read at its timeout, leaves that checkout could not be measured and starts no further read', async () => {
+        const never = new Promise<never>((_, reject) => {
+          release = () => reject(denied());
+        });
+        const started: string[] = [];
+        if (which === 'tagHead') {
+          const target = join(home, 'dev', 'old', 'target');
+          mkdirSync(target);
+          writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55');
+        }
+        const running = run(t0, {
+          readTimeoutMs: 20,
+          io: {
+            ...real,
+            readNames: (path) => {
+              if (which === 'readNames' && path.endsWith(join('dev', 'fresh', 'apps'))) {
+                started.push(which);
+                return never;
+              }
+              return real.readNames(path);
+            },
+            tagHead: () => {
+              started.push(which);
+              return never;
+            },
+          },
+        });
+        while (started.length === 0) await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(20);
+        const { result, census } = await running;
+        expect(result).toBeUndefined();
+        expect(started).toHaveLength(1);
+        const failed = census?.finds.filter(({ unreadable }) => unreadable) ?? [];
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({ bytes: 0, measuredDirs: 0 });
+        expect(census?.finds.filter(({ evaluatedAt }) => evaluatedAt === 0).length).toBeGreaterThan(0);
+        expect(hungRead()).not.toBeNull();
+      });
+    });
+  });
+
+  describe('errors from measuring', () => {
+    it('lets an unverified child cleanup propagate as the same object', async () => {
+      const failure = Object.assign(new Error('unverified'), { reportCleanup: true });
+      vi.spyOn(diskUsage, 'refreshMeasure').mockRejectedValue(failure);
+      await expect(run(t0)).rejects.toBe(failure);
+    });
+
+    it('contains any other error, returns its message and writes nothing', async () => {
+      vi.spyOn(diskUsage, 'refreshMeasure').mockRejectedValue(new Error('disk exploded'));
+      const { result, census } = await run(t0);
+      expect(result).toBe('disk exploded');
+      expect(census).toBeNull();
+    });
   });
 });
