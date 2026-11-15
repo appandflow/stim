@@ -127,8 +127,10 @@ export function scanSkipper(home: string): (path: string) => boolean {
 
 /** The files of a folder that project detection reads or stats: the manifests every integration's `inspect` looks at. */
 /**
- * Compared case-insensitively on every volume: a case-insensitive one reads `Package.JSON` as `package.json`, and a case-
- * sensitive one only loses a folder it could have accepted, the safe direction.
+ * Compared case-insensitively on every volume: a case-insensitive one reads `Package.JSON` as `package.json`. On a case-
+ * sensitive one detection reads only the exact `package.json`, so this can only reject a folder it could have accepted,
+ * except that the Xcode exemption below must hold for every manifest that folds to `package.json`, since which one
+ * detection reads depends on the volume.
  */
 const DETECTION_FILES = new Set([
   'package.json',
@@ -146,6 +148,9 @@ const XCODE_CONTAINER = /\.(xcodeproj|xcworkspace)$/i;
 /** React Native's owned roots, which detection resolves with `realpath` when it walks up from a native layout. */
 const OWNED_ROOTS = new Set(['ios', 'android']);
 const folded = (name: string): string => name.toLowerCase();
+/** The entry is not there: the only read failure that is not unsafe, and only for an entry a successful listing showed. */
+const absent = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 
 interface Entry {
   name: string;
@@ -197,7 +202,7 @@ export async function folderSafety(
   const hasContainer = entries.some((entry) => XCODE_CONTAINER.test(entry.name));
   const manifests = detection.filter((entry) => folded(entry.name) === 'package.json');
   if (manifests.length === 0) return hasContainer ? 'unsafe' : 'safe';
-  let declares = false;
+  let declares = true;
   for (const manifest of manifests) {
     let text: string;
     try {
@@ -206,8 +211,10 @@ export async function folderSafety(
       return error instanceof Unanswered ? 'unreadable' : 'unsafe';
     }
     try {
-      declares ||= declaresAppDependency(JSON.parse(text));
-    } catch {}
+      declares &&= declaresAppDependency(JSON.parse(text));
+    } catch {
+      declares = false;
+    }
   }
   return hasContainer && !declares ? 'unsafe' : 'safe';
 }
@@ -241,7 +248,8 @@ export async function nestedSafety(
           inner = await read(path);
         } catch (error) {
           if (error instanceof Unanswered) return 'unreadable';
-          continue;
+          if (absent(error)) continue;
+          return 'unsafe';
         }
         const result = await folderSafety(path, inner, timeoutMs, io);
         if (result !== 'safe') return result;

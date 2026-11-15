@@ -220,6 +220,27 @@ describe('scanForCheckouts', () => {
     expect(detect).not.toHaveBeenCalled();
   });
 
+  it('calls no detection on a folder or its child when that child cannot be listed, however readable its manifest is', async () => {
+    mkdirSync(join(home, 'mono', 'apps', 'app'), { recursive: true });
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    const listing = async (path: string) => {
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return [directory('app')];
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    };
+    const detect = vi.fn<(path: string) => boolean>(() => true);
+    const recognition = { ...REAL_RECOGNITION_IO, readEntries: listing };
+    const scan = await scanForCheckouts(home, detect, { entries: listing, recognition });
+    expect(scan.found).toEqual([]);
+    expect(detect).not.toHaveBeenCalled();
+  });
+
   it('stops at its time budget and says so', async () => {
     project('dev', 'one');
     const scan = await scanForCheckouts(home, marked, { budgetMs: -1 });

@@ -1240,7 +1240,9 @@ packages folder, or an Xcode container with no app dependency in package.json,
 makes that subtree not a scan checkout, and a manifest or file metadata read that does not answer in 3
 seconds ends the scan (cached finds stay unselected, not dropped). Not bounded:
 the ancestors above the home folder, a file that becomes unreadable between that
-check and detection, and what a pass reads inside a checkout once discovered. The result is
+check and detection, the ios and android directories detection resolves without
+the walk entering them (checked to be real directories, not that they answer, so
+a stalled mount point there is not detected), and what a pass reads inside a checkout once discovered. The result is
 kept in maintenance/discovery-scan.json under the Stim home (when it ran, what
 it found, what it could not read) and discovery reads that file, so a pass or gc
 never walks the disk. A scan that fails or stops early keeps the previous finds,

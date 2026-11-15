@@ -141,6 +141,33 @@ describe('scanEntryValid with a hand-edited scan result', () => {
         expect(await nestedSafety(where, [symlink('Packages')], 10)).toBe('unsafe');
       });
 
+      it('keeps the Xcode exemption only when every manifest that folds to package.json declares an app dependency', async () => {
+        const declaring = JSON.stringify({ dependencies: { expo: '*' } });
+        const texts: Record<string, string> = {};
+        const io = { ...REAL_RECOGNITION_IO, readText: async (path: string) => texts[path] ?? '{}' };
+        const entries = [file('package.json'), file('Package.JSON'), folder('X.xcodeproj')];
+        texts['/work/x/Package.JSON'] = declaring;
+        expect(await folderSafety(where, entries, 10, io)).toBe('unsafe');
+        texts['/work/x/package.json'] = declaring;
+        expect(await folderSafety(where, entries, 10, io)).toBe('safe');
+      });
+
+      it('is unsafe, never safe, when a child that detection enumerates cannot be listed', async () => {
+        const denied = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        const gone = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        const io = (failure: Error) => ({
+          ...REAL_RECOGNITION_IO,
+          readEntries: async (path: string) => {
+            if (path === '/work/x/apps') return [folder('app')];
+            if (path === '/work/x/apps/app') throw failure;
+            return [];
+          },
+        });
+        const entries = [folder('apps')];
+        expect(await nestedSafety(where, entries, 10, io(denied))).toBe('unsafe');
+        expect(await nestedSafety(where, entries, 10, io(gone))).toBe('safe');
+      });
+
       it('reads a mixed-case regular manifest through the bounded reader instead of skipping it', async () => {
         const reads: string[] = [];
         const io = {

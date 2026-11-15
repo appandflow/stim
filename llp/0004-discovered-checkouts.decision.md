@@ -153,7 +153,12 @@ functions to the chain from the home folder to the entry, memoised per discovery
 call, and reads the entry's own metadata (`lstat`, `stat`, `realpath`) through the
 bounded reader. Not bounded, and stated as such: the ancestor reads above the home
 folder (`/Users` and `/`); a file that becomes unreadable between the bounded read
-and detection; and everything a pass later reads synchronously inside a checkout
+and detection; the `ios` and `android` directories of the folder and of each
+ancestor, which detection resolves with `realpath` without the walk entering
+them (the gate checks that each is a real directory, not that it answers, so a
+stalled mount point there is not detected; the walk's own bounded `readdir` covers
+only the folders it enters, and the `apps`, `examples` and `packages` containers
+and their children are listed through the bounded reader by the gate); and everything a pass later reads synchronously inside a checkout
 once it is discovered (artifact collection, app roots, state), which is the same
 for registered and sibling-discovered checkouts today. Registered projects and
 sibling discovery recognise as before. An Xcode container without an app
