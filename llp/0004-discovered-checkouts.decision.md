@@ -84,9 +84,19 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
   reads that file, so a maintenance pass or `stim gc` never walks the disk.
-- Passes evaluate at most 40 reduce-only checkouts at a time, in a window over
-  them that moves every 15 minutes. Discovery still lists every one, and the
-  report says which are left for a later pass.
+- The reduction passes (the artifact and dependency collection in
+  `artifactCheckoutsAsync`, the idle and dormant stages in `idleWorkspaces`, and
+  the Cargo target candidates in `cargoTargetCandidates`) skip a reduce-only
+  checkout left for a later pass, so each evaluates at most 40 at a time, in a
+  window over them that moves every 15 minutes. Discovery still lists every one,
+  and `stim gc --dry-run` marks those left for a later pass. The window does not
+  bound the finished-worktree check (`collectWorktreeSweep`), in a background
+  pass or in the pressure ladder: it classifies and inspects every discovered
+  worktree with git (status, activity, HEAD, unpushed), measured at about 0.14
+  seconds each on one MacBook, whether or not it is left for a later pass. Skipping
+  the deferred ones there was tried and reverted, because worktrees are grouped by
+  path prefix and a group is held when any of its roots is reduce-only, so
+  dropping a root could release a held worktree.
 - The stored result keeps the schedule (last attempt, last attempt that did not
   fail, last attempt at low disk) and the finds. A failed or truncated scan
   keeps the previous finds, and a finished one keeps those under a folder it

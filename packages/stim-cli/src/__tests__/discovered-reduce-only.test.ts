@@ -539,6 +539,34 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(existsSync(codex)).toBe(true);
   });
 
+  it('holds a tool-folder worktree from removal even when a discover root inside it adds a non-reduce-only child root', async () => {
+    mkdirSync(join(main, 'packages', 'app'), { recursive: true });
+    writeFileSync(join(main, 'packages', 'app', 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'app');
+    git(main, 'push', '-q', 'origin', 'main');
+    const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'aa11', 'main'), 'codex');
+    const config = {
+      version: 2 as const,
+      projects: { [main]: {} },
+      repos: {},
+      maintenance: { discoverRoots: [join(codex, 'packages')] },
+    };
+    saveConfig(config);
+    const found = await discoverCheckouts(config, [main]);
+    expect(found.map(({ path, reduceOnly }) => [path, reduceOnly])).toEqual(
+      expect.arrayContaining([
+        [codex, true],
+        [join(codex, 'packages', 'app'), undefined],
+      ]),
+    );
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(planned.worktrees.find((entry) => entry.path === codex)).toMatchObject({
+      reduceOnly: true,
+      skipped: expect.stringContaining('never removes'),
+    });
+  });
+
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {
     const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
     const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
