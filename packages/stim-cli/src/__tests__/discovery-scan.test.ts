@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testContext } from './_context.ts';
@@ -94,6 +95,68 @@ describe('scanForCheckouts', () => {
     } finally {
       chmodSync(join(home, 'Documents', 'locked'), 0o700);
     }
+  });
+
+  it('does not call detection for a folder whose manifest read does not answer, and ends the scan truncated with the folder unreadable', async () => {
+    project('dev', 'app');
+    const detect = vi.fn<(path: string) => boolean>((path) => marked(path));
+    let started = 0;
+    let release: (text: string) => void = () => {};
+    const stuck = {
+      readEntries: (path: string) => readdir(path, { withFileTypes: true }),
+      readText: () => {
+        started++;
+        return new Promise<string>((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+    const pending = scanForCheckouts(home, detect, { recognition: stuck, readTimeoutMs: 10 });
+    const waiting = { started: () => started > 0 };
+    while (!waiting.started()) await new Promise((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await pending).toMatchObject({ truncated: true, unreadable: [join(home, 'dev', 'app')], found: [] });
+    expect(detect).not.toHaveBeenCalledWith(join(home, 'dev', 'app'));
+    release('{}');
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('treats a folder whose manifest is not a regular file as not a checkout, and goes on', async () => {
+    mkdirSync(join(home, 'dev', 'fifo'), { recursive: true });
+    project('dev', 'ok');
+    const detect = vi.fn<(path: string) => boolean>((path) => marked(path));
+    const entries = async (path: string) => {
+      const listing = await readdir(path, { withFileTypes: true });
+      return path.endsWith('fifo')
+        ? [{ name: 'package.json', isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false }]
+        : listing;
+    };
+    const scan = await scanForCheckouts(home, detect, { entries });
+    expect(scan.found).toEqual([join(home, 'dev', 'ok')]);
+    expect(detect).not.toHaveBeenCalledWith(join(home, 'dev', 'fifo'));
+  });
+
+  it('does not recognise a native Android layout below a folder whose manifest is not a regular file, since detection reads every ancestor', async () => {
+    mkdirSync(join(home, 'dev', 'app'), { recursive: true });
+    const regular = (name: string) => ({
+      name,
+      isFile: () => true,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    });
+    const fifo = { name: 'package.json', isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false };
+    const directory = { name: 'app', isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false };
+    const listing = (blocked: boolean) => async (path: string) => {
+      if (path === home) return [{ ...directory, name: 'dev' }];
+      if (path === join(home, 'dev')) return blocked ? [fifo, directory] : [directory];
+      return [regular('settings.gradle'), regular('gradlew')];
+    };
+    const detect = vi.fn<(path: string) => boolean>((path) => path.endsWith('app'));
+    expect((await scanForCheckouts(home, detect, { entries: listing(true) })).found).toEqual([]);
+    expect(detect).not.toHaveBeenCalledWith(join(home, 'dev', 'app'));
+    expect((await scanForCheckouts(home, detect, { entries: listing(false) })).found).toEqual([
+      join(home, 'dev', 'app'),
+    ]);
   });
 
   it('stops at its time budget and says so', async () => {
@@ -273,6 +336,15 @@ describe('runDiscoveryScanIfDue', () => {
       lowScanAt: t0 + 2 * hour,
       completedAt: t0 + 2 * hour,
     });
+  });
+
+  it('retries a truncated scan after an hour, like a failed one, instead of waiting a week', async () => {
+    await runDiscoveryScanIfDue(tick(), { ...options(t0), budgetMs: -1 });
+    expect(readDiscoveryScan()).toMatchObject({ truncated: true, completedAt: 0, ranAt: t0 });
+    await runDiscoveryScanIfDue(tick(), options(t0 + hour / 2));
+    expect(readDiscoveryScan()?.ranAt).toBe(t0);
+    await runDiscoveryScanIfDue(tick(), options(t0 + 2 * hour));
+    expect(readDiscoveryScan()).toMatchObject({ truncated: false, completedAt: t0 + 2 * hour });
   });
 
   it('keeps the previous finds when a scan fails and records the attempt', async () => {

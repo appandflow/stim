@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  readFileSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -18,6 +19,7 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as idleStop from '../stimd/passes/idle-stop.ts';
 import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
+import { answered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 import * as fsUtil from '../fs-util.ts';
 import { deleteOutputs } from '../daemon/idle.ts';
@@ -472,6 +474,33 @@ describe('checkouts found through a tool folder or the full scan', () => {
         }
       },
     );
+  });
+
+  it('leaves a cached scan find unselected while a read is pending, keeps it in the scan file, and selects it once the read settles', async () => {
+    const tool = join(base, 'home', 'tools', 'mytool');
+    mkdirSync(tool, { recursive: true });
+    writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeScan([tool]);
+    const file = join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json');
+    const before = readFileSync(file, 'utf8');
+    let release: (value: string) => void = () => {};
+    const hung = answered(
+      'a stalled mount',
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+      10,
+    ).catch(() => null);
+    await vi.advanceTimersByTimeAsync(10);
+    await hung;
+    const config = { projects: { [main]: {} }, repos: {} };
+    expect(await discoverCheckouts(config, [main])).toEqual([]);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    release('done');
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await discoverCheckouts(config, [main])).map((entry) => entry.path)).toEqual([tool]);
   });
 
   it('drops a cached checkout that was replaced by a symlink to a folder the scan never enters, and plans nothing under it', async () => {

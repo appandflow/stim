@@ -1221,7 +1221,7 @@ Two more sources find checkouts that Stim only reduces and never removes
 and the checkouts of the full scan. The scan is a pruned walk of the home
 folder, run by the daemon after a maintenance pass has acted (never before its
 cleanup, never by a command): weekly, and also while the disk level is above
-normal when no scan has run for an hour; a failed scan is retried after an hour.
+normal when no scan has run for an hour; a failed or truncated scan is retried after an hour.
 The schedule is kept with the result, so a restarted daemon forgets nothing. It
 reads ~/Documents (macOS may ask once; a folder that does not answer within 3
 seconds, such as one waiting for that answer, is recorded as unreadable, ends
@@ -1230,7 +1230,11 @@ folders, other volumes, symlinks, dependency or build folders, deeper
 dot-folders, the Stim home and every dot-folder starting with .stim, the build
 worker root, and the tool homes and caches among the home folder's other
 dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
-recognised project and goes seven levels deep within 45 seconds. The result is
+recognised project and goes seven levels deep within 45 seconds. Before project
+detection runs on a folder, its detection files are proved safe to read: a
+manifest that is not a regular file, or an Xcode container, makes the folder not a
+scan checkout, and a manifest that does not answer in 3 seconds ends the scan
+(cached finds stay unselected, not dropped). The result is
 kept in maintenance/discovery-scan.json under the Stim home (when it ran, what
 it found, what it could not read) and discovery reads that file, so a pass or gc
 never walks the disk. A scan that fails or stops early keeps the previous finds,

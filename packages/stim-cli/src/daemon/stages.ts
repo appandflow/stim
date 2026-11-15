@@ -510,7 +510,7 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
       const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', {
         locked: true,
         operation,
-        reduceOnly: config.projects[path] === undefined,
+        reduceOnly: false,
       });
       if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
       const owns = (kind: 'ios' | 'android') =>

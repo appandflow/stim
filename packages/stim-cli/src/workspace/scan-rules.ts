@@ -1,9 +1,12 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { buildWorkerRoot } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
+import { declaresAppDependency } from './project-files.ts';
 import { loadConfig } from './config.ts';
 
 export const MAX_DEPTH = 7;
@@ -123,24 +126,165 @@ export function scanSkipper(home: string): (path: string) => boolean {
     stim.some((folder) => within(path, folder)) || (!homeIsTemporary && temps.some((temp) => within(path, temp)));
 }
 
+/** The files of a folder that project detection reads or stats: the manifests every integration's `inspect` looks at. */
+const DETECTION_FILES = new Set([
+  'package.json',
+  'settings.gradle',
+  'settings.gradle.kts',
+  'gradlew',
+  'gradlew.bat',
+  'Package.swift',
+  'exact.mjs',
+  'app.json',
+]);
+const PROJECT_FOLDERS = ['apps', 'examples', 'packages'];
+const PROJECT_FOLDER_ENTRIES = 50;
+const XCODE_CONTAINER = /\.(xcodeproj|xcworkspace)$/;
+
+interface Entry {
+  name: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+/** How the recognition gate reads the disk; injected by tests. */
+export interface RecognitionIo {
+  readEntries: (path: string) => Promise<Entry[]>;
+  readText: (path: string) => Promise<string>;
+}
+
+export const REAL_RECOGNITION_IO: RecognitionIo = {
+  readEntries: (path) => readdir(path, { withFileTypes: true }),
+  readText: (path) => readFile(path, 'utf8'),
+};
+
+/**
+ * Whether `recognises` can be called on `folder` without a read that could block: `safe`; `unsafe` when it could (a
+ * detection file that is not a regular file, such as a FIFO or a symlink into a stalled mount, or an Xcode container,
+ * whose project files `containers()` follows by the paths they name), so the folder is not treated as a checkout;
+ * `unreadable` when a read did not answer in time, or another read is still pending (`bounded-read.ts`). `entries` is
+ * the folder's listing. A regular `package.json`, the one detection file project detection reads rather than stats, is
+ * read here first through the bounded reader, so an evicted or stalled file is found out before the synchronous read.
+ * `apps`, `examples` and `packages` children are checked the same way, because `recognises` looks inside them.
+ */
+export async function recognitionReads(
+  folder: string,
+  entries: readonly Entry[],
+  timeoutMs: number,
+  io: RecognitionIo = REAL_RECOGNITION_IO,
+  nested = true,
+): Promise<'safe' | 'unsafe' | 'unreadable'> {
+  if (hungRead() !== null) return 'unreadable';
+  const detection = entries.filter((entry) => DETECTION_FILES.has(entry.name));
+  if (detection.some((entry) => !entry.isFile())) return 'unsafe';
+  const hasContainer = entries.some((entry) => XCODE_CONTAINER.test(entry.name));
+  try {
+    if (detection.some((entry) => entry.name === 'package.json')) {
+      const text = await answered(folder, () => io.readText(join(folder, 'package.json')), timeoutMs);
+      let declares = false;
+      try {
+        declares = declaresAppDependency(JSON.parse(text));
+      } catch {}
+      if (hasContainer && !declares) return 'unsafe';
+    } else if (hasContainer) return 'unsafe';
+    if (!nested) return 'safe';
+    for (const name of PROJECT_FOLDERS) {
+      const entry = entries.find((candidate) => candidate.name === name);
+      if (!entry) continue;
+      if (entry.isSymbolicLink()) return 'unsafe';
+      if (!entry.isDirectory()) continue;
+      const children = (await answered(folder, () => io.readEntries(join(folder, name)), timeoutMs))
+        .filter((child) => child.isDirectory() && !child.isSymbolicLink())
+        .slice(0, PROJECT_FOLDER_ENTRIES);
+      for (const child of children) {
+        const path = join(folder, name, child.name);
+        const inner = await answered(folder, () => io.readEntries(path), timeoutMs).catch((error: unknown) => {
+          if (error instanceof Unanswered) throw error;
+          return null;
+        });
+        if (inner === null) continue;
+        const result = await recognitionReads(path, inner, timeoutMs, io, false);
+        if (result !== 'safe') return result;
+      }
+    }
+    return 'safe';
+  } catch (error) {
+    if (error instanceof Unanswered) return 'unreadable';
+    return 'unsafe';
+  }
+}
+
+/** Whether detection in `entries`' folder walks up the ancestors: a native Android layout is a candidate root. */
+export const needsAncestors = (entries: readonly Entry[]): boolean =>
+  entries.some((entry) => entry.name === 'settings.gradle' || entry.name === 'settings.gradle.kts');
+
 /**
  * Whether a checkout a scan recorded may still be used: it is a real directory (not a symlink), its canonical path is
  * the recorded one, it lies below the home folder on the home volume, no folder between the two is one the scan skips
- * (`scanDescends`, `skip`), and `isCheckout` still recognises it. Anything else, such as a checkout moved away with a
- * symlink left behind, is dropped.
+ * (`scanDescends`, `skip`), its detection reads are bounded (`recognitionReads`) and `isCheckout` still recognises it.
+ * `invalid` drops it, such as a checkout moved away with a symlink left behind; `pending` means a read did not answer,
+ * so it is not selected this time and stays in the scan file.
  */
-export function scanEntryValid(
+export async function scanEntryValid(
   path: string,
-  { home, isCheckout, skip }: { home: string; isCheckout: (path: string) => boolean; skip: (path: string) => boolean },
-): boolean {
+  {
+    home,
+    isCheckout,
+    skip,
+    timeoutMs = 3000,
+    io = REAL_RECOGNITION_IO,
+    ancestors = new Map(),
+  }: {
+    home: string;
+    isCheckout: (path: string) => boolean;
+    skip: (path: string) => boolean;
+    timeoutMs?: number;
+    io?: RecognitionIo;
+    /** The gate results of folders above checkouts, shared by the entries of one revalidation. */
+    ancestors?: Map<string, Promise<'safe' | 'unsafe' | 'unreadable'>>;
+  },
+): Promise<'valid' | 'invalid' | 'pending'> {
   try {
     if (!within(path, home) || path === home || lstatSync(path).isSymbolicLink() || !statSync(path).isDirectory())
-      return false;
-    if (realpathSync.native(path) !== path || statSync(path).dev !== statSync(home).dev || skip(path)) return false;
+      return 'invalid';
+    if (realpathSync.native(path) !== path || statSync(path).dev !== statSync(home).dev || skip(path)) return 'invalid';
     const names = relative(home, path).split(sep);
-    if (names.length > MAX_DEPTH) return false;
-    return names.every((name, i) => scanDescends(name, i + 1)) && isCheckout(path);
+    if (names.length > MAX_DEPTH || !names.every((name, i) => scanDescends(name, i + 1))) return 'invalid';
   } catch {
-    return false;
+    return 'invalid';
   }
+  if (hungRead() !== null) return 'pending';
+  let entries: Entry[];
+  try {
+    entries = await answered(path, () => io.readEntries(path), timeoutMs);
+  } catch (error) {
+    return error instanceof Unanswered ? 'pending' : 'invalid';
+  }
+  const reads = await recognitionReads(path, entries, timeoutMs, io);
+  if (reads === 'unreadable') return 'pending';
+  if (reads !== 'safe') return 'invalid';
+  if (needsAncestors(entries)) {
+    const above = [
+      home,
+      ...relative(home, dirname(path))
+        .split(sep)
+        .filter(Boolean)
+        .map((_, i, names) => join(home, ...names.slice(0, i + 1))),
+    ];
+    for (const folder of above) {
+      let result = ancestors.get(folder);
+      if (!result) {
+        result = answered(folder, () => io.readEntries(folder), timeoutMs).then(
+          (listing) => recognitionReads(folder, listing, timeoutMs, io, false),
+          (error: unknown) => (error instanceof Unanswered ? ('unreadable' as const) : ('unsafe' as const)),
+        );
+        ancestors.set(folder, result);
+      }
+      const gate = await result;
+      if (gate === 'unreadable') return 'pending';
+      if (gate === 'unsafe') return 'invalid';
+    }
+  }
+  return isCheckout(path) ? 'valid' : 'invalid';
 }

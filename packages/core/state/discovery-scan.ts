@@ -9,7 +9,7 @@ export interface DiscoveryScan {
   version: 2;
   /** When the last attempt started, epoch ms. A failed or truncated attempt is stamped too. */
   ranAt: number;
-  /** When the last attempt that did not fail started; 0 when none did. The weekly schedule counts from it. */
+  /** When the last attempt that finished, neither failed nor truncated, started; 0 when none did. The weekly schedule counts from it. */
   completedAt: number;
   /** When the last attempt that ran while a volume's level was above normal started; 0 when none did. */
   lowScanAt: number;

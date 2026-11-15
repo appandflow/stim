@@ -15,7 +15,15 @@ import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { loadConfig } from './config.ts';
 import { recognises } from './discovery.ts';
-import { MAX_DEPTH, scanDescends, scanSkipper } from './scan-rules.ts';
+import {
+  MAX_DEPTH,
+  REAL_RECOGNITION_IO,
+  needsAncestors,
+  recognitionReads,
+  scanDescends,
+  scanSkipper,
+  type RecognitionIo,
+} from './scan-rules.ts';
 
 const HOUR_MS = 60 * 60_000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
@@ -40,7 +48,9 @@ const refused = (error: unknown) => ['EACCES', 'EPERM'].includes(errorCode(error
  * A read that does not answer within 3 seconds stops the walk at once: the folder is recorded unreadable, the result is
  * truncated, and the read stays the pending one (`bounded-read.ts`), so no further read starts, here or in a later scan,
  * until it settles. It also stops at `MAX_DEPTH` levels, `MAX_FOLDERS` folders or `budgetMs`, and says so in
- * `truncated`. An abort rejects.
+ * `truncated`. Before `isCheckout` runs on a folder, `recognitionReads` proves that project detection cannot block
+ * there: a detection file that is not regular, or an Xcode container, makes the folder not a checkout, and a manifest
+ * read that does not answer ends the walk like any other timed-out read. An abort rejects.
  */
 export async function scanForCheckouts(
   home: string,
@@ -52,13 +62,15 @@ export async function scanForCheckouts(
     readTimeoutMs = READ_TIMEOUT_MS,
     stat: statOf = (path) => lstat(path),
     entries: entriesOf = (path) => readdir(path, { withFileTypes: true }),
+    recognition = REAL_RECOGNITION_IO,
   }: {
     budgetMs?: number;
     signal?: AbortSignal;
     skip?: (path: string) => boolean;
     readTimeoutMs?: number;
     stat?: (path: string) => Promise<{ dev: number }>;
-    entries?: (path: string) => Promise<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean }[]>;
+    entries?: RecognitionIo['readEntries'];
+    recognition?: RecognitionIo;
   } = {},
 ): Promise<ScanOutcome> {
   const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false };
@@ -87,7 +99,7 @@ export async function scanForCheckouts(
     if (!stopAt(home, error)) throw error;
     return outcome;
   }
-  const walk = async (folder: string, depth: number): Promise<void> => {
+  const walk = async (folder: string, depth: number, unsafeAbove: boolean): Promise<void> => {
     if (exhausted()) return;
     outcome.visited++;
     let entries;
@@ -97,7 +109,14 @@ export async function scanForCheckouts(
       stopAt(folder, error);
       return;
     }
-    if (depth > 0 && isCheckout(folder)) {
+    const reads = await recognitionReads(folder, entries, readTimeoutMs, recognition, depth > 0);
+    if (reads === 'unreadable') {
+      outcome.unreadable.push(folder);
+      outcome.truncated = true;
+      return;
+    }
+    const above = unsafeAbove || reads === 'unsafe';
+    if (depth > 0 && reads === 'safe' && !(above && needsAncestors(entries)) && isCheckout(folder)) {
       outcome.found.push(folder);
       return;
     }
@@ -114,10 +133,10 @@ export async function scanForCheckouts(
         if (stopAt(path, error)) return;
         continue;
       }
-      if (info.dev === volume) await walk(path, depth + 1);
+      if (info.dev === volume) await walk(path, depth + 1, above);
     }
   };
-  await walk(home, 0);
+  await walk(home, 0, false);
   return outcome;
 }
 
@@ -134,8 +153,9 @@ export function mergeFound(previous: readonly string[], outcome: ScanOutcome): s
 
 /**
  * Whether a scan is due. Never twice within an hour, so a failing or truncated scan is retried hourly and a rise and
- * fall of the disk level cannot start a run of scans; then weekly from the last attempt that did not fail, or hourly
- * while the level is above normal and no scan has run during it for an hour.
+ * fall of the disk level cannot start a run of scans; then weekly from the last scan that finished (a failed or
+ * truncated one is partial and does not count), or hourly while the level is above normal and no scan has run during
+ * it for an hour.
  */
 export function discoveryScanDue(
   last: Pick<DiscoveryScan, 'ranAt' | 'completedAt' | 'lowScanAt'> | null,
@@ -178,7 +198,8 @@ export async function runDiscoveryScanIfDue(
     home = homedir(),
     now = Date.now(),
     attempted = attempts,
-  }: { home?: string; now?: number; attempted?: { at: number } } = {},
+    budgetMs,
+  }: { home?: string; now?: number; attempted?: { at: number }; budgetMs?: number } = {},
 ): Promise<void> {
   if (!tick || isScopedHome(tick.operation.env)) return;
   const { operation } = tick;
@@ -207,10 +228,11 @@ export async function runDiscoveryScanIfDue(
     const outcome = await scanForCheckouts(realHome, recognises, {
       signal: operation.signal,
       skip: scanSkipper(realHome),
+      ...(budgetMs === undefined ? {} : { budgetMs }),
     });
     writeScan({
       ...attempt,
-      completedAt: now,
+      completedAt: outcome.truncated ? (last?.completedAt ?? 0) : now,
       durationMs: Date.now() - now,
       ...outcome,
       found: mergeFound(last?.found ?? [], { ...outcome, found: outcome.found.filter((p) => !dotFolder(p)) }),

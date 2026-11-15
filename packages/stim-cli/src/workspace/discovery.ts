@@ -261,12 +261,15 @@ function discovery(
 }
 
 /** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
-function revalidatedScan(): DiscoveryChild[] {
+async function revalidatedScan(): Promise<DiscoveryChild[]> {
   const home = canonicalPath(homedir());
   const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
-  return (readDiscoveryScan()?.found ?? [])
-    .filter((path) => isAbsolute(path) && scanEntryValid(path, rules))
-    .map((path) => ({ path, origin: 'scan', from: 'full scan', recognised: true }));
+  const valid: DiscoveryChild[] = [];
+  const ancestors = new Map();
+  for (const path of readDiscoveryScan()?.found ?? [])
+    if (isAbsolute(path) && (await scanEntryValid(path, { ...rules, ancestors })) === 'valid')
+      valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
+  return valid;
 }
 
 async function computeDiscovered(
@@ -337,7 +340,7 @@ async function computeDiscovered(
       else outside.push({ path, from: main });
     }
   }
-  const scanned: DiscoveryChild[] = scoped ? [] : revalidatedScan();
+  const scanned: DiscoveryChild[] = scoped ? [] : await revalidatedScan();
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );

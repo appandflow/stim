@@ -131,6 +131,28 @@ installed command. The record lets doctor report what the folder holds and the
 command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
+Project detection (`recognises`) on a scan or revalidation path is bounded by
+construction, because it reads files synchronously and a stalled mount, an
+iCloud file waiting for a download or a FIFO would block the thread. Per folder it
+reads `package.json` (existence and content), checks the existence of
+`settings.gradle(.kts)`, `gradlew(.bat)`, `Package.swift`, `exact.mjs` and
+`app.json`, lists the folder and stats its `*.xcodeproj` and `*.xcworkspace`
+entries, lists `apps`, `examples` and `packages` and repeats this for up to 50
+children of each, and for a native Android or Xcode layout without an app
+dependency walks every ancestor up to `/` doing the same. Before `recognises`
+runs, the folder's own listing is checked: a detection file that is not a regular
+file makes the folder not a checkout, a regular `package.json` is read first
+through the bounded reader (a read that does not answer ends the scan truncated,
+or leaves a cached find unselected and in the file), the children of `apps`,
+`examples` and `packages` get the same treatment, and a native Android layout
+below a folder with such a non-regular file is not recognised. An Xcode
+container is not treated as a scan checkout, because its project files name
+other files that cannot be listed ahead of time; sibling and root discovery still
+recognise it. What stays unbounded: the ancestor reads of a native Android layout
+for `/Users` and `/` (local system volumes), and the synchronous read of a file
+that became unreadable between the bounded read and detection. Registered
+projects and sibling discovery recognise as before.
+
 A scan find outside a home dot-folder can also be an installed tool. Every route
 that deletes outputs, dependencies or Cargo data of a reduce-only checkout keeps
 the checkout while an executable reachable through a PATH directory is a symlink
@@ -163,13 +185,12 @@ readings and the home scan (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
 therefore holds one libuv thread per isolate, and reduction of reduce-only
-checkouts stays off until that read settles. The daemon has two isolates that
-read launchers, the main thread (the dormant stage and the pressure ladder, which
-reach `clearStoppedOutputs`) and the passes thread (the artifact, dependency and
-Cargo routes), so up to two reads can be outstanding in the daemon; the scan runs
-only on the passes thread, and CLI commands are separate processes. A scan stops
-at the first read that times out: the result is truncated and the previous finds
-are kept.
+checkouts stays off until that read settles. Two isolates in the daemon can
+read launchers, the main thread and the passes thread, so up to two reads can be
+outstanding there; the scan runs only on the passes thread, and CLI commands are
+separate processes. A scan stops at the first read that times out: the result is
+truncated and the previous finds are kept. A truncated scan, like a failed one, is
+retried after an hour; the weekly schedule counts only from a scan that finished.
 A directory or entry that does not exist, and a dangling symlink, is no
 launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
 keeps every reduce-only checkout for that operation, with a reason naming the
@@ -220,7 +241,7 @@ minutes (not "least recently handled first"), the depth of seven, the folders
 pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
 `~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
 normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the
-retry of a failed scan after an hour, the scan running only in the daemon
+retry of a failed or truncated scan after an hour (its result is partial), the scan running only in the daemon
 after the pass, and the PATH launcher keep. The scan is not deferred under host
 load; it takes about a second and a half on one MacBook.
 
