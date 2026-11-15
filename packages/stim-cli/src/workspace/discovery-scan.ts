@@ -8,9 +8,11 @@ import {
   maintenanceDir,
   readDiscoveryScan,
   type DiscoveryScan,
-  type MaintenancePressure,
+  type DaemonMeasurement,
 } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
+import { loadConfig } from './config.ts';
 import { recognises } from './discovery.ts';
 
 const HOUR_MS = 60 * 60_000;
@@ -119,11 +121,19 @@ export async function scanForCheckouts(
   return outcome;
 }
 
-/** Whether a scan is due: weekly, and hourly while a volume is below its normal free-disk level. */
-export function discoveryScanDue(last: Pick<DiscoveryScan, 'ranAt'> | null, now: number, lowDisk: boolean): boolean {
+/** Whether a scan is due: weekly, and once an hour after the disk level rose above normal. */
+export function discoveryScanDue(last: Pick<DiscoveryScan, 'ranAt'> | null, now: number, rose: boolean): boolean {
   if (!last || last.ranAt > now) return true;
-  return now - last.ranAt >= (lowDisk ? HOUR_MS : WEEK_MS);
+  return now - last.ranAt >= (rose ? HOUR_MS : WEEK_MS);
 }
+
+/** What this process remembers between ticks: when it last tried a scan, and whether the disk level was above normal. */
+interface ScanMemory {
+  attemptedAt: number;
+  wasLow: boolean;
+}
+
+const processMemory: ScanMemory = { attemptedAt: 0, wasLow: false };
 
 function writeScan(scan: DiscoveryScan): void {
   mkdirSync(maintenanceDir(), { recursive: true });
@@ -142,43 +152,40 @@ function writeScan(scan: DiscoveryScan): void {
 }
 
 /**
- * Scans the home folder when the weekly or low-disk schedule says so and stores the result under the Stim home. A scan
- * that fails or runs out of time is stored too, with the checkouts the last scan found, so it is not retried every
- * tick. Only a daemon tick scans, never a command, and a scoped STIM_HOME never does.
+ * Scans the home folder when the weekly schedule says so, or an hour after the last scan when the disk level has just
+ * risen above normal, and stores the result under the Stim home. A scan that fails or runs out of time is stored too,
+ * with the checkouts the last scan found, and this process does not retry within the interval even when nothing could
+ * be stored. Only a daemon tick scans, never a command, and a scoped STIM_HOME never does. Nothing but an abort
+ * escapes, so a scan can never stop the maintenance pass it runs in.
  */
 export async function runDiscoveryScanIfDue(
-  tick: { operation: StimContext } | undefined,
-  pressure: Pick<MaintenancePressure, 'diskLevel'> | null,
-  home: string = homedir(),
+  tick: { operation: StimContext; measured: { measurement: Pick<DaemonMeasurement, 'disk'> } } | undefined,
+  { home = homedir(), memory = processMemory }: { home?: string; memory?: ScanMemory } = {},
 ): Promise<void> {
   if (!tick || isScopedHome(tick.operation.env)) return;
   const { operation } = tick;
-  const lowDisk = (pressure?.diskLevel ?? 0) > 0;
-  const last = readDiscoveryScan();
   const now = Date.now();
-  if (!discoveryScanDue(last, now, lowDisk)) return;
-  const trigger = lowDisk ? 'low-disk' : 'weekly';
+  const thresholds = diskThresholds(loadConfig(), operation.env).thresholds;
+  const low = diskPressure(tick.measured.measurement.disk, thresholds).level !== 'normal';
+  const rose = low && !memory.wasLow;
+  memory.wasLow = low;
+  const last = readDiscoveryScan();
+  const ranAt = Math.max(last?.ranAt ?? 0, memory.attemptedAt);
+  if (!discoveryScanDue(ranAt > 0 ? { ranAt } : null, now, rose)) return;
+  memory.attemptedAt = now;
+  const trigger = rose ? 'low-disk' : 'weekly';
+  const store = (scan: Omit<DiscoveryScan, 'version' | 'ranAt' | 'durationMs' | 'trigger'>) =>
+    writeScan({ version: 1, ranAt: now, durationMs: Date.now() - now, trigger, ...scan });
   try {
     const outcome = await scanForCheckouts(canonicalPath(home), recognises, { signal: operation.signal });
-    writeScan({
-      version: 1,
-      ranAt: now,
-      durationMs: Date.now() - now,
-      trigger,
-      ...outcome,
-      found: outcome.found.toSorted(),
-    });
+    store({ ...outcome, found: outcome.found.toSorted() });
   } catch {
-    operation.signal.throwIfAborted();
-    writeScan({
-      version: 1,
-      ranAt: now,
-      durationMs: Date.now() - now,
-      trigger,
-      visited: 0,
-      found: last?.found ?? [],
-      unreadable: last?.unreadable ?? [],
-      truncated: true,
-    });
+    if (operation.signal.aborted) {
+      memory.attemptedAt = 0;
+      return;
+    }
+    try {
+      store({ visited: 0, found: last?.found ?? [], unreadable: last?.unreadable ?? [], truncated: true });
+    } catch {}
   }
 }

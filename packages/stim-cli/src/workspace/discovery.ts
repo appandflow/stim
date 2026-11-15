@@ -218,8 +218,9 @@ interface Discovery {
  * projects (`git worktree list`) inside the folders Stim manages, recognised direct children of the folders holding
  * those checkouts, and recognised direct children of `maintenance.discoverRoots`. Nothing under the system temporary
  * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots`
- * folder. A scoped STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of
- * another. Nothing is registered, written or persisted.
+ * folder, or is a worktree in a tool folder or a checkout of the last full scan, which are reduce-only. A scoped
+ * STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of another. Discovery
+ * registers and writes nothing; the full scan's result is read from the file the daemon wrote.
  */
 export async function discoverCheckouts(
   config: Config | null,

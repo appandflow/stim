@@ -1201,7 +1201,8 @@ or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
 manages and gets no action of any kind. Nothing under the system temporary
 directory or a dot-folder directly inside the home directory is ever touched,
-except inside a maintenance.discoverRoots folder, which is always considered.
+except inside a maintenance.discoverRoots folder, which is always considered,
+and the ~/.codex/worktrees worktrees below, which are only reduced.
 A worktree nested in a registered root is left to that workspace. The home
 directory and / are never a folder that holds known projects. A scoped
 STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery
@@ -1210,7 +1211,7 @@ a discovered repository and pull requests come from the cache.
 Two more sources find checkouts that Stim only reduces and never removes
 (reduce-only): linked worktrees of known repositories in ~/.codex/worktrees,
 and the checkouts of the full scan. The scan is a pruned walk of the home
-folder, run by the daemon weekly and, while the disk level is above normal, at
+folder, run by the daemon weekly and, when the disk level rises above normal, at
 most hourly; no command runs it. It reads ~/Documents (macOS may
 ask once), skips ~/Desktop, ~/Downloads, ~/Library, the media folders, other
 volumes, dot-folders, symlinks and dependency or build folders, stops at a

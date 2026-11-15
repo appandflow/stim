@@ -16,7 +16,9 @@ registered checkouts, and direct children of the folders in
 `maintenance.discoverRoots`. A child counts only when Stim's project detection
 recognises it, itself or through a direct child of its `apps`, `examples` or
 `packages` folder. Discovery registers nothing, writes nothing, recomputes each
-run and never runs `git fetch`.
+run and never runs `git fetch`. Two more sources, the common tool folders and the
+full scan (see "Tool folders and the full scan"), add checkouts that are only
+reduced.
 
 Reason: checkouts no `stim` command ran in can hold most of a disk; an audit of
 one MacBook on 2026-11-11 found 119 of 151 checkouts, 248 GB, unknown to Stim,
@@ -39,14 +41,17 @@ checkout folder, a folder that holds a known project, or a
 `maintenance.discoverRoots` folder. Nothing under the system temporary directory
 or a dot-folder directly inside the home directory is ever touched, unless it
 lies inside a `maintenance.discoverRoots` folder: a path inside such a folder
-is never a protected location, matched after symlinks resolve. The home
+is never a protected location, matched after symlinks resolve. The one other
+exception is `~/.codex/worktrees`, whose worktrees are reduce-only (see "Tool
+folders and the full scan"). The home
 directory and `/` are never a folder that holds known projects. A scoped
 `STIM_HOME` discovers only from its own `maintenance.discoverRoots`.
 
 Reason: `git worktree list` also returns worktrees other tools own, such as
 `~/.codex/worktrees`, pin checkouts under a home dot-folder and agent scratch
 folders under the temporary directory. Stim cannot tell what those tools still
-need. A scratch home must not reach the repositories of the real one.
+need, so it removes none of them; it reduces only the outputs of the
+`~/.codex/worktrees` ones. A scratch home must not reach the repositories of the real one.
 
 Maintainer decision: "Def need to fix it if its the case, paths added to
 discover root need to always be considered", 2026-11-14 (#5757), about a folder
@@ -97,21 +102,38 @@ Maintainer decision, 2026-11-14 (#5762), verbatim:
 Earlier the same evening, on including common tool folders by default: "Could
 these common paths just be included by default in Discovered checkout".
 
-The coordinator's reading, not the maintainer's words, for the points that
+The coordinator's reading, not the maintainer's words, for the points the
 decision leaves open:
 
 1. Checkouts found only through a common path or the full scan are reduced and
-   never removed by Stim. Removal is what doctor suggests to the person.
-2. Common paths start with `~/.codex/worktrees`. Others are added only with
-   evidence that a tool uses that path.
-3. "Once in a while" is weekly; on low disk the scan runs when a volume's level
+   never removed by Stim: build outputs, tagged caches, and a linked worktree's
+   `node_modules` and Pods go by the discovered-checkout rules, and the checkout
+   or worktree itself stays. This is the rule that already applies to a worktree
+   in a dot-folder of its main checkout (`.claude/worktrees`). Removal is what
+   doctor suggests to the person. A folder named in `maintenance.discoverRoots`
+   keeps the full discovered rules, removal of finished worktrees included.
+2. Common paths start with `~/.codex/worktrees`. Other tools' folders are added
+   only with evidence that the tool uses that path.
+3. "Once in a while" is weekly. On low disk the scan runs when a volume's level
    rises above normal, at most once an hour.
-4. Doctor reads the last scan's result and does not run the scan.
-5. `~/Desktop`, `~/Downloads` and other volumes are not scanned.
-6. The bound of 40 per discovery, the 15 minute window, the depth of seven and
-   the folders pruned are implementation choices, not decisions.
+4. Doctor reads the last scan's result and does not run the scan, so it stays
+   fast.
+5. The line Stim commands print on low disk also names what the scan found, its
+   size and the command that adds it.
+6. `~/Desktop` and `~/Downloads` are not scanned. Other volumes are not scanned.
+7. "Idle for a long time" has no number yet.
 
-Doctor's listing and the line printed on low disk are not part of this change.
+Chosen by the implementing lane, not by the maintainer or the coordinator: the
+bound of 40 reduce-only checkouts per discovery in a window that moves every 15
+minutes (not "least recently handled first"), the depth of seven, the folders
+pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
+`~/Applications` left out, the low-disk scan running once per rise of the disk
+level (the daemon's high or critical disk level, `disk.minFreeGb`) at most
+hourly rather than hourly for as long as the disk stays low, and the scan
+running only in the daemon.
+
+Not part of this change: points 4, 5 and 7, which belong to the doctor listing
+and the low-disk line.
 
 ## Removing a discovered worktree needs more evidence
 

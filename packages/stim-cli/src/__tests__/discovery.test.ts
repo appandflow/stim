@@ -154,6 +154,7 @@ describe('discoverCheckouts', () => {
   it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {
     vi.stubEnv('STIM_HOME', '');
     vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
     const docs = join(base, 'home', 'Documents', 'old-app');
     app(docs);
     mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });

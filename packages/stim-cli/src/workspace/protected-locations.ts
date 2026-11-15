@@ -25,7 +25,7 @@ function real(path: string): string | null {
 /**
  * Whether a path lies under the system temporary directory, or under a dot-folder directly inside the home directory
  * (`~/.codex`, `~/.config`, `~/.exact`): other tools own what is there, so Stim never acts on it. A path that does not
- * resolve counts as protected.
+ * resolve counts as protected. Discovery lists the worktrees in `~/.codex/worktrees` anyway, as reduce-only.
  */
 export function isProtectedLocation(path: string, roots: Roots = defaultRoots()): boolean {
   const target = real(path);

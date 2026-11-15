@@ -417,7 +417,7 @@ export async function runMaintenance(
       recent: [],
       plan: [],
     };
-    await runDiscoveryScanIfDue(tick, state.pressure);
+    await runDiscoveryScanIfDue(tick);
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);

@@ -56,6 +56,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-reduce-only-')));
     vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
     vi.stubEnv('STIM_HOME', '');
     main = join(base, 'dev', 'main');
     mkdirSync(main, { recursive: true });
