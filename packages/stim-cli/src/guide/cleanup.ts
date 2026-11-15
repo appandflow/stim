@@ -1277,13 +1277,10 @@ each have one; the scan runs on the passes thread) no other launcher or scan
 read starts and a scheduled scan is skipped. A scan stops at the first read that
 times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
 their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
-checkout's after idle.sourceDormantDays), reduced by the rules below. The
-reduction passes (artifact and dependency collection, the idle and dormant
-stages, and the Cargo target measurement) evaluate at most 40 of them at a time,
-in a window that moves every 15 minutes; stim gc --dry-run lists all of them and
-says which are left for a later pass. The finished-worktree check is not bounded
-by that window: in a background pass and in the pressure ladder it still inspects
-every discovered worktree with git (about 0.14 seconds each where measured). A
+checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
+evaluated on every pass, like a sibling-discovered checkout; the
+finished-worktree check inspects every discovered worktree with git (about 0.14
+seconds each where measured). A
 folder named in maintenance.discoverRoots
 keeps the full rules. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine

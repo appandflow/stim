@@ -1,4 +1,4 @@
-import { isJsonObject, readJsonObject } from './json-file.ts';
+import { isJsonObject, readStateFile } from './json-file.ts';
 import { discoveryScanFile } from './paths.ts';
 
 /** How an attempt ended: finished, cut short by the folder cap or the time budget, or by a read that timed out or a failure. */
@@ -79,6 +79,33 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
   };
 }
 
+/**
+ * The scan file as the scheduler needs it: `absent` (no previous result), `unreadable` (it exists and could not be
+ * read, so nothing is known and no scan may run on top of it), or `read` with the result, which is null when the
+ * contents do not parse or are another version, since they are unusable either way.
+ */
+export type DiscoveryScanFile =
+  | { status: 'absent' }
+  | { status: 'unreadable' }
+  | { status: 'read'; scan: DiscoveryScan | null };
+
+export function readDiscoveryScanFile(): DiscoveryScanFile {
+  let text: string;
+  try {
+    text = readStateFile(discoveryScanFile());
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+      ? { status: 'absent' }
+      : { status: 'unreadable' };
+  }
+  try {
+    return { status: 'read', scan: parseDiscoveryScan(JSON.parse(text)) };
+  } catch {
+    return { status: 'read', scan: null };
+  }
+}
+
 export function readDiscoveryScan(): DiscoveryScan | null {
-  return parseDiscoveryScan(readJsonObject(discoveryScanFile()));
+  const file = readDiscoveryScanFile();
+  return file.status === 'read' ? file.scan : null;
 }

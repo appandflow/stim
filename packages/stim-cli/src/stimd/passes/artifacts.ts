@@ -145,9 +145,7 @@ export async function artifactCheckoutsAsync(
   operation?: StimContext,
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  const discovered = (await discoverCheckouts(loadConfig(), listedRoots(), operation)).filter(
-    (entry) => !entry.deferred,
-  );
+  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
   const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {

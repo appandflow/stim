@@ -243,9 +243,7 @@ async function idleWorkspaces(
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
-  const found = discover
-    ? (await discoverCheckouts(config, listedRoots(), reading.operation)).filter(({ deferred }) => !deferred)
-    : [];
+  const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {

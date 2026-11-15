@@ -33,12 +33,7 @@ import {
 import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
-import {
-  windowReduceOnly,
-  discoverCheckouts,
-  discoveredOutside,
-  type DiscoveredCheckout,
-} from '../workspace/discovery.ts';
+import { discoverCheckouts, discoveredOutside } from '../workspace/discovery.ts';
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
   const real = await original<typeof import('../workspace/protected-locations.ts')>();
@@ -567,6 +562,68 @@ describe('checkouts found through a tool folder or the full scan', () => {
     });
   });
 
+  it('treats a tool-folder worktree as reduce-only for the artifact and Cargo passes too when a discover root inside it adds a child root', async () => {
+    mkdirSync(join(main, 'packages', 'app'), { recursive: true });
+    mkdirSync(join(main, 'ios', 'App.xcodeproj'), { recursive: true });
+    writeFileSync(join(main, 'packages', 'app', 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(main, 'ios', 'App.xcodeproj', 'project.pbxproj'), 'x');
+    writeFileSync(join(main, '.gitignore'), 'target/\nnode_modules/\n');
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'app');
+    git(main, 'push', '-q', 'origin', 'main');
+    const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'aa11', 'main'), 'codex');
+    mkdirSync(join(codex, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(codex, 'node_modules', '.bin', 'tool'), '#!/bin/sh\n');
+    mkdirSync(join(codex, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(codex, 'target', 'debug', 'incremental'), { recursive: true });
+    mkdirSync(join(codex, 'target', 'release'), { recursive: true });
+    writeFileSync(join(codex, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(codex, 'target', 'debug', 'incremental', 'data'), 'x'.repeat(10_000));
+    writeFileSync(join(codex, 'target', 'release', 'tool'), '#!/bin/sh\n');
+    age(codex);
+    saveConfig({
+      version: 2,
+      projects: { [main]: {} },
+      repos: {},
+      maintenance: { discoverRoots: [join(codex, 'packages')] },
+    });
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    const { signal } = new AbortController();
+    const checkouts = await artifactCheckoutsAsync(signal, testContext({ env: {} }));
+    expect(checkouts.find((entry) => entry.path === codex)?.reduceOnly).toBe(true);
+
+    const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
+    const dependencies = (await collectArtifactsAsync('dependencies', options, signal, testContext({ env: {} })))
+      .candidates;
+    expect(dependencies.map((entry) => entry.path)).toContain(join(codex, 'node_modules'));
+    const plan = () =>
+      planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation: testContext({ env: {} }),
+      });
+    expect((await plan()).actions.map((action) => action.target)).toContain(join(codex, 'target'));
+
+    mkdirSync(join(base, 'home', 'bin'));
+    symlinkSync(join(codex, 'target', 'release', 'tool'), join(base, 'home', 'bin', 'tool'));
+    const kept = await collectArtifactsAsync('dependencies', options, signal, testContext({ env: {} }));
+    expect(kept.candidates.map((entry) => entry.path)).not.toContain(join(codex, 'node_modules'));
+    expect(kept.skips).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: join(codex, 'node_modules'), reason: expect.stringContaining('on PATH') }),
+      ]),
+    );
+    const after = await plan();
+    expect(after.actions.map((action) => action.target)).not.toContain(join(codex, 'target'));
+    expect(after.skips).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: join(codex, 'target'), reason: expect.stringContaining('on PATH') }),
+      ]),
+    );
+  });
+
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {
     const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
     const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
@@ -584,33 +641,5 @@ describe('checkouts found through a tool folder or the full scan', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees({ ...planned, worktrees }, { now: Date.now() });
     expect(existsSync(codex)).toBe(true);
-  });
-});
-
-describe('windowReduceOnly', () => {
-  const entry = (n: number, reduceOnly = true): DiscoveredCheckout => ({
-    path: `/p/${String(n).padStart(3, '0')}`,
-    origin: 'scan',
-    from: 'full scan',
-    ...(reduceOnly ? { reduceOnly: true } : {}),
-  });
-  const window = 15 * 60_000;
-  const handled = (found: DiscoveredCheckout[]) => found.filter((e) => !e.deferred).map((e) => e.path);
-
-  it('lists every checkout, defers all but a moving window of the reduce-only ones, and takes each in turn', () => {
-    const all = [entry(1, false), ...Array.from({ length: 10 }, (_, i) => entry(i + 10))];
-    const now = 100 * window;
-    const first = windowReduceOnly(all, now, 4);
-    expect(first.map((e) => e.path)).toEqual(all.map((e) => e.path));
-    expect(first.filter((e) => e.reduceOnly && !e.deferred)).toHaveLength(4);
-    expect(first[0]?.deferred).toBeUndefined();
-    const seen = new Set<string>();
-    for (let i = 0; i < 10; i++) for (const path of handled(windowReduceOnly(all, now + i * window, 4))) seen.add(path);
-    expect(seen.size).toBe(all.length);
-  });
-
-  it('defers nothing when the reduce-only ones fit the limit', () => {
-    const all = [entry(1), entry(2)];
-    expect(windowReduceOnly(all, 0, 4)).toEqual(all);
   });
 });

@@ -84,19 +84,18 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
   reads that file, so a maintenance pass or `stim gc` never walks the disk.
-- The reduction passes (the artifact and dependency collection in
-  `artifactCheckoutsAsync`, the idle and dormant stages in `idleWorkspaces`, and
-  the Cargo target candidates in `cargoTargetCandidates`) skip a reduce-only
-  checkout left for a later pass, so each evaluates at most 40 at a time, in a
-  window over them that moves every 15 minutes. Discovery still lists every one,
-  and `stim gc --dry-run` marks those left for a later pass. The window does not
-  bound the finished-worktree check (`collectWorktreeSweep`), in a background
-  pass or in the pressure ladder: it classifies and inspects every discovered
-  worktree with git (status, activity, HEAD, unpushed), measured at about 0.14
-  seconds each on one MacBook, whether or not it is left for a later pass. Skipping
-  the deferred ones there was tried and reverted, because worktrees are grouped by
-  path prefix and a group is held when any of its roots is reduce-only, so
-  dropping a root could release a held worktree.
+- Every reduce-only checkout is evaluated on every pass, like a sibling-discovered
+  checkout, and classified from the complete discovery list. A window of 40 per
+  pass was built and removed: filtering by it before classification changed
+  what was protected, twice (a worktree grouped with a nested discover root lost
+  its reduce-only status). Bounding per-pass cost for many checkouts belongs to
+  #5531; the finished-worktree check (`collectWorktreeSweep`) inspects every
+  discovered worktree with git (status, activity, HEAD, unpushed), measured at about
+  0.14 seconds each on one MacBook.
+- An existing scan file that cannot be read (any error other than it not existing)
+  stops the scan for that tick and writes nothing, as an unreadable config does;
+  one that reads but does not parse, or is another version, is treated as no
+  result, since its contents are unusable either way.
 - The stored result keeps the schedule (last attempt, last attempt that did not
   fail, last attempt at low disk) and the finds. A failed or truncated scan
   keeps the previous finds, and a finished one keeps those under a folder it
@@ -281,8 +280,7 @@ decision leaves open:
 7. "Idle for a long time" has no number yet.
 
 Chosen by the implementing lane, not by the maintainer or the coordinator: the
-bound of 40 reduce-only checkouts per discovery in a window that moves every 15
-minutes (not "least recently handled first"), the depth of seven, the folders
+depth of seven, the folders
 pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
 `~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
 normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the

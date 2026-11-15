@@ -120,9 +120,7 @@ async function cargoTargetCandidates(
   };
   for (const root of registered) await add(root, false, false, root);
   const discovered = new Set(
-    (await discoverCheckouts(loadConfig(), listedRoots(), operation))
-      .filter(({ deferred }) => !deferred)
-      .map(({ path }) => canonicalPath(path)),
+    (await discoverCheckouts(loadConfig(), listedRoots(), operation)).map(({ path }) => canonicalPath(path)),
   );
   for (const checkout of await artifactCheckoutsAsync(signal, operation))
     for (const base of appRoots(checkout, 'build'))

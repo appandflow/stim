@@ -574,6 +574,31 @@ describe('runDiscoveryScanIfDue', () => {
     expect(readDiscoveryScan()?.found).toEqual([join(base, 'home', 'dev', 'app')]);
   });
 
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'starts no scan and writes nothing when an existing scan file cannot be read',
+    async () => {
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      const before = readFileSync(discoveryScanFile(), 'utf8');
+      chmodSync(discoveryScanFile(), 0o000);
+      try {
+        let started = 0;
+        await runDiscoveryScanIfDue(tick(), {
+          ...options(t0 + 8 * 24 * hour),
+          scanOptions: {
+            entries: async () => {
+              started++;
+              return [];
+            },
+          },
+        });
+        expect(started).toBe(0);
+      } finally {
+        chmodSync(discoveryScanFile(), 0o600);
+      }
+      expect(readFileSync(discoveryScanFile(), 'utf8')).toBe(before);
+    },
+  );
+
   describe('a read that fails for a reason other than a timeout or absence', () => {
     const denied = () => Object.assign(new Error('EACCES'), { code: 'EACCES' });
     const later = () => options(t0 + 8 * 24 * hour);

@@ -21,10 +21,6 @@ type DiscoveryOrigin = 'worktree' | 'sibling' | 'root' | 'scan';
  */
 const TOOL_FOLDERS = ['.codex/worktrees'];
 
-/** At most this many checkouts found only through a tool folder or the full scan are handled per discovery. */
-const MAX_REDUCE_ONLY = 40;
-const REDUCE_ONLY_WINDOW_MS = 15 * 60_000;
-
 export interface DiscoveredCheckout {
   /** The canonical path of the checkout. */
   path: string;
@@ -33,11 +29,6 @@ export interface DiscoveredCheckout {
   from: string;
   /** Found through a tool folder or the full scan: Stim reduces its outputs and never removes it. */
   reduceOnly?: boolean;
-  /**
-   * A reduce-only checkout outside the window of at most `MAX_REDUCE_ONLY` that this discovery hands to the passes that
-   * evaluate each checkout; a later window takes it. Reports still list it.
-   */
-  deferred?: boolean;
 }
 
 export interface DiscoveryChild {
@@ -181,23 +172,6 @@ export function inToolFolder(path: string, home: string): boolean {
 }
 
 /**
- * Marks all but `limit` of the checkouts found only through a tool folder or the full scan as `deferred`: a window over
- * them that moves with `now`, so every one is handled within a few windows and one pass evaluates a bounded number.
- * Every checkout stays in the list, so no report or classification loses one.
- */
-export function windowReduceOnly(
-  found: readonly DiscoveredCheckout[],
-  now: number,
-  limit: number = MAX_REDUCE_ONLY,
-): DiscoveredCheckout[] {
-  const only = found.filter((entry) => entry.reduceOnly);
-  if (only.length <= limit) return [...found];
-  const start = (Math.floor(now / REDUCE_ONLY_WINDOW_MS) * limit) % only.length;
-  const kept = new Set(Array.from({ length: limit }, (_, i) => only[(start + i) % only.length]));
-  return found.map((entry) => (entry.reduceOnly && !kept.has(entry) ? { ...entry, deferred: true } : entry));
-}
-
-/**
  * Whether Stim acts on a discovered linked worktree: it lies in its repository's own main checkout folder, in a folder
  * that holds a known project, or in a `maintenance.discoverRoots` folder, and not in a protected location. A path inside
  * a `maintenance.discoverRoots` folder is never protected.
@@ -232,9 +206,8 @@ export async function discoverCheckouts(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
-  now: number = Date.now(),
 ): Promise<DiscoveredCheckout[]> {
-  return (await discovery(config, known, operation, now)).found;
+  return (await discovery(config, known, operation)).found;
 }
 
 /** What discovery reached outside the folders Stim manages. */
@@ -248,15 +221,10 @@ export async function discoveredOutside(
 
 const memo = new WeakMap<StimContext, Promise<Discovery>>();
 
-function discovery(
-  config: Config | null,
-  known: readonly string[],
-  operation?: StimContext,
-  now: number = Date.now(),
-): Promise<Discovery> {
-  if (!operation) return computeDiscovered(config, known, operation, now);
+function discovery(config: Config | null, known: readonly string[], operation?: StimContext): Promise<Discovery> {
+  if (!operation) return computeDiscovered(config, known, operation);
   let found = memo.get(operation);
-  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation, now)));
+  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation)));
   return found;
 }
 
@@ -276,7 +244,6 @@ async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
-  now: number = Date.now(),
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
@@ -346,11 +313,10 @@ async function computeDiscovered(
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
-  const selected = windowReduceOnly(everything, now);
   const listed = new Set(everything.map(({ path }) => path));
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {
-    found: selected,
+    found: everything,
     outside: outside.filter(({ path }) => !listed.has(path) && !coveredByKnown(path)),
   };
 }

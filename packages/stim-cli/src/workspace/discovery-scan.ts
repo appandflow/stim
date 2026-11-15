@@ -7,7 +7,7 @@ import {
   type ScanTruncation,
   discoveryScanFile,
   maintenanceDir,
-  readDiscoveryScan,
+  readDiscoveryScanFile,
   type DaemonMeasurement,
   type DiscoveryScan,
 } from '@stim-cli/core/state';
@@ -255,7 +255,9 @@ export async function runDiscoveryScanIfDue(
   try {
     const thresholds = diskThresholds(loadConfig(), operation.env).thresholds;
     low = diskPressure(tick.measured.measurement.disk, thresholds).level !== 'normal';
-    last = readDiscoveryScan();
+    const file = readDiscoveryScanFile();
+    if (file.status === 'unreadable') return;
+    last = file.status === 'read' ? file.scan : null;
   } catch {
     return;
   }
