@@ -352,6 +352,36 @@ Each record has src: gc, level (info, or error for a failed item), msg and
            and the reason a kept or failed item was left
 Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
 
+DAEMON LOG TIMING
+$STIM_HOME/daemon/daemon.ndjson (rotated at 8 MiB, one older file kept as
+daemon.ndjson.1) carries one debug record, event daemon_step, for each timed
+step. It is written when the step ends, whether it finished, threw or was
+aborted, so a step that took hours shows where the time went. Fields: step,
+startedAt (ISO time), durationMs, items (when the step counts any), outcome
+(finished, threw or aborted), error (threw only, at most 200 characters), and
+for a rung: rung and pressureLevel (the level the rung ran at). A loop's record falls
+between its rung's startedAt and its end. Steps and what items counts:
+  rung                          a pressure ladder rung; the actions it recorded
+  idle_stage_candidates,
+  stopped_output_candidates,
+  dormant_candidates            the workspace and checkout evidence loops;
+                                the checkouts visited
+  collect_artifacts             the artifact scan of a dependency step; the
+                                candidates and skips it found
+  rank_dependencies,
+  rank_source_dependencies      the dependencies ranked, and for the source
+                                step also those kept
+  plan_rung6, plan_worktrees,
+  plan_history                  the actions or worktrees the plan returned
+  dormant_dependencies          the dormant dependency step, when it runs (at
+                                most hourly); the actions it took or kept
+A step writes one record, never one per item. A tick at normal writes one
+(dormant_candidates); at high up to 16 and at critical up to 22; the dormant
+dependency step adds about 7 an hour. The records change nothing a pass does.
+Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
+before the install signature and target reads to the end of the folder walk;
+nothing reads it yet.
+
 BUILD LEDGER
 stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any
 directory: one record per native build run (ios, android or macos; compiled

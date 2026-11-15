@@ -146,19 +146,25 @@ export async function refreshMeasure(
   const skip = () => freshMeasure(path, options) !== null || failedRecently();
   const fresh = () => ({ outcome: 'fresh' as const, measure: freshMeasure(path, options) });
   if (skip()) return fresh();
-  const record = (bytes: number, privateBytes: number | null, signature: string | null, at: number): DiskMeasure => {
+  const record = (
+    bytes: number,
+    privateBytes: number | null,
+    signature: string | null,
+    at: number,
+    walkMs: number | null,
+  ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
       measuredAt: new Date(at).toISOString(),
       ...(privateBytes !== null ? { privateBytes } : {}),
       ...(signature ? { signature } : {}),
     };
-    writeCacheFile(diskUsageCacheFile(path), { path, ...measure });
+    writeCacheFile(diskUsageCacheFile(path), { path, ...measure, ...(walkMs !== null ? { walkMs } : {}) });
     return measure;
   };
   if (!existsSync(path)) {
     if (!dependency) return { outcome: 'fresh', measure: null };
-    return { outcome: 'measured', measure: record(0, 0, ABSENT, now()) };
+    return { outcome: 'measured', measure: record(0, 0, ABSENT, now(), null) };
   }
   const claim = options.claim ? takeWalkClaim() : null;
   if (options.claim && !claim) return { outcome: 'busy', measure: null };
@@ -190,7 +196,10 @@ export async function refreshMeasure(
         writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
       return { outcome: 'failed', measure: null };
     }
-    return { outcome: 'measured', measure: record(size.bytes, size.privateBytes, signature, startedAt) };
+    return {
+      outcome: 'measured',
+      measure: record(size.bytes, size.privateBytes, signature, startedAt, Math.max(0, now() - startedAt)),
+    };
   } catch (error) {
     cleanupUnverified = error instanceof Error && 'reportCleanup' in error;
     throw error;
