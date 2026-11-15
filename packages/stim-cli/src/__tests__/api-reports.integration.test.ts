@@ -34,6 +34,11 @@ import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
+const cleanupBudget = vi.hoisted((): { ms?: number } => ({}));
+vi.mock('../process-group-exit.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../process-group-exit.ts')>();
+  return { ...original, groupExitBudgetMs: (capMs?: number) => cleanupBudget.ms ?? original.groupExitBudgetMs(capMs) };
+});
 const removal = vi.hoisted((): { after?: (path: unknown) => void } => ({}));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
@@ -1162,6 +1167,7 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
   const targets: { pid: number; processToken: string }[] = [];
   const targetPid = join(item.root, 'probe.pid');
   let closed: Promise<void> = Promise.resolve();
+  cleanupBudget.ms = 1000;
   const capture = vi
     .spyOn(identities, 'captureProcessIdentity')
     .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
@@ -1202,6 +1208,7 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
     expect(inspectProcessIdentity(owned)).toBe('same');
     for (const record of targets) expect(inspectProcessIdentity(record)).toBe('same');
   } finally {
+    cleanupBudget.ms = undefined;
     capture.mockRestore();
     probe.mockRestore();
     controller.abort();
