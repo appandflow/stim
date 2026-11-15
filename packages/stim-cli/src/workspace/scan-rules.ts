@@ -177,7 +177,10 @@ export const REAL_RECOGNITION_IO: RecognitionIo = {
   realpath: (path) => realpath(path),
 };
 
-type Safety = 'safe' | 'unsafe' | 'unreadable';
+type Safety = 'safe' | 'unsafe' | 'unreadable' | 'stopped';
+
+/** Asked before every read the gate makes: true when the scan's own limit (abort, time budget, folder cap) has run out. */
+type Stop = () => boolean;
 
 /**
  * Whether project detection can read in `folder` without blocking, from the folder's own listing: `unsafe` when a
@@ -194,6 +197,7 @@ export async function folderSafety(
   entries: readonly Entry[],
   timeoutMs: number,
   io: RecognitionIo = REAL_RECOGNITION_IO,
+  stop?: Stop,
 ): Promise<Safety> {
   if (hungRead() !== null) return 'unreadable';
   const detection = entries.filter((entry) => DETECTION_FILES.has(folded(entry.name)));
@@ -204,6 +208,7 @@ export async function folderSafety(
   if (manifests.length === 0) return hasContainer ? 'unsafe' : 'safe';
   let declares = true;
   for (const manifest of manifests) {
+    if (stop?.()) return 'stopped';
     let text: string;
     try {
       text = await answered(folder, () => io.readText(join(folder, manifest.name)), timeoutMs);
@@ -223,12 +228,15 @@ export async function folderSafety(
  * `folderSafety` for what detection inspects below `folder` itself: each of `apps`, `examples` and `packages` (the
  * container folder, with its own `package.json`) and up to 50 children of each. A symlinked container, or any unsafe or
  * unreadable member, makes the result that. The ancestors of `folder` are the caller's: they have passed `folderSafety`.
+ * `stop` is asked before every read, so a scan's budget is honoured between them (`stopped`); revalidation passes none,
+ * and is bounded per read and by detection's own caps (50 children per container, at most seven folders in the chain).
  */
 export async function nestedSafety(
   folder: string,
   entries: readonly Entry[],
   timeoutMs: number,
   io: RecognitionIo = REAL_RECOGNITION_IO,
+  stop?: Stop,
 ): Promise<Safety> {
   const read = (path: string) => answered(path, () => io.readEntries(path), timeoutMs);
   try {
@@ -236,13 +244,15 @@ export async function nestedSafety(
       if (entry.isSymbolicLink()) return 'unsafe';
       if (!entry.isDirectory()) continue;
       const container = join(folder, entry.name);
+      if (stop?.()) return 'stopped';
       const members = await read(container);
-      const own = await folderSafety(container, members, timeoutMs, io);
+      const own = await folderSafety(container, members, timeoutMs, io, stop);
       if (own !== 'safe') return own;
       for (const child of members
         .filter((member) => member.isDirectory() && !member.isSymbolicLink())
         .slice(0, PROJECT_FOLDER_ENTRIES)) {
         const path = join(container, child.name);
+        if (stop?.()) return 'stopped';
         let inner: Entry[];
         try {
           inner = await read(path);
@@ -251,7 +261,7 @@ export async function nestedSafety(
           if (absent(error)) continue;
           return 'unsafe';
         }
-        const result = await folderSafety(path, inner, timeoutMs, io);
+        const result = await folderSafety(path, inner, timeoutMs, io, stop);
         if (result !== 'safe') return result;
       }
     }
@@ -329,11 +339,10 @@ export async function scanEntryValid(
       ancestors.set(folder, gate);
     }
     const { listing, safety } = await gate;
-    if (safety === 'unreadable') return 'pending';
-    if (safety === 'unsafe') return 'invalid';
+    if (safety !== 'safe') return safety === 'unsafe' ? 'invalid' : 'pending';
     if (folder === path) own = listing;
   }
   const nested = await nestedSafety(path, own, timeoutMs, io);
-  if (nested === 'unreadable') return 'pending';
-  return nested === 'safe' && isCheckout(path) ? 'valid' : 'invalid';
+  if (nested !== 'safe') return nested === 'unsafe' ? 'invalid' : 'pending';
+  return isCheckout(path) ? 'valid' : 'invalid';
 }

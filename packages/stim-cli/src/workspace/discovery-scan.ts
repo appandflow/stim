@@ -123,7 +123,8 @@ export async function scanForCheckouts(
       stopAt(folder, error);
       return;
     }
-    const safety = await folderSafety(folder, entries, readTimeoutMs, recognition);
+    const safety = await folderSafety(folder, entries, readTimeoutMs, recognition, exhausted);
+    if (safety === 'stopped') return;
     if (safety === 'unreadable') {
       outcome.unreadable.push(folder);
       stop('read');
@@ -132,7 +133,8 @@ export async function scanForCheckouts(
     const above = unsafeAbove || safety === 'unsafe';
     if (above) return;
     if (depth > 0) {
-      const nested = await nestedSafety(folder, entries, readTimeoutMs, recognition);
+      const nested = await nestedSafety(folder, entries, readTimeoutMs, recognition, exhausted);
+      if (nested === 'stopped') return;
       if (nested === 'unreadable') {
         outcome.unreadable.push(folder);
         stop('read');

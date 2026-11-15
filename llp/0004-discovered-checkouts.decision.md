@@ -131,6 +131,15 @@ installed command. The record lets doctor report what the folder holds and the
 command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
+The scan has a 45 second budget (and a 200 thousand folder cap, and an abort),
+checked before every read it makes, including every read of the safety checks
+below: when it runs out the folder is not recognised and the scan ends truncated
+as `budget`, keeping the previous finds. It can overrun the budget by at most one
+read's 3 second timeout plus the time detection itself takes on the folder it is
+recognising, which is synchronous and not interruptible. Revalidation has no total
+budget; each read has the 3 second timeout, and the number of reads is bounded by
+detection's own caps (50 children per container, seven folders in the chain).
+
 Project detection (`recognises`) reads files synchronously, and a stalled mount,
 an iCloud file waiting for a download or a FIFO would block the thread. Before
 detection runs on a folder, the scan or the revalidation proves its reads cannot

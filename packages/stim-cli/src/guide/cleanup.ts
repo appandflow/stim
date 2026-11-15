@@ -1231,7 +1231,15 @@ folders, other volumes, symlinks, dependency or build folders, deeper
 dot-folders, the Stim home and every dot-folder starting with .stim, the build
 worker root, and the tool homes and caches among the home folder's other
 dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
-recognised project and goes seven levels deep within 45 seconds. Before project
+recognised project and goes seven levels deep. The scan has a 45 second budget,
+checked before every read it makes (including every read of the project checks
+below); when it runs out the scan ends truncated as a budget stop and keeps the
+previous finds. It can overrun the budget by at most one read's 3 second timeout,
+plus the time project detection itself takes on the folder it is recognising,
+which is synchronous and cannot be interrupted. Revalidation of cached finds has
+no total budget: each read is bounded by the 3 second timeout, and the number of
+reads by detection's own caps (50 children per container, seven folders in the
+chain). Before project
 detection runs on a folder, the manifests detection reads are proved safe, for
 the folder, each ancestor down from the home folder, its apps, examples and
 packages folders and their children: a manifest (any case) that is not a regular file, an

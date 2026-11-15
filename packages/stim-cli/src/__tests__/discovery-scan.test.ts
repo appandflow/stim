@@ -241,6 +241,38 @@ describe('scanForCheckouts', () => {
     expect(detect).not.toHaveBeenCalled();
   });
 
+  it("ends the scan truncated as budget, without calling detection, when a folder's nested checks outlast the remaining budget", async () => {
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    mkdirSync(join(home, 'mono', 'apps'), { recursive: true });
+    const children = Array.from({ length: 50 }, (_, i) => directory(`app${i}`));
+    let reads = 0;
+    const listing = async (path: string) => {
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return children;
+      return [];
+    };
+    const slow = async (path: string) => {
+      reads++;
+      vi.setSystemTime(Date.now() + 1000);
+      return listing(path);
+    };
+    const detect = vi.fn<(path: string) => boolean>(() => true);
+    const scan = await scanForCheckouts(home, detect, {
+      entries: listing,
+      recognition: { ...REAL_RECOGNITION_IO, readEntries: slow },
+      budgetMs: 5000,
+    });
+    expect(scan).toMatchObject({ truncated: true, truncation: 'budget', found: [] });
+    expect(detect).not.toHaveBeenCalled();
+    expect(reads).toBeLessThan(10);
+  });
+
   it('stops at its time budget and says so', async () => {
     project('dev', 'one');
     const scan = await scanForCheckouts(home, marked, { budgetMs: -1 });
