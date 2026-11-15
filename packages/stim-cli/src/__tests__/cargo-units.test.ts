@@ -117,7 +117,12 @@ describe('a profile on disk with Exact ledger', () => {
       writeLedger();
       stub({});
 
-      const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
+      const result = await trimCargoTarget(target, {
+        launching: { reduceOnly: false },
+        needBytes: 0,
+        incremental: 'all',
+        units: 'all',
+      });
 
       expect(result.removed).toContain('debug: 1 idle units');
       expect(readdirSync(join(profile(), '.fingerprint')).filter((name) => name.startsWith('foo-'))).toHaveLength(8);
@@ -132,7 +137,12 @@ describe('a profile on disk with Exact ledger', () => {
     stub({});
 
     expect(idleCargoUnitPaths(target, Date.now())).toEqual([]);
-    const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
+    const result = await trimCargoTarget(target, {
+      launching: { reduceOnly: false },
+      needBytes: 0,
+      incremental: 'all',
+      units: 'all',
+    });
 
     expect(result.removed).not.toContain('debug: 1 idle units');
     expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
@@ -146,7 +156,12 @@ describe('a profile on disk with Exact ledger', () => {
     stub({});
     expect(idleCargoUnitPaths(target, Date.now())).toEqual([]);
 
-    const result = await trimCargoTarget(target, { needBytes: 0, incremental: 'all', units: 'all' });
+    const result = await trimCargoTarget(target, {
+      launching: { reduceOnly: false },
+      needBytes: 0,
+      incremental: 'all',
+      units: 'all',
+    });
 
     expect(result.removed).not.toContain('debug: 1 idle units');
     expect(existsSync(join(profile(), 'deps', `libserde-${h(1)}.rlib`))).toBe(true);
@@ -160,7 +175,7 @@ describe('a profile on disk with Exact ledger', () => {
     writeLedger();
     stub({ ps: () => `${join(profile(), 'deps', `tokio-${h(3)}.d`)} --nocapture\n` });
 
-    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0, units: 'all' });
 
     expect(result.removed).toEqual(['debug: 1 idle units']);
     expect(existsSync(join(profile(), 'deps', `libtokio-${h(3)}.rlib`))).toBe(true);
@@ -178,7 +193,7 @@ describe('a profile on disk with Exact ledger', () => {
     writeLedger();
     stub({});
 
-    const sweep = () => trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const sweep = () => trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0, units: 'all' });
     const locked = await withCargoLocks([join(target, dir, lock)], sweep);
 
     expect(locked).toMatchObject({ value: { removed: [], kept: [expect.stringContaining(`holds ${lock}`)] } });
@@ -193,7 +208,7 @@ describe('a profile on disk with Exact ledger', () => {
     mkdirSync(join(profile(), '.cargo-build-lock'));
     stub({});
 
-    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0, units: 'all' });
 
     expect(result.removed).toEqual([]);
     expect(result.kept.join(' ')).toContain('.cargo-build-lock could not be locked');
@@ -213,7 +228,7 @@ describe('a profile on disk with Exact ledger', () => {
       },
     });
 
-    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0, units: 'all' });
 
     expect(result.removed).toEqual([]);
     expect(existsSync(fp)).toBe(true);
@@ -234,7 +249,7 @@ describe('a profile on disk with Exact ledger', () => {
       },
     });
 
-    const result = await trimCargoTarget(target, { needBytes: 0, units: 'all' });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0, units: 'all' });
 
     expect(result.removed).toEqual(['debug: 25 idle units']);
     expect(result.kept.join(' ')).toContain('Exact updated its ledger');

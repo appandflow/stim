@@ -173,6 +173,8 @@ interface WorktreeCandidate {
   activity: WorktreeActivity | null;
   /** Discovery found it; see `WorktreeFacts.discovered`. */
   discovered?: boolean;
+  /** Discovered through a tool folder or the full scan: never removed, only reduced. */
+  reduceOnly?: boolean;
   /** The main checkout of its repository, for a discovered worktree. */
   source?: string;
   /** How many uncommitted or untracked entries removal archives first; absent or 0 for a clean worktree. */
@@ -599,7 +601,8 @@ async function discoveredHold(candidate: WorktreeCandidate, operation?: StimCont
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),
-    reads: discoveredReads(operation?.signal),
+    reads: discoveredReads(operation?.signal, operation),
+    reduceOnly: candidate.reduceOnly === true,
     operation,
   });
   return hold ? [hold] : [];
@@ -831,6 +834,7 @@ export async function collectWorktreeSweep({
   const outside: WorktreeCandidate[] = [];
   const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const discoveredPaths = new Set(discovered.map(({ path }) => path));
+  const reduceOnlyPaths = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const candidates = await candidateRootsAsync(operation, discovered);
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
@@ -914,7 +918,13 @@ export async function collectWorktreeSweep({
         skipped: null,
         eligibleAt: null,
         activity,
-        ...(discoveredOnly ? { discovered: true, ...('refusal' in source ? {} : { source: source.path }) } : {}),
+        ...(discoveredOnly
+          ? {
+              discovered: true,
+              ...(roots.some((root) => reduceOnlyPaths.has(root)) ? { reduceOnly: true } : {}),
+              ...('refusal' in source ? {} : { source: source.path }),
+            }
+          : {}),
         ...(archiveDirty ? { dirty } : {}),
       },
       facts,
@@ -971,12 +981,13 @@ export async function collectWorktreeSweep({
   const handed = worktrees.filter((candidate) => candidate.discovered && candidate.skipped === null);
   if (handed.length) {
     const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
-    const reads = discoveredReads(operation?.signal);
+    const reads = discoveredReads(operation?.signal, operation);
     for (const candidate of handed) {
       const hold = await discoveredRemovalHold(candidate.path, {
         main: candidate.source ?? null,
         idleMs: dormantMs(operation),
         reads,
+        reduceOnly: candidate.reduceOnly === true,
         operation,
       });
       if (hold) Object.assign(candidate, { skipCode: 'recent-activity', skipped: `kept: ${hold}`, eligibleAt: null });

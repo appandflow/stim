@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
+import { testContext } from './_context.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
   discoverCheckouts,
@@ -21,7 +22,9 @@ import {
   type DiscoveryChild,
 } from '../workspace/discovery.ts';
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+}));
 
 describe('isBroadFolder', () => {
   it('refuses the home folder, a folder holding it and the filesystem root, and accepts a folder below it', () => {
@@ -148,6 +151,45 @@ describe('discoverCheckouts', () => {
       [join(base, 'dev', 'neighbour'), 'sibling'],
     ]);
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
+  });
+
+  it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
+    const docs = join(base, 'home', 'Documents', 'old-app');
+    app(docs);
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    const scan = {
+      version: 2,
+      completedAt: 1,
+      lowScanAt: 0,
+      ranAt: 1,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [docs, join(base, 'gone')],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    };
+    writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+    expect(
+      (await discoverCheckouts({ projects: {}, repos: {} }, [])).map(({ path, origin, reduceOnly }) => [
+        path,
+        origin,
+        reduceOnly,
+      ]),
+    ).toEqual([[docs, 'scan', true]]);
+    vi.stubEnv('STIM_HOME', join(base, 'scoped'));
+    expect(
+      await discoverCheckouts(
+        { projects: {}, repos: {} },
+        [],
+        testContext({ env: { STIM_HOME: join(base, 'scoped') } }),
+      ),
+    ).toEqual([]);
   });
 
   it('never takes the home directory as a folder that holds known projects', async () => {

@@ -246,6 +246,10 @@ export function maintenanceStateFile(): string {
   return join(maintenanceDir(), 'state.json');
 }
 
+export function discoveryScanFile(): string {
+  return join(maintenanceDir(), 'discovery-scan.json');
+}
+
 export function gcLogDir(): string {
   return join(configDir(), 'gc');
 }

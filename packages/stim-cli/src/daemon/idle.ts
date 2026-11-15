@@ -15,6 +15,7 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { launcherReason, type Launching } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -186,11 +187,15 @@ async function decide(
 }
 
 /** The regenerable outputs the idle stage deletes, and why each other one stays. */
-export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
+export async function idleOutputs(
+  path: string,
+  config: Config,
+  launching: Launching,
+): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
   for (const dir of await existingBuildDirsAsync(path)) {
-    const problem = await regenerableDirProblem(path, dir);
+    const problem = await regenerableDirProblem(path, dir, undefined, { launching });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else paths.push(dir);
   }
@@ -209,10 +214,20 @@ export async function idleOutputs(path: string, config: Config): Promise<{ paths
   return { paths, kept };
 }
 
-export async function deleteOutputs(paths: readonly string[]): Promise<number> {
+/**
+ * Deletes `paths`, measuring each first. For a reduce-only checkout `guard` reads the executables on PATH anew after the
+ * measurement, immediately before each removal, and keeps a path whose checkout one resolves into, saying so in `kept`.
+ */
+export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
   let freed = 0;
   for (const path of paths) {
-    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const launcher = launching.reduceOnly ? launcherReason(launching.checkout, await launching.launchers()) : null;
+    if (launcher) {
+      kept.push(`kept ${path}: ${launcher}`);
+      continue;
+    }
+    freed += bytes;
     await rm(path, { recursive: true, force: true });
   }
   return freed;
@@ -306,8 +321,9 @@ async function enterIdleStage(
               const [kind, slot = 'default'] = key.split(':');
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
-            const outputs = await idleOutputs(path, config);
-            const freed = await deleteOutputs(outputs.paths);
+            const launching: Launching = { reduceOnly: false };
+            const outputs = await idleOutputs(path, config, launching);
+            const freed = await deleteOutputs(outputs.paths, launching, outputs.kept);
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';

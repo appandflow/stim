@@ -28,7 +28,8 @@ STIM_HOME home runs it like any other.
 The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
 (every 5 minutes), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). The reading plans nothing, the idle check
+minutes) and the age sweep (daily); the daemon also rescans the home folder for
+checkouts after the pass, weekly and also at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
 plans only idle stops, and the cap trims follow the size, worktree and sweep
 checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
@@ -1208,12 +1209,80 @@ or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
 manages and gets no action of any kind. Nothing under the system temporary
 directory or a dot-folder directly inside the home directory is ever touched,
-except inside a maintenance.discoverRoots folder, which is always considered.
+except inside a maintenance.discoverRoots folder, which is always considered,
+and the ~/.codex/worktrees worktrees below, which are only reduced.
 A worktree nested in a registered root is left to that workspace. The home
 directory and / are never a folder that holds known projects. A scoped
 STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery
 registers nothing, writes nothing and recomputes each run; no git fetch runs in
 a discovered repository and pull requests come from the cache.
+Two more sources find checkouts that Stim only reduces and never removes
+(reduce-only): linked worktrees of known repositories in ~/.codex/worktrees,
+and the checkouts of the full scan. The scan is a pruned walk of the home
+folder, run by the daemon after a maintenance pass has acted (never before its
+cleanup, never by a command): weekly, and also while the disk level is above
+normal when no scan has run for an hour; a scan that failed or ended on a read that timed out is retried after an hour,
+one that stopped at its folder cap or time budget is not.
+The schedule is kept with the result, so a restarted daemon forgets nothing. It
+reads ~/Documents (macOS may ask once; a folder that does not answer within 3
+seconds, such as one waiting for that answer, is recorded as unreadable, ends
+that scan early with the previous finds kept, and is read on the next scan), skips ~/Desktop, ~/Downloads, ~/Library, the media
+folders, other volumes, symlinks, dependency or build folders, deeper
+dot-folders, the Stim home and every dot-folder starting with .stim, the build
+worker root, and the tool homes and caches among the home folder's other
+dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
+recognised project and goes seven levels deep. The scan has a 45 second budget,
+checked before every read it makes (including every read of the project checks
+below); when it runs out the scan ends truncated as a budget stop and keeps the
+previous finds. It can overrun the budget by at most one read's 3 second timeout,
+plus the time project detection itself takes on the folder it is recognising,
+which is synchronous and cannot be interrupted. Revalidation of cached finds has
+no total budget: each read is bounded by the 3 second timeout, and the number of
+reads by detection's own caps (50 children per container, the home folder and up to
+seven below it). Before project
+detection runs on a folder, the manifests detection reads are proved safe, for
+the folder, each ancestor down from the home folder, its apps, examples and
+packages folders and their children: a manifest (any case) that is not a regular file, an
+ios or android entry that is not a real directory, a symlinked apps, examples or
+packages folder, or an Xcode container with no app dependency in package.json,
+makes that subtree not a scan checkout, and a manifest or file metadata read that does not answer in 3
+seconds ends the scan (cached finds stay unselected, not dropped). Not bounded:
+the ancestors above the home folder, a file that becomes unreadable between that
+check and detection, the ios and android directories detection resolves without
+the walk entering them (checked to be real directories, not that they answer, so
+a stalled mount point there is not detected), and what a pass reads inside a checkout once discovered. The result is
+kept in maintenance/discovery-scan.json under the Stim home (when it ran, what
+it found, what it could not read) and discovery reads that file, so a pass or gc
+never walks the disk. A scan that fails or stops early keeps the previous finds,
+and a finished one keeps those under a folder it could not read, which includes a
+folder whose project check was denied by the system (it is listed unreadable, not
+rejected). Discovery checks
+each recorded checkout again before using it: still a real folder (not a
+symlink), on the home volume, below no skipped folder and still a project;
+anything else is dropped. Checkouts the scan finds under a dot-folder of the
+home folder are recorded in the result and never acted on, because an installed
+tool cannot be told from a checkout there; maintenance.discoverRoots is the way
+to manage one. A reduce-only checkout that an executable on PATH (a symlink in a
+PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
+~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
+resolves into is kept whole, by every pass that deletes its outputs,
+dependencies or Cargo target. A directory that cannot be read (not one that is
+missing, or one that does not answer within 3 seconds) keeps every reduce-only
+checkout for that pass, and the reason names it and says fixing its permissions
+restores reduction. Each deletion reads the directories anew, at the moment it
+reads the processes using the path (not the pass's planning reading); a
+directory that hangs ends the reading as incomplete at once, and while that read
+is pending (at most one per thread: the daemon's main thread and passes thread
+each have one; the scan runs on the passes thread) no other launcher or scan
+read starts and a scheduled scan is skipped. A scan stops at the first read that
+times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
+their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
+checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
+evaluated on every pass, like a sibling-discovered checkout; the
+finished-worktree check inspects every discovered worktree with git (about 0.14
+seconds each where measured). A
+folder named in maintenance.discoverRoots
+keeps the full rules. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes
 (git-ignored files included; node_modules, Pods and nested worktrees skipped,
@@ -1221,8 +1290,13 @@ and build, dist, target, .cache and similar folders skipped only where git
 ignores them), its last commit and its git writes, for idle.dormantDays. A
 process running from or working in it, an agent session in it, a pin by
 maintenance.keep, more source files than the scan reads, or evidence that
-cannot be read keeps it. Its regenerable build outputs go when it is idle; a
-linked one also loses node_modules and Pods, a main checkout keeps them. A
+cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
+node_modules and Pods go too: a linked worktree's after idle.dormantDays (default
+1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
+never), by the same evidence. That holds for every kind of discovered checkout
+(children of the folders holding registered checkouts, children of
+maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
+and a PATH launcher keeps a reduce-only one. A
 target directory at a checkout root whose CACHEDIR.TAG starts with the standard
 CACHEDIR.TAG signature line and whose files git ignores counts as build output
 for every checkout.
@@ -1239,8 +1313,8 @@ Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
 skip-worktree, which hides edits from git status. A worktree inside a
 dot-folder of its main checkout other than .worktrees (.claude/worktrees) is
-managed by another tool and is never removed, though its outputs are reduced.
-Dirty work is never archived.
+managed by another tool and is never removed, though its outputs are reduced;
+so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each
 would lose, or why it is kept; one over the scan bound is listed under Needs a
 person.

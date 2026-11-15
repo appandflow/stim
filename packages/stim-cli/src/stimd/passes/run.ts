@@ -38,6 +38,7 @@ import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -407,12 +408,15 @@ export async function runMaintenance(
     crashLine(error);
     return;
   }
+  let scanAfter = false;
+  let passFailed = false;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {
     const resolved = resolveMaintenanceSettings();
     const settings = report && resolved.mode === 'on' ? { ...resolved, mode: 'report' as const } : resolved;
     if (settings.mode === 'off') return;
+    scanAfter = true;
     const state: MaintenanceState = readMaintenanceState() ?? {
       version: 1,
       lastAt: {},
@@ -729,6 +733,7 @@ export async function runMaintenance(
     }
     writeState(state);
   } catch (error) {
+    passFailed = true;
     throwUnverifiedCleanup(error);
     const message = error instanceof Error ? error.message : String(error);
     try {
@@ -742,7 +747,19 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
+    if (scanAfter) await scanAfterPass(tick, passFailed);
   }
+}
+
+/**
+ * The discovery scan, after the pass has released its claim. Not after a failed pass or a cancellation, and nothing it
+ * throws can reach the caller: the pass's own error, such as an unverified child cleanup, is the one that must surface.
+ */
+async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean): Promise<void> {
+  if (passFailed || tick?.operation.signal.aborted) return;
+  try {
+    await runDiscoveryScanIfDue(tick);
+  } catch {}
 }
 
 function crashLine(error: unknown): void {

@@ -423,7 +423,9 @@ describe('workspace directories without workspace.json', () => {
   });
 });
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+}));
 
 test('listWorkspaceDirs resolves each directory through its workspace.json', () => {
   const { root } = goneWorkspace('app');

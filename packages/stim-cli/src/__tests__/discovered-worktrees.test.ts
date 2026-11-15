@@ -17,7 +17,9 @@ import * as reads from '../workspace/discovered-reads.ts';
 import { discoveredRemovalHold } from '../workspace/discovered-removal.ts';
 import { worktreeInScope } from '../workspace/discovery.ts';
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+}));
 
 const day = 86_400_000;
 
@@ -160,10 +162,16 @@ describe('a discovered worktree on the removal path', () => {
       main,
       idleMs: day,
       reads: reads.discoveredReads(),
+      reduceOnly: false,
     });
     expect(hold).toContain('managed by another tool');
     expect(
-      await discoveredRemovalHold(join(main, '.worktrees', 'x'), { main, idleMs: day, reads: reads.discoveredReads() }),
+      await discoveredRemovalHold(join(main, '.worktrees', 'x'), {
+        main,
+        idleMs: day,
+        reads: reads.discoveredReads(),
+        reduceOnly: false,
+      }),
     ).not.toContain('another tool');
   });
 
@@ -182,6 +190,7 @@ describe('a discovered worktree on the removal path', () => {
   it('keeps a worktree a process runs from or an agent session works in', async () => {
     worktree('held');
     vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
+      launchers: async () => ({ targets: [], incomplete: [] }),
       processes: async () => ({
         commands: [{ pid: 1, line: `node ${join(base, 'roots', 'held')}/server.js` }],
         cwds: [],
