@@ -13,10 +13,11 @@ import {
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
-import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { execStartOverride } from '@stim-cli/core';
-import { stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
+import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { stimBuildDigest, stimdClaimRoot, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
@@ -789,6 +790,43 @@ export async function uninstallService(label: string): Promise<string[]> {
   return notes;
 }
 
+async function uninstallPortListeners(port: number): Promise<string[] | null> {
+  let listeners = await listenerPids(port);
+  if (listeners.length === 0 && process.platform === 'linux') {
+    const listed = await run('ss', ['-H', '-ltnp', `sport = :${port}`]);
+    if (listed.ok)
+      listeners = Array.from(listed.stdout.matchAll(/\bpid=(\d+),fd=/g), ([, pid]) => pid).filter(
+        (pid) => pid !== undefined,
+      );
+  }
+  return listeners.length === 0 && (await portFree(port)) ? null : listeners;
+}
+
+async function requireUninstallPortReleased(label: string, installed: InstalledService, routeOff: number | null) {
+  const { port, stimHome } = installed;
+  if (port === null) return;
+  const home = stimHome && isAbsolute(stimHome) ? stimHome : join(homedir(), '.stim');
+  const owner = () => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive')?.owner;
+  const previous = owner();
+  let listeners = await uninstallPortListeners(port);
+  let daemon = owner();
+  if (daemon && daemon.processToken !== previous?.processToken && !listeners?.includes(String(daemon.pid))) {
+    listeners = await uninstallPortListeners(port);
+    daemon = owner();
+  }
+  if (!listeners || !daemon || inspectProcessIdentity(daemon) !== 'same') return;
+  const owned = listeners.includes(String(daemon.pid));
+  if (!owned && listeners.length > 0) return;
+
+  const kept = `Kept the ${label} ${fileNoun()}${routeOff === null ? '' : ` and its Tailscale route on HTTPS port ${routeOff}`}.`;
+  const retry = `Then retry \`stim service uninstall --label ${label}\`.`;
+  throw new ServiceError(
+    owned
+      ? `Stim daemon PID ${daemon.pid} for ${home} is still listening on port ${port}. ${kept} Stop that daemon after its work finishes. ${retry}`
+      : `Port ${port} is still in use and its owner could not be verified. Stim daemon PID ${daemon.pid} for ${home} is still running. ${kept} Check the listener. ${retry}`,
+  );
+}
+
 async function uninstallJob(label: string): Promise<string[]> {
   const installed = await requireManaged(label);
   if (!installed) return [`${label} is not installed.`];
@@ -816,6 +854,7 @@ async function uninstallJob(label: string): Promise<string[]> {
   }
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
   await unload(label, null);
+  await requireUninstallPortReleased(label, installed, routeOff);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
     notes.push(
