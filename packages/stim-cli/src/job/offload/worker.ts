@@ -42,7 +42,7 @@ import type { CcacheActivity, CompilationCacheActivity } from '../../engine/buil
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../../engine/ccache.ts';
 import { assembleTaskFor } from '../../engine/gradle.ts';
 
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
 import {
   fingerprint as computeFingerprint,
   fingerprintRuntime,
@@ -301,12 +301,16 @@ const PRIVATE_DIRS = [
  */
 function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void {
   try {
-    getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
-      input: dirs.map((entry) => entry.join('\t')).join('\n'),
-      // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
-      omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
-      timeoutMs: 60_000,
-    });
+    getExecutor().runFile(
+      windowsSystemExecutable('powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS],
+      {
+        input: dirs.map((entry) => entry.join('\t')).join('\n'),
+        // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
+        omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
+        timeoutMs: 60_000,
+      },
+    );
   } catch (error) {
     const reason = (error instanceof Error ? error.message : String(error)).trim().split('\n').at(-1);
     throw new Error(`Could not prepare the private Windows build directories: ${reason}`, { cause: error });
