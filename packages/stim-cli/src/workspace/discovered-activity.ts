@@ -5,7 +5,8 @@ import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
-import { launcherReason, runningFromReason } from './running-from.ts';
+import { launcherReason } from './launchers.ts';
+import { runningFromReason } from './running-from.ts';
 
 /** Folders holding dependencies or other checkouts, skipped wherever they are. */
 const ALWAYS_SKIPPED = new Set(['.git', '.worktrees', 'node_modules', 'Pods']);

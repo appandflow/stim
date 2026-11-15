@@ -64,6 +64,8 @@ export interface StageCandidate {
   idleMs: number;
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
+  /** Found through a tool folder or the full scan; a PATH launcher into it keeps its outputs. */
+  reduceOnly?: boolean;
 }
 
 /** `idle.dormantDays` in milliseconds; 0 when the dormant stage is off. */
@@ -145,7 +147,7 @@ async function idleVerdict(
   {
     locked = false,
     operation,
-    reads = discoveredReads(operation?.signal, operation?.env),
+    reads = discoveredReads(operation?.signal, operation),
     full = false,
     reduceOnly = false,
   }: {
@@ -239,7 +241,7 @@ async function idleWorkspaces(
   { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
-  const reads = discoveredReads(reading.operation?.signal, reading.operation?.env);
+  const reads = discoveredReads(reading.operation?.signal, reading.operation);
   const found = discover
     ? (await discoverCheckouts(config, listedRoots(), reading.operation)).filter(({ deferred }) => !deferred)
     : [];
@@ -265,7 +267,7 @@ async function idleWorkspaces(
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
       }
-      readings.push({ path, project, idleMs });
+      readings.push({ path, project, idleMs, ...(reduceOnly.has(path) ? { reduceOnly: true } : {}) });
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
@@ -339,7 +341,13 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
-            if ((await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, { locked: true, operation })) === null)
+            if (
+              (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
+                locked: true,
+                operation,
+                ...(candidate.reduceOnly ? { reduceOnly: true } : {}),
+              })) === null
+            )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await idleOutputs(path, config);
             if (!outputs.paths.length) return null;

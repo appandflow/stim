@@ -20,6 +20,7 @@ import {
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
+import { launcherReason, launchersOf } from '../../workspace/launchers.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -67,6 +68,8 @@ export interface ArtifactWorktree {
   keys: string[];
   /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
   agents?: string[];
+  /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
+  reduceOnly?: boolean;
 }
 
 export interface ArtifactCandidate {
@@ -77,6 +80,7 @@ export interface ArtifactCandidate {
   agents?: string[];
   /** In a source checkout, whose dependencies no worktree warm restores. */
   source?: boolean;
+  reduceOnly?: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -143,6 +147,7 @@ export async function artifactCheckoutsAsync(
     (entry) => !entry.deferred,
   );
   const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
+  const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
@@ -151,7 +156,11 @@ export async function artifactCheckoutsAsync(
       declareFor: operation,
     });
     const entry = artifactWorktree(root, entries, source);
-    if (entry) found.set(entry.path, entry);
+    if (entry)
+      found.set(
+        entry.path,
+        reduceOnly.has(root) || found.get(entry.path)?.reduceOnly ? { ...entry, reduceOnly: true } : entry,
+      );
   }
   return [...found.values()];
 }
@@ -254,6 +263,8 @@ type ArtifactReads = {
   tracked: string | null;
   activity: ReturnType<typeof worktreeActivityOf>;
   written: number | null;
+  /** Why an executable on PATH keeps a reduce-only checkout, or null. */
+  launcher: string | null;
 };
 
 async function artifactReads(
@@ -273,7 +284,8 @@ async function artifactReads(
   const windowed = tracked !== null && !tracked.trim() && kind === 'dependencies';
   const activity = windowed ? await worktreeActivityOfAsync(worktree, keys, operation) : null;
   const written = windowed ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
-  return { tracked, activity, written };
+  const launcher = candidate.reduceOnly ? launcherReason(worktree, await launchersOf(operation, signal)()) : null;
+  return { tracked, activity, written, launcher };
 }
 
 async function pinsOf(
@@ -342,6 +354,7 @@ function keptReason(
 ): string | null {
   const guarded = artifactGuard(candidate, kind, pinned, locked, running, inUse);
   if (guarded) return guarded;
+  if (reads?.launcher) return reads.launcher;
   const { worktree, path, keys } = candidate;
   const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
@@ -450,6 +463,7 @@ export async function collectArtifactsAsync(
           keys: worktree.keys,
           locked: worktree.locked,
           agents: worktree.agents,
+          ...(worktree.reduceOnly ? { reduceOnly: true } : {}),
           ...(options.source ? { source: true } : {}),
         };
         const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
@@ -610,6 +624,7 @@ export async function clearArtifact(
     keys: worktree.keys,
     locked: worktree.locked,
     agents,
+    ...(worktree.reduceOnly ? { reduceOnly: true } : {}),
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
@@ -735,6 +750,7 @@ export async function clearSourceTrees(
     locked: worktree.locked,
     agents: (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [],
     source: true,
+    ...(worktree.reduceOnly ? { reduceOnly: true } : {}),
   };
   const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };

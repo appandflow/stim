@@ -12,6 +12,9 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import { testContext } from './_context.ts';
 import { artifactCheckoutsAsync } from '../stimd/passes/artifacts.ts';
 import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -30,6 +33,9 @@ vi.mock('../workspace/protected-locations.ts', async (original) => {
     isProtectedLocation: (path: string) => real.isProtectedLocation(path, { home: homedir(), temps: [] }),
   };
 });
+
+const launcherDirs = vi.hoisted(() => ({ list: new Array<string>() }));
+vi.mock('../workspace/launcher-directories.ts', () => ({ launcherDirectories: () => launcherDirs.list }));
 
 const day = 86_400_000;
 
@@ -61,6 +67,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
 
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-reduce-only-')));
+    launcherDirs.list = [join(base, 'home', 'bin')];
     vi.stubEnv('HOME', join(base, 'home'));
     vi.stubEnv('USERPROFILE', join(base, 'home'));
     vi.stubEnv('STIM_HOME', '');
@@ -153,6 +160,51 @@ describe('checkouts found through a tool folder or the full scan', () => {
     mkdirSync(bin);
     symlinkSync(join(tool, 'android', 'app', 'build', 'bin', 'mytool'), join(bin, 'mytool'));
     expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
+  });
+
+  it('keeps the Cargo target of a scan-found checkout at high disk, in the plan and at the trim, while a PATH executable links into it', async () => {
+    const tool = join(base, 'home', 'tools', 'mytool');
+    mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
+    mkdirSync(join(tool, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(tool, 'target', 'debug', 'incremental'), { recursive: true });
+    mkdirSync(join(tool, 'target', 'release'), { recursive: true });
+    writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(tool, '.gitignore'), 'target/\n');
+    writeFileSync(join(tool, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(tool, 'target', 'debug', 'incremental', 'data'), 'x'.repeat(10_000));
+    writeFileSync(join(tool, 'target', 'release', 'mytool'), '#!/bin/sh\n');
+    execFileSync('git', ['-C', tool, 'init', '-q']);
+    execFileSync('git', ['-C', tool, 'add', '-A']);
+    execFileSync('git', ['-C', tool, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    writeScan([tool]);
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    const operation = testContext({ env: {} });
+    const plan = () =>
+      planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation,
+      });
+    const planned = await plan();
+    expect(planned.actions).toMatchObject([{ kind: 'would-clear-build-dirs', target: join(tool, 'target') }]);
+
+    mkdirSync(join(base, 'home', 'bin'));
+    symlinkSync(join(tool, 'target', 'release', 'mytool'), join(base, 'home', 'bin', 'mytool'));
+    const kept = await planCargoTargetsAtPressure({
+      settings: resolveMaintenanceSettings(),
+      pinned: () => false,
+      now: Date.now(),
+      level: 'high',
+      operation: testContext({ env: {} }),
+    });
+    expect(kept.actions).toEqual([]);
+    expect(kept.skips).toMatchObject([{ target: join(tool, 'target'), reason: expect.stringContaining('on PATH') }]);
+    const [action] = planned.actions;
+    if (!action) throw new Error('no trim was planned');
+    const trim = await trimCargoTargetAction(action, testContext({ env: {} }));
+    expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
   it('drops a cached checkout that was replaced by a symlink to a folder the scan never enters, and plans nothing under it', async () => {

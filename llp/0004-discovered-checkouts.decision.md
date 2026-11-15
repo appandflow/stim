@@ -99,7 +99,8 @@ A folder named in `maintenance.discoverRoots` keeps the full rules. A scoped
 
 Reason for entering home dot-folders: checkouts live there too, for example
 about 18 checkouts and 80 GB of Cargo `target/` under `~/.exact/exact2` (#5757),
-so a blanket skip of dot-folders would miss the layout that started this work.
+so a blanket skip of dot-folders would never even report the layout that started
+this work. The scan records them; it does not act on them (see below).
 The scan enters a dot-folder directly in the home folder unless it is in a
 named prune list of tool homes, package and build caches and runtimes
 (`.git`, `.npm`, `.yarn`, `.bun`, `.gradle`, `.cargo`, `.rustup`, `.nvm`,
@@ -130,11 +131,22 @@ installed command. The record lets doctor report what the folder holds and the
 command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
-A scan find outside a home dot-folder can also be an installed tool. Discovery
-keeps a reduce-only checkout (a tool folder or scan find), and so its outputs, while an executable reachable
-through a PATH directory (and `~/.local/bin`, `~/bin`, `/usr/local/bin`,
-`/opt/homebrew/bin`) is a symlink that resolves into it. A wrapper script that
-only names a path is not followed.
+A scan find outside a home dot-folder can also be an installed tool. Every route
+that deletes outputs, dependencies or Cargo data of a reduce-only checkout keeps
+the checkout while an executable reachable through a PATH directory is a symlink
+that resolves into it: the idle stage (`discoveredEvidence`, and again under the
+locks in `clearStoppedOutputs`), the artifact and dependency passes
+(`artifactReads` into `keptReason`, which `collectArtifactsAsync`,
+`clearArtifact` and the source dependency trees all pass through), and the Cargo
+target measurement, the pressure plan and the acting trim
+(`regenerableDirProblem` with the launcher reader). The directories read are
+those on PATH and the per-user bin folders a daemon started by launchd does not
+list: `~/.local/bin`, `~/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.volta/bin`,
+`~/Library/pnpm`, the active nvm bin, `/usr/local/bin` and `/opt/homebrew/bin`.
+A directory or entry that does not exist, and a dangling symlink, is no
+launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
+keeps every reduce-only checkout for that operation, with a reason naming the
+directory. A wrapper script that only names a path is not followed.
 
 A scan-found source checkout follows the existing discovered rule and loses
 `node_modules` and Pods after `idle.sourceDormantDays` (7); the maintainer has
@@ -181,8 +193,9 @@ minutes (not "least recently handled first"), the depth of seven, the folders
 pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
 `~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
 normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the
-retry of a failed scan after an hour, and the scan running only in the daemon
-after the pass.
+retry of a failed scan after an hour, the scan running only in the daemon
+after the pass, and the PATH launcher keep. The scan is not deferred under host
+load; it takes about a second and a half on one MacBook.
 
 Not part of this change: points 4, 5 and 7, which belong to the doctor listing
 and the low-disk line.

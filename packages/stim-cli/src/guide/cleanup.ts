@@ -1241,8 +1241,12 @@ anything else is dropped. Checkouts the scan finds under a dot-folder of the
 home folder are recorded in the result and never acted on, because an installed
 tool cannot be told from a checkout there; maintenance.discoverRoots is the way
 to manage one. A reduce-only checkout that an executable on PATH (a symlink in a
-PATH directory, ~/.local/bin, ~/bin, /usr/local/bin or /opt/homebrew/bin)
-resolves into is kept whole. Reduce-only checkouts have their build outputs and, in
+PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
+~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
+resolves into is kept whole, by every pass that deletes its outputs,
+dependencies or Cargo target. A directory that cannot be read (not one that is
+missing) keeps every reduce-only checkout for that pass, and the reason names
+it. Reduce-only checkouts have their build outputs and, in
 a linked worktree, node_modules and Pods reduced by the rules below. Passes
 evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
 stim gc --dry-run lists all of them and says which are left for a later pass. A

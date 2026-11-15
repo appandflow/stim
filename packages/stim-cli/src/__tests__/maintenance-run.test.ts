@@ -504,6 +504,32 @@ test('an invalid cache cap falls back only that cap while report mode remains en
   }
 });
 
+const quietTick = (signal?: AbortSignal): MaintenanceTick => ({
+  operation: testContext(signal ? { signal } : {}),
+  measured: {
+    measurement: {
+      disk: [{ volume: '/', freeMb: 500_000 }],
+      memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
+      load1: 0,
+      cores: 1,
+      bootedSimulators: null,
+      runningEmulators: null,
+      interaction: null,
+    },
+    sims: null,
+    simsError: null,
+    devices: [],
+  },
+});
+
+test('the discovery scan runs once after a successful daemon pass, with that pass tick', async () => {
+  const scan = vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  const tick = quietTick();
+  await runMaintenance('daemon', { tick });
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(scan).toHaveBeenCalledWith(tick);
+});
+
 test('an unverified child cleanup in a pass surfaces as that failure, not as the abort of a due discovery scan', async () => {
   const failure = Object.assign(new Error('unverified cleanup'), {
     code: 'STIM_CLAIM_UNAVAILABLE',
@@ -517,23 +543,7 @@ test('an unverified child cleanup in a pass surfaces as that failure, not as the
   const scan = vi
     .spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue')
     .mockImplementation(async () => controller.signal.throwIfAborted());
-  const tick: MaintenanceTick = {
-    operation: testContext({ signal: controller.signal }),
-    measured: {
-      measurement: {
-        disk: [{ volume: '/', freeMb: 500_000 }],
-        memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
-        load1: 0,
-        cores: 1,
-        bootedSimulators: null,
-        runningEmulators: null,
-        interaction: null,
-      },
-      sims: null,
-      simsError: null,
-      devices: [],
-    },
-  };
+  const tick = quietTick(controller.signal);
   await expect(runMaintenance('daemon', { tick })).rejects.toBe(failure);
   expect(scan).not.toHaveBeenCalled();
 });

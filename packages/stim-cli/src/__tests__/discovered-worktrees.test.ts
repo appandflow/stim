@@ -184,7 +184,7 @@ describe('a discovered worktree on the removal path', () => {
   it('keeps a worktree a process runs from or an agent session works in', async () => {
     worktree('held');
     vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
-      launchers: async () => [],
+      launchers: async () => ({ targets: [], incomplete: [] }),
       processes: async () => ({
         commands: [{ pid: 1, line: `node ${join(base, 'roots', 'held')}/server.js` }],
         cwds: [],
