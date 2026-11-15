@@ -425,9 +425,11 @@ describe('runDiscoveryCensusIfDue', () => {
         home,
         canonical: null,
       });
-      expect(report.groups.some(({ kind }) => kind === 'unchecked')).toBe(true);
-      expect(report.groups.filter(({ kind }) => kind === 'unchecked')).toHaveLength(2);
-      expect(report.groups.every(({ command }) => command === null || !command.includes('unchecked'))).toBe(true);
+      expect(report.groups.filter(({ kind }) => kind === 'unchecked').map(({ command }) => command)).toEqual([
+        null,
+        null,
+      ]);
+      expect(report.complete).toBe(false);
     });
 
     it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {

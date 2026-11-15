@@ -13,7 +13,7 @@ interface UnmanagedGroup {
    */
   kind: 'reduce-only' | 'dot-folder' | 'unchecked';
   checkouts: number;
-  /** The bytes of the build directories that were measured; a lower bound while `failed` or `notMeasuredYet` is above 0. */
+  /** The bytes of the build directories that were measured; a lower bound while `failed`, `partial` or `notMeasuredYet` is above 0, or the list is not `complete`. */
   bytes: number;
   /** Checkouts whose every build directory was measured. */
   measured: number;
@@ -25,7 +25,7 @@ interface UnmanagedGroup {
   notMeasuredYet: number;
   /** The command that adds `folder` to the machine's `maintenance.discoverRoots`; null with `commandProblem` set. */
   command: string | null;
-  commandProblem: 'too-broad' | 'setting-unreadable' | 'unchecked' | null;
+  commandProblem: 'too-broad' | 'already-named' | 'setting-unreadable' | 'unchecked' | null;
   /**
    * Each checkout with when git last wrote in it (ISO time; null is unknown, never old), oldest first, unknown last. It
    * is the newest modification time of the git directory's HEAD, index and logs/HEAD, and says nothing about edits.
@@ -55,11 +55,15 @@ export interface DiscoveryReport {
   censusAt: number | null;
   /** Whether the census was made from the scan the scan file holds now; when false its sizes are not shown. */
   censusCurrent: boolean;
-  /**
-   * Only when the caller cannot canonicalise roots (the per-command hook): `maintenance.discoverRoots` changed since the
-   * census, so no group is listed.
-   */
+  /** `maintenance.discoverRoots` changed since the census classified, so the classification may be stale. */
   rootsChangedSinceCensus: boolean;
+  /**
+   * Whether the listing may be taken as everything the scan found: false when the scan stopped early, failed or could
+   * not read a path, the census is not from the current scan, is still pending or predates a roots change, or any group
+   * is unchecked or holds a failed, partial or not yet measured checkout. Every figure and the sentence that all is
+   * managed follow this one value.
+   */
+  complete: boolean;
   groups: UnmanagedGroup[];
 }
 
@@ -93,7 +97,12 @@ export function adoptCommand(setting: DiscoverRootsValue, folder: string): strin
 
 const KIND_ORDER = { 'reduce-only': 0, 'dot-folder': 1, unchecked: 2 };
 
-function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: DiscoverRootsValue): UnmanagedGroup {
+function groupOf(
+  first: CensusFind,
+  finds: readonly CensusFind[],
+  setting: DiscoverRootsValue,
+  named: boolean,
+): UnmanagedGroup {
   const unchecked = first.kind === 'unchecked';
   let bytes = 0;
   let measured = 0;
@@ -113,7 +122,7 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
     if (find.evaluatedAt > 0 && (oldestMeasuredAt === null || find.evaluatedAt < oldestMeasuredAt))
       oldestMeasuredAt = find.evaluatedAt;
   }
-  const command = first.adoptable && !unchecked ? adoptCommand(setting, first.folder) : null;
+  const command = first.adoptable && !unchecked && !named ? adoptCommand(setting, first.folder) : null;
   return {
     folder: first.folder,
     kind: first.kind,
@@ -128,9 +137,11 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
       ? 'unchecked'
       : !first.adoptable
         ? 'too-broad'
-        : command === null
-          ? 'setting-unreadable'
-          : null,
+        : named
+          ? 'already-named'
+          : command === null
+            ? 'setting-unreadable'
+            : null,
     oldestMeasuredAt,
     members: finds
       .map((find) => ({ path: find.path, at: find.gitActivityAt }))
@@ -142,8 +153,9 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
 }
 
 /**
- * The listing for doctor and the low-disk line. The census is the daemon's classification as of its last run, so a find
- * whose folder `maintenance.discoverRoots` names now is left out, and the listing is cut to what is still unmanaged.
+ * The listing for doctor and the low-disk line. The census is the daemon's classification as of its last run: it alone
+ * decides what is listed, and this function never hides an entry, it only chooses how to present it. A group whose
+ * folder is a root discovery uses (or the setting names now) is shown without an adopt command.
  */
 export function discoveryReport({
   scan,
@@ -175,20 +187,17 @@ export function discoveryReport({
           }
         : { status: 'unusable' }
       : { status: scan.status };
-  const base = { scan: summary, censusCurrent: false, rootsChangedSinceCensus: false, groups: [] };
+  const base = { scan: summary, censusCurrent: false, rootsChangedSinceCensus: false, complete: false, groups: [] };
   if (summary.status !== 'read') return { ...base, census: 'none', censusAt: null };
   if (census.status !== 'read') return { ...base, census: census.status, censusAt: null };
   if (!census.census) return { ...base, census: 'unusable', censusAt: null };
   const lexical = rootsOf(setting, home);
   const recorded = census.census.roots;
   const unchanged = recorded.length === lexical.length && recorded.every((root, at) => root === lexical[at]);
-  if (canonical === null && !unchanged)
-    return { ...base, census: 'read', censusAt: census.census.at, rootsChangedSinceCensus: true };
   const roots = new Set([...lexical, ...census.census.canonicalRoots, ...(canonical ? lexical.map(canonical) : [])]);
   const current = summary.ranAt === census.census.scanRanAt;
   const byFolder = new Map<string, { first: CensusFind; finds: CensusFind[] }>();
   for (const listed of census.census.finds) {
-    if (roots.has(listed.folder)) continue;
     const find = current
       ? listed
       : {
@@ -208,14 +217,21 @@ export function discoveryReport({
     byFolder.set(key, group);
   }
   const groups = [...byFolder.values()]
-    .map(({ first, finds }) => groupOf(first, finds, setting))
+    .map(({ first, finds }) => groupOf(first, finds, setting, first.adoptable && roots.has(first.folder)))
     .toSorted((a, b) => (a.kind === b.kind ? b.bytes - a.bytes : KIND_ORDER[a.kind] - KIND_ORDER[b.kind]));
   return {
     scan: summary,
     census: 'read',
     censusAt: census.census.at,
     censusCurrent: current,
-    rootsChangedSinceCensus: false,
+    rootsChangedSinceCensus: !unchanged,
+    complete:
+      summary.truncation === 'none' &&
+      summary.unreadable.length === 0 &&
+      current &&
+      !census.census.pending &&
+      unchanged &&
+      groups.every((group) => group.kind !== 'unchecked' && group.failed + group.partial + group.notMeasuredYet === 0),
     groups,
   };
 }
@@ -234,10 +250,10 @@ const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' :
 
 const day = (at: number): string => new Date(at).toISOString().slice(0, 10);
 
-function sizeText(group: UnmanagedGroup): string {
+function sizeText(group: UnmanagedGroup, complete: boolean): string {
   const unknown = group.failed + group.notMeasuredYet + group.partial;
   if (group.checkouts === unknown && group.bytes === 0) return 'build output not measured';
-  const prefix = unknown ? 'at least ' : '';
+  const prefix = unknown || !complete ? 'at least ' : '';
   const rest = [
     group.failed ? `${count(group.failed, 'checkout')} could not be measured` : '',
     group.notMeasuredYet ? `${count(group.notMeasuredYet, 'checkout')} not measured yet` : '',
@@ -280,10 +296,9 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
       'The list of what it found is unusable (corrupt or from another Stim version); the daemon rewrites it.',
     ];
   if (!report.groups.length) {
-    const finished = scan.truncation === 'none' && scan.unreadable.length === 0 && report.censusCurrent;
     return [
       ...lines,
-      finished
+      report.complete
         ? 'Every checkout it found is managed.'
         : 'No unmanaged checkout is listed, but that scan or its list is incomplete, so checkouts may be missing.',
     ];
@@ -300,14 +315,16 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
       lines.push(
         `${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')} could not be checked this time because a read did not answer; they are neither listed as managed nor gone, and the daemon checks again within the hour. Any measurement below is from an earlier run.`,
       );
-      lines.push(`  ${sizeText(group)}`);
+      lines.push(`  ${sizeText(group, report.complete)}`);
       for (const { path, gitActivityAt } of group.members)
         lines.push(
           `  ${shorten(path, home)}: last git activity ${gitActivityAt === null ? 'unknown' : gitActivityAt.slice(0, 10)}`,
         );
       continue;
     }
-    lines.push(`${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')}, ${sizeText(group)}`);
+    lines.push(
+      `${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')}, ${sizeText(group, report.complete)}`,
+    );
     lines.push(
       group.kind === 'reduce-only'
         ? '  Stim reduces their build output when idle and never removes them. Adding the folder to maintenance.discoverRoots applies the full discovered-checkout rules, which include removing finished linked worktrees:'
@@ -318,7 +335,9 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
         ? `  ${group.command}`
         : group.commandProblem === 'too-broad'
           ? '  This folder is the home folder or holds it, which maintenance.discoverRoots cannot name.'
-          : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
+          : group.commandProblem === 'already-named'
+            ? '  This folder is already named in maintenance.discoverRoots, so there is nothing to add; these are listed because discovery did not select them or could not check them yet.'
+            : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
     );
     for (const { path, gitActivityAt } of group.members)
       lines.push(
@@ -339,13 +358,10 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
  */
 export function lowDiskLine(report: DiscoveryReport, home: string): string | null {
   const total = report.groups.reduce((sum, group) => sum + group.bytes, 0);
-  const measuring = report.groups.some(
-    (group) => group.failed + group.notMeasuredYet + group.partial > 0 || group.kind === 'unchecked',
-  );
   if (total === 0 || report.rootsChangedSinceCensus) return null;
+  const qualifier = report.complete ? '' : 'at least ';
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
-  const holding = `Stim: checkouts it does not fully manage hold ${measuring ? 'at least ' : ''}${gb(total)} of build output`;
+  const holding = `Stim: checkouts it does not fully manage hold ${qualifier}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;
-  const lowerBound = largest.failed + largest.notMeasuredYet + largest.partial > 0;
-  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${lowerBound ? 'at least ' : ''}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
+  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${qualifier}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
 }

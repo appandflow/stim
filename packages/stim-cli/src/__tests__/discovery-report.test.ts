@@ -119,13 +119,14 @@ describe('discoveryReport', () => {
     );
   });
 
-  it('leaves out a folder that maintenance.discoverRoots names since the daemon classified', () => {
+  it('shows a folder that maintenance.discoverRoots names since the daemon classified, with no command and the reason', () => {
     const result = report([find({ path: '/Users/me/dev/app1' }), find({ path: '/Users/me/work/app2' })], {
       value: ['~/dev'],
       error: null,
     });
-    expect(result.groups.map(({ folder }) => folder)).toEqual(['/Users/me/work']);
-    expect(result.groups[0]?.command).toContain(`'["~/dev","/Users/me/work"]'`);
+    const byFolder = Object.fromEntries(result.groups.map((group) => [group.folder, group]));
+    expect(byFolder['/Users/me/dev']).toMatchObject({ command: null, commandProblem: 'already-named' });
+    expect(byFolder['/Users/me/work']?.command).toContain(`'["~/dev","/Users/me/work"]'`);
   });
 
   it('offers no command for the home folder, and none when the setting does not read, and says which', () => {
@@ -172,7 +173,7 @@ describe('discoveryReport', () => {
     expect(lowDiskLine(result, home)).toBeNull();
   });
 
-  it('shows the age of the oldest measurement, and leaves out a folder the setting names through a symlink', () => {
+  it('shows the age of the oldest measurement, and a folder the setting names through a symlink as already named', () => {
     const [group] = report([
       find({ path: '/Users/me/dev/a', evaluatedAt: now - 5 * day }),
       find({ path: '/Users/me/dev/b' }),
@@ -187,7 +188,7 @@ describe('discoveryReport', () => {
         value: [join(real, 'link')],
         error: null,
       });
-      expect(result.groups).toEqual([]);
+      expect(result.groups).toMatchObject([{ command: null, commandProblem: 'already-named' }]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -237,11 +238,80 @@ describe('the largest folder on the low-disk line', () => {
     }
   });
 
-  it('lists a group below a configured root, and drops only a group whose folder is the root itself', () => {
+  it('lists a group below a configured root with its own command, and the root itself as already named', () => {
     const below = find({ path: '/Users/me/.exact/exact2/a', folder: '/Users/me/.exact/exact2', kind: 'dot-folder' });
     const direct = find({ path: '/Users/me/.exact/b', folder: '/Users/me/.exact', kind: 'dot-folder' });
     const result = report([below, direct], { value: ['/Users/me/.exact'], error: null });
-    expect(result.groups.map(({ folder }) => folder)).toEqual(['/Users/me/.exact/exact2']);
+    const byFolder = Object.fromEntries(result.groups.map((group) => [group.folder, group]));
+    expect(byFolder['/Users/me/.exact/exact2']?.command).toContain('/Users/me/.exact/exact2');
+    expect(byFolder['/Users/me/.exact']).toMatchObject({ command: null, commandProblem: 'already-named' });
+  });
+});
+
+describe('completeness', () => {
+  const finished = (over: Partial<DiscoveryScan> = {}) => ({ status: 'read', scan: { ...scan, ...over } }) as const;
+
+  it('is one value that the totals, the figures and the all-managed sentence follow: a truncated scan with measured finds reads at least', () => {
+    const complete = report([find({ path: '/Users/me/dev/a', bytes: GB })]);
+    expect(complete.complete).toBe(true);
+    expect(lowDiskLine(complete, home)).toContain('hold 1.0 GB');
+    for (const over of [
+      { truncated: true, truncation: 'budget' as const },
+      { truncated: true, truncation: 'failed' as const },
+      { unreadable: ['/Users/me/Documents/x'] },
+    ]) {
+      const result = report([find({ path: '/Users/me/dev/a', bytes: GB })], noRoots, finished(over));
+      expect(result.complete).toBe(false);
+      expect(lowDiskLine(result, home)).toContain('hold at least 1.0 GB');
+      expect(discoveryLines(result, home).join('\n')).toContain('at least 1.0 GB');
+    }
+  });
+
+  it('is false for a pending census or one made from another scan, and true only when nothing is unknown', () => {
+    const pending: DiscoveryCensusFile = {
+      status: 'read',
+      census: { version: 1, at: now, scanRanAt: scan.ranAt, roots: [], canonicalRoots: [], pending: true, finds: [] },
+    };
+    const input = { scan: finished(), setting: noRoots, home, canonical: same };
+    expect(discoveryReport({ ...input, census: pending }).complete).toBe(false);
+    expect(discoveryReport({ ...input, census: census([]) }).complete).toBe(true);
+    expect(discoveryReport({ ...input, scan: finished({ ranAt: scan.ranAt + 1 }), census: census([]) }).complete).toBe(
+      false,
+    );
+  });
+
+  it('lists a find under a broad configured root with the home-folder wording, and the line follows', () => {
+    const file: DiscoveryCensusFile = {
+      status: 'read',
+      census: {
+        version: 1,
+        at: now,
+        scanRanAt: scan.ranAt,
+        roots: ['/Users/me'],
+        canonicalRoots: [],
+        pending: false,
+        finds: [find({ path: '/Users/me/app', folder: '/Users/me', adoptable: false })],
+      },
+    };
+    const result = discoveryReport({
+      scan: finished(),
+      census: file,
+      setting: { value: ['~'], error: null },
+      home,
+      canonical: same,
+    });
+    expect(result.groups).toMatchObject([{ folder: '/Users/me', command: null, commandProblem: 'too-broad' }]);
+    expect(result.complete).toBe(true);
+    expect(lowDiskLine(result, home)).toContain('hold 1.0 GB');
+  });
+
+  it('lists an unchecked direct child of a configured root with no adopt command', () => {
+    const result = report([find({ path: '/Users/me/dev/a', kind: 'unchecked' })], {
+      value: ['/Users/me/dev'],
+      error: null,
+    });
+    expect(result.groups).toMatchObject([{ kind: 'unchecked', command: null }]);
+    expect(result.complete).toBe(false);
   });
 });
 
@@ -269,7 +339,7 @@ describe('what the listing may claim', () => {
     expect(lowDiskLine(result, home)).toContain('at least');
   });
 
-  it('makes no filesystem call without a canonicaliser: it masks by the recorded roots and lists nothing once the setting changed', () => {
+  it('makes no filesystem call without a canonicaliser: it names a folder by the recorded roots, and says the setting changed', () => {
     const recorded = (roots: string[]): DiscoveryCensusFile => ({
       status: 'read',
       census: {
@@ -290,10 +360,13 @@ describe('what the listing may claim', () => {
         home,
         canonical: null,
       });
-    expect(through(recorded(['/Users/me/link']), ['/Users/me/link']).groups).toEqual([]);
+    expect(through(recorded(['/Users/me/link']), ['/Users/me/link']).groups).toMatchObject([
+      { folder: '/real/dev', commandProblem: 'already-named' },
+    ]);
     const changed = through(recorded(['/Users/me/link']), ['/Users/me/other']);
     expect(changed.rootsChangedSinceCensus).toBe(true);
-    expect(changed.groups).toEqual([]);
+    expect(changed.groups).toHaveLength(1);
+    expect(changed.complete).toBe(false);
     expect(lowDiskLine(changed, home)).toBeNull();
   });
 });
@@ -357,8 +430,8 @@ describe('discoveryLines', () => {
     expect(lines).toContain('last scanned the home folder on 2026-11-14');
     expect(lines).toContain('stopped early (time budget)');
     expect(lines).toContain('could not read ~/Documents/x');
-    expect(lines).toContain('~/dev: 1 checkout, 2.0 GB of build output');
-    expect(lines).toContain('~/.exact/exact2: 1 checkout, 80.0 GB of build output');
+    expect(lines).toContain('~/dev: 1 checkout, at least 2.0 GB of build output');
+    expect(lines).toContain('~/.exact/exact2: 1 checkout, at least 80.0 GB of build output');
     expect(lines).toContain('Stim reduces their build output when idle and never removes them');
     expect(lines).toContain('Stim cannot tell a checkout from an installed tool, so it does nothing with them');
     expect(lines).toContain(`'["/Users/me/.exact/exact2"]'`);

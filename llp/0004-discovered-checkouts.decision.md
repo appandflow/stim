@@ -314,8 +314,11 @@ maintainer:
   the complete discovery list and measures their recognised build output into
   `maintenance/discovery-census.json`. Doctor and the low-disk line read that
   file, the scan file and the `maintenance.discoverRoots` setting, and walk nothing.
-  A group whose folder the setting names now is left out before the daemon
-  classifies again.
+  Only the classification drops an entry, and only with evidence that a route
+  manages it; the report never hides a census entry, it chooses how to present it.
+  A group whose folder is a root discovery uses, or the setting names now, is shown
+  with no adopt command and words saying why its entries are listed. A group in a
+  root discovery ignores (a broad one such as `~`) is an ordinary group.
 - Two kinds, worded differently because they are different facts: reduce-only
   scan finds (Stim reduces their outputs and never removes them), and finds under
   a home dot-folder (Stim does nothing with them). Both are grouped by the
@@ -345,21 +348,25 @@ maintainer:
   holds uncommitted or unpushed work, and leaves deleting one to the person.
 - What is and is not bounded on the census path. Bounded (`answered`): the scan's
   safety gate for each folder (`folderSafety`, `nestedSafety`), the census's own
-  layout reads and the git activity reads. Not bounded: synchronous `existsSync` on each configured `maintenance.discoverRoots` entry, each
-  registered project root and each worktree entry of a repository; synchronous
-  `realpathSync` (through `canonicalPath`) on those, on the repository folders, on
-  the home folder and on every child `childrenOf` lists; `isProtectedLocation`
+  layout reads and the git activity reads. Not bounded by the shared
+  reader, found by reading `computeDiscovered`, `unmanagedScanFinds`, `scanSkipper` and
+  `childrenOf` (the callees of project recognition and of the git helpers were not
+  traced): synchronous `existsSync` on each configured `maintenance.discoverRoots`
+  entry, each registered project root and each worktree entry of a repository;
+  synchronous `realpathSync` (through `canonicalPath`) on those, on the repository
+  folders, on the home folder, on every child `childrenOf` lists, on the known roots
+  and, in `scanSkipper`, on the Stim home, the build worker root and the temporary
+  directories (with a config read under the Stim home); `isProtectedLocation`
   (`realpathSync`) on every worktree path and on every candidate child outside a
   configured root, scan finds included; project recognition (`recognises`:
-  `projectRegistry.selectDoctor(path)` and a synchronous `readdirSync` of the
-  folder's `apps`, `examples` and `packages`) in `childrenOf` and at the end of
-  `scanEntryValid`; and the listings in `childrenOf`, which are raced against 3
-  seconds rather than going through the shared reader, so a timed-out read stays
-  outstanding. This is every filesystem call `computeDiscovered` and what it calls
-  make, read top to bottom; the census runs it, and `unmanagedScanFinds` adds
-  `canonicalPath` on the known roots. The passes run it the same way on main; what
-  this change adds is that project recognition now also runs on finds under home
-  dot-folders.
+  `projectRegistry.selectDoctor(path)` and a synchronous `readdirSync` of the folder's
+  `apps`, `examples` and `packages`) in `childrenOf` and at the end of
+  `scanEntryValid`; the `childrenOf` listings, which are raced against 3 seconds
+  rather than going through the shared reader; and git subprocesses
+  (`git worktree list` and `git symbolic-ref`, through the exec wrapper, abortable
+  and bounded by their own timeouts) in `resolveSourceCheckoutAsync`. The passes run
+  discovery the same way; what this change adds is that project recognition now also
+  runs on finds under home dot-folders.
 - Instead of idle, the census records one bounded fact per checkout, the last git
   activity: the newest modification time of `HEAD`, `index` and `logs/HEAD` in the
   checkout's git directory. That is `<checkout>/.git` for a main checkout, and for a
@@ -455,6 +462,11 @@ hidden from `git status`.
 Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 
 ## Known limits of the listing
+
+A find that contains, or lies inside, a registered project or a discovered checkout
+is treated as managed and is not listed, although only that project or checkout is
+managed. This is the symmetric coverage rule `selectDiscovered` applies to the
+deleting passes; a monorepo root with a registered app inside it is the common case.
 
 A find whose layout read is permanently denied is re-measured each run and takes one
 of the 25 slots (`looked`) of every run until it is fixed or leaves the scan result.

@@ -1300,8 +1300,9 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   registered project or a discovered checkout that touches it; lying below a
   maintenance.discoverRoots folder is not coverage, since a root reaches only its
   direct children) and that pass the same revalidation as a scan
-  find; Stim does nothing with them. A checkout another route already manages is
-  not listed, and the worktrees in ~/.codex/worktrees are not scan finds, so
+  find; Stim does nothing with them. A find that contains, or lies inside, a
+  registered project or a discovered checkout is treated as managed and not listed,
+  although only that project or checkout is managed. And the worktrees in ~/.codex/worktrees are not scan finds, so
   they are not listed either.
   Size is the recognised build output only: the directories maintenance clears
   as build output for the checkout and for each folder directly in its apps and
@@ -1315,16 +1316,20 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   pending) and checks the abort and the run's budget first; the directory rules
   are the ones the deleting passes use, driven by that reader. A path that does
   not exist is absent; a denied or timed-out read makes the checkout "could not
-  be measured", never a measured zero. Not bounded on this path (every
-  filesystem call discovery makes, read top to bottom): existsSync on each
-  configured discover root, registered project root and worktree entry; realpathSync
-  (canonicalPath) on those, the repository folders, the home folder and every child
-  listed; isProtectedLocation (realpathSync) on every worktree path and candidate
-  child outside a configured root; project recognition (selectDoctor and a
-  synchronous readdirSync of apps, examples and packages) for each child and at the
-  end of the revalidation of every scan find; and the child listings, which are
-  raced against 3 seconds, not read through the shared reader. The passes run them
-  the same way; the census adds that recognition now also runs on finds under home
+  be measured", never a measured zero. Not bounded on this path (found by
+  reading computeDiscovered, unmanagedScanFinds, scanSkipper and childrenOf; the
+  callees of project recognition and of the git helpers were not traced): existsSync
+  on each configured discover root, registered project root and worktree entry;
+  realpathSync (canonicalPath) on those, the repository folders, the home folder,
+  every child listed, the known roots and, in scanSkipper, the Stim home, the build
+  worker root and the temporary directories; isProtectedLocation (realpathSync) on
+  every worktree path and candidate child outside a configured root; project
+  recognition (selectDoctor and a synchronous readdirSync of apps, examples and
+  packages) for each child and at the end of the revalidation of every scan find;
+  the child listings, which are raced against 3 seconds, not read through the shared
+  reader; and git subprocesses (git worktree list and git symbolic-ref through the
+  exec wrapper, abortable, with their own timeouts). The passes run them the same
+  way; the census adds that recognition now also runs on finds under home
   dot-folders. A revalidation metadata read that fails for anything but proven
   absence (a denied lstat, for one) leaves the find pending, never dropped. A du that
   exits non-zero is a measured lower bound: the bytes count and the totals read "at
@@ -1376,11 +1381,18 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   truncation, visited, unreadable }, census (read | absent | unreadable |
   unusable | none), censusAt, censusCurrent, and groups, one per containing
   folder and kind, each { folder, kind, checkouts, bytes, measured, failed,
-  notMeasuredYet, command, commandProblem, oldestMeasuredAt, members: [{ path,
-  gitActivityAt (ISO time or null) }] }. Doctor reads the
-  two files and the setting and walks nothing; a group whose folder
-  maintenance.discoverRoots names now (symlinks resolved) is left out, though the
-  daemon has not classified again yet. The section shows only where doctor runs,
+  partial, notMeasuredYet, command, commandProblem (too-broad | already-named |
+  setting-unreadable | unchecked), oldestMeasuredAt, members: [{ path,
+  gitActivityAt (ISO time or null) }] }, plus complete and rootsChangedSinceCensus.
+  complete is one value, false when the scan stopped early, failed or could not
+  read a path, the census is pending, from another scan or older than a roots
+  change, or any group is unchecked or has a failed, partial or not yet measured
+  checkout; every figure ("at least") and the sentence that every checkout is
+  managed follow it. Doctor reads the two files and the setting and walks nothing,
+  and never hides a census entry: a group whose folder is a root discovery uses, or
+  that the setting names now (symlinks resolved), is shown with no command and the
+  reason, and a group in a root discovery ignores (a broad one such as ~) is an
+  ordinary group. The section shows only where doctor runs,
   which is inside a project. command is stim settings set
   maintenance.discoverRoots '<json>' --scope machine with the current value plus
   the folder, quoted for the shell; it is null for the home folder or a folder
