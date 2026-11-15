@@ -53,6 +53,7 @@ import {
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { timedStep, type DaemonLog, type StepTally } from './step-timing.ts';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -89,6 +90,8 @@ export interface DeviceReading {
   protectedRoot?: string;
   /** The context whose reads run without blocking the event loop: the daemon tick's or a command's. */
   operation?: StimContext;
+  /** Where the evidence loops write their `daemon_step` record; absent, they write none. */
+  log?: DaemonLog;
 }
 
 function projectSettings(path: string, operation: StimContext | undefined) {
@@ -233,7 +236,25 @@ interface IdleSelection {
   onKept?: (path: string, reason: string) => void;
 }
 
-async function idleWorkspaces(
+function idleWorkspaces(
+  step: string,
+  config: Config,
+  reading: DeviceReading,
+  thresholdMs: number,
+  setting: string,
+  worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
+  selection: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+): Promise<StageCandidate[]> {
+  return timedStep(
+    reading.log,
+    step,
+    (tally) => readIdleWorkspaces(tally, config, reading, thresholdMs, setting, worthIt, selection),
+    { signal: reading.operation?.signal },
+  );
+}
+
+async function readIdleWorkspaces(
+  tally: StepTally,
   config: Config,
   reading: DeviceReading,
   thresholdMs: number,
@@ -246,7 +267,9 @@ async function idleWorkspaces(
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
-  for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
+  const checkouts = [...Object.entries(config.projects), ...discovered];
+  tally.items = checkouts.length;
+  for (const [path, project] of checkouts) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
@@ -311,7 +334,10 @@ export function idleStageCandidates(
   selection: IdleSelection = {},
 ): Promise<StageCandidate[]> {
   const { setting = PRESSURE_THRESHOLD, ...rest } = selection;
-  return idleWorkspaces(config, reading, thresholdMs, setting, () => true, { discover: true, ...rest });
+  return idleWorkspaces('idle_stage_candidates', config, reading, thresholdMs, setting, () => true, {
+    discover: true,
+    ...rest,
+  });
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */
@@ -320,7 +346,9 @@ export function stoppedOutputCandidates(
   reading: DeviceReading,
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
-  return idleWorkspaces(config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs, { discover: true });
+  return idleWorkspaces('stopped_output_candidates', config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs, {
+    discover: true,
+  });
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
@@ -467,6 +495,7 @@ export function dormantCandidates(
   thresholdMs: number,
 ): Promise<StageCandidate[]> {
   return idleWorkspaces(
+    'dormant_candidates',
     config,
     reading,
     thresholdMs,

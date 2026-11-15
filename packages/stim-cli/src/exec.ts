@@ -172,12 +172,20 @@ function spawnReportJob(
   );
 }
 
+const REPORT_COMMAND_MAX_LENGTH = 120;
+
+function describeReportCommand(file: string, args: readonly string[], redact?: readonly string[]): string {
+  const text = [basename(file), ...redactArgv(args, redact, file)].join(' ');
+  return text.length > REPORT_COMMAND_MAX_LENGTH ? `${text.slice(0, REPORT_COMMAND_MAX_LENGTH - 3)}...` : text;
+}
+
 function reportChild(
   child: ChildProcess,
   signal?: AbortSignal,
   failed?: (error: Error) => Error,
   contained = false,
   selectedContext?: StimContext,
+  command?: string,
 ): { cancel: () => Promise<void>; closed: Promise<void> } | undefined {
   const context = selectedContext ?? ambientContext();
   const report = reportSignal(context);
@@ -198,6 +206,7 @@ function reportChild(
     });
   });
   const pid = child.pid;
+  const named = `${pid}${command ? ` running \`${command}\`` : ''}`;
   const cleanupSettled = () =>
     ended && (pid === undefined || (process.platform === 'win32' ? contained : !processGroupAlive(pid)));
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
@@ -241,7 +250,7 @@ function reportChild(
         }
         if (identity === 'unknown') {
           refuse(
-            `Cannot verify cleanup for report child ${pid}${captured && !captured.ok ? ` (its identity was not captured at spawn: ${captured.reason})` : ''}; its process or descendants were left untouched.`,
+            `Cannot verify cleanup for report child ${named}${captured && !captured.ok ? ` (its identity was not captured at spawn: ${captured.reason})` : ''}; its process or descendants were left untouched.`,
           );
         }
       }
@@ -293,14 +302,14 @@ function reportChild(
         await awaitClose();
         if (!ended) await new Promise<void>((resolve) => setImmediate(resolve));
         if (!ended && observe() === 'gone') await awaitClose();
-        if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
+        if (!ended) refuse(`Report child ${named} did not close within the cleanup budget.`);
       }
       if (
         pid !== undefined &&
         process.platform !== 'win32' &&
         !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
       )
-        refuse(`Report child ${pid} still has descendants after cleanup.`);
+        refuse(`Report child ${named} still has descendants after cleanup.`);
     })());
   if (report) trackReportResource(context, closed, cancel, signal, undefined, cleanupSettled);
   else {
@@ -571,6 +580,7 @@ const defaultExecutor: Executor = {
           },
           contained,
           context,
+          describeReportCommand(file, args, redact),
         );
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
@@ -755,6 +765,8 @@ const defaultExecutor: Executor = {
             )
           : error,
       contained,
+      undefined,
+      describeReportCommand(cmd, args),
     );
     if (observed && watch !== undefined && child.pid !== undefined)
       void lifetime?.closed.then(
