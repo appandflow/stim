@@ -182,11 +182,11 @@ description, each with the same port check.
 
 **Events.**
 
-- stimd crash, in-place update or engine switch: the helper keeps recording. The
-  successor retakes the claim (owner gone, child live) and takes the helper from
-  the details. There is no tail and no offset handover. An exit while no stimd
-  runs waits in the exit file. The helper runs from its build's engine
-  directory, which the claim's `engineDir` keeps retained.
+- On POSIX the helper keeps recording through a stimd crash, in-place update
+  or engine switch. The successor retakes the claim (owner gone, child live)
+  and takes the helper from the details. There is no tail and no offset
+  handover. An exit while no stimd runs waits in the exit file. The helper runs
+  from its build's engine directory, which the claim's `engineDir` keeps retained.
 - Idle exit: stimd does not idle-exit while it supervises a dev server, since
   idle stop, the C6 restart, hosted links and watch roots run in its tick.
 - Helper crash: the dev server likely dies of EPIPE on its next write. stimd
@@ -205,15 +205,21 @@ description, each with the same port check.
 - Machine reboot: the claim's owner and child are gone and no exit file exists,
   so the stop reads as "gone and recorded no cause".
 
-**Windows.** The helper is used there too, but not detached, and stimd still
-stops dev servers at its exit and holds an update with `heldBy:
-"dev-servers"`. Whether a detached helper and its dev server outlive stimd on
-Windows is not checked. Two Stim builds on one home (audit A6) are unchanged.
+**Windows.** stimd starts the helper without detaching it. stimd stops dev
+servers on orderly exit and reports `heldBy: "dev-servers"` when a running
+dev server holds a planned update. Two Stim builds on one home (audit A6) are
+unchanged.
 
-Planned: #5571
+A Windows runner using published `stim@2.0.0-next.20261114220335.g84b6915`
+bundled an Android app with bare React Native Metro before forcibly stopping
+only the resident stimd. Windows then reported that the original helper and
+Metro had exited and the port had no listener. The replacement stimd started
+a new Metro with `alreadyRunning: false`.
+[Runner log](https://github.com/appandflow/stim/actions/runs/43656050004/job/132634675815) ·
+[Issue evidence](https://github.com/appandflow/stim/issues/5571#issuecomment-6886285709)
 
-Run the test where stimd exits and the successor stops the helper's dev server
-in `ci-full`, then drop Metro from `metroRootsEndingWithStimd` and the hold.
+The proposal for a detached Windows helper that a successor daemon can verify,
+adopt and stop is retired. The planned-update hold remains. [#5571](https://github.com/appandflow/stim/issues/5571)
 
 **Contracts.** The `status --json` `supervisor` object keeps its shape and
 meaning: `supervisor.pid` is the dev server's pid. The heartbeat, `metro.stop`,
@@ -235,8 +241,8 @@ helper still writes, at a known cost: every line lands in `metro.ndjson` twice,
 the exit settles as unknown, and the exit file stays until a helper-aware stimd
 finds it matching nothing.
 
-Not determined: Windows behaviour; whether a `NODE_OPTIONS` meant for the
-project, which the helper inherits as 1.40's supervisor did, matters.
+The effect of a project's `NODE_OPTIONS` on the helper remains unverified. The
+helper inherits it as the 1.40 supervisor did.
 
 ## The physical iPhone console's helper
 
