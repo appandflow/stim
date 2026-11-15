@@ -346,5 +346,6 @@ export function lowDiskLine(report: DiscoveryReport, home: string): string | nul
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
   const holding = `Stim: checkouts it does not fully manage hold ${measuring ? 'at least ' : ''}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;
-  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
+  const lowerBound = largest.failed + largest.notMeasuredYet + largest.partial > 0;
+  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${lowerBound ? 'at least ' : ''}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
 }

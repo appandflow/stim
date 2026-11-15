@@ -227,6 +227,24 @@ describe('sizes', () => {
   });
 });
 
+describe('the largest folder on the low-disk line', () => {
+  it('reads as at least when that folder holds a partial, failed or not yet measured checkout, and exact otherwise', () => {
+    const exact = lowDiskLine(report([find({ path: '/Users/me/dev/a', bytes: 2 * GB })]), home);
+    expect(exact).toContain('(2.0 GB)');
+    for (const over of [{ partialDirs: 1 }, { failedDirs: 1, measuredDirs: 0 }, { evaluatedAt: 0 }]) {
+      const line = lowDiskLine(report([find({ path: '/Users/me/dev/a', bytes: 2 * GB, ...over })]), home);
+      expect(line).toContain('(at least 2.0 GB)');
+    }
+  });
+
+  it('lists a group below a configured root, and drops only a group whose folder is the root itself', () => {
+    const below = find({ path: '/Users/me/.exact/exact2/a', folder: '/Users/me/.exact/exact2', kind: 'dot-folder' });
+    const direct = find({ path: '/Users/me/.exact/b', folder: '/Users/me/.exact', kind: 'dot-folder' });
+    const result = report([below, direct], { value: ['/Users/me/.exact'], error: null });
+    expect(result.groups.map(({ folder }) => folder)).toEqual(['/Users/me/.exact/exact2']);
+  });
+});
+
 describe('what the listing may claim', () => {
   it('says every checkout is managed only for a finished scan, a census made from it and no unchecked find', () => {
     const lines = (scanOver: Partial<DiscoveryScan>, finds: CensusFind[] = []) =>

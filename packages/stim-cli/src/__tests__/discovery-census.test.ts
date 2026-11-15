@@ -426,7 +426,8 @@ describe('runDiscoveryCensusIfDue', () => {
         canonical: null,
       });
       expect(report.groups.some(({ kind }) => kind === 'unchecked')).toBe(true);
-      expect(discoveryLines(report, home).join('\n')).not.toContain('Every checkout it found is managed.');
+      expect(report.groups.filter(({ kind }) => kind === 'unchecked')).toHaveLength(2);
+      expect(report.groups.every(({ command }) => command === null || !command.includes('unchecked'))).toBe(true);
     });
 
     it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {
@@ -486,6 +487,46 @@ describe('runDiscoveryCensusIfDue', () => {
       expect(report.groups[0]).toMatchObject({ partial: 2 });
       expect(discoveryLines(report, home).join('\n')).toContain('at least');
       expect(lowDiskLine(report, home)).toContain('at least');
+    });
+  });
+
+  describe('below a configured root', () => {
+    const under = (root: string) =>
+      saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [root] } });
+    const reportOf = (root: string) =>
+      discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [root], error: null },
+        home,
+        canonical: null,
+      });
+
+    it('lists a find two levels down with an adopt command for its own parent, and not a direct child discovery selected', async () => {
+      const root = join(home, '.exact');
+      checkout(join(root, 'direct'));
+      await scanAt(t0 + hour);
+      under(root);
+      const { census } = await run(t0 + hour);
+      const names = (census?.finds ?? []).map(({ path }) => path.slice(home.length)).toSorted();
+      expect(names).toContain('/.exact/exact2/a');
+      expect(names).not.toContain('/.exact/direct');
+      const group = reportOf(root).groups.find(({ folder }) => folder === join(root, 'exact2'));
+      expect(group?.command).toContain(JSON.stringify([root, join(root, 'exact2')]));
+    });
+
+    it('keeps a find whose metadata read was denied as unchecked', async () => {
+      const root = join(home, '.exact');
+      under(root);
+      const { REAL_RECOGNITION_IO } = await import('../workspace/scan-rules.ts');
+      const real = REAL_RECOGNITION_IO.lstat;
+      vi.spyOn(REAL_RECOGNITION_IO, 'lstat').mockImplementation(async (path) => {
+        if (path.endsWith(join('exact2', 'b'))) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        return real(path);
+      });
+      const { census } = await run(t0);
+      expect(census?.finds.find(({ path }) => path.endsWith(join('exact2', 'b')))).toMatchObject({ kind: 'unchecked' });
+      expect(census?.pending).toBe(true);
     });
   });
 

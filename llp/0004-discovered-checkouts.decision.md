@@ -345,16 +345,21 @@ maintainer:
   holds uncommitted or unpushed work, and leaves deleting one to the person.
 - What is and is not bounded on the census path. Bounded (`answered`): the scan's
   safety gate for each folder (`folderSafety`, `nestedSafety`), the census's own
-  layout reads and the git activity reads. Not bounded: `scanEntryValid` ends in
-  project recognition (`recognises`: `projectRegistry.selectDoctor(path)` and a
-  synchronous `readdirSync` of the folder's `apps`, `examples` and `packages`),
-  which runs on the find after the bounded reads of that same folder have
-  answered; for ordinary scan finds outside a configured root, discovery's
-  protected-location check (`isProtectedLocation`, `realpathSync`); and
-  `canonicalPath` on children of sibling folders and configured roots. Those run
-  this way for every scan find in the passes on main, and this change adds only
-  that project recognition now also runs on finds under home dot-folders, through
-  `unmanagedScanFinds`.
+  layout reads and the git activity reads. Not bounded: synchronous `existsSync` on each configured `maintenance.discoverRoots` entry, each
+  registered project root and each worktree entry of a repository; synchronous
+  `realpathSync` (through `canonicalPath`) on those, on the repository folders, on
+  the home folder and on every child `childrenOf` lists; `isProtectedLocation`
+  (`realpathSync`) on every worktree path and on every candidate child outside a
+  configured root, scan finds included; project recognition (`recognises`:
+  `projectRegistry.selectDoctor(path)` and a synchronous `readdirSync` of the
+  folder's `apps`, `examples` and `packages`) in `childrenOf` and at the end of
+  `scanEntryValid`; and the listings in `childrenOf`, which are raced against 3
+  seconds rather than going through the shared reader, so a timed-out read stays
+  outstanding. This is every filesystem call `computeDiscovered` and what it calls
+  make, read top to bottom; the census runs it, and `unmanagedScanFinds` adds
+  `canonicalPath` on the known roots. The passes run it the same way on main; what
+  this change adds is that project recognition now also runs on finds under home
+  dot-folders.
 - Instead of idle, the census records one bounded fact per checkout, the last git
   activity: the newest modification time of `HEAD`, `index` and `logs/HEAD` in the
   checkout's git directory. That is `<checkout>/.git` for a main checkout, and for a
@@ -451,8 +456,13 @@ Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 
 ## Known limits of the listing
 
-A find whose read is permanently denied or unreadable takes one of the 25 slots of
-each census run, every run, until it is fixed or leaves the scan result. The census
+A find whose layout read is permanently denied is re-measured each run and takes one
+of the 25 slots (`looked`) of every run until it is fixed or leaves the scan result.
+A find whose metadata read is denied is carried as unchecked without taking a slot,
+but the census stays pending and reruns discovery every hour. A find that stays
+unreadable or unchecked keeps the list from ever being called complete, and doctor
+says so each time: it prints that the list may be incomplete and never that
+everything is managed. The census
 file is read without a lock (it is replaced atomically under a lock, so a reader
 sees the old or the new file). A `du` that exits non-zero (denied files) is recorded
 as a measured lower bound: its bytes count and the totals read "at least".

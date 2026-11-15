@@ -353,8 +353,10 @@ const touches = (path: string, other: string): boolean =>
 /**
  * The scan finds that are not managed through another route, classified from the complete discovery list: the finds
  * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
- * is unmanaged unless a registered project, a folder of `maintenance.discoverRoots`, a tool folder or any discovered
- * checkout covers it. Each dot-folder find is revalidated like a scan find. A find of either kind whose revalidation did
+ * is unmanaged unless a registered project or a discovered checkout touches it. Lying inside a `maintenance.discoverRoots`
+ * folder or a tool folder is not coverage: discovery reaches only the direct children of a root and the worktrees git
+ * lists, and a find it did not select stays listed. (The scan prunes `.codex`, so a find under the tool folder cannot
+ * come from it.) Each dot-folder find is revalidated like a scan find. A find of either kind whose revalidation did
  * not answer is `unchecked` (when no route covers it), never dropped. A scoped STIM_HOME scans nothing and so finds
  * nothing. Null when there is no usable scan result.
  *
@@ -380,8 +382,6 @@ export async function unmanagedScanFinds(
   const ancestors = new Map();
   const covered = (path: string): boolean =>
     !isAbsolute(path) ||
-    roots.some((root) => inside(path, root)) ||
-    inToolFolder(path, home) ||
     knownRoots.some((root) => touches(path, root)) ||
     found.some((checkout) => touches(path, checkout.path));
   const dotFolder: string[] = [];

@@ -1297,8 +1297,9 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   classified from the complete discovery list, and the size of their build
   output. Reduce-only: scan finds that discovery selects with origin scan.
   Dot-folder: scan finds under a home dot-folder that no route reaches (a
-  registered project, a maintenance.discoverRoots folder, ~/.codex/worktrees or
-  another discovered checkout) and that pass the same revalidation as a scan
+  registered project or a discovered checkout that touches it; lying below a
+  maintenance.discoverRoots folder is not coverage, since a root reaches only its
+  direct children) and that pass the same revalidation as a scan
   find; Stim does nothing with them. A checkout another route already manages is
   not listed, and the worktrees in ~/.codex/worktrees are not scan finds, so
   they are not listed either.
@@ -1314,14 +1315,17 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   pending) and checks the abort and the run's budget first; the directory rules
   are the ones the deleting passes use, driven by that reader. A path that does
   not exist is absent; a denied or timed-out read makes the checkout "could not
-  be measured", never a measured zero. Not bounded on this path: project
-  recognition, which ends the revalidation of every scan find (it runs
-  projectRegistry.selectDoctor and a synchronous readdirSync of apps, examples and
-  packages on the find, after the bounded reads of that folder answered), discovery's
-  protected-location check (realpathSync) on ordinary scan finds, and canonicalPath
-  on children of sibling folders and configured roots. They run so for every scan
-  find in the passes; the census adds that recognition now also runs on finds under
-  home dot-folders. A revalidation metadata read that fails for anything but proven
+  be measured", never a measured zero. Not bounded on this path (every
+  filesystem call discovery makes, read top to bottom): existsSync on each
+  configured discover root, registered project root and worktree entry; realpathSync
+  (canonicalPath) on those, the repository folders, the home folder and every child
+  listed; isProtectedLocation (realpathSync) on every worktree path and candidate
+  child outside a configured root; project recognition (selectDoctor and a
+  synchronous readdirSync of apps, examples and packages) for each child and at the
+  end of the revalidation of every scan find; and the child listings, which are
+  raced against 3 seconds, not read through the shared reader. The passes run them
+  the same way; the census adds that recognition now also runs on finds under home
+  dot-folders. A revalidation metadata read that fails for anything but proven
   absence (a denied lstat, for one) leaves the find pending, never dropped. A du that
   exits non-zero is a measured lower bound: the bytes count and the totals read "at
   least"; the cache entry records it, and no other reader of the cache sees it. Sizes go through the disk-usage cache, one
