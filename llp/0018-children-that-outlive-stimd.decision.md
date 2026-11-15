@@ -46,7 +46,8 @@ although group members still wrote (audit A1, A3).
 
 **Process tree.** stimd starts `metro-run` (`dist/metro-run.mjs`,
 `src/stimd/metro/run.ts`), which starts the dev server with piped stdout and
-stderr in the dev server's own process group. The helper's child per mode:
+stderr. On POSIX it also starts the dev server in its own process group. The
+group-based behavior below applies on POSIX. The helper's child per mode:
 
 - Expo: `node_modules/.bin/expo start` (on Windows, Stim's node running the bin).
 - `metro.command`: the command's program.
@@ -210,11 +211,11 @@ servers on orderly exit and reports `heldBy: "dev-servers"` when a running
 dev server holds a planned update. Two Stim builds on one home (audit A6) are
 unchanged.
 
-A Windows runner using published `stim@2.0.0-next.20261114220335.g84b6915`
-bundled an Android app with bare React Native Metro before forcibly stopping
-only the resident stimd. Windows then reported that the original helper and
-Metro had exited and the port had no listener. The replacement stimd started
-a new Metro with `alreadyRunning: false`.
+A Windows fixture using published `stim@2.0.0-next.20261114220335.g84b6915`
+served an Android-platform JavaScript bundle from bare React Native Metro
+before the runner forcibly stopped only the resident stimd. Windows reported that
+the original helper and Metro had exited and the port had no listener. The
+replacement stimd started a new Metro with `alreadyRunning: false`.
 [Runner log](https://github.com/appandflow/stim/actions/runs/43656050004/job/132634675815) ·
 [Issue evidence](https://github.com/appandflow/stim/issues/5571#issuecomment-6886285709)
 
@@ -233,8 +234,8 @@ answered `not-owned` and `stim stop` then signalled the recorded dev server
 itself. Stim cannot tell whether that dev server still runs under an unresolved
 claim, so it refuses (LLP 0007); `stim stop` prints that message and remedy.
 
-**Migration, compat C30 until 2.1.0.** A claim without `helper` holds a dev
-server that a pre-helper stimd started. It is adopted as before (file tail, exit
+**POSIX migration, compat C30 until 2.1.0.** A claim without `helper` holds a
+dev server that a pre-helper stimd started. It is adopted as before (file tail, exit
 code unknown) and restarted at its workspace's next idle point. A rollback to a
 pre-helper build adopts a helper's claim the old way and tails the raw files the
 helper still writes, at a known cost: every line lands in `metro.ndjson` twice,
