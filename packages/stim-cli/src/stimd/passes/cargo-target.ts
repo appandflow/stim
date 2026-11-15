@@ -12,6 +12,7 @@ import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
+import { lowestFree } from './measure.ts';
 import {
   cargoProfileDirs,
   idleCargoUnitPaths,
@@ -396,6 +397,7 @@ export async function trimCargoTargetAction(
   action: MaintenanceAction,
   operation?: StimContext,
   lowPriority = false,
+  stop?: AbortSignal,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
@@ -403,12 +405,20 @@ export async function trimCargoTargetAction(
     return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
+  const measure = action.level === undefined;
+  const before = measure ? 0 : lowestFree(await readVolumeSpaceAsync([action.target], operation?.signal));
   const result = await trimCargoTarget(action.target, {
     needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
     ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
     lowPriority,
     signal: operation?.signal,
+    measure,
+    ...(stop ? { stop } : {}),
   });
+  if (!measure) {
+    const freed = lowestFree(await readVolumeSpaceAsync([action.target], operation?.signal)) - before;
+    result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
+  }
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;
   if (result.deleteError)
     return {

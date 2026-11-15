@@ -17,6 +17,7 @@ import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
 import { runLadderToFree } from '../daemon/passes.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
@@ -504,6 +505,27 @@ describe('the pressure ladder', () => {
       vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
       await runLadder(input(true, remeasure), pressure('high'));
       expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'rung 3 plans no Cargo target when the level has cleared by the time it starts',
+    async () => {
+      const { incremental } = cargoApp();
+      const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
+      let calls = 0;
+
+      await runLadder(
+        {
+          ...input(true, async () => (++calls === 1 ? pressure('high') : pressure('normal'))),
+          fromRung: 3,
+          lastRung: 3,
+        },
+        pressure('high'),
+      );
+
+      expect(plan).not.toHaveBeenCalled();
+      expect(existsSync(incremental)).toBe(true);
     },
   );
 

@@ -1,8 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { configDir } from '@stim-cli/core';
+import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
@@ -21,6 +20,7 @@ const EXACT_LEDGER = '.exact-sweep.json';
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
+const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
@@ -350,12 +350,7 @@ export async function trimCargoTarget(registeredTarget: string, options: CargoTr
   let claim: ClaimHandle | null | undefined;
   try {
     const attempt = tryAcquireClaim({
-      root: join(
-        configDir(),
-        'maintenance',
-        'cargo-trim',
-        `${createHash('sha256').update(target).digest('hex').slice(0, 24)}.claims`,
-      ),
+      root: cargoTargetTrimClaims(target),
       mode: 'exclusive',
       label: 'Cargo target trim',
       details: { target },
@@ -386,6 +381,10 @@ interface CargoTrimOptions {
   lowPriority?: boolean;
   now?: number;
   signal?: AbortSignal;
+  /** Stops the trim between units that completed; a unit in flight finishes. */
+  stop?: AbortSignal;
+  /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
+  measure?: boolean;
 }
 
 async function trimClaimed(
@@ -397,9 +396,14 @@ async function trimClaimed(
     lowPriority = false,
     now = Date.now(),
     signal,
+    stop,
+    measure = true,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const stopped = (): boolean => stop?.aborted === true;
+  const measured = (path: string): Promise<number> =>
+    measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
   const aside = join(target, ASIDE);
   let keepAside = false;
   if (existsSync(join(aside, STRANDED)))
@@ -429,6 +433,10 @@ async function trimClaimed(
     locks: (where: string) => Promise<string[]>,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
+    if (stopped()) {
+      if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
+      return false;
+    }
     const profiles = await locks(dir);
     if (inUse(used, dir)) {
       result.kept.push(`${label}: a process uses it`);
@@ -481,7 +489,7 @@ async function trimClaimed(
         return false;
       }
     }
-    result.bytes += bytes ?? (await sizeOf(there, signal, lowPriority));
+    result.bytes += bytes ?? (await measured(there));
     result.removed.push(label);
     return true;
   };
@@ -504,6 +512,7 @@ async function trimClaimed(
     const locks = [join(target, `${EXACT_LEDGER}.lock`), ...PROFILE_LOCKS.map((name) => join(profile, name))];
     for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
       signal?.throwIfAborted();
+      if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
       const chunk = candidates
         .slice(at, at + UNIT_CHUNK)
         .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
@@ -538,7 +547,7 @@ async function trimClaimed(
       if ('kept' in movedBatch) return { units: swept, bytes, kept: movedBatch.kept };
       if ('kept' in movedBatch.value) return { units: swept, bytes, kept: movedBatch.value.kept };
       swept += movedBatch.value.units;
-      if (movedBatch.value.units) bytes += await sizeOf(batch, signal, lowPriority);
+      if (movedBatch.value.units) bytes += await measured(batch);
     }
     return { units: swept, bytes };
   };
@@ -565,16 +574,22 @@ async function trimClaimed(
   const remaining = (cargoProfileDirs(target) ?? []).filter(
     (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
   );
-  const refreshed =
-    incremental === 'all' || result.bytes < needBytes ? await readTargetUse(target, signal, lowPriority) : used;
-  if (refreshed === null) result.kept.push('the files processes hold open cannot be read');
+  const refreshed = stopped()
+    ? null
+    : incremental === 'all' || result.bytes < needBytes
+      ? await readTargetUse(target, signal, lowPriority)
+      : used;
+  if (stopped()) {
+    if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
+  } else if (refreshed === null) result.kept.push('the files processes hold open cannot be read');
   else used = refreshed;
   if (refreshed !== null && (incremental === 'all' || result.bytes < needBytes)) {
     const candidates: { path: string; bytes: number }[] = [];
     for (const profile of remaining) {
       const dir = join(profile, 'incremental');
       if (incremental === 'toNeed' && inUse(used, profile)) continue;
-      if (existsSync(dir)) candidates.push({ path: dir, bytes: await sizeOf(dir, signal, lowPriority) });
+      if (existsSync(dir))
+        candidates.push({ path: dir, bytes: incremental === 'all' ? 0 : await sizeOf(dir, signal, lowPriority) });
     }
     const chosen =
       incremental === 'all'
@@ -589,6 +604,7 @@ async function trimClaimed(
   if (units === 'all' || (units === 'toNeed' && result.bytes < needBytes))
     for (const profile of remaining) {
       signal?.throwIfAborted();
+      if (stopped()) break;
       const key = profile.slice(target.length + 1);
       const swept = await sweepUnits(profile, key);
       if (swept.kept) result.kept.push(`${key}: ${swept.kept}`);

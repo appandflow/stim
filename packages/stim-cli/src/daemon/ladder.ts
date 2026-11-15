@@ -101,6 +101,8 @@ export interface LadderInput {
   operation?: StimContext;
   /** The workspace of the command that runs the ladder, which no rung takes. */
   protectedRoot?: string;
+  /** Aborts at a build's headroom deadline; a Cargo target trim in flight stops between units. */
+  stop?: AbortSignal;
 }
 
 interface RungContext extends LadderInput {
@@ -221,6 +223,7 @@ async function run(
       ...actContext(context.settings),
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
+      ...(context.stop ? { stop: context.stop } : {}),
       ...(worktreeSweep ? { worktreeSweep } : {}),
     });
   } catch (error) {
@@ -385,6 +388,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   const key = `${configDir()}\0${context.level}`;
   const last = cargoTrimmedAt.get(key);
   if (last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
+  if (!(await context.stillShort())) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const plan = await planCargoTargetsAtPressure({
     settings: context.settings,

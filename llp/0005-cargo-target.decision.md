@@ -5,7 +5,7 @@
 **Systems:** Cleanup, Exact
 **Author:** Janic Duplessis / Claude
 **Date:** 2026-11-12
-**Related:** LLP 0001, LLP 0004
+**Related:** LLP 0001, LLP 0004, LLP 0007
 
 ## Which targets Stim manages
 
@@ -68,9 +68,15 @@ and runs it; the daemon runs it at most every 10 minutes per level, a command
 once, and a command leaves its own workspace's `target/` alone. An acting `stim gc` runs it
 before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep`, the lock, `lsof` and `ps` checks and the rename with its
-re-check apply unchanged. Every trim of a target, from any process, holds that
-target's exclusive ownership claim (LLP 0007); one that cannot take it keeps the
-target and names the holder.
+re-check apply unchanged. Every trim of a target, from any process and any Stim home, holds that
+target's exclusive ownership claim (LLP 0007) under `~/.stim/machine/cargo-trim/`;
+one that cannot take it keeps the target and names the claim. Reason: two Stim
+homes can register or discover the same checkout, and a second trim starts by
+deleting `target/.stim-trimmed`, which the first may still need to put back. The
+claim is outside `target/` because `cargo clean` or the trim itself would delete
+it, and outside the project tree, as runtime state is. Under a headroom
+deadline the trim stops between units; at high and critical it walks nothing
+before removing, and reports the free space it gained.
 
 Maintainer decision: "we def should not have to wait on full disk measurement
 to be able to remove caches", 2026-11-14.
