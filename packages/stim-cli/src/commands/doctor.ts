@@ -3,7 +3,10 @@ import {
   daemonNdjsonFile,
   daemonSnapshotFile,
   gcLogFile,
+  machineSettingValue,
   readDaemonSnapshot,
+  readDiscoveryCensusFile,
+  readDiscoveryScanFile,
   type DaemonPressure,
   type DaemonStatus,
 } from '@stim-cli/core/state';
@@ -21,13 +24,19 @@ import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
+  DISCOVER_ROOTS_KEY,
+  discoveryLines,
+  discoveryReport,
+  type DiscoveryReport,
+} from '../workspace/discovery-report.ts';
+import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
   settingValueAt,
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
-import type { StimContext } from '@stim-cli/core';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { readMachineSettings, type MachineSettings } from '../diagnostics/doctor-config.ts';
 import { checkWorktreeStorageLayout } from '../diagnostics/doctor-storage.ts';
 import {
@@ -219,6 +228,21 @@ function toolchainLines(report: ToolchainReport): string[] {
   ];
 }
 
+/** `maintenance.olderThanDays`, the age the doctor listing calls idle; null when it is 0 or does not read. */
+function idleAfterDays(env: NodeJS.ProcessEnv): number | null {
+  const { value, error } = machineSettingValue('maintenance.olderThanDays', { config: loadConfig(), env });
+  return !error && typeof value === 'number' && value > 0 ? value : null;
+}
+
+const DISCOVERY_TITLE = 'Checkouts Stim does not fully manage';
+
+function discoverySection(report: DiscoveryReport, env: NodeJS.ProcessEnv): string[] {
+  const lines = isScopedHome(env)
+    ? ['A scoped Stim home never scans the home folder, so it lists nothing.']
+    : discoveryLines(report, homedir());
+  return lines.map((line) => (line ? `  ${line}` : line));
+}
+
 function pressureLines(pressure: DaemonPressure | null): string[] {
   return pressure
     ? [phaseLine('pressure', `${pressure.level}${pressure.reasons.length ? `: ${pressure.reasons.join('; ')}` : ''}`)]
@@ -398,6 +422,11 @@ export interface DoctorReport {
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
   /** @internal Carries no compatibility: the stim-daemon state, as `status --json` prints it. */
   daemon: DaemonStatus & { logPath: string };
+  /**
+   * @internal Carries no compatibility: what the last home folder scan found that Stim does not fully manage, grouped
+   * by folder with the size of the build output, from the daemon's cached result.
+   */
+  discovery: DiscoveryReport;
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;
@@ -758,6 +787,14 @@ async function assembleDoctorReport(
     pressure: pressure.pressure,
     maintenance: { ...maintenance, logPath: gcLogFile() },
     daemon: { ...daemon, logPath: daemonNdjsonFile() },
+    discovery: discoveryReport({
+      scan: readDiscoveryScanFile(),
+      census: readDiscoveryCensusFile(),
+      setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env }),
+      idleAfterDays: idleAfterDays(env),
+      home: homedir(),
+      now: Date.now(),
+    }),
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),
     toolchain,
@@ -842,6 +879,9 @@ export function doctorOp(
             toolchain ? toolchainLines(toolchain) : [],
           ),
           ...maintenanceLines,
+          '',
+          DISCOVERY_TITLE,
+          ...discoverySection(report.discovery, process.env),
         ];
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
@@ -871,6 +911,9 @@ export function doctorOp(
         console.log(`  ${f.detail}`);
         if (f.fix) console.log(chalk.dim(`  -> ${f.fix}`));
       }
+
+      console.log(chalk.bold(`\n${DISCOVERY_TITLE}`));
+      for (const line of discoverySection(report.discovery, process.env)) console.log(chalk.dim(line));
 
       const serverOnly = findings.every(isServerFinding);
       console.log(

@@ -130,6 +130,80 @@ test('the next command, report-only gc included, warns on stderr while the daemo
   expect(errors).toEqual([expect.stringContaining('disk pressure is critical (4.0 GB free on /')]);
 });
 
+test('the critical-disk warning adds one line with what unmanaged checkouts hold and the command for the largest folder, only from a readable census', () => {
+  mkdirSync(join(home, 'daemon'), { recursive: true });
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  writeFileSync(
+    join(home, 'daemon', 'snapshot.json'),
+    JSON.stringify({
+      version: 1,
+      pid: 1,
+      startedAt: new Date().toISOString(),
+      mode: 'on',
+      tickAt: new Date().toISOString(),
+      tickMs: 1,
+      intervalMs: 60_000,
+      measurement: {},
+      workspaces: [],
+      pressure: {
+        level: 'critical',
+        disk: 'critical',
+        memory: 'normal',
+        reasons: ['4.0 GB free on /'],
+        memoryWarningSince: null,
+      },
+    }),
+  );
+  const ranAt = Date.now();
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-scan.json'),
+    JSON.stringify({
+      version: 2,
+      ranAt,
+      completedAt: ranAt,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    }),
+  );
+  const find = {
+    path: '/Users/x/dev/app',
+    kind: 'reduce-only',
+    folder: '/Users/x/dev',
+    adoptable: true,
+    evaluatedAt: ranAt,
+    dirs: 1,
+    measuredDirs: 1,
+    failedDirs: 0,
+    bytes: 3 * 1024 ** 3,
+    lastActivityAt: null,
+  };
+  const census = join(home, 'maintenance', 'discovery-census.json');
+  const errors: string[] = [];
+  vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
+
+  writeFileSync(census, '{');
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(1);
+
+  errors.length = 0;
+  writeFileSync(
+    census,
+    JSON.stringify({ version: 1, at: ranAt, scanRanAt: ranAt, roots: [], idleDays: 3, pending: false, finds: [find] }),
+  );
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(2);
+  expect(errors[1]).toBe(
+    `Stim: checkouts it does not fully manage hold 3.0 GB of build output. Add the largest folder, /Users/x/dev (3.0 GB), to what Stim manages with: stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine; stim doctor lists the rest.`,
+  );
+});
+
 const DAEMON_ROW =
   '  101 /opt/jdk/bin/java -cp /opt/gradle-9.4.1/lib/gradle-daemon-main-9.4.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1\n';
 const WRAPPER_ROW = '  202 /opt/jdk/bin/java -jar /app/gradle/wrapper/gradle-wrapper.jar assembleDebug\n';
