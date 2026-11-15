@@ -142,8 +142,8 @@ list. Reason: Stim cannot tell an installed tool from a checkout there, for
 example a Swift CLI cloned under `~/.mytool` whose launcher on PATH points into
 its ignored `.build/release`; clearing that output once idle would break the
 installed command. The record lets doctor report what the folder holds and the
-command that adds it to `maintenance.discoverRoots`; that listing is not part of
-this change.
+command that adds it to `maintenance.discoverRoots`; the listing is described in
+"The doctor listing and the low-disk line".
 
 The scan has a 45 second budget (and a 200 thousand folder cap, and an abort),
 checked before every read it makes, including every read of the safety checks
@@ -288,8 +288,74 @@ retry after an hour of a scan that failed or ended on a read that timed out, whi
 after the pass, and the PATH launcher keep. The scan is not deferred under host
 load; it takes about a second and a half on one MacBook.
 
-Not part of this change: points 4, 5 and 7, which belong to the doctor listing
-and the low-disk line.
+Points 4, 5 and 7 are implemented in "The doctor listing and the low-disk line".
+
+## The doctor listing and the low-disk line
+
+Maintainer direction, 2026-11-14 (#5762), verbatim, on the line Stim commands
+print when the disk is low: "do stim commands when low on disk space already log
+smt", then "could be part of that", then "smt like low disk space, found projects
+not managed by stim taking x space , command to add to discover roots". On the
+first of the two points it records for doctor, the decision above says: "doctor
+lists them and suggest adding as managed path or delete if idle for long time".
+Relayed by the coordinator, not on the issue: "like maybe not part of doctor since
+it could be slow", said about the scan, so doctor never walks the disk.
+
+What these words state: doctor lists the finds Stim does not fully manage and
+suggests adding the folder as a managed path, or deleting what has been idle a
+long time; the low-disk line carries how much they hold and the command that adds
+them; the scan stays out of doctor.
+
+Chosen by the implementing lane and the coordinator's brief, not by the
+maintainer:
+
+- The daemon writes the result. After a scan it classifies the scan's finds from
+  the complete discovery list and measures their recognised build output into
+  `maintenance/discovery-census.json`. Doctor and the low-disk line read that
+  file, the scan file and the `maintenance.discoverRoots` setting, and walk nothing.
+  A group whose folder the setting names now is left out before the daemon
+  classifies again.
+- Two kinds, worded differently because they are different facts: reduce-only
+  scan finds (Stim reduces their outputs and never removes them), and finds under
+  a home dot-folder (Stim does nothing with them). Both are grouped by the
+  folder that holds them, the only folder `maintenance.discoverRoots` can name to
+  adopt them, with a command built from the current value plus that folder and
+  quoted for the shell. The home folder and a folder holding it cannot be named, so
+  such a group gets words and no command. The command adds the folder to the full
+  discovered-checkout rules, finished-worktree removal included, and for a
+  dot-folder find lets Stim act where it did not; the listing says so.
+- Size is the recognised build output only (the build directories maintenance
+  clears, a Cargo target with `CACHEDIR.TAG` or Exact's), not `node_modules` or
+  Pods, and not proof that a directory is deletable. It goes through
+  `refreshMeasure` and the disk-usage cache: one walk at a time on the machine, 10
+  seconds per directory, at most 25 checkouts and 90 seconds per run; a checkout
+  measured within a day is carried over, and what a run leaves is measured by the
+  next one an hour later. A walk that failed or timed out is "could not be
+  measured" and a directory not reached is "not measured yet", never zero; a total
+  with either is "at least".
+- Idle uses `maintenance.olderThanDays` (default 3, "Days unused before the age
+  sweep removes it"; 0 turns the listing off) as the threshold, with the idle
+  stage's own evidence for a reduce-only checkout (`discoveredEvidence`): the
+  daemon records the newest activity only when that evidence is complete, older
+  than the threshold and nothing uses the checkout. Doctor lists such a checkout by
+  path, as words for the person; Stim offers no command that deletes. A dot-folder
+  find gets no idle evidence and no suggestion to delete, since an installed tool
+  cannot be told from a checkout there.
+- The low-disk line is a second stderr line after the existing one, at critical
+  only, never on stdout or in JSON. It gives the total (with "at least" while some
+  is unmeasured) and the command for the largest reduce-only folder; a dot-folder
+  group counts in the total and is never the one named.
+- Doctor shows it as a section outside the findings, so it never changes a PASS or
+  the count, and carries it in `--json` as `discovery`, an internal field. Doctor
+  runs only inside a project, so the section does too.
+- The worktrees in `~/.codex/worktrees` reach discovery through git as reduce-only
+  worktrees and are not scan finds, so they are not listed.
+
+Open for the maintainer: how long idle is "a long time" (the threshold borrows an
+existing three-day setting, which is short for a deletion suggestion); whether
+the low-disk line also appears at the high level; whether listing the
+`~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
+Desktop show the listing.
 
 ## Removing a discovered worktree needs more evidence
 
@@ -328,6 +394,8 @@ Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 - Issues: #5512, #5515, #5757, #5762. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
+  `packages/stim-cli/src/workspace/discovery-census.ts`,
+  `packages/stim-cli/src/workspace/discovery-report.ts`,
   `packages/stim-cli/src/workspace/discovered-removal.ts`,
   `packages/stim-cli/src/workspace/protected-locations.ts`,
   `packages/stim-cli/src/workspace/hidden-edits.ts`,
