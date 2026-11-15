@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { testContext } from './_context.ts';
-import * as worktreeModule from '../workspace/worktree.ts';
 import {
   artifactCheckoutsAsync,
   artifactWorktreesAsync,
@@ -214,6 +213,47 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
+  it('keeps a nested app Cargo target when a PATH launcher resolves into the checkout outside that app, in the plan and at the trim', async () => {
+    const mono = join(base, 'home', 'tools', 'mono');
+    const app = join(mono, 'apps', 'native');
+    mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', 'incremental'), { recursive: true });
+    mkdirSync(join(mono, 'bin'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    writeFileSync(join(app, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(app, 'target', 'debug', 'incremental', 'data'), 'x'.repeat(10_000));
+    writeFileSync(join(mono, 'bin', 'tool'), '#!/bin/sh\n');
+    execFileSync('git', ['-C', mono, 'init', '-q']);
+    execFileSync('git', ['-C', mono, 'add', '-A']);
+    execFileSync('git', ['-C', mono, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    writeScan([mono]);
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    const plan = () =>
+      planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation: testContext({ env: {} }),
+      });
+    const planned = await plan();
+    expect(planned.actions).toMatchObject([{ kind: 'would-clear-build-dirs', target: join(app, 'target') }]);
+
+    mkdirSync(join(base, 'home', 'bin'));
+    symlinkSync(join(mono, 'bin', 'tool'), join(base, 'home', 'bin', 'tool'));
+    const kept = await plan();
+    expect(kept.actions).toEqual([]);
+    expect(kept.skips).toMatchObject([{ target: join(app, 'target'), reason: expect.stringContaining('on PATH') }]);
+    const [action] = planned.actions;
+    if (!action) throw new Error('no trim was planned');
+    expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({
+      status: 'kept',
+      detail: expect.stringContaining('on PATH'),
+    });
+  });
+
   describe('the artifact and dependency route for a scan-found linked worktree', () => {
     const operation = () => testContext({ env: {} });
     const scanFoundWorktree = () => {
@@ -224,17 +264,10 @@ describe('checkouts found through a tool folder or the full scan', () => {
       writeScan([found]);
       return { found, modules: join(found, 'node_modules') };
     };
-    const candidates = async () => {
-      const { signal } = new AbortController();
-      return collectArtifactsAsync(
-        'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false },
-        signal,
-        operation(),
-      );
-    };
-    const clear = async (modules: string) => {
-      const { signal } = new AbortController();
+    const { signal } = new AbortController();
+    const collectOptions = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
+    const candidates = async () => collectArtifactsAsync('dependencies', collectOptions, signal, operation());
+    const clear = async (modules: string, shared?: ReturnType<typeof operation>) => {
       return clearArtifact(
         { kind: 'would-delete-dependencies', target: modules, bytes: 0, reason: 'test' },
         'dependencies',
@@ -242,7 +275,8 @@ describe('checkouts found through a tool folder or the full scan', () => {
           windowMs: 0,
           protectedRoot: '',
           pinned: () => false,
-          worktrees: await artifactWorktreesAsync(signal),
+          worktrees: await artifactWorktreesAsync(signal, shared),
+          ...(shared ? { operation: shared } : {}),
         },
       );
     };
@@ -255,38 +289,42 @@ describe('checkouts found through a tool folder or the full scan', () => {
       expect(existsSync(modules)).toBe(false);
     });
 
-    it('keeps it, naming the launcher, when an executable on PATH resolves into the checkout, at the plan and at the check under the lock', async () => {
+    it('keeps it, naming the launcher, when one appears after the plan, with the same operation at both', async () => {
       const { modules } = scanFoundWorktree();
       const bin = join(base, 'home', 'bin');
       mkdirSync(bin);
       const link = join(bin, 'tool');
       symlinkSync(join(modules, '.bin', 'tool'), link);
-      const planned = await candidates();
-      expect(planned.candidates).toEqual([]);
-      expect(planned.skips).toMatchObject([{ target: modules, reason: expect.stringContaining('on PATH') }]);
-      expect(await clear(modules)).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
-
+      const withLauncher = await candidates();
+      expect(withLauncher.candidates).toEqual([]);
+      expect(withLauncher.skips).toMatchObject([{ target: modules, reason: expect.stringContaining('on PATH') }]);
       rmSync(link);
-      const appears = vi.spyOn(worktreeModule, 'worktreeLockAsync').mockImplementation(async () => {
-        symlinkSync(join(modules, '.bin', 'tool'), link);
-        return null;
+
+      const shared = operation();
+      const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, shared);
+      expect(planned.candidates.map((entry) => entry.path)).toEqual([modules]);
+      symlinkSync(join(modules, '.bin', 'tool'), link);
+      expect(await clear(modules, shared)).toMatchObject({
+        status: 'kept',
+        detail: expect.stringContaining('on PATH'),
       });
-      expect(await clear(modules)).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
-      expect(appears).toHaveBeenCalled();
       expect(existsSync(modules)).toBe(true);
     });
 
     test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'keeps it when a launcher directory cannot be read, naming the directory',
+      'keeps it when a launcher directory becomes unreadable after the plan, naming the directory',
       async () => {
         const { modules } = scanFoundWorktree();
         const locked = join(base, 'home', 'locked-bin');
         mkdirSync(locked, { mode: 0o000 });
-        launcherDirs.list = [locked];
         try {
-          const planned = await candidates();
-          expect(planned.candidates).toEqual([]);
-          expect(planned.skips).toMatchObject([{ target: modules, reason: expect.stringContaining(locked) }]);
+          const shared = operation();
+          const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, shared);
+          expect(planned.candidates.map((entry) => entry.path)).toEqual([modules]);
+          launcherDirs.list = [...launcherDirs.list, locked];
+          const outcome = await clear(modules, shared);
+          expect(outcome).toMatchObject({ status: 'kept', detail: expect.stringContaining(locked) });
+          expect(existsSync(modules)).toBe(true);
         } finally {
           chmodSync(locked, 0o700);
         }

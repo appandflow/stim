@@ -220,7 +220,11 @@ export async function regenerableDirProblem(
   root: string,
   path: string,
   signal?: AbortSignal,
-  { processes = true, launchers }: { processes?: boolean; launchers?: () => Promise<LauncherScan> } = {},
+  {
+    processes = true,
+    launchers,
+    launcherRoot = root,
+  }: { processes?: boolean; launchers?: () => Promise<LauncherScan>; launcherRoot?: string } = {},
 ): Promise<string | null> {
   const rel = relative(root, path);
   try {
@@ -242,7 +246,7 @@ export async function regenerableDirProblem(
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
   if (launchers) {
-    const launcher = launcherReason(root, await launchers());
+    const launcher = launcherReason(launcherRoot, await launchers());
     if (launcher) return launcher;
   }
   if (

@@ -29,13 +29,36 @@ const REAL_IO: LauncherIo = {
 const ABSENT = ['ENOENT', 'ENOTDIR'];
 const absent = (error: unknown) => error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
 
+const READ_TIMEOUT_MS = 3000;
+/** How long a reading taken just before a deletion may be reused by the next deletion of the same operation. */
+const FRESH_MS = 5000;
+
+/** `read`'s result, or an ETIMEDOUT rejection when it has not answered in time, as a hung mount would not. */
+async function answered<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      read,
+      new Promise<never>((_, fail) => {
+        timer = setTimeout(() => fail(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Reads the entries of each launcher directory and resolves the symlinks among them, once per reader. A wrapper
- * script that merely names a path is not followed.
+ * script that merely names a path is not followed. Every call to the directory has 3 seconds to answer.
  */
 export function launcherReader(
   signal?: AbortSignal,
-  { directories, io = REAL_IO }: { directories: readonly string[]; io?: LauncherIo } = { directories: [] },
+  {
+    directories,
+    io = REAL_IO,
+    timeoutMs = READ_TIMEOUT_MS,
+  }: { directories: readonly string[]; io?: LauncherIo; timeoutMs?: number } = { directories: [] },
 ): () => Promise<LauncherScan> {
   let scan: Promise<LauncherScan> | undefined;
   const read = async (): Promise<LauncherScan> => {
@@ -43,11 +66,11 @@ export function launcherReader(
     for (const directory of directories) {
       signal?.throwIfAborted();
       try {
-        for (const name of await io.readdir(directory)) {
+        for (const name of await answered(io.readdir(directory), timeoutMs)) {
           const entry = join(directory, name);
           try {
-            if (!(await io.isSymlink(entry))) continue;
-            found.targets.push(await io.realpath(entry));
+            if (!(await answered(io.isSymlink(entry), timeoutMs))) continue;
+            found.targets.push(await answered(io.realpath(entry), timeoutMs));
           } catch (error) {
             if (!absent(error)) throw error;
           }
@@ -63,21 +86,46 @@ export function launcherReader(
 }
 
 const readers = new WeakMap<StimContext, () => Promise<LauncherScan>>();
+const fresh = new WeakMap<StimContext, { at: number; scan: Promise<LauncherScan> }>();
 
-/** The launcher reader of an operation, so every route of one pass reads the directories once. */
+const newReader = (
+  operation: StimContext | undefined,
+  signal: AbortSignal | undefined,
+  directories?: readonly string[],
+) => launcherReader(signal ?? operation?.signal, { directories: directories ?? launcherDirectories(operation?.env) });
+
+/** The launcher reader of an operation for planning: every route of one pass shares one reading. */
 export function launchersOf(
   operation: StimContext | undefined,
   signal?: AbortSignal,
   directories?: readonly string[],
 ): () => Promise<LauncherScan> {
-  const make = () =>
-    launcherReader(signal ?? operation?.signal, {
-      directories: directories ?? launcherDirectories(operation?.env ?? {}),
-    });
-  if (!operation) return make();
+  if (!operation) return newReader(operation, signal, directories);
   let reader = readers.get(operation);
-  if (!reader) readers.set(operation, (reader = make()));
+  if (!reader) readers.set(operation, (reader = newReader(operation, signal, directories)));
   return reader;
+}
+
+/**
+ * The launcher reader for the check that immediately precedes a deletion. It never uses the operation's planning
+ * reading, which can be minutes old: a launcher may have appeared or a directory become unreadable since. Deletions of
+ * one operation within 5 seconds of each other share one fresh reading, so many deletions in a row do not each pay the
+ * read (55 to 72 ms here).
+ */
+export function freshLaunchers(
+  operation: StimContext | undefined,
+  signal?: AbortSignal,
+  directories?: readonly string[],
+): () => Promise<LauncherScan> {
+  if (!operation) return () => newReader(operation, signal, directories)();
+  return () => {
+    const now = Date.now();
+    const prior = fresh.get(operation);
+    if (prior && now >= prior.at && now - prior.at < FRESH_MS) return prior.scan;
+    const scan = newReader(operation, signal, directories)();
+    fresh.set(operation, { at: now, scan });
+    return scan;
+  };
 }
 
 /**
@@ -89,6 +137,6 @@ export function launcherReason(folder: string, scan: LauncherScan): string | nul
   const target = scan.targets.find((path) => path.startsWith(`${root}${sep}`));
   if (target) return `an executable on PATH runs from it (${target})`;
   if (scan.incomplete.length)
-    return `an executable on PATH cannot be ruled out: ${scan.incomplete.join(', ')} could not be read`;
+    return `an executable on PATH cannot be ruled out: ${scan.incomplete.join(', ')} could not be read; fixing its permissions or access restores reduction`;
   return null;
 }

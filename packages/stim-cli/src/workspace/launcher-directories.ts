@@ -7,7 +7,7 @@ import { delimiter, join } from 'node:path';
  * links), `~/.cargo/bin` (cargo install), `~/.bun/bin` (bun), `~/.volta/bin` (Volta), `~/Library/pnpm` (pnpm's global
  * bin), the active nvm bin (`NVM_BIN`), and `/usr/local/bin` and `/opt/homebrew/bin` (Homebrew).
  */
-export function launcherDirectories(env: NodeJS.ProcessEnv): string[] {
+export function launcherDirectories(env: NodeJS.ProcessEnv = process.env): string[] {
   const home = homedir();
   const extra = [
     join(home, '.local', 'bin'),

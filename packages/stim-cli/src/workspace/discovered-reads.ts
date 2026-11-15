@@ -1,7 +1,7 @@
 import type { AgentSession } from '@stim-cli/core/state';
 import { agentKey, attributeAgentSessions, discoverAgentSessions } from '../agent-sessions.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { launchersOf, type LauncherScan } from './launchers.ts';
+import { freshLaunchers, launchersOf, type LauncherScan } from './launchers.ts';
 import { processReader, type RunningProcesses } from './running-from.ts';
 import type { StimContext } from '@stim-cli/core';
 
@@ -14,11 +14,12 @@ export interface DiscoveredReads {
   sessions: (path: string, now: number) => Promise<string[]>;
 }
 
-export function discoveredReads(signal?: AbortSignal, operation?: StimContext): DiscoveredReads {
+/** `fresh` reads the launcher directories anew, for the check that immediately precedes a deletion. */
+export function discoveredReads(signal?: AbortSignal, operation?: StimContext, fresh = false): DiscoveredReads {
   let found: Promise<AgentSession[]> | undefined;
   return {
     processes: processReader(signal),
-    launchers: launchersOf(operation, signal),
+    launchers: fresh ? freshLaunchers(operation, signal) : launchersOf(operation, signal),
     sessions: async (path, now) => {
       found ??= discoverAgentSessions({ now });
       const sessions = await found;

@@ -1245,8 +1245,11 @@ PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
 ~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
 resolves into is kept whole, by every pass that deletes its outputs,
 dependencies or Cargo target. A directory that cannot be read (not one that is
-missing) keeps every reduce-only checkout for that pass, and the reason names
-it. Reduce-only checkouts have their build outputs and, in
+missing, or one that does not answer within 3 seconds) keeps every reduce-only
+checkout for that pass, and the reason names it and says fixing its permissions
+restores reduction. The check before each deletion reads the directories anew
+(reused for at most 5 seconds by the next deletion), not the pass's planning
+reading. Reduce-only checkouts have their build outputs and, in
 a linked worktree, node_modules and Pods reduced by the rules below. Passes
 evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
 stim gc --dry-run lists all of them and says which are left for a later pass. A

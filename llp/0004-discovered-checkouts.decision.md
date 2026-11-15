@@ -143,6 +143,14 @@ target measurement, the pressure plan and the acting trim
 those on PATH and the per-user bin folders a daemon started by launchd does not
 list: `~/.local/bin`, `~/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.volta/bin`,
 `~/Library/pnpm`, the active nvm bin, `/usr/local/bin` and `/opt/homebrew/bin`.
+Planning shares one reading per operation. The check that immediately precedes a
+deletion (under the lock in `clearArtifact` and `clearSourceTrees`, in
+`clearStoppedOutputs`, and before `trimCargoTargetAction` trims) reads the
+directories anew, and the next deletion of the same operation reuses that
+reading for at most 5 seconds, so a long pass never deletes on an old reading
+and a run of deletions does not each pay the read (55 to 72 ms here). A Cargo
+target is checked against its owning checkout, not its app folder. Each call to a
+directory has 3 seconds to answer; a timeout is an incomplete inspection.
 A directory or entry that does not exist, and a dangling symlink, is no
 launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
 keeps every reduce-only checkout for that operation, with a reason naming the

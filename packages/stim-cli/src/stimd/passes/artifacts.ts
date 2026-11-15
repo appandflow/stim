@@ -20,7 +20,7 @@ import {
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { launcherReason, launchersOf } from '../../workspace/launchers.ts';
+import { freshLaunchers, launcherReason, launchersOf } from '../../workspace/launchers.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -272,6 +272,7 @@ async function artifactReads(
   kind: ArtifactKind,
   signal: AbortSignal,
   operation?: StimContext,
+  { fresh = false }: { fresh?: boolean } = {},
 ): Promise<ArtifactReads> {
   const { worktree, path, keys } = candidate;
   const tracked = await gitQuietAsync(worktree, ['ls-files', '--', relative(worktree, path)], {
@@ -284,7 +285,9 @@ async function artifactReads(
   const windowed = tracked !== null && !tracked.trim() && kind === 'dependencies';
   const activity = windowed ? await worktreeActivityOfAsync(worktree, keys, operation) : null;
   const written = windowed ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
-  const launcher = candidate.reduceOnly ? launcherReason(worktree, await launchersOf(operation, signal)()) : null;
+  const launcher = candidate.reduceOnly
+    ? launcherReason(worktree, await (fresh ? freshLaunchers : launchersOf)(operation, signal)())
+    : null;
   return { tracked, activity, written, launcher };
 }
 
@@ -632,7 +635,7 @@ export async function clearArtifact(
     candidate,
     kind,
     { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
-    await artifactReads(candidate, kind, signal, operation),
+    await artifactReads(candidate, kind, signal, operation, { fresh: true }),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
   const unrestorable =
@@ -654,7 +657,7 @@ export async function clearArtifact(
         inUse: await inUseOf(candidate, kind, signal, operation, key),
         ...(key ? { locked: key } : {}),
       },
-      await artifactReads(candidate, kind, signal, operation),
+      await artifactReads(candidate, kind, signal, operation, { fresh: true }),
     );
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
@@ -767,7 +770,7 @@ export async function clearSourceTrees(
           inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
           ...(held ? { locked: held } : {}),
         },
-        await artifactReads(candidate, 'dependencies', signal, operation),
+        await artifactReads(candidate, 'dependencies', signal, operation, { fresh: true }),
       ) ??
       (await regenerableDirProblem(worktree.path, path, signal)) ??
       linkedWorktreeUsing(candidate, options.worktrees)

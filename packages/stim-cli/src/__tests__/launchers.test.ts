@@ -1,3 +1,4 @@
+import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { launcherReader, launcherReason } from '../workspace/launchers.ts';
 
 const missing = (code: string) => Object.assign(new Error(code), { code });
@@ -46,5 +47,25 @@ describe('the PATH launcher scan', () => {
     const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing('EIO') }));
     expect(unresolved.incomplete).toEqual(['/bin1']);
     expect(launcherReason('/work/app', unresolved)).toContain('cannot be ruled out');
+  });
+
+  it('treats a directory that does not answer in time as not inspected, and names the way to restore reduction', async () => {
+    const hung = { ...io({ '/bin1': ['tool'] }), readdir: () => new Promise<string[]>(() => {}) };
+    const pending = launcherReader(undefined, { directories: ['/hung'], io: hung, timeoutMs: 10 })();
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await pending;
+    expect(result.incomplete).toEqual(['/hung']);
+    expect(launcherReason('/work/app', result)).toContain('permissions');
+  });
+});
+
+describe('the launcher directories', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('lists the PATH of the process when no environment is given, and of the given environment otherwise', () => {
+    vi.stubEnv('PATH', '/from/process:/also/process');
+    expect(launcherDirectories()).toEqual(expect.arrayContaining(['/from/process', '/also/process']));
+    expect(launcherDirectories({ PATH: '/given' })).toContain('/given');
+    expect(launcherDirectories({ PATH: '/given' })).not.toContain('/from/process');
   });
 });

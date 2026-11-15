@@ -345,6 +345,7 @@ export async function clearStoppedOutputs(
               (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
                 locked: true,
                 operation,
+                reads: discoveredReads(operation?.signal, operation, true),
                 ...(candidate.reduceOnly ? { reduceOnly: true } : {}),
               })) === null
             )

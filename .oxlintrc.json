@@ -522,6 +522,7 @@
         "packages/stim-cli/src/web/chrome.ts",
         "packages/stim-cli/src/workspace/config.ts",
         "packages/stim-cli/src/workspace/git-read.ts",
+        "packages/stim-cli/src/workspace/launcher-directories.ts",
         "packages/stim-cli/src/workspace/settings.ts",
         "packages/stim-cli/src/workspace/workspace-state.ts",
         "packages/stim-cli/src/workspace/worktree-refresh.ts"
