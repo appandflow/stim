@@ -326,7 +326,7 @@ async function runCommandLadder(
         // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
-        ...(headroom ? { operation: headroom.operation } : {}),
+        ...(headroom ? { operation: headroom.operation, stop: headroom.stop } : {}),
       },
       pressure,
     );

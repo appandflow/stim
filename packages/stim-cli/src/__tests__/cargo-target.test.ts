@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { staleCargoPaths, staleCargoTargetPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
 
@@ -201,6 +202,88 @@ test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock
 
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual(['debug: a build holds its .cargo-build-lock']);
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('a second trim of a target, from another Stim home, keeps what the first moved aside and reports that it was kept', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-cargo-trim-home-'));
+  const otherHome = mkdtempSync(join(tmpdir(), 'stim-cargo-trim-other-'));
+  vi.stubEnv('STIM_HOME', home);
+  try {
+    makeProfile('debug', 3 * DAY);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let paused: () => void = () => {};
+    const reachedPause = new Promise<void>((done) => (paused = done));
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'lsof' && args.some((arg: string) => arg.includes('.stim-trimmed'))) {
+          paused();
+          await gate;
+          return '';
+        }
+        return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+      },
+    });
+    const first = trimCargoTarget(target, { needBytes: 0 });
+    await reachedPause;
+    const staged = join(realpathSync.native(target), '.stim-trimmed', '0', '.fingerprint');
+    expect(existsSync(staged)).toBe(true);
+
+    vi.stubEnv('STIM_HOME', otherHome);
+    const second = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(second.removed).toEqual([]);
+    expect(second.kept.join(' ')).toContain('another trim of it holds');
+    expect(existsSync(staged)).toBe(true);
+    release();
+    expect((await first).removed).toEqual(['debug']);
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+    expect(existsSync(cargoTargetTrimClaims(realpathSync.native(target)))).toBe(false);
+  } finally {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(otherHome, { recursive: true, force: true });
+  }
+});
+
+test('a trim stopped at a deadline keeps every unit it has not moved, finishes the one in flight and walks nothing', async () => {
+  try {
+    for (const name of ['debug', 'release', 'host-dev']) makeProfile(name, 3 * DAY);
+    const deadline = new AbortController();
+    const real = getExecutor();
+    const walked: string[] = [];
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du' || file === 'nice') walked.push(String(args.at(-1)));
+        if (file === 'lsof' && args.some((arg: string) => arg.includes('.stim-trimmed'))) deadline.abort();
+        return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+      },
+    });
+
+    const result = await trimCargoTarget(target, {
+      needBytes: 0,
+      incremental: 'all',
+      measure: false,
+      stop: deadline.signal,
+    });
+
+    const present = ['debug', 'release', 'host-dev'].filter((name) =>
+      existsSync(join(target, name, 'deps', 'libx.rlib')),
+    );
+    expect(result.removed).toHaveLength(1);
+    expect(present).toHaveLength(2);
+    for (const name of present)
+      expect(existsSync(join(target, name, '.fingerprint', 'unit-0123456789abcdef', 'lib'))).toBe(true);
+    expect(result.kept.join(' ')).toContain('headroom deadline');
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+    expect(walked).toEqual([]);
   } finally {
     resetExecutor();
   }

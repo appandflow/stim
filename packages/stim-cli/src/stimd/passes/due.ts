@@ -1,4 +1,4 @@
-import type { MaintenanceCheck, MaintenanceState } from '@stim-cli/core/state';
+import type { MaintenanceCheck, MaintenanceState, PressureLevel } from '@stim-cli/core/state';
 import type { MaintenanceSettings } from './settings.ts';
 
 const DEFERRED_RETRY_MS = 5 * 60_000;
@@ -10,6 +10,7 @@ export function due(
   state: MaintenanceState | null,
   settings: Pick<MaintenanceSettings, 'worktreeCheckMinutes' | 'sweepHours' | 'removeFinishedWorktrees'>,
   now: number,
+  diskLevel: PressureLevel = 'normal',
 ): MaintenanceCheck[] {
   const elapsed = (stamp: number | undefined) => (stamp === undefined || stamp > now ? Infinity : now - stamp);
   const intervalMs = {
@@ -20,7 +21,11 @@ export function due(
     idle: IDLE_CHECK_MS,
   } satisfies Record<MaintenanceCheck, number>;
   return (['pressure', 'size', 'worktree', 'sweep', 'idle'] as const).filter((check) => {
-    if (intervalMs[check] === Infinity || elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS) return false;
+    if (
+      intervalMs[check] === Infinity ||
+      (diskLevel === 'normal' && elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS)
+    )
+      return false;
     return elapsed(state?.lastAt[check]) >= intervalMs[check];
   });
 }
