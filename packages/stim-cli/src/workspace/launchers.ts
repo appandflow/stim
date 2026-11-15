@@ -2,6 +2,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { launcherDirectories } from './launcher-directories.ts';
 
 /**
@@ -31,47 +32,14 @@ const absent = (error: unknown) => error instanceof Error && 'code' in error && 
 
 const READ_TIMEOUT_MS = 3000;
 
-/**
- * The one launcher read that timed out and has not settled. While it is pending, no new read starts: a hung mount holds
- * exactly one libuv thread however many readings are asked for, and every reading reports it incomplete at once.
- * Module state, so the bound is per thread of the process; in the daemon only the passes thread reads launchers.
- */
-let hung: { directory: string } | null = null;
-/** Readings run one at a time, so the single read in flight is the only one outstanding. */
+/** Readings run one at a time, so a reading never adds a second read in flight. */
 let queue: Promise<unknown> = Promise.resolve();
-
-class Unanswered extends Error {}
-
-/** `read`'s result, or an `Unanswered` rejection when it has not answered in time; the read itself cannot be cancelled. */
-async function answered<T>(directory: string, start: () => Promise<T>, timeoutMs: number): Promise<T> {
-  const read = start();
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      read,
-      new Promise<never>((_, fail) => {
-        timer = setTimeout(() => fail(new Unanswered('timed out')), timeoutMs);
-      }),
-    ]);
-  } catch (error) {
-    if (error instanceof Unanswered) {
-      const mine = { directory };
-      hung = mine;
-      const settled = () => {
-        if (hung === mine) hung = null;
-      };
-      read.then(settled, settled);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /**
  * Reads the entries of each launcher directory and resolves the symlinks among them, once per reader. A wrapper
  * script that merely names a path is not followed. Every call to the directory has 3 seconds to answer; one that does
- * not ends the reading at once as incomplete, and no reading starts a read while an earlier one is still pending.
+ * not ends the reading at once as incomplete, and no read of any kind starts while an earlier one is still pending
+ * (`bounded-read.ts`).
  */
 export function launcherReader(
   signal?: AbortSignal,
@@ -86,7 +54,8 @@ export function launcherReader(
     const found: LauncherScan = { targets: [], incomplete: [] };
     for (const directory of directories) {
       signal?.throwIfAborted();
-      if (hung) return { targets: found.targets, incomplete: [...found.incomplete, hung.directory] };
+      const stuck = hungRead();
+      if (stuck) return { targets: found.targets, incomplete: [...found.incomplete, stuck] };
       try {
         for (const name of await answered(directory, () => io.readdir(directory), timeoutMs)) {
           const entry = join(directory, name);
@@ -147,6 +116,35 @@ export function freshLaunchers(
   directories?: readonly string[],
 ): () => Promise<LauncherScan> {
   return () => newReader(operation, signal, directories)();
+}
+
+/**
+ * Whether a PATH launcher can keep a checkout's outputs, which every caller on a deletion path states: `reduceOnly: false`
+ * for a registered workspace, which has no launcher keep, or a fresh launcher reading and the checkout it is checked
+ * against.
+ */
+export type Launching =
+  | { reduceOnly: false }
+  | { reduceOnly: true; launchers: () => Promise<LauncherScan>; checkout: string };
+
+/** The `Launching` of a checkout for planning: the operation's shared reading for a reduce-only one, none otherwise. */
+export function planningLaunching(
+  reduceOnly: boolean,
+  checkout: string,
+  operation: StimContext | undefined,
+  signal?: AbortSignal,
+): Launching {
+  return reduceOnly ? { reduceOnly, launchers: launchersOf(operation, signal), checkout } : { reduceOnly };
+}
+
+/** The `Launching` of a checkout for a deletion: a fresh launcher reading for a reduce-only one, none otherwise. */
+export function launchingOf(
+  reduceOnly: boolean,
+  checkout: string,
+  operation: StimContext | undefined,
+  signal?: AbortSignal,
+): Launching {
+  return reduceOnly ? { reduceOnly, launchers: freshLaunchers(operation, signal), checkout } : { reduceOnly };
 }
 
 /**

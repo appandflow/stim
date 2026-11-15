@@ -253,7 +253,7 @@ export async function runMaintenanceAtLevel({
       ? 'left for a later pass: at most 40 checkouts found through a tool folder or the full scan are handled at a time'
       : taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
-        : await discoveredKeepReason(checkout.path, idleMs, operation, reads, checkout.reduceOnly === true);
+        : await discoveredKeepReason(checkout.path, idleMs, checkout.reduceOnly === true, operation, reads);
     if (kept && /source entries to check|cannot be read/.test(kept))
       blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
     discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });

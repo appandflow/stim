@@ -15,8 +15,13 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as idleStop from '../stimd/passes/idle-stop.ts';
+import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
+import * as fsUtil from '../fs-util.ts';
+import { deleteOutputs } from '../daemon/idle.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   artifactCheckoutsAsync,
   artifactWorktreesAsync,
@@ -214,6 +219,76 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
+  it('keeps what a launcher that appears during the trim own process read points into, and trims it when none appears', async () => {
+    const tool = join(base, 'home', 'tools', 'mytool');
+    mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
+    mkdirSync(join(tool, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(tool, 'target', 'debug', 'incremental', 'x'), { recursive: true });
+    writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(tool, '.gitignore'), 'target/\n');
+    writeFileSync(join(tool, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'), 'x'.repeat(10_000));
+    execFileSync('git', ['-C', tool, 'init', '-q']);
+    execFileSync('git', ['-C', tool, 'add', '-A']);
+    execFileSync('git', ['-C', tool, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    writeScan([tool]);
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    mkdirSync(join(base, 'home', 'bin'));
+    const link = join(base, 'home', 'bin', 'tool');
+    const real = getExecutor();
+    const trimWith = async (appears: boolean) => {
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'ps') return '';
+          if (file !== 'lsof') return real.runFileAsync(file, args, options);
+          if (appears && !existsSync(link))
+            symlinkSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'), link);
+          return '';
+        },
+      });
+      const planned = await planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation: testContext({ env: {} }),
+      });
+      const [action] = planned.actions;
+      if (!action) throw new Error('no trim was planned');
+      return trimCargoTargetAction(action, testContext({ env: {} }));
+    };
+    try {
+      expect(await trimWith(true)).toMatchObject({ status: 'kept' });
+      expect(existsSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'))).toBe(true);
+      rmSync(link);
+      expect(await trimWith(false)).toMatchObject({ status: 'done' });
+      expect(existsSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'))).toBe(false);
+    } finally {
+      resetExecutor();
+    }
+  });
+
+  it('keeps an output a launcher resolves into when it appears while deleteOutputs measures, and deletes it otherwise', async () => {
+    const checkout = join(base, 'home', 'tools', 'out');
+    const output = join(checkout, 'build');
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(output, 'tool'), 'x');
+    let measured = false;
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+      measured = true;
+      return 1;
+    });
+    const launchers = async () => ({ targets: measured ? [join(output, 'tool')] : [], incomplete: [] });
+    const kept: string[] = [];
+    expect(await deleteOutputs([output], { reduceOnly: true, launchers, checkout }, kept)).toBe(0);
+    expect(existsSync(output)).toBe(true);
+    expect(kept).toEqual([expect.stringContaining('on PATH')]);
+
+    expect(await deleteOutputs([output], { reduceOnly: false }, kept)).toBe(1);
+    expect(existsSync(output)).toBe(false);
+  });
+
   it('keeps a nested app Cargo target when a PATH launcher resolves into the checkout outside that app, in the plan and at the trim', async () => {
     const mono = join(base, 'home', 'tools', 'mono');
     const app = join(mono, 'apps', 'native');
@@ -331,6 +406,51 @@ describe('checkouts found through a tool folder or the full scan', () => {
       });
       expect(reads).toBeGreaterThanOrEqual(2);
       expect(existsSync(modules)).toBe(true);
+    });
+
+    describe('through clearDependency, whose final recheck is the idleness evidence', () => {
+      const clearThroughRecheck = async (appears: boolean) => {
+        const { modules } = scanFoundWorktree();
+        const link = join(base, 'home', 'bin', 'tool');
+        mkdirSync(join(base, 'home', 'bin'));
+        const shared = operation();
+        const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, shared);
+        const [candidate] = planned.candidates;
+        if (!candidate) throw new Error('no dependency candidate');
+        const real = idleStop.idleStopEvidence;
+        vi.spyOn(idleStop, 'idleStopEvidence').mockImplementation(async (...args) => {
+          if (appears) symlinkSync(join(modules, '.bin', 'tool'), link);
+          return real(...args);
+        });
+        const outcome = await clearDependency(
+          {
+            candidate,
+            source: false,
+            workspace: candidate.keys[0] ?? candidate.worktree,
+            bytes: null,
+            privateBytes: null,
+          },
+          day,
+          '',
+          await artifactWorktreesAsync(signal, shared),
+          'test',
+          shared,
+          false,
+        );
+        return { outcome, modules };
+      };
+
+      it('clears it when no launcher appears', async () => {
+        const { outcome, modules } = await clearThroughRecheck(false);
+        expect(outcome).toMatchObject({ status: 'done' });
+        expect(existsSync(modules)).toBe(false);
+      });
+
+      it('keeps it when a launcher appears during the recheck', async () => {
+        const { outcome, modules } = await clearThroughRecheck(true);
+        expect(outcome).toMatchObject({ status: 'kept', detail: 'it is no longer idle' });
+        expect(existsSync(modules)).toBe(true);
+      });
     });
 
     test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(

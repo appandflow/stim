@@ -9,7 +9,7 @@ import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { freshLaunchers, launchersOf } from '../../workspace/launchers.ts';
+import { launchingOf, planningLaunching } from '../../workspace/launchers.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
@@ -34,9 +34,9 @@ export interface CargoTargetCandidate {
   identity: string;
   discovered: boolean;
   /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps its target. */
-  reduceOnly?: boolean;
+  reduceOnly: boolean;
   /** The checkout that owns the target, which a PATH launcher can point anywhere into; `root` is the app inside it. */
-  checkout?: string;
+  checkout: string;
   measuredAt: number | null;
 }
 
@@ -99,7 +99,7 @@ async function cargoTargetCandidates(
 ): Promise<CargoTargetCandidate[]> {
   const signal = operation?.signal ?? new AbortController().signal;
   const found: CargoTargetCandidate[] = [];
-  const add = async (base: string, discovered: boolean, reduceOnly = false, owner?: string) => {
+  const add = async (base: string, discovered: boolean, reduceOnly: boolean, checkout: string) => {
     const root = canonicalPath(base);
     for (const path of await cargoTargetDirsAsync(root)) {
       try {
@@ -111,13 +111,14 @@ async function cargoTargetCandidates(
           dir: path,
           identity,
           discovered,
-          ...(reduceOnly ? { reduceOnly, checkout: owner ?? root } : {}),
+          reduceOnly,
+          checkout,
           measuredAt: lastMeasured.get(path) ?? null,
         });
       } catch {}
     }
   };
-  for (const root of registered) await add(root, false);
+  for (const root of registered) await add(root, false, false, root);
   const discovered = new Set(
     (await discoverCheckouts(loadConfig(), listedRoots(), operation))
       .filter(({ deferred }) => !deferred)
@@ -125,7 +126,7 @@ async function cargoTargetCandidates(
   );
   for (const checkout of await artifactCheckoutsAsync(signal, operation))
     for (const base of appRoots(checkout, 'build'))
-      await add(base, discovered.has(canonicalPath(checkout.path)), checkout.reduceOnly === true, checkout.path);
+      await add(base, discovered.has(canonicalPath(checkout.path)), checkout.reduceOnly, checkout.path);
   return found;
 }
 
@@ -156,7 +157,7 @@ export async function measureCargoTargets(
     lastMeasured.set(dir, now);
     const problem = await regenerableDirProblem(root, dir, operation?.signal, {
       processes: false,
-      ...(reduceOnly ? { launchers: launchersOf(operation), launcherRoot: checkout ?? root } : {}),
+      launching: planningLaunching(reduceOnly, checkout, operation),
     });
     if (problem) {
       scan.refused.set(dir, { workspace: root, reason: problem });
@@ -367,7 +368,7 @@ export async function planCargoTargetsAtPressure({
     if (tightened === 'normal') continue;
     const problem = await regenerableDirProblem(workspace, dir, signal, {
       processes: false,
-      ...(reduceOnly ? { launchers: launchersOf(operation, signal), launcherRoot: checkout ?? workspace } : {}),
+      launching: planningLaunching(reduceOnly, checkout, operation, signal),
     });
     if (problem) {
       plan.skips.push({ target: dir, reason: problem, workspace });
@@ -407,14 +408,15 @@ export async function planCargoTargetsAtPressure({
 async function managedAs(
   root: string,
   operation?: StimContext,
-): Promise<{ reduceOnly: boolean; checkout?: string } | null> {
+): Promise<{ reduceOnly: boolean; checkout: string } | null> {
   const canonical = canonicalPath(root);
-  if (listedRoots().some((listed) => canonicalPath(listed) === canonical)) return { reduceOnly: false };
+  if (listedRoots().some((listed) => canonicalPath(listed) === canonical))
+    return { reduceOnly: false, checkout: canonical };
   const signal = operation?.signal ?? new AbortController().signal;
   const checkout = (await artifactCheckoutsAsync(signal, operation)).find((entry) =>
     appRoots(entry, 'build').some((base) => canonicalPath(base) === canonical),
   );
-  return checkout ? { reduceOnly: checkout.reduceOnly === true, checkout: checkout.path } : null;
+  return checkout ? { reduceOnly: checkout.reduceOnly, checkout: checkout.path } : null;
 }
 
 async function targetVolume(target: string, signal?: AbortSignal): Promise<{ freeMb: number; device: number } | null> {
@@ -434,9 +436,10 @@ export async function trimCargoTargetAction(
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
   const managed = await managedAs(root, operation);
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
+  const launching = launchingOf(managed.reduceOnly, managed.checkout, operation);
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, {
     processes: false,
-    ...(managed.reduceOnly ? { launchers: freshLaunchers(operation), launcherRoot: managed.checkout ?? root } : {}),
+    launching,
   });
   if (problem) return kept(problem);
   const measure = action.level === undefined;
@@ -448,7 +451,7 @@ export async function trimCargoTargetAction(
     signal: operation?.signal,
     measure,
     ...(stop ? { stop } : {}),
-    ...(managed.reduceOnly ? { launchers: freshLaunchers(operation) } : {}),
+    launching,
   });
   if (!measure) {
     const after = before ? await targetVolume(action.target, operation?.signal) : null;

@@ -21,6 +21,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
+import { launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
@@ -151,8 +152,8 @@ function recordAction(
 }
 
 /** The bytes of the regenerable build outputs the idle stage would delete in a workspace. */
-export async function idleOutputBytes(path: string, config: Config): Promise<number> {
-  return pathsBytes((await idleOutputs(path, config)).paths);
+export async function idleOutputBytes(path: string, config: Config, launching: Launching): Promise<number> {
+  return pathsBytes((await idleOutputs(path, config, launching)).paths);
 }
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
@@ -274,7 +275,13 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS, context.operation)
       : {
           outcome: 'would' as const,
-          bytes: context.measure ? await idleOutputBytes(candidate.path, context.config) : 0,
+          bytes: context.measure
+            ? await idleOutputBytes(
+                candidate.path,
+                context.config,
+                launchingOf(candidate.reduceOnly, candidate.path, context.operation),
+              )
+            : 0,
           detail: wouldDetail(context),
         };
     if (!result) continue;

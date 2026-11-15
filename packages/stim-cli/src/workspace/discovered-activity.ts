@@ -111,14 +111,14 @@ export async function discoveredEvidence(
     idleMs,
     reads,
     operation,
-    reduceOnly = false,
+    reduceOnly,
   }: {
     now: number;
     idleMs: number;
     reads: DiscoveredReads;
     operation?: StimContext;
     /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
-    reduceOnly?: boolean;
+    reduceOnly: boolean;
   },
 ): Promise<IdleStopEvidence> {
   const signal = operation?.signal;

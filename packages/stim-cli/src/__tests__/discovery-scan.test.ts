@@ -9,7 +9,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testContext } from './_context.ts';
@@ -95,26 +94,6 @@ describe('scanForCheckouts', () => {
     } finally {
       chmodSync(join(home, 'Documents', 'locked'), 0o700);
     }
-  });
-
-  it('stops reading siblings at once when its budget is spent, as repeated timed-out stats spend it', async () => {
-    for (let i = 0; i < 100; i++) project(`p${String(i).padStart(3, '0')}`);
-    let stats = 0;
-    const hung = async (path: string) => {
-      if (path === home) return lstat(path);
-      stats++;
-      return new Promise<never>(() => {});
-    };
-    const pending = scanForCheckouts(home, marked, { budgetMs: 40, readTimeoutMs: 10, stat: hung });
-    const state = { done: false };
-    void pending.then(() => (state.done = true));
-    while (!state.done) {
-      if (stats > 0) await vi.advanceTimersByTimeAsync(10);
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    const scan = await pending;
-    expect(scan.truncated).toBe(true);
-    expect(stats).toBeLessThan(10);
   });
 
   it('stops at its time budget and says so', async () => {
@@ -215,6 +194,34 @@ describe('runDiscoveryScanIfDue', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
+  });
+
+  it('stops at the first read that does not answer, starts no read while it is pending, and scans again once it settles', async () => {
+    let started = 0;
+    let release: (names: []) => void = () => {};
+    const hungEntries = () => {
+      started++;
+      return new Promise<[]>((resolve) => {
+        release = resolve;
+      });
+    };
+    const home = join(base, 'home');
+    const first = scanForCheckouts(home, marked, { entries: hungEntries, readTimeoutMs: 10 });
+    const waiting = { started: () => started > 0 };
+    while (!waiting.started()) await new Promise((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await first).toMatchObject({ truncated: true, unreadable: [home], found: [] });
+
+    const later = await scanForCheckouts(home, marked, { entries: hungEntries, readTimeoutMs: 10 });
+    expect(later.truncated).toBe(true);
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    expect(readDiscoveryScan()).toBeNull();
+    expect(started).toBe(1);
+
+    release([]);
+    await vi.advanceTimersByTimeAsync(0);
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    expect(readDiscoveryScan()).toMatchObject({ found: [join(base, 'home', 'dev', 'app')], truncated: false });
   });
 
   it('never scans for a command, only for a daemon tick', async () => {

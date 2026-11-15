@@ -1224,8 +1224,8 @@ cleanup, never by a command): weekly, and also while the disk level is above
 normal when no scan has run for an hour; a failed scan is retried after an hour.
 The schedule is kept with the result, so a restarted daemon forgets nothing. It
 reads ~/Documents (macOS may ask once; a folder that does not answer within 3
-seconds, such as one waiting for that answer, is recorded as unreadable and is
-read on the next scan), skips ~/Desktop, ~/Downloads, ~/Library, the media
+seconds, such as one waiting for that answer, is recorded as unreadable, ends
+that scan early with the previous finds kept, and is read on the next scan), skips ~/Desktop, ~/Downloads, ~/Library, the media
 folders, other volumes, symlinks, dependency or build folders, deeper
 dot-folders, the Stim home and every dot-folder starting with .stim, the build
 worker root, and the tool homes and caches among the home folder's other
@@ -1250,7 +1250,10 @@ checkout for that pass, and the reason names it and says fixing its permissions
 restores reduction. Each deletion reads the directories anew, at the moment it
 reads the processes using the path (not the pass's planning reading); a
 directory that hangs ends the reading as incomplete at once, and while that read
-is pending no other launcher read starts. Reduce-only checkouts have their build outputs and, in
+is pending (at most one per thread: the daemon's main thread and passes thread
+each have one; the scan runs on the passes thread) no other launcher or scan
+read starts and a scheduled scan is skipped. A scan stops at the first read that
+times out, keeping the previous finds. Reduce-only checkouts have their build outputs and, in
 a linked worktree, node_modules and Pods reduced by the rules below. Passes
 evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
 stim gc --dry-run lists all of them and says which are left for a later pass. A

@@ -157,11 +157,19 @@ that remains is the one for a process that starts executing from the path after
 the last evidence read: Stim accepts it for processes and gives launchers no
 larger one. A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
-reading as incomplete at once. At most one launcher read is outstanding per
-thread (in the daemon only the passes thread reads launchers): while a read that
-timed out is pending, every reading reports incomplete immediately without
-starting a read, so a hung mount holds one libuv thread, and reduction of
-reduce-only checkouts stays off until that read settles.
+reading as incomplete at once. A native read cannot be cancelled, so at most one
+read that timed out is outstanding per JavaScript isolate, shared by the launcher
+readings and the home scan (`bounded-read.ts`): while it is pending, no further
+launcher or scan read starts, every launcher reading reports incomplete
+immediately naming the folder, and a scheduled scan is skipped. A hung mount
+therefore holds one libuv thread per isolate, and reduction of reduce-only
+checkouts stays off until that read settles. The daemon has two isolates that
+read launchers, the main thread (the dormant stage and the pressure ladder, which
+reach `clearStoppedOutputs`) and the passes thread (the artifact, dependency and
+Cargo routes), so up to two reads can be outstanding in the daemon; the scan runs
+only on the passes thread, and CLI commands are separate processes. A scan stops
+at the first read that times out: the result is truncated and the previous finds
+are kept.
 A directory or entry that does not exist, and a dangling symlink, is no
 launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
 keeps every reduce-only checkout for that operation, with a reason naming the

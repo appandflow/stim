@@ -12,6 +12,7 @@ import {
 } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { loadConfig } from './config.ts';
 import { recognises } from './discovery.ts';
 import { MAX_DEPTH, scanDescends, scanSkipper } from './scan-rules.ts';
@@ -31,28 +32,15 @@ interface ScanOutcome {
 
 const errorCode = (error: unknown) => (error instanceof Error && 'code' in error ? String(error.code) : '');
 
-/** `read`'s result, or an ETIMEDOUT rejection when it has not answered in time, as a hung mount or a permission prompt would not. */
-async function answered<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      read,
-      new Promise<never>((_, fail) => {
-        timer = setTimeout(() => fail(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const unanswered = (error: unknown) => ['EACCES', 'EPERM', 'ETIMEDOUT'].includes(errorCode(error));
+const refused = (error: unknown) => ['EACCES', 'EPERM'].includes(errorCode(error));
 
 /**
  * A pruned walk below `home` (`scanDescends`, `skip`): folders for which `isCheckout` holds are results and are not
- * entered; symlinks and other volumes are skipped; a folder the system refuses or that does not answer within 3 seconds
- * is recorded as unreadable, never an error. It stops at `MAX_DEPTH` levels, `MAX_FOLDERS` folders or `budgetMs`, and
- * says so in `truncated`. An abort rejects.
+ * entered; symlinks and other volumes are skipped; a folder the system refuses is recorded as unreadable, never an error.
+ * A read that does not answer within 3 seconds stops the walk at once: the folder is recorded unreadable, the result is
+ * truncated, and the read stays the pending one (`bounded-read.ts`), so no further read starts, here or in a later scan,
+ * until it settles. It also stops at `MAX_DEPTH` levels, `MAX_FOLDERS` folders or `budgetMs`, and says so in
+ * `truncated`. An abort rejects.
  */
 export async function scanForCheckouts(
   home: string,
@@ -63,31 +51,50 @@ export async function scanForCheckouts(
     skip = () => false,
     readTimeoutMs = READ_TIMEOUT_MS,
     stat: statOf = (path) => lstat(path),
+    entries: entriesOf = (path) => readdir(path, { withFileTypes: true }),
   }: {
     budgetMs?: number;
     signal?: AbortSignal;
     skip?: (path: string) => boolean;
     readTimeoutMs?: number;
     stat?: (path: string) => Promise<{ dev: number }>;
+    entries?: (path: string) => Promise<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean }[]>;
   } = {},
 ): Promise<ScanOutcome> {
   const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false };
   const deadline = Date.now() + budgetMs;
-  const volume = (await statOf(home)).dev;
   const exhausted = (): boolean => {
     signal?.throwIfAborted();
-    if (!outcome.truncated && (Date.now() > deadline || outcome.visited >= MAX_FOLDERS)) outcome.truncated = true;
+    if (!outcome.truncated && (Date.now() > deadline || outcome.visited >= MAX_FOLDERS || hungRead() !== null))
+      outcome.truncated = true;
     return outcome.truncated;
   };
+  const stopAt = (folder: string, error: unknown): boolean => {
+    signal?.throwIfAborted();
+    if (error instanceof Unanswered) {
+      outcome.unreadable.push(folder);
+      outcome.truncated = true;
+      return true;
+    }
+    if (refused(error)) outcome.unreadable.push(folder);
+    return false;
+  };
+  if (hungRead() !== null) return { ...outcome, truncated: true };
+  let volume: number;
+  try {
+    volume = (await answered(home, () => statOf(home), readTimeoutMs)).dev;
+  } catch (error) {
+    if (!stopAt(home, error)) throw error;
+    return outcome;
+  }
   const walk = async (folder: string, depth: number): Promise<void> => {
     if (exhausted()) return;
     outcome.visited++;
     let entries;
     try {
-      entries = await answered(readdir(folder, { withFileTypes: true }), readTimeoutMs);
+      entries = await answered(folder, () => entriesOf(folder), readTimeoutMs);
     } catch (error) {
-      signal?.throwIfAborted();
-      if (unanswered(error)) outcome.unreadable.push(folder);
+      stopAt(folder, error);
       return;
     }
     if (depth > 0 && isCheckout(folder)) {
@@ -102,10 +109,9 @@ export async function scanForCheckouts(
       if (skip(path)) continue;
       let info;
       try {
-        info = await answered(statOf(path), readTimeoutMs);
+        info = await answered(path, () => statOf(path), readTimeoutMs);
       } catch (error) {
-        signal?.throwIfAborted();
-        if (unanswered(error)) outcome.unreadable.push(path);
+        if (stopAt(path, error)) return;
         continue;
       }
       if (info.dev === volume) await walk(path, depth + 1);
@@ -185,7 +191,8 @@ export async function runDiscoveryScanIfDue(
   } catch {
     return;
   }
-  if (!discoveryScanDue(last, now, low) || (now >= attempted.at && now - attempted.at < HOUR_MS)) return;
+  if (!discoveryScanDue(last, now, low) || (now >= attempted.at && now - attempted.at < HOUR_MS) || hungRead() !== null)
+    return;
   attempted.at = now;
   const attempt = {
     version: 2,

@@ -162,10 +162,16 @@ describe('a discovered worktree on the removal path', () => {
       main,
       idleMs: day,
       reads: reads.discoveredReads(),
+      reduceOnly: false,
     });
     expect(hold).toContain('managed by another tool');
     expect(
-      await discoveredRemovalHold(join(main, '.worktrees', 'x'), { main, idleMs: day, reads: reads.discoveredReads() }),
+      await discoveredRemovalHold(join(main, '.worktrees', 'x'), {
+        main,
+        idleMs: day,
+        reads: reads.discoveredReads(),
+        reduceOnly: false,
+      }),
     ).not.toContain('another tool');
   });
 

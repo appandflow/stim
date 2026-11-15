@@ -3,7 +3,7 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
-import { launcherReason, type LauncherScan } from './launchers.ts';
+import { launcherReason, type Launching } from './launchers.ts';
 import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
 export type ArtifactKind = 'build' | 'dependencies';
@@ -219,12 +219,8 @@ export function isBuildDirPath(path: string): boolean {
 export async function regenerableDirProblem(
   root: string,
   path: string,
-  signal?: AbortSignal,
-  {
-    processes = true,
-    launchers,
-    launcherRoot = root,
-  }: { processes?: boolean; launchers?: () => Promise<LauncherScan>; launcherRoot?: string } = {},
+  signal: AbortSignal | undefined,
+  { processes = true, launching }: { processes?: boolean; launching: Launching },
 ): Promise<string | null> {
   const rel = relative(root, path);
   try {
@@ -245,8 +241,8 @@ export async function regenerableDirProblem(
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
-  if (launchers) {
-    const launcher = launcherReason(launcherRoot, await launchers());
+  if (launching.reduceOnly) {
+    const launcher = launcherReason(launching.checkout, await launching.launchers());
     if (launcher) return launcher;
   }
   if (

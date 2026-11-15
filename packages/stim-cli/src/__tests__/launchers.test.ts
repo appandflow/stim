@@ -1,4 +1,5 @@
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
+import { scanForCheckouts } from '../workspace/discovery-scan.ts';
 import { launcherReader, launcherReason } from '../workspace/launchers.ts';
 
 const missing = (code: string) => Object.assign(new Error(code), { code });
@@ -73,6 +74,17 @@ describe('the PATH launcher scan', () => {
     const later = await Promise.all([reading(), reading(), reading()]);
     expect(later.map((entry) => entry.incomplete)).toEqual([['/hung'], ['/hung'], ['/hung']]);
     expect(started).toBe(1);
+
+    let scanReads = 0;
+    const homeScan = await scanForCheckouts('/', () => false, {
+      stat: async () => ({ dev: 1 }),
+      entries: async () => {
+        scanReads++;
+        return [];
+      },
+    });
+    expect(homeScan.truncated).toBe(true);
+    expect(scanReads).toBe(0);
 
     release([]);
     await vi.advanceTimersByTimeAsync(0);

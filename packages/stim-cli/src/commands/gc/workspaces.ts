@@ -366,7 +366,7 @@ export async function workspaceBuildReasonsAsync(
 async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
   for (const path of await existingBuildDirsAsync(root))
-    if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
+    if (!(await regenerableDirProblem(root, path, signal, { launching: { reduceOnly: false } }))) dirs.push(path);
   return dirs;
 }
 
@@ -661,7 +661,10 @@ export async function clearWorkspaceOutputs(
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
           for (const path of lighten ? await existingBuildDirsAsync(root) : [])
-            inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
+            inTree.push({
+              path,
+              problem: await regenerableDirProblem(root, path, signal, { launching: { reduceOnly: false } }),
+            });
           for (const path of [
             ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),

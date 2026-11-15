@@ -6,7 +6,7 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-cl
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
-import type { LauncherScan } from './launchers.ts';
+import type { LauncherScan, Launching } from './launchers.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
@@ -399,10 +399,10 @@ interface CargoTrimOptions {
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
   /**
-   * For a reduce-only checkout: a fresh reading of the executables on PATH, taken wherever the processes using the target
-   * are read, so a path one of them resolves to is kept like a path a process runs from.
+   * For a reduce-only checkout, a fresh reading of the executables on PATH, taken wherever the processes using the target
+   * are read, so a path one of them resolves to is kept like a path a process runs from. Every caller states it.
    */
-  launchers?: () => Promise<LauncherScan>;
+  launching: Launching;
 }
 
 async function trimClaimed(
@@ -416,10 +416,11 @@ async function trimClaimed(
     signal,
     stop,
     measure = true,
-    launchers,
+    launching,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const launchers = launching.reduceOnly ? launching.launchers : undefined;
   const cannotRead = launchers
     ? 'the files processes hold open or the executables on PATH cannot be read'
     : 'the files processes hold open cannot be read';

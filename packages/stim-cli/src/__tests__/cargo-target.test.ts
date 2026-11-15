@@ -105,7 +105,7 @@ test('trimming removes the stale profiles, keeps the rest and leaves nothing asi
     makeProfile('aarch64-linux-android/host-dev', 3 * DAY);
     makeProfile('release', 0);
 
-    const result = await trimCargoTarget(target, { needBytes: 0 });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
 
     expect(result.removed.toSorted()).toEqual(['aarch64-linux-android', 'debug']);
     expect(existsSync(join(target, 'debug'))).toBe(false);
@@ -139,7 +139,7 @@ test('a profile a process works in or runs a binary from stays, and an unreadabl
       ps: () => `${real}/release/deps/mytest-0123456789abcdef --nocapture\n/bin/zsh -l\n`,
     });
 
-    const result = await trimCargoTarget(target, { needBytes: 0 });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
 
     expect(result.removed).toEqual(['host-dev']);
     expect(result.kept).toEqual(['debug: a process uses it', 'release: a process uses it']);
@@ -150,7 +150,7 @@ test('a profile a process works in or runs a binary from stays, and an unreadabl
       },
     });
     makeProfile('profile-b', 3 * DAY);
-    const unreadable = await trimCargoTarget(target, { needBytes: 0 });
+    const unreadable = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
     expect(unreadable.removed).toEqual([]);
     expect(existsSync(join(target, 'profile-b', 'deps', 'libx.rlib'))).toBe(true);
   } finally {
@@ -175,7 +175,7 @@ test('a directory that cannot be put back after a build took its lock is never d
         return '4242\n';
       },
     });
-    const result = await trimCargoTarget(target, { needBytes: 0 });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
 
     expect(result.removed).toEqual([]);
     expect(result.kept.join(' ')).toContain('could not be put back');
@@ -198,7 +198,7 @@ test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock
       lsof: (args) => (args.includes('-t') && args.some((arg) => arg.endsWith('.cargo-build-lock')) ? '4242\n' : ''),
     });
 
-    const result = await trimCargoTarget(target, { needBytes: 0 });
+    const result = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
 
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual(['debug: a build holds its .cargo-build-lock']);
@@ -229,13 +229,13 @@ test('a second trim of a target, from another Stim home, keeps what the first mo
         return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
       },
     });
-    const first = trimCargoTarget(target, { needBytes: 0 });
+    const first = trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
     await reachedPause;
     const staged = join(realpathSync.native(target), '.stim-trimmed', '0', '.fingerprint');
     expect(existsSync(staged)).toBe(true);
 
     vi.stubEnv('STIM_HOME', otherHome);
-    const second = await trimCargoTarget(target, { needBytes: 0 });
+    const second = await trimCargoTarget(target, { launching: { reduceOnly: false }, needBytes: 0 });
 
     expect(second.removed).toEqual([]);
     expect(second.kept.join(' ')).toContain('another trim of it holds');
@@ -268,6 +268,7 @@ test('a trim stopped at a deadline keeps every unit it has not moved, finishes t
     });
 
     const result = await trimCargoTarget(target, {
+      launching: { reduceOnly: false },
       needBytes: 0,
       incremental: 'all',
       measure: false,
@@ -301,7 +302,11 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
       incomplete: [],
     });
 
-    const result = await trimCargoTarget(target, { needBytes: 1, incremental: 'all', launchers });
+    const result = await trimCargoTarget(target, {
+      needBytes: 1,
+      incremental: 'all',
+      launching: { reduceOnly: true, launchers, checkout: target },
+    });
 
     expect(readings).toBe(2);
     expect(result.removed).toEqual([]);
@@ -311,7 +316,11 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
     makeProfile('debug', 3 * DAY);
     const unreadable = await trimCargoTarget(target, {
       needBytes: 0,
-      launchers: async () => ({ targets: [], incomplete: ['/locked'] }),
+      launching: {
+        reduceOnly: true,
+        launchers: async () => ({ targets: [], incomplete: ['/locked'] }),
+        checkout: target,
+      },
     });
     expect(unreadable.removed).toEqual([]);
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
