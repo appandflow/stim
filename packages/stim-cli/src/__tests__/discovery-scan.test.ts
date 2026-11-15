@@ -15,7 +15,8 @@ import { join } from 'node:path';
 import { testContext } from './_context.ts';
 import { discoveryScanFile, parseDiscoveryScan, readDiscoveryScan } from '@stim-cli/core/state';
 import { discoveryScanDue, mergeFound, runDiscoveryScanIfDue, scanForCheckouts } from '../workspace/discovery-scan.ts';
-import { scanDescends } from '../workspace/scan-rules.ts';
+import { REAL_RECOGNITION_IO, scanDescends } from '../workspace/scan-rules.ts';
+import type { ScanTruncation } from '@stim-cli/core/state';
 
 const marked = (path: string) => existsSync(join(path, 'package.json'));
 
@@ -103,6 +104,7 @@ describe('scanForCheckouts', () => {
     let started = 0;
     let release: (text: string) => void = () => {};
     const stuck = {
+      ...REAL_RECOGNITION_IO,
       readEntries: (path: string) => readdir(path, { withFileTypes: true }),
       readText: () => {
         started++;
@@ -159,6 +161,37 @@ describe('scanForCheckouts', () => {
     ]);
   });
 
+  it('calls no detection on a folder or below it when its apps folder holds a manifest that is not a regular file', async () => {
+    mkdirSync(join(home, 'mono', 'apps', 'x'), { recursive: true });
+    const regular = (name: string) => ({
+      name,
+      isFile: () => true,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    });
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    const fifo = { name: 'package.json', isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false };
+    const listing = (blocked: boolean) => async (path: string) => {
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return blocked ? [fifo, directory('x')] : [directory('x')];
+      return [regular('settings.gradle'), regular('gradlew')];
+    };
+    const recognition = { ...REAL_RECOGNITION_IO, readEntries: async (path: string) => listing(true)(path) };
+    const detect = vi.fn<(path: string) => boolean>(() => true);
+    expect((await scanForCheckouts(home, detect, { entries: listing(true), recognition })).found).toEqual([]);
+    expect(detect).not.toHaveBeenCalled();
+    const clean = { ...REAL_RECOGNITION_IO, readEntries: async (path: string) => listing(false)(path) };
+    expect((await scanForCheckouts(home, detect, { entries: listing(false), recognition: clean })).found).toEqual([
+      join(home, 'mono'),
+    ]);
+  });
+
   it('stops at its time budget and says so', async () => {
     project('dev', 'one');
     const scan = await scanForCheckouts(home, marked, { budgetMs: -1 });
@@ -168,10 +201,11 @@ describe('scanForCheckouts', () => {
 
 describe('discoveryScanDue', () => {
   const now = Date.UTC(2026, 10, 14);
-  const at = (ranAgo: number, completedAgo = ranAgo, lowAgo = 1e12) => ({
+  const at = (ranAgo: number, completedAgo = ranAgo, lowAgo = 1e12, truncation: ScanTruncation = 'none') => ({
     ranAt: now - ranAgo,
     completedAt: now - completedAgo,
     lowScanAt: now - lowAgo,
+    truncation,
   });
   const hour = 3_600_000;
   const day = 24 * hour;
@@ -181,6 +215,17 @@ describe('discoveryScanDue', () => {
     expect(discoveryScanDue(at(-1000), now, false)).toBe(true);
     expect(discoveryScanDue(at(6 * day), now, false)).toBe(false);
     expect(discoveryScanDue(at(7 * day), now, false)).toBe(true);
+  });
+
+  it('retries an attempt that ended on a read or a failure after an hour at any disk level, even right after a success', () => {
+    expect(discoveryScanDue(at(2 * hour, 24 * hour, 2 * hour, 'read'), now, false)).toBe(true);
+    expect(discoveryScanDue(at(2 * hour, 24 * hour, 2 * hour, 'failed'), now, false)).toBe(true);
+    expect(discoveryScanDue(at(30 * 60_000, 24 * hour, 2 * hour, 'read'), now, false)).toBe(false);
+  });
+
+  it('treats an attempt that stopped at the folder cap or the time budget as finished, so it is not retried hourly at normal disk', () => {
+    expect(discoveryScanDue(at(2 * hour, 2 * hour, 1e12, 'budget'), now, false)).toBe(false);
+    expect(discoveryScanDue(at(2 * hour, 2 * hour, 1e12, 'folders'), now, true)).toBe(true);
   });
 
   it('retries a failed scan after an hour, not after a week, and never twice within an hour', () => {
@@ -201,6 +246,7 @@ describe('mergeFound', () => {
     found,
     unreadable,
     truncated,
+    truncation: truncated ? ('read' as const) : ('none' as const),
     visited: 1,
   });
   it('keeps the previous finds under an unreadable folder, drops the others, and keeps all of them when truncated', () => {
@@ -338,13 +384,37 @@ describe('runDiscoveryScanIfDue', () => {
     });
   });
 
-  it('retries a truncated scan after an hour, like a failed one, instead of waiting a week', async () => {
-    await runDiscoveryScanIfDue(tick(), { ...options(t0), budgetMs: -1 });
-    expect(readDiscoveryScan()).toMatchObject({ truncated: true, completedAt: 0, ranAt: t0 });
-    await runDiscoveryScanIfDue(tick(), options(t0 + hour / 2));
-    expect(readDiscoveryScan()?.ranAt).toBe(t0);
+  it('counts a scan that stopped at its time budget as finished, so it is not retried hourly at normal disk', async () => {
+    await runDiscoveryScanIfDue(tick(), { ...options(t0), scanOptions: { budgetMs: -1 } });
+    expect(readDiscoveryScan()).toMatchObject({ truncated: true, truncation: 'budget', completedAt: t0, ranAt: t0 });
     await runDiscoveryScanIfDue(tick(), options(t0 + 2 * hour));
-    expect(readDiscoveryScan()).toMatchObject({ truncated: false, completedAt: t0 + 2 * hour });
+    expect(readDiscoveryScan()?.ranAt).toBe(t0);
+  });
+
+  it('retries a scan that ended on a read that timed out after an hour at any disk level, though a scan finished recently', async () => {
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    expect(readDiscoveryScan()).toMatchObject({ truncation: 'none', completedAt: t0 });
+    let started = 0;
+    let release: (names: []) => void = () => {};
+    const entries = () => {
+      started++;
+      return new Promise<[]>((resolve) => {
+        release = resolve;
+      });
+    };
+    const second = runDiscoveryScanIfDue(tick(low), {
+      ...options(t0 + 25 * hour),
+      scanOptions: { entries, readTimeoutMs: 10 },
+    });
+    const waiting = { started: () => started > 0 };
+    while (!waiting.started()) await new Promise((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(10);
+    await second;
+    expect(readDiscoveryScan()).toMatchObject({ truncation: 'read', completedAt: t0, ranAt: t0 + 25 * hour });
+    release([]);
+    await vi.advanceTimersByTimeAsync(0);
+    await runDiscoveryScanIfDue(tick(), options(t0 + 27 * hour));
+    expect(readDiscoveryScan()).toMatchObject({ truncation: 'none', ranAt: t0 + 27 * hour });
   });
 
   it('keeps the previous finds when a scan fails and records the attempt', async () => {

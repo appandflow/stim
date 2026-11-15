@@ -172,6 +172,7 @@ describe('discoverCheckouts', () => {
       dotFolderFound: [],
       unreadable: [],
       truncated: false,
+      truncation: 'none',
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
     expect(

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanEntryValid } from '../workspace/scan-rules.ts';
+import { REAL_RECOGNITION_IO, scanEntryValid } from '../workspace/scan-rules.ts';
 
 describe('scanEntryValid with a hand-edited scan result', () => {
   let home: string;
@@ -75,33 +75,96 @@ describe('scanEntryValid with a hand-edited scan result', () => {
       isSymbolicLink: () => false,
     });
 
-    it('does not call detection for a detection file that is not regular, or for an Xcode container', async () => {
+    const listing = (listings: Record<string, ReturnType<typeof file>[]>) => ({
+      ...REAL_RECOGNITION_IO,
+      readEntries: async (path: string) => listings[path] ?? [],
+      readText: async () => '{}',
+    });
+
+    it('does not call detection for a detection file that is not regular, or for an Xcode container without an app dependency', async () => {
       const detect = vi.fn<(path: string) => boolean>(() => true);
+      const path = project('dev', 'app');
       for (const entries of [
         [fifo('package.json')],
         [file('package.json'), fifo('gradlew')],
         [folder('App.xcodeproj')],
-      ]) {
-        const io = { readEntries: async () => entries, readText: async () => '{"dependencies":{"expo":"*"}}' };
-        const path = project('dev', 'app');
-        const result = await scanEntryValid(path, { ...rules(), isCheckout: detect, io });
-        expect(result).toBe('invalid');
+        [file('package.json'), folder('App.xcodeproj')],
+      ])
+        expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: listing({ [path]: entries }) })).toBe(
+          'invalid',
+        );
+      expect(detect).not.toHaveBeenCalled();
+      const app = {
+        ...listing({ [path]: [file('package.json'), folder('App.xcodeproj')] }),
+        readText: async () => '{"dependencies":{"expo":"*"}}',
+      };
+      expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: app })).toBe('valid');
+    });
+
+    it('does not call detection when an ancestor, the home folder or an apps folder holds a manifest that is not a regular file', async () => {
+      const detect = vi.fn<(path: string) => boolean>(() => true);
+      const path = project('mono', 'apps', 'x');
+      const android = [file('settings.gradle'), file('gradlew')];
+      const control = listing({
+        [join(home, 'mono')]: [folder('apps')],
+        [join(home, 'mono', 'apps')]: [folder('x')],
+        [path]: android,
+      });
+      expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: control })).toBe('valid');
+      detect.mockClear();
+      for (const unsafe of [home, join(home, 'mono'), join(home, 'mono', 'apps')]) {
+        const io = {
+          ...control,
+          readEntries: async (at: string) => (at === unsafe ? [fifo('package.json')] : await control.readEntries(at)),
+        };
+        expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io })).toBe('invalid');
       }
       expect(detect).not.toHaveBeenCalled();
+    });
+
+    it('treats a metadata read that does not answer as pending, before any detection', async () => {
+      const detect = vi.fn<(path: string) => boolean>(() => true);
+      let release: (value: { isSymbolicLink(): boolean }) => void = () => {};
+      let started = 0;
+      const stuck = {
+        ...listing({}),
+        lstat: () => {
+          started++;
+          return new Promise<{ isSymbolicLink(): boolean }>((resolve) => {
+            release = resolve;
+          });
+        },
+      };
+      const path = project('dev', 'app');
+      const first = scanEntryValid(path, { ...rules(), isCheckout: detect, io: stuck, timeoutMs: 10 });
+      const waiting = { started: () => started > 0 };
+      while (!waiting.started()) await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await first).toBe('pending');
+      expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: stuck })).toBe('pending');
+      expect(started).toBe(1);
+      expect(detect).not.toHaveBeenCalled();
+      release({ isSymbolicLink: () => false });
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     it('does not call detection while a manifest read is pending, leaves the entry pending, and recovers once it settles', async () => {
       const detect = vi.fn<(path: string) => boolean>(() => true);
       let release: (text: string) => void = () => {};
-      const stuck = {
-        readEntries: async () => [file('package.json')],
-        readText: () =>
-          new Promise<string>((resolve) => {
-            release = resolve;
-          }),
-      };
+      let started = 0;
       const path = project('dev', 'app');
+      const stuck = {
+        ...listing({ [path]: [file('package.json')] }),
+        readText: () => {
+          started++;
+          return new Promise<string>((resolve) => {
+            release = resolve;
+          });
+        },
+      };
       const first = scanEntryValid(path, { ...rules(), isCheckout: detect, io: stuck, timeoutMs: 10 });
+      const waiting = { started: () => started > 0 };
+      while (!waiting.started()) await new Promise((resolve) => setImmediate(resolve));
       await vi.advanceTimersByTimeAsync(10);
       expect(await first).toBe('pending');
       expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: stuck, timeoutMs: 10 })).toBe('pending');
@@ -109,7 +172,7 @@ describe('scanEntryValid with a hand-edited scan result', () => {
 
       release('{}');
       await vi.advanceTimersByTimeAsync(0);
-      const ok = { readEntries: async () => [file('package.json')], readText: async () => '{}' };
+      const ok = listing({ [path]: [file('package.json')] });
       expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: ok })).toBe('valid');
     });
   });

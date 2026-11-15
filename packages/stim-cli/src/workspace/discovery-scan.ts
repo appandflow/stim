@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
+  type ScanTruncation,
   discoveryScanFile,
   maintenanceDir,
   readDiscoveryScan,
@@ -18,8 +19,8 @@ import { recognises } from './discovery.ts';
 import {
   MAX_DEPTH,
   REAL_RECOGNITION_IO,
-  needsAncestors,
-  recognitionReads,
+  folderSafety,
+  nestedSafety,
   scanDescends,
   scanSkipper,
   type RecognitionIo,
@@ -36,6 +37,8 @@ interface ScanOutcome {
   unreadable: string[];
   visited: number;
   truncated: boolean;
+  /** Why it stopped early, for the schedule and the doctor listing. */
+  truncation: Exclude<ScanTruncation, 'failed'>;
 }
 
 const errorCode = (error: unknown) => (error instanceof Error && 'code' in error ? String(error.code) : '');
@@ -48,9 +51,11 @@ const refused = (error: unknown) => ['EACCES', 'EPERM'].includes(errorCode(error
  * A read that does not answer within 3 seconds stops the walk at once: the folder is recorded unreadable, the result is
  * truncated, and the read stays the pending one (`bounded-read.ts`), so no further read starts, here or in a later scan,
  * until it settles. It also stops at `MAX_DEPTH` levels, `MAX_FOLDERS` folders or `budgetMs`, and says so in
- * `truncated`. Before `isCheckout` runs on a folder, `recognitionReads` proves that project detection cannot block
- * there: a detection file that is not regular, or an Xcode container, makes the folder not a checkout, and a manifest
- * read that does not answer ends the walk like any other timed-out read. An abort rejects.
+ * `truncated`, with the reason in `truncation`. Before `isCheckout` runs on a folder, `folderSafety` has proved, for it and
+ * for every folder above it down from the home folder, and `nestedSafety` for what detection inspects below it, that
+ * project detection cannot block: an unsafe folder (a non-regular detection file, or an Xcode container without an app
+ * dependency) makes its whole subtree unrecognisable, and a manifest read that does not answer ends the walk like any
+ * other timed-out read. An abort rejects.
  */
 export async function scanForCheckouts(
   home: string,
@@ -73,25 +78,34 @@ export async function scanForCheckouts(
     recognition?: RecognitionIo;
   } = {},
 ): Promise<ScanOutcome> {
-  const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false };
+  const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false, truncation: 'none' };
   const deadline = Date.now() + budgetMs;
+  const stop = (truncation: Exclude<ScanTruncation, 'none' | 'failed'>): void => {
+    if (outcome.truncated) return;
+    outcome.truncated = true;
+    outcome.truncation = truncation;
+  };
   const exhausted = (): boolean => {
     signal?.throwIfAborted();
-    if (!outcome.truncated && (Date.now() > deadline || outcome.visited >= MAX_FOLDERS || hungRead() !== null))
-      outcome.truncated = true;
+    if (hungRead() !== null) stop('read');
+    else if (Date.now() > deadline) stop('budget');
+    else if (outcome.visited >= MAX_FOLDERS) stop('folders');
     return outcome.truncated;
   };
   const stopAt = (folder: string, error: unknown): boolean => {
     signal?.throwIfAborted();
     if (error instanceof Unanswered) {
       outcome.unreadable.push(folder);
-      outcome.truncated = true;
+      stop('read');
       return true;
     }
     if (refused(error)) outcome.unreadable.push(folder);
     return false;
   };
-  if (hungRead() !== null) return { ...outcome, truncated: true };
+  if (hungRead() !== null) {
+    stop('read');
+    return outcome;
+  }
   let volume: number;
   try {
     volume = (await answered(home, () => statOf(home), readTimeoutMs)).dev;
@@ -109,16 +123,25 @@ export async function scanForCheckouts(
       stopAt(folder, error);
       return;
     }
-    const reads = await recognitionReads(folder, entries, readTimeoutMs, recognition, depth > 0);
-    if (reads === 'unreadable') {
+    const safety = await folderSafety(folder, entries, readTimeoutMs, recognition);
+    if (safety === 'unreadable') {
       outcome.unreadable.push(folder);
-      outcome.truncated = true;
+      stop('read');
       return;
     }
-    const above = unsafeAbove || reads === 'unsafe';
-    if (depth > 0 && reads === 'safe' && !(above && needsAncestors(entries)) && isCheckout(folder)) {
-      outcome.found.push(folder);
-      return;
+    const above = unsafeAbove || safety === 'unsafe';
+    if (above) return;
+    if (depth > 0) {
+      const nested = await nestedSafety(folder, entries, readTimeoutMs, recognition);
+      if (nested === 'unreadable') {
+        outcome.unreadable.push(folder);
+        stop('read');
+        return;
+      }
+      if (nested === 'safe' && isCheckout(folder)) {
+        outcome.found.push(folder);
+        return;
+      }
     }
     if (depth >= MAX_DEPTH) return;
     for (const entry of entries) {
@@ -133,7 +156,7 @@ export async function scanForCheckouts(
         if (stopAt(path, error)) return;
         continue;
       }
-      if (info.dev === volume) await walk(path, depth + 1, above);
+      if (info.dev === volume) await walk(path, depth + 1, false);
     }
   };
   await walk(home, 0, false);
@@ -152,18 +175,20 @@ export function mergeFound(previous: readonly string[], outcome: ScanOutcome): s
 }
 
 /**
- * Whether a scan is due. Never twice within an hour, so a failing or truncated scan is retried hourly and a rise and
- * fall of the disk level cannot start a run of scans; then weekly from the last scan that finished (a failed or
- * truncated one is partial and does not count), or hourly while the level is above normal and no scan has run during
- * it for an hour.
+ * Whether a scan is due. Never twice within an hour, so a rise and fall of the disk level cannot start a run of scans.
+ * After that hour an attempt that ended on a failure or a read that timed out is retried whatever the disk level; one
+ * that finished, or stopped at the folder cap or the time budget (the same limit would stop a retry), follows the weekly
+ * schedule from the last scan that did not end on a read or failure, and runs hourly while the level is above normal
+ * and no scan has run during it for an hour.
  */
 export function discoveryScanDue(
-  last: Pick<DiscoveryScan, 'ranAt' | 'completedAt' | 'lowScanAt'> | null,
+  last: Pick<DiscoveryScan, 'ranAt' | 'completedAt' | 'lowScanAt' | 'truncation'> | null,
   now: number,
   low: boolean,
 ): boolean {
   if (!last || last.ranAt > now) return true;
   if (now - last.ranAt < HOUR_MS) return false;
+  if (last.truncation === 'read' || last.truncation === 'failed') return true;
   return now - last.completedAt >= WEEK_MS || (low && now - last.lowScanAt >= HOUR_MS);
 }
 
@@ -189,7 +214,8 @@ function writeScan(scan: DiscoveryScan): void {
 /**
  * Scans the home folder when the schedule says so (`discoveryScanDue`) and stores the result under the Stim home, with
  * the schedule's own times, so a retired worker or a restarted daemon forgets nothing. A failed scan stores nothing but
- * its attempt time, keeps the previous finds and is retried after an hour. Only a daemon tick scans, never a command,
+ * its attempt time, keeps the previous finds and is retried after an hour, as is a scan that ended on a read that timed
+ * out; one that stopped at the folder cap or the time budget counts as finished, since a retry would hit the same limit. Only a daemon tick scans, never a command,
  * and a scoped STIM_HOME never does. Only an abort escapes, so a scan can never end the maintenance pass it follows.
  */
 export async function runDiscoveryScanIfDue(
@@ -198,8 +224,14 @@ export async function runDiscoveryScanIfDue(
     home = homedir(),
     now = Date.now(),
     attempted = attempts,
-    budgetMs,
-  }: { home?: string; now?: number; attempted?: { at: number }; budgetMs?: number } = {},
+    scanOptions = {},
+  }: {
+    home?: string;
+    now?: number;
+    attempted?: { at: number };
+    /** Limits and readers of the walk, for tests. */
+    scanOptions?: Parameters<typeof scanForCheckouts>[2];
+  } = {},
 ): Promise<void> {
   if (!tick || isScopedHome(tick.operation.env)) return;
   const { operation } = tick;
@@ -221,18 +253,26 @@ export async function runDiscoveryScanIfDue(
     lowScanAt: low ? now : (last?.lowScanAt ?? 0),
     trigger: low ? 'low-disk' : 'weekly',
   } as const;
-  const failed = { ...attempt, completedAt: last?.completedAt ?? 0, durationMs: 0, visited: 0, truncated: true };
+  const failedTruncation: ScanTruncation = 'failed';
+  const failed = {
+    ...attempt,
+    completedAt: last?.completedAt ?? 0,
+    durationMs: 0,
+    visited: 0,
+    truncated: true,
+    truncation: failedTruncation,
+  };
   const realHome = canonicalPath(home);
   const dotFolder = (path: string) => relative(realHome, path).startsWith('.');
   try {
     const outcome = await scanForCheckouts(realHome, recognises, {
       signal: operation.signal,
       skip: scanSkipper(realHome),
-      ...(budgetMs === undefined ? {} : { budgetMs }),
+      ...scanOptions,
     });
     writeScan({
       ...attempt,
-      completedAt: outcome.truncated ? (last?.completedAt ?? 0) : now,
+      completedAt: outcome.truncation === 'read' ? (last?.completedAt ?? 0) : now,
       durationMs: Date.now() - now,
       ...outcome,
       found: mergeFound(last?.found ?? [], { ...outcome, found: outcome.found.filter((p) => !dotFolder(p)) }),

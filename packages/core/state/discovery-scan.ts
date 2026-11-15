@@ -1,6 +1,12 @@
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { discoveryScanFile } from './paths.ts';
 
+/** How an attempt ended: finished, cut short by the folder cap or the time budget, or by a read that timed out or a failure. */
+export type ScanTruncation = 'none' | 'budget' | 'folders' | 'read' | 'failed';
+
+const isTruncation = (value: unknown): value is ScanTruncation =>
+  value === 'none' || value === 'budget' || value === 'folders' || value === 'read' || value === 'failed';
+
 /**
  * What the last full scan of the home folder found: the checkouts Stim's project detection recognises that
  * `maintenance.discoverRoots`, registered projects and the common tool folders do not reach, and what it could not read.
@@ -29,8 +35,10 @@ export interface DiscoveryScan {
   dotFolderFound: string[];
   /** Folders the system refused or that did not answer, skipped without error. */
   unreadable: string[];
-  /** The scan stopped at its time or folder limit before it finished. */
+  /** The scan stopped at its time or folder limit, or on a read or failure, before it finished. */
   truncated: boolean;
+  /** How the attempt ended. `read` and `failed` are retried after an hour; the others follow the weekly schedule. */
+  truncation: ScanTruncation;
 }
 
 const strings = (value: unknown): value is string[] =>
@@ -51,7 +59,8 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
     !strings(value.found) ||
     !strings(value.dotFolderFound) ||
     !strings(value.unreadable) ||
-    typeof value.truncated !== 'boolean'
+    typeof value.truncated !== 'boolean' ||
+    !isTruncation(value.truncation)
   )
     return null;
   return {
@@ -66,6 +75,7 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
     dotFolderFound: value.dotFolderFound,
     unreadable: value.unreadable,
     truncated: value.truncated,
+    truncation: value.truncation,
   };
 }
 

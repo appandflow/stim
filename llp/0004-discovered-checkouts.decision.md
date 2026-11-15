@@ -131,27 +131,34 @@ installed command. The record lets doctor report what the folder holds and the
 command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
-Project detection (`recognises`) on a scan or revalidation path is bounded by
-construction, because it reads files synchronously and a stalled mount, an
-iCloud file waiting for a download or a FIFO would block the thread. Per folder it
-reads `package.json` (existence and content), checks the existence of
-`settings.gradle(.kts)`, `gradlew(.bat)`, `Package.swift`, `exact.mjs` and
-`app.json`, lists the folder and stats its `*.xcodeproj` and `*.xcworkspace`
-entries, lists `apps`, `examples` and `packages` and repeats this for up to 50
-children of each, and for a native Android or Xcode layout without an app
-dependency walks every ancestor up to `/` doing the same. Before `recognises`
-runs, the folder's own listing is checked: a detection file that is not a regular
-file makes the folder not a checkout, a regular `package.json` is read first
-through the bounded reader (a read that does not answer ends the scan truncated,
-or leaves a cached find unselected and in the file), the children of `apps`,
-`examples` and `packages` get the same treatment, and a native Android layout
-below a folder with such a non-regular file is not recognised. An Xcode
-container is not treated as a scan checkout, because its project files name
-other files that cannot be listed ahead of time; sibling and root discovery still
-recognise it. What stays unbounded: the ancestor reads of a native Android layout
-for `/Users` and `/` (local system volumes), and the synchronous read of a file
-that became unreadable between the bounded read and detection. Registered
-projects and sibling discovery recognise as before.
+Project detection (`recognises`) reads files synchronously, and a stalled mount,
+an iCloud file waiting for a download or a FIFO would block the thread. When the
+scan or the revalidation decides whether a folder is a checkout, every read
+detection makes is bounded by construction. Detection inspects the folder, up to
+50 children of each of its `apps`, `examples` and `packages` folders, those
+container folders themselves and every ancestor up to `/`; each inspection reads
+`package.json`, checks the existence of `settings.gradle(.kts)`, `gradlew(.bat)`,
+`Package.swift`, `exact.mjs` and `app.json`, and lists the folder, and an Xcode
+container without an app dependency makes it parse project files that name other
+files. So one check, `folderSafety`, applies to every folder the walk passes from
+the home folder down and to each folder detection inspects below the one being
+decided (`nestedSafety`), with no condition: a detection file that is not a
+regular file, or an Xcode container with no app dependency in `package.json`, makes
+the folder unsafe; a regular `package.json` is read once through the bounded
+reader first. An unsafe folder makes its whole subtree unrecognisable and the walk
+does not descend into it. A manifest read that does not answer ends the scan
+truncated with the folder unreadable (`truncation: read`), or leaves a cached find
+unselected and in the file. Revalidation checks the chain from the home folder to
+the entry with the same function, memoised per discovery call, and reads the
+entry's own metadata (`lstat`, `stat`, `realpath`) through the bounded reader too.
+Not bounded, and stated as such: the ancestor reads above the home folder (`/Users`
+and `/`); a file that becomes unreadable between the bounded read and detection;
+and everything a pass later reads synchronously inside a checkout once it is
+discovered (artifact collection, app roots, state), which is the same for
+registered and sibling-discovered checkouts today. Registered projects and
+sibling discovery recognise as before. An Xcode container without an app
+dependency is not a scan checkout, though sibling and root discovery still
+recognise it.
 
 A scan find outside a home dot-folder can also be an installed tool. Every route
 that deletes outputs, dependencies or Cargo data of a reduce-only checkout keeps
@@ -189,8 +196,10 @@ checkouts stays off until that read settles. Two isolates in the daemon can
 read launchers, the main thread and the passes thread, so up to two reads can be
 outstanding there; the scan runs only on the passes thread, and CLI commands are
 separate processes. A scan stops at the first read that times out: the result is
-truncated and the previous finds are kept. A truncated scan, like a failed one, is
-retried after an hour; the weekly schedule counts only from a scan that finished.
+truncated and the previous finds are kept. A scan that failed or ended on a timed-out
+read is retried after an hour whatever the disk level; one that stopped at the folder
+cap or the time budget follows the weekly schedule (hourly while the disk level is above
+normal), since a retry would hit the same limit.
 A directory or entry that does not exist, and a dangling symlink, is no
 launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
 keeps every reduce-only checkout for that operation, with a reason naming the
@@ -241,7 +250,7 @@ minutes (not "least recently handled first"), the depth of seven, the folders
 pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
 `~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
 normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the
-retry of a failed or truncated scan after an hour (its result is partial), the scan running only in the daemon
+retry after an hour of a scan that failed or ended on a read that timed out, while one that stopped at the folder cap or the time budget counts as finished (`truncation` records which), the scan running only in the daemon
 after the pass, and the PATH launcher keep. The scan is not deferred under host
 load; it takes about a second and a half on one MacBook.
 
