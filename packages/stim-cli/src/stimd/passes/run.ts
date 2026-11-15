@@ -36,6 +36,7 @@ import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -416,6 +417,7 @@ export async function runMaintenance(
       recent: [],
       plan: [],
     };
+    await runDiscoveryScanIfDue(tick, state.pressure);
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);

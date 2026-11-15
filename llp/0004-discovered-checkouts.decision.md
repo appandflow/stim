@@ -57,6 +57,62 @@ the maintainer's words.
 Everything else in this section was chosen by the coordinator and the review of
 #5519, not by the maintainer.
 
+## Tool folders and the full scan
+
+Discovery also reads two more sources, and what they find is reduce-only: Stim
+reduces its build outputs and, in a linked worktree, `node_modules` and Pods by
+the discovered-checkout rules, and never removes the checkout or worktree. The
+hold that keeps a worktree inside a dot-folder of its main checkout
+(`.claude/worktrees`) applies to it.
+
+- Common tool folders: linked worktrees of known repositories in
+  `~/.codex/worktrees`. The list is one constant with that one path.
+- The full scan: a pruned walk of the home folder for checkouts that Stim's
+  project detection recognises and discovery does not reach. The daemon runs it
+  weekly and, while the disk level is above normal, at most hourly; a command
+  never runs it. It reads `~/Documents`, skips `~/Desktop`, `~/Downloads`,
+  `~/Library`, other media folders, dot-folders, symlinks, other volumes and
+  dependency, build and cache folders, stops at a recognised project and goes
+  seven levels deep. A folder the system refuses is skipped and recorded, never
+  an error. The result is stored in `maintenance/discovery-scan.json` under the
+  Stim home (when it ran, what it found, what it could not read) and discovery
+  reads that file, so a maintenance pass or `stim gc` never walks the disk.
+- At most 40 reduce-only checkouts are handled per discovery, in a window over
+  them that moves every 15 minutes.
+
+A folder named in `maintenance.discoverRoots` keeps the full rules. A scoped
+`STIM_HOME` discovers nothing from either source.
+
+Reason: on one MacBook `~/.codex/worktrees` held 53 worktrees and 12 GB that
+Stim listed once as outside the folders it manages, with no size and no way
+forward.
+
+Maintainer decision, 2026-11-14 (#5762), verbatim:
+
+> ok so lets do:
+> discovery - current logic + common paths + full scan once in a while (also triggered more often on low disk), full scan can try to be fast, ie like not scan places we know theres gonna be no projects and lots of files so can keep it fast ish, prob will trigger permission promts for Documents folder prob the only one it makes sense to scan but I guess its fine.
+>
+> discovered workspaces - cleaned using our safer rules we have already, doctor lists them and suggest adding as managed path or delete if idle for long time
+
+Earlier the same evening, on including common tool folders by default: "Could
+these common paths just be included by default in Discovered checkout".
+
+The coordinator's reading, not the maintainer's words, for the points that
+decision leaves open:
+
+1. Checkouts found only through a common path or the full scan are reduced and
+   never removed by Stim. Removal is what doctor suggests to the person.
+2. Common paths start with `~/.codex/worktrees`. Others are added only with
+   evidence that a tool uses that path.
+3. "Once in a while" is weekly; on low disk the scan runs when a volume's level
+   rises above normal, at most once an hour.
+4. Doctor reads the last scan's result and does not run the scan.
+5. `~/Desktop`, `~/Downloads` and other volumes are not scanned.
+6. The bound of 40 per discovery, the 15 minute window, the depth of seven and
+   the folders pruned are implementation choices, not decisions.
+
+Doctor's listing and the line printed on low disk are not part of this change.
+
 ## Removing a discovered worktree needs more evidence
 
 A discovered linked worktree follows the registered-workspace rules for build
@@ -91,8 +147,9 @@ Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 
 ## Links
 
-- Issues: #5512, #5515, #5757. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
+  `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovered-removal.ts`,
   `packages/stim-cli/src/workspace/protected-locations.ts`,
   `packages/stim-cli/src/workspace/hidden-edits.ts`,

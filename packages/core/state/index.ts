@@ -52,6 +52,7 @@ export * from './tailnet.ts';
 export * from './server-service.ts';
 export * from './hosted-logs.ts';
 export * from './maintenance.ts';
+export * from './discovery-scan.ts';
 export * from './gc-log.ts';
 export * from './build-ledger.ts';
 export * from './agent-device.ts';

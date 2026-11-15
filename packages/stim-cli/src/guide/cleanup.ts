@@ -28,7 +28,8 @@ STIM_HOME home runs it like any other.
 The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
 (every 5 minutes), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). The reading plans nothing, the idle check
+minutes) and the age sweep (daily); the daemon also rescans the home folder for
+checkouts weekly, or hourly at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
 plans only idle stops, and the cap trims follow the size, worktree and sweep
 checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
@@ -1206,6 +1207,21 @@ directory and / are never a folder that holds known projects. A scoped
 STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery
 registers nothing, writes nothing and recomputes each run; no git fetch runs in
 a discovered repository and pull requests come from the cache.
+Two more sources find checkouts that Stim only reduces and never removes
+(reduce-only): linked worktrees of known repositories in ~/.codex/worktrees,
+and the checkouts of the full scan. The scan is a pruned walk of the home
+folder, run by the daemon weekly and, while the disk level is above normal, at
+most hourly; no command runs it. It reads ~/Documents (macOS may
+ask once), skips ~/Desktop, ~/Downloads, ~/Library, the media folders, other
+volumes, dot-folders, symlinks and dependency or build folders, stops at a
+recognised project and goes seven levels deep. A folder the system refuses is
+skipped and recorded. The result is kept in maintenance/discovery-scan.json
+under the Stim home (when it ran, what it found, what it could not read) and
+discovery reads that file, so a pass or gc never walks the disk. Reduce-only
+checkouts have their build outputs and, in a linked worktree, node_modules and
+Pods reduced by the rules below; at most 40 of them are handled at a time, in a
+window that moves every 15 minutes. A folder named in maintenance.discoverRoots
+keeps the full rules. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes
 (git-ignored files included; node_modules, Pods and nested worktrees skipped,
@@ -1231,8 +1247,8 @@ Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
 skip-worktree, which hides edits from git status. A worktree inside a
 dot-folder of its main checkout other than .worktrees (.claude/worktrees) is
-managed by another tool and is never removed, though its outputs are reduced.
-Dirty work is never archived.
+managed by another tool and is never removed, though its outputs are reduced;
+so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each
 would lose, or why it is kept; one over the scan bound is listed under Needs a
 person.

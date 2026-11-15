@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
-import { machineSettingValue, type Config } from '@stim-cli/core/state';
+import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { isProtectedLocation } from './protected-locations.ts';
@@ -11,7 +11,18 @@ import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
 
-type DiscoveryOrigin = 'worktree' | 'sibling' | 'root';
+type DiscoveryOrigin = 'worktree' | 'sibling' | 'root' | 'scan';
+
+// @ref LLP 0004#tool-folders-and-the-full-scan -- reduce-only tool folders
+/**
+ * Folders under the home folder where another tool puts linked worktrees of the user's repositories. Stim discovers
+ * those worktrees of known repositories and reduces their outputs, and never removes them.
+ */
+const TOOL_FOLDERS = ['.codex/worktrees'];
+
+/** At most this many checkouts found only through a tool folder or the full scan are handled per discovery. */
+const MAX_REDUCE_ONLY = 40;
+const REDUCE_ONLY_WINDOW_MS = 15 * 60_000;
 
 export interface DiscoveredCheckout {
   /** The canonical path of the checkout. */
@@ -19,6 +30,8 @@ export interface DiscoveredCheckout {
   origin: DiscoveryOrigin;
   /** The repository, folder or `maintenance.discoverRoots` entry that led to it. */
   from: string;
+  /** Found through a tool folder or the full scan: Stim reduces its outputs and never removes it. */
+  reduceOnly?: boolean;
 }
 
 export interface DiscoveryChild {
@@ -40,15 +53,17 @@ export function selectDiscovered({
   children,
 }: {
   known: readonly string[];
-  worktrees: readonly { path: string; from: string }[];
+  worktrees: readonly { path: string; from: string; reduceOnly?: boolean }[];
   children: readonly DiscoveryChild[];
 }): DiscoveredCheckout[] {
   const found = new Map<string, DiscoveredCheckout>();
   const covered = (path: string) =>
     known.some((root) => path === root || path.startsWith(`${root}${sep}`) || root.startsWith(`${path}${sep}`));
-  for (const { path, from } of worktrees) if (!covered(path)) found.set(path, { path, origin: 'worktree', from });
+  for (const { path, from, reduceOnly } of worktrees)
+    if (!covered(path)) found.set(path, { path, origin: 'worktree', from, ...(reduceOnly ? { reduceOnly } : {}) });
   for (const { path, origin, from, recognised } of children)
-    if (recognised && !found.has(path) && !covered(path)) found.set(path, { path, origin, from });
+    if (recognised && !found.has(path) && !covered(path))
+      found.set(path, { path, origin, from, ...(origin === 'scan' ? { reduceOnly: true } : {}) });
   return [...found.values()].toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -68,7 +83,7 @@ function isProject(path: string): boolean {
  * Whether Stim's project detection recognises the folder: it is a project itself, or a direct child of its `apps/`,
  * `examples/` or `packages/` is, as in a monorepo whose root holds no app.
  */
-function recognises(path: string): boolean {
+export function recognises(path: string): boolean {
   if (isProject(path)) return true;
   return PROJECT_FOLDERS.some((folder) => {
     try {
@@ -153,6 +168,28 @@ export function broadDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv
 }
 
 const inside = (path: string, folder: string) => path === folder || path.startsWith(`${folder}${sep}`);
+
+/** Whether `path` lies inside a tool folder (see `TOOL_FOLDERS`) of the home folder `home`. */
+export function inToolFolder(path: string, home: string): boolean {
+  return TOOL_FOLDERS.some((folder) => inside(path, join(home, folder)));
+}
+
+/**
+ * At most `limit` of the checkouts found only through a tool folder or the full scan, a window over them that moves
+ * with `now`, so every one is handled within a few windows and one pass pays for a bounded number. The rest are left
+ * out of this discovery and stay as they are.
+ */
+export function boundReduceOnly(
+  found: readonly DiscoveredCheckout[],
+  now: number,
+  limit: number = MAX_REDUCE_ONLY,
+): DiscoveredCheckout[] {
+  const only = found.filter((entry) => entry.reduceOnly);
+  if (only.length <= limit) return [...found];
+  const start = (Math.floor(now / REDUCE_ONLY_WINDOW_MS) * limit) % only.length;
+  const kept = new Set(Array.from({ length: limit }, (_, i) => only[(start + i) % only.length]));
+  return found.filter((entry) => !entry.reduceOnly || kept.has(entry));
+}
 
 /**
  * Whether Stim acts on a discovered linked worktree: it lies in its repository's own main checkout folder, in a folder
@@ -265,7 +302,7 @@ async function computeDiscovered(
       repositories.push(repository);
     }
   }
-  const worktrees: { path: string; from: string }[] = [];
+  const worktrees: { path: string; from: string; reduceOnly?: boolean }[] = [];
   const outside: Discovery['outside'] = [];
   for (const { entries, main } of repositories) {
     for (const entry of entries) {
@@ -273,15 +310,24 @@ async function computeDiscovered(
       if (path === canonicalPath(main)) continue;
       if (worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots }))
         worktrees.push({ path, from: main });
+      else if (inToolFolder(path, canonicalPath(homedir()))) worktrees.push({ path, from: main, reduceOnly: true });
       else outside.push({ path, from: main });
     }
   }
-  const allowed = children.filter(
+  const scanned: DiscoveryChild[] = scoped
+    ? []
+    : (readDiscoveryScan()?.found ?? [])
+        .filter((path) => isAbsolute(path) && existsSync(path))
+        .map(canonicalPath)
+        .filter((path) => !isBroadFolder(path))
+        .map((path) => ({ path, origin: 'scan', from: 'full scan', recognised: true }));
+  const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
   const knownRoots = known.map(canonicalPath);
-  const selected = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
-  const listed = new Set(selected.map(({ path }) => path));
+  const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
+  const selected = boundReduceOnly(everything, Date.now());
+  const listed = new Set(everything.map(({ path }) => path));
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {
     found: selected,
