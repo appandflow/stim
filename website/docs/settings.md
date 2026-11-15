@@ -992,7 +992,8 @@ machine value to stop a hosted session whose client has been gone that long. GB 
 <MaintenanceSettings />
 
 Size, idle, worktree and sweep checks wait while the one-minute load is above
-4 per core; the `stim-daemon`'s pressure level and ladder never wait.
+4 per core and every volume's disk level is normal; at high or critical load
+defers none of them. The `stim-daemon`'s pressure level and ladder never wait.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails, and other platforms use `os.freemem()`.
 The build-cache and Metro caps trim entries down to 80% of the limit. The Swift

@@ -41,7 +41,8 @@ pressure ladder from rung 2 before they build; no other command starts one, and
 with daemon.mode off none runs. gc --dry-run prints what an acting gc would
 delete at the measured level, or at the --pressure level.
 Size, idle, worktree and sweep checks wait while the one-minute load is above 4
-per core. Measured directories are workspace build outputs and Stim's
+per core and every volume's disk level is normal; at high or critical load defers
+none of them. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches. The size
 check also records the disk of each owned and parked simulator and emulator
 (category owned-devices); status prints the total as "owned devices".
@@ -143,13 +144,18 @@ In on mode a pass runs, cheapest to rebuild first:
      tightens this: at high every recognised target/, in use or not, loses all
      its stale profiles and all incremental/ data whatever the cap, and
      at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
-     to every target/. The level is read when the trim is planned, which is at
-     the hourly size scan, or hourly on its own while host load defers the size
-     scan (the cap is never held back by load, and its du runs at low priority,
-     one target/ at a time, 120 seconds at most each, ended at once by a
-     handover; the planning du, the trim's du, lsof and ps run niced, while
-     reading the units' directories is in-process and short), and at once
-     for stim gc. Without Exact's ledger, a build that changes nothing leaves
+     to every target/. At high or critical the trim is planned
+     from the folders alone, with no size scan, no du and no load gate first: the
+     pressure ladder runs it at the start of rung 3, before any shared cache
+     is trimmed (the stim-daemon's at most every 10 minutes per level; the one
+     start, ios and android run before they build runs it once and leaves the
+     workspace being built alone), one process at a time per target/ for each user account, whatever its Stim home, and an acting stim gc runs
+     it before it measures anything. At normal the cap is planned at the hourly
+     size scan, or hourly on its own while host load defers the size scan (the
+     cap is never held back by load, and its du runs at low priority, one
+     target/ at a time, 120 seconds at most each, ended at once by a handover;
+     the planning du, the trim's du, lsof and ps run niced, while reading the
+     units' directories is in-process and short). Without Exact's ledger, a build that changes nothing leaves
      no trace in a profile's directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,
      moved back if a build took one of the profile's lock files (.cargo-lock,
@@ -557,6 +563,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     idle stage and rung 1, H. Kept: as above.
   Parked devices
     rung 2, H until the level clears, C all.
+  Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3
+    rung 3 before any cache, H and C. Kept: as the cap trim above.
   Shared caches trimmed to half their caps; at C every registered cache emptied,
   the fingerprint index and memo
     rung 3, H and C. Kept: entries a running build protects, report-only

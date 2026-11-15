@@ -25,7 +25,9 @@ import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
-import { cacheEntryProtectionFor, maintenancePinned } from '../stimd/passes/protect.ts';
+import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } from '../stimd/passes/protect.ts';
+import { executedActionName } from '../maintenance-kind.ts';
+import { planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
 import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
@@ -99,6 +101,8 @@ export interface LadderInput {
   operation?: StimContext;
   /** The workspace of the command that runs the ladder, which no rung takes. */
   protectedRoot?: string;
+  /** Aborts at a build's headroom deadline; a Cargo target trim in flight stops between units. */
+  stop?: AbortSignal;
 }
 
 interface RungContext extends LadderInput {
@@ -200,7 +204,7 @@ async function run(
       context,
       {
         rung: context.rung,
-        kind: plan.kind.replace(/^would-/, ''),
+        kind: executedActionName(plan),
         target: plan.target,
         ...(plan.workspace ? { workspace: plan.workspace } : {}),
         outcome: 'would',
@@ -219,6 +223,7 @@ async function run(
       ...actContext(context.settings),
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
+      ...(context.stop ? { stop: context.stop } : {}),
       ...(worktreeSweep ? { worktreeSweep } : {}),
     });
   } catch (error) {
@@ -231,7 +236,7 @@ async function run(
     context,
     {
       rung: context.rung,
-      kind: plan.kind.replace(/^would-/, ''),
+      kind: executedActionName(plan),
       target: plan.target,
       ...(plan.workspace ? { workspace: plan.workspace } : {}),
       outcome: outcome.status,
@@ -373,6 +378,34 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
+const CARGO_TRIM_RETRY_MS = 10 * 60_000;
+const cargoTrimmedAt = new Map<string, number>();
+
+async function cargoTargetsStep(context: RungContext): Promise<void> {
+  // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- the trim needs no size scan or load gate
+  if (context.force) return;
+  const now = Date.now();
+  const key = `${configDir()}\0${context.level}`;
+  const last = cargoTrimmedAt.get(key);
+  if (last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
+  if (!(await context.stillShort())) return;
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const plan = await planCargoTargetsAtPressure({
+    settings: context.settings,
+    pinned: maintenancePinnedReader(context.operation),
+    now,
+    signal: context.operation?.signal,
+    ...(context.operation ? { operation: context.operation } : {}),
+  });
+  for (const action of plan.actions) {
+    const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
+    if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
+    if (!(await context.stillShort())) return;
+    await run(context, action);
+  }
+  cargoTrimmedAt.set(key, now);
+}
+
 /**
  * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
  * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
@@ -380,6 +413,7 @@ async function trim(
  * other registered cache emptied whole except those `emptyRegisteredCaches` keeps.
  */
 async function cachesRung(context: RungContext): Promise<void> {
+  await cargoTargetsStep(context);
   const critical = context.level === 'critical';
   const recentDays = critical ? 0 : context.settings.protectRecentHours / 24;
   const entries = [

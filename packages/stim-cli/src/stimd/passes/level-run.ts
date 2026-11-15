@@ -17,7 +17,8 @@ import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
-import { measureCargoTargets } from './cargo-target.ts';
+import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
+import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
 import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
@@ -142,6 +143,40 @@ export async function runMaintenanceAtLevel({
     );
   const outside = await discoveredOutside(loadConfig(), listedRoots(), operation);
   const now = Date.now();
+  if (act && level !== 'normal') {
+    let early: Awaited<ReturnType<typeof planCargoTargetsAtPressure>> = { actions: [], blocked: [], skips: [] };
+    try {
+      early = await planCargoTargetsAtPressure({
+        settings,
+        pinned: maintenancePinnedReader(operation),
+        now,
+        signal: operation?.signal,
+        ...(operation ? { operation } : {}),
+        ...(chosen ? { level: chosen } : {}),
+      });
+    } catch (error) {
+      if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+      operation?.signal.throwIfAborted();
+      blocked.push(`Cargo target trim could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    for (const action of early.actions) {
+      operation?.signal.throwIfAborted();
+      let outcome: ActionOutcome;
+      try {
+        outcome = await executeAction(action, {
+          settings,
+          background: false,
+          protectedRoot: triggeringRoot(operation),
+          ...(operation ? { operation } : {}),
+        });
+      } catch (error) {
+        if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+        operation?.signal.throwIfAborted();
+        outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+      }
+      take(fromOutcome(action, outcome));
+    }
+  }
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
   const sizes = [
     ...(await measureSizes(now, measureFailed, operation)),

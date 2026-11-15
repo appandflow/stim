@@ -77,6 +77,37 @@ The full table lives in `website/docs/commands.md` (the `gc` section) and in
 `stim guide cleanup`; this document records why the levels are shaped this
 way, not the table.
 
+## Pressure acts without waiting for measurement or load
+
+While any volume is at high or critical, no cleanup step waits for a size
+scan, a `du` of what it frees, or host load to drop. A step whose decision
+needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
+and runs at once; a step that needs sizes measures them at once. Host load
+defers the size, idle, worktree and sweep checks only while every volume is at
+normal. The walk itself keeps its protections (one at a time, the walk claim,
+time limits, abort on handover). Walks above normal run at normal priority:
+under the load that defers a walk at normal, a walk niced to 19 gets almost no
+CPU, and the disk is what is short.
+
+Reason: on 2026-11-14 a Mac spent an evening at high and critical, reached 0.2
+GB free three times, and emptied Stim's own shared caches before it trimmed 40
+GB of Cargo data it was allowed to remove. The Cargo trim was planned only by
+the maintenance pass, which starts after the daemon tick's pressure ladder
+(112 minutes that evening) and after the lane's dormant dependency step (69
+minutes), so it waited 3 h 26 min from the previous Cargo measurement.
+
+Maintainer decision: "we def should not have to wait on full disk measurement
+to be able to remove caches", 2026-11-14.
+
+Maintainer decision: "Lets make sure that if disk space is low we do any needed
+measurement right away since disk space is prio over cpu use", 2026-11-14.
+
+Chosen by the coordinator, not the maintainer: the Cargo trim runs as the first
+step of ladder rung 3, at most every 10 minutes per level in the long-lived daemon (a build command's
+ladder runs it once, and leaves its own workspace's `target/` alone), so a
+checkout in use does not lose its `incremental/` data every tick; walks above
+normal are not niced.
+
 ## One idle day reduces a workspace
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to

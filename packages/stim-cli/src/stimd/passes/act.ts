@@ -89,6 +89,8 @@ export interface ActContext {
   operation?: StimContext;
   /** The Cargo target trim runs its child processes at low priority. */
   lowPriority?: boolean;
+  /** The Cargo target trim leaves what it has not moved yet once this aborts. */
+  stop?: AbortSignal;
 }
 
 const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
@@ -551,7 +553,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
-      return trimCargoTargetAction(action, context.operation, context.lowPriority);
+      return trimCargoTargetAction(action, context.operation, context.lowPriority, context.stop);
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':
