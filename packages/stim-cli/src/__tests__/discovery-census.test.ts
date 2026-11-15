@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -169,7 +169,15 @@ describe('runDiscoveryCensusIfDue', () => {
     const real = {
       readNames: (path: string) => readdir(path),
       isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
-      tagHead: async () => null,
+      lstat: async (path: string) => {
+        const info = await lstat(path);
+        return {
+          kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other',
+          mtimeMs: info.mtimeMs,
+        } as const;
+      },
+      head: async (path: string, bytes: number) =>
+        (await lstat(path)).isFile() ? (await readFile(path, 'utf8')).slice(0, bytes) : null,
     };
     const denied = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
 
@@ -209,7 +217,7 @@ describe('runDiscoveryCensusIfDue', () => {
 
     describe.each([
       ['a listing that never answers', 'readNames'],
-      ['a tag file read that never answers', 'tagHead'],
+      ['a tag file read that never answers', 'head'],
     ] as const)('%s', (_name, which) => {
       let release: () => void = () => {};
       afterEach(() => release());
@@ -219,7 +227,7 @@ describe('runDiscoveryCensusIfDue', () => {
           release = () => reject(denied());
         });
         const started: string[] = [];
-        if (which === 'tagHead') {
+        if (which === 'head') {
           const target = join(home, 'dev', 'old', 'target');
           mkdirSync(target);
           writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55');
@@ -235,7 +243,7 @@ describe('runDiscoveryCensusIfDue', () => {
               }
               return real.readNames(path);
             },
-            tagHead: () => {
+            head: () => {
               started.push(which);
               return never;
             },
@@ -252,6 +260,97 @@ describe('runDiscoveryCensusIfDue', () => {
         expect(census?.finds.filter(({ evaluatedAt }) => evaluatedAt === 0).length).toBeGreaterThan(0);
         expect(hungRead()).not.toBeNull();
       });
+    });
+  });
+
+  describe('last git activity', () => {
+    const real = {
+      readNames: (path: string) => readdir(path),
+      isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
+      lstat: async (path: string) => {
+        const info = await lstat(path);
+        return {
+          kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other',
+          mtimeMs: info.mtimeMs,
+        } as const;
+      },
+      head: async (path: string, bytes: number) =>
+        (await lstat(path)).isFile() ? (await readFile(path, 'utf8')).slice(0, bytes) : null,
+    };
+    const at = (iso: string) => new Date(iso);
+    const touch = (path: string, when: Date) => {
+      mkdirSync(join(path, '..'), { recursive: true });
+      writeFileSync(path, 'x');
+      utimesSync(path, when, when);
+    };
+    const git = async (io = real) => {
+      const { census } = await run(t0, { io });
+      return Object.fromEntries(
+        (census?.finds ?? []).map(({ path, gitActivityAt }) => [path.slice(home.length), gitActivityAt]),
+      );
+    };
+
+    it('is the newest of HEAD, index and logs/HEAD of a main checkout, and unknown without a git directory', async () => {
+      const dir = join(home, 'dev', 'old', '.git');
+      touch(join(dir, 'HEAD'), at('2026-01-01T00:00:00Z'));
+      touch(join(dir, 'index'), at('2026-03-01T00:00:00Z'));
+      touch(join(dir, 'logs', 'HEAD'), at('2026-02-01T00:00:00Z'));
+      const found = await git();
+      expect(found['/dev/old']).toBe(at('2026-03-01T00:00:00Z').getTime());
+      expect(found['/dev/fresh']).toBeNull();
+    });
+
+    it('follows a linked worktree to its git directory under .git/worktrees', async () => {
+      const gitDir = join(base, 'main', '.git', 'worktrees', 'fresh');
+      touch(join(gitDir, 'HEAD'), at('2026-04-01T00:00:00Z'));
+      writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${gitDir}\n`);
+      expect((await git())['/dev/fresh']).toBe(at('2026-04-01T00:00:00Z').getTime());
+    });
+
+    it('is unknown for a .git file that names a directory outside a .git/worktrees directory', async () => {
+      const elsewhere = join(base, 'elsewhere', 'gitdir');
+      touch(join(elsewhere, 'HEAD'), at('2026-04-01T00:00:00Z'));
+      writeFileSync(join(home, 'dev', 'fresh', '.git'), `gitdir: ${elsewhere}\n`);
+      writeFileSync(join(home, 'dev', 'old', '.git'), 'gitdir: relative/.git/worktrees/x\n');
+      const found = await git();
+      expect(found['/dev/fresh']).toBeNull();
+      expect(found['/dev/old']).toBeNull();
+    });
+
+    it('is unknown, not old, when a git file is a symlink', async () => {
+      const dir = join(home, 'dev', 'old', '.git');
+      touch(join(base, 'target-file'), at('2020-01-01T00:00:00Z'));
+      mkdirSync(dir, { recursive: true });
+      symlinkSync(join(base, 'target-file'), join(dir, 'HEAD'));
+      expect((await git())['/dev/old']).toBeNull();
+    });
+
+    it('is unknown when the read never answers, and the run does not wait on it', async () => {
+      touch(join(home, 'dev', 'fresh', '.git', 'HEAD'), at('2026-01-01T00:00:00Z'));
+      let release: () => void = () => {};
+      const never = new Promise<never>((_, reject) => {
+        release = () => reject(new Error('released'));
+      });
+      const started: string[] = [];
+      const running = run(t0, {
+        readTimeoutMs: 20,
+        io: {
+          ...real,
+          lstat: (path) => {
+            if (path.endsWith(join('dev', 'fresh', '.git'))) {
+              started.push(path);
+              return never;
+            }
+            return real.lstat(path);
+          },
+        },
+      });
+      while (started.length === 0) await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(20);
+      const { census } = await running;
+      release();
+      expect(started).toHaveLength(1);
+      expect(census?.finds.find(({ path }) => path.endsWith('/dev/fresh'))?.gitActivityAt).toBeNull();
     });
   });
 

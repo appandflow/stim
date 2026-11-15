@@ -570,7 +570,8 @@ leased until <time>" for each one.`,
                   bytes of recognised build output, how many checkouts were
                   measured, failed or not measured yet, the command that adds
                   the folder to maintenance.discoverRoots (null with
-                  commandProblem when it cannot), and the oldest measurement
+                  commandProblem when it cannot), and the oldest measurement and each checkout's last git activity (ISO time
+                  or null for unknown)
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",

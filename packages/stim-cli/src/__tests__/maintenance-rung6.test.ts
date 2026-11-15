@@ -183,6 +183,7 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
     failedDirs: 0,
     bytes: 3 * 1024 ** 3,
     unreadable: false,
+    gitActivityAt: null,
   };
   const census = join(home, 'maintenance', 'discovery-census.json');
   const errors: string[] = [];

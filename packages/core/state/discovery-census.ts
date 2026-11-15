@@ -23,6 +23,11 @@ export interface CensusFind {
   bytes: number;
   /** Listing its build directories failed or did not answer, so nothing about its output is known. */
   unreadable: boolean;
+  /**
+   * When git last wrote in the checkout (epoch ms): the newest modification time of the git directory's HEAD, index and
+   * logs/HEAD. Null is unknown, never old. It says nothing about edits made without touching git.
+   */
+  gitActivityAt: number | null;
 }
 
 /**
@@ -58,7 +63,8 @@ function parseFind(value: unknown): CensusFind | null {
     !finite(value.measuredDirs) ||
     !finite(value.failedDirs) ||
     !finite(value.bytes) ||
-    typeof value.unreadable !== 'boolean'
+    typeof value.unreadable !== 'boolean' ||
+    (value.gitActivityAt !== null && !finite(value.gitActivityAt))
   )
     return null;
   return {
@@ -72,6 +78,7 @@ function parseFind(value: unknown): CensusFind | null {
     failedDirs: value.failedDirs,
     bytes: value.bytes,
     unreadable: value.unreadable,
+    gitActivityAt: value.gitActivityAt,
   };
 }
 

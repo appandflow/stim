@@ -1332,16 +1332,26 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   cleanup containment (stim guide lifecycle); any other census error is
   contained, writes nothing and is one maintenance_failure record (target
   discovery census) in the cleanup log. The census reads no idle evidence: that
-  evidence walks the source of a checkout with no bound it could apply, so
-  doctor says Stim has not checked whether a checkout is in use or holds
-  uncommitted or unpushed work, and leaves deleting one to the person.
+  evidence walks the source of a checkout with no bound it could apply. It
+  records one cheap fact instead, the last git activity: the newest
+  modification time of HEAD, index and logs/HEAD in the checkout's git
+  directory (its .git directory, or for a linked worktree the absolute
+  .git/worktrees/<name> directory its .git file names), by bounded lstat
+  reads that never follow a symlink and run no git. Commits, checkouts, staging
+  and reflog writes change it; editing files without touching git does not. A
+  missing git directory, a name outside .git/worktrees, a read that fails or
+  times out, or a spent budget gives unknown, never old. Doctor lists each
+  checkout with that date, oldest first, unknown last, with no threshold, and
+  says Stim has not checked whether a checkout is in use or holds uncommitted or
+  unpushed work; deleting one is the person's call.
   stim doctor prints it as the section "Checkouts Stim does not fully manage"
   and carries it in --json as discovery (internal, no compatibility promise):
   scan { status: read | absent | unreadable | unusable, ranAt, trigger,
   truncation, visited, unreadable }, census (read | absent | unreadable |
   unusable | none), censusAt, censusCurrent, and groups, one per containing
   folder and kind, each { folder, kind, checkouts, bytes, measured, failed,
-  notMeasuredYet, command, commandProblem, oldestMeasuredAt }. Doctor reads the
+  notMeasuredYet, command, commandProblem, oldestMeasuredAt, members: [{ path,
+  gitActivityAt (ISO time or null) }] }. Doctor reads the
   two files and the setting and walks nothing; a group whose folder
   maintenance.discoverRoots names now (symlinks resolved) is left out, though the
   daemon has not classified again yet. The section shows only where doctor runs,

@@ -343,6 +343,21 @@ maintainer:
   source with no bound the census could apply without changing code the deleting
   passes use, so doctor says Stim has not checked whether a checkout is in use or
   holds uncommitted or unpushed work, and leaves deleting one to the person.
+- Instead of idle, the census records one bounded fact per checkout, the last git
+  activity: the newest modification time of `HEAD`, `index` and `logs/HEAD` in the
+  checkout's git directory. That is `<checkout>/.git` for a main checkout, and for a
+  linked worktree the directory its `.git` file names after `gitdir:`, accepted
+  only when absolute and ending in `.git/worktrees/<name>`. The reads are `lstat`
+  and a 512 byte prefix of a regular `.git` file, through `answered`, under the
+  run's budget and abort checks; no symlink is followed and no git process runs.
+  Commits, checkouts, staging and reflog writes change the date; editing files
+  without touching git does not, so it never proves a checkout unused. A missing
+  or unusual git directory, a failed or timed-out read or a spent budget is
+  unknown, shown as unknown and never as old. Doctor lists each checkout with the
+  date, oldest first, unknown last, in text and as an ISO string or null in the
+  JSON, with no threshold and without the word idle: the date is the fact and the
+  person judges. Chosen by the implementing lane and the coordinator, not by the
+  maintainer.
 - The census classifies a discovery computed from the scan result it records
   (not the per-operation memo the passes share) and records that `ranAt`; a census
   from an older scan than the scan file shows its checkouts as not measured yet.
@@ -358,9 +373,9 @@ maintainer:
 - The worktrees in `~/.codex/worktrees` reach discovery through git as reduce-only
   worktrees and are not scan finds, so they are not listed.
 
-Open for the maintainer: how Stim should tell that a checkout has been idle "a
-long time" (the doctor listing does not, since the evidence cannot be bounded);
-whether
+Open for the maintainer: whether the last git activity date is enough for "delete if
+idle for long time", or Stim should offer more (it states no number and does not
+read source activity); whether
 the low-disk line also appears at the high level; whether listing the
 `~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
 Desktop show the listing.

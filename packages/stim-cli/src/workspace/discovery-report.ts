@@ -22,6 +22,11 @@ interface UnmanagedGroup {
   /** The command that adds `folder` to the machine's `maintenance.discoverRoots`; null with `commandProblem` set. */
   command: string | null;
   commandProblem: 'too-broad' | 'setting-unreadable' | null;
+  /**
+   * Each checkout with when git last wrote in it (ISO time; null is unknown, never old), oldest first, unknown last. It
+   * is the newest modification time of the git directory's HEAD, index and logs/HEAD, and says nothing about edits.
+   */
+  members: Array<{ path: string; gitActivityAt: string | null }>;
   /** The oldest measurement among the checkouts that have one, epoch ms; null when none was measured. */
   oldestMeasuredAt: number | null;
 }
@@ -117,6 +122,12 @@ function groupOf(first: CensusFind, finds: readonly CensusFind[], setting: Disco
     command,
     commandProblem: !first.adoptable ? 'too-broad' : command === null ? 'setting-unreadable' : null,
     oldestMeasuredAt,
+    members: finds
+      .map((find) => ({ path: find.path, at: find.gitActivityAt }))
+      .toSorted((a, b) =>
+        a.at === null || b.at === null ? Number(a.at === null) - Number(b.at === null) : a.at - b.at,
+      )
+      .map(({ path, at }) => ({ path, gitActivityAt: at === null ? null : new Date(at).toISOString() })),
   };
 }
 
@@ -159,7 +170,16 @@ export function discoveryReport({
     if (roots.has(listed.folder)) continue;
     const find = current
       ? listed
-      : { ...listed, evaluatedAt: 0, dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
+      : {
+          ...listed,
+          evaluatedAt: 0,
+          dirs: 0,
+          measuredDirs: 0,
+          failedDirs: 0,
+          bytes: 0,
+          unreadable: false,
+          gitActivityAt: null,
+        };
     const key = `${find.kind}\0${find.folder}`;
     const group = byFolder.get(key) ?? { first: find, finds: [] };
     group.finds.push(find);
@@ -247,9 +267,13 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
           ? '  This folder is the home folder or holds it, which maintenance.discoverRoots cannot name.'
           : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
     );
+    for (const { path, gitActivityAt } of group.members)
+      lines.push(
+        `  ${shorten(path, home)}: last git activity ${gitActivityAt === null ? 'unknown' : gitActivityAt.slice(0, 10)}`,
+      );
     if (group.kind === 'reduce-only')
       lines.push(
-        '  Stim has not checked whether they are in use or hold uncommitted or unpushed work; delete a checkout you no longer need yourself, after checking that.',
+        '  Stim has not checked whether they are in use or hold uncommitted or unpushed work; last git activity is when git last wrote there and says nothing about edits made without it; delete a checkout you no longer need yourself, after checking that.',
       );
   }
   return lines;

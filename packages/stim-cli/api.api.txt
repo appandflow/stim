@@ -1426,8 +1426,11 @@
 [*] interface UnmanagedGroup { @@1 folder: string;
 [*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder";
 [*] interface UnmanagedGroup { @@1 measured: number;
+[*] interface UnmanagedGroup { @@1 members: Array<{
 [*] interface UnmanagedGroup { @@1 notMeasuredYet: number;
 [*] interface UnmanagedGroup { @@1 oldestMeasuredAt: number | null;
+[*] interface UnmanagedGroup { @@2 gitActivityAt: string | null;
+[*] interface UnmanagedGroup { @@2 path: string;
 [*] interface UnverifiedCleanup {
 [*] interface UnverifiedCleanup { @@1 child: number;
 [*] interface UnverifiedCleanup { @@1 message: string;

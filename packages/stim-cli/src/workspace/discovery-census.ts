@@ -1,7 +1,7 @@
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryCensusFile,
@@ -75,19 +75,25 @@ function writeCensus(census: DiscoveryCensus): void {
 export interface CensusIo {
   readNames: (path: string) => Promise<string[]>;
   isDirectory: (path: string) => Promise<boolean>;
-  /** Whether it is a regular file, and its first bytes as text. */
-  tagHead: (path: string) => Promise<string | null>;
+  /** What the path is, without following a symlink, and when it was last modified. */
+  lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number }>;
+  /** Null unless it is a regular file; else its first `bytes` bytes as text. */
+  head: (path: string, bytes: number) => Promise<string | null>;
 }
 
 const REAL_IO: CensusIo = {
   readNames: (path) => readdir(path),
   isDirectory: async (path) => (await lstat(path)).isDirectory(),
-  tagHead: async (path) => {
+  lstat: async (path) => {
+    const info = await lstat(path);
+    return { kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other', mtimeMs: info.mtimeMs };
+  },
+  head: async (path, bytes) => {
     if (!(await lstat(path)).isFile()) return null;
     const file = await open(path, 'r');
     try {
-      const buffer = Buffer.alloc(TAG_PREFIX_BYTES);
-      const { bytesRead } = await file.read(buffer, 0, TAG_PREFIX_BYTES, 0);
+      const buffer = Buffer.alloc(bytes);
+      const { bytesRead } = await file.read(buffer, 0, bytes, 0);
       return buffer.toString('utf8', 0, bytesRead);
     } finally {
       await file.close();
@@ -108,6 +114,9 @@ interface Reader {
   names: (path: string) => Promise<string[]>;
   directory: (path: string) => Promise<boolean>;
   signature: (path: string) => Promise<boolean>;
+  /** Null when the path does not exist. */
+  info: (path: string) => Promise<Awaited<ReturnType<CensusIo['lstat']>> | null>;
+  head: (path: string, bytes: number) => Promise<string | null>;
   answer: (read: DirRead) => Promise<string[] | boolean>;
 }
 
@@ -132,13 +141,17 @@ function boundedReader(io: CensusIo, deadline: number, signal: AbortSignal, time
   const names = (path: string) => read<string[]>(path, [], () => io.readNames(path));
   const directory = (path: string) => read(path, false, () => io.isDirectory(path));
   const signature = async (path: string) => {
-    const head = await read<string | null>(path, null, () => io.tagHead(path));
+    const head = await read<string | null>(path, null, () => io.head(path, TAG_PREFIX_BYTES));
     return head !== null && signatureHeads(head);
   };
+  const info = (path: string) => read<Awaited<ReturnType<CensusIo['lstat']>> | null>(path, null, () => io.lstat(path));
+  const head = (path: string, bytes: number) => read<string | null>(path, null, () => io.head(path, bytes));
   return {
     names,
     directory,
     signature,
+    info,
+    head,
     answer: (request) =>
       'names' in request
         ? names(request.names)
@@ -169,9 +182,56 @@ async function buildDirsOf(path: string, reader: Reader): Promise<string[]> {
   return [...dirs];
 }
 
+const GIT_FILES = ['HEAD', 'index', join('logs', 'HEAD')];
+const GIT_POINTER_BYTES = 512;
+const WORKTREE_GIT_DIR = /[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/;
+
+/**
+ * The git directory of a checkout without running git: `<c>/.git` when it is a directory, or the directory a linked
+ * worktree's `.git` file names after `gitdir:`, accepted only when it is absolute and ends in `.git/worktrees/<name>`.
+ * Symlinks are never followed. Null when it cannot be told.
+ */
+async function gitDirOf(path: string, reader: Reader): Promise<string | null> {
+  const dotGit = join(path, '.git');
+  const info = await reader.info(dotGit);
+  if (!info) return null;
+  if (info.kind === 'directory') return dotGit;
+  if (info.kind !== 'file') return null;
+  const text = await reader.head(dotGit, GIT_POINTER_BYTES);
+  const named = text === null ? null : /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text)?.[1];
+  if (!named || !isAbsolute(named)) return null;
+  const gitDir = resolve(named);
+  if (!WORKTREE_GIT_DIR.test(gitDir)) return null;
+  return (await reader.info(gitDir))?.kind === 'directory' ? gitDir : null;
+}
+
+/**
+ * When git last wrote in a checkout: the newest modification time of the git directory's `HEAD`, `index` and `logs/HEAD`
+ * (commits, checkouts, staging and reflog writes change them; editing files without touching git does not). A file that
+ * does not exist is skipped, and a git directory with none of them, a file that is not a regular file, a failed or timed
+ * out read or a spent budget gives null: unknown, never old. No git process runs and no source is read.
+ */
+async function lastGitActivity(path: string, reader: Reader): Promise<number | null> {
+  try {
+    const gitDir = await gitDirOf(path, reader);
+    if (!gitDir) return null;
+    let newest: number | null = null;
+    for (const name of GIT_FILES) {
+      const info = await reader.info(join(gitDir, name));
+      if (!info) continue;
+      if (info.kind !== 'file') return null;
+      newest = Math.max(newest ?? 0, info.mtimeMs);
+    }
+    return newest;
+  } catch (error) {
+    if (error instanceof Unreadable || error instanceof OutOfBudget) return null;
+    throw error;
+  }
+}
+
 const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
 
-type Measurement = Pick<CensusFind, 'dirs' | 'measuredDirs' | 'failedDirs' | 'bytes' | 'unreadable'>;
+type Measurement = Pick<CensusFind, 'dirs' | 'measuredDirs' | 'failedDirs' | 'bytes' | 'unreadable' | 'gitActivityAt'>;
 
 /**
  * The recognised build output of a checkout, measured one directory at a time through `refreshMeasure`: the disk usage
@@ -195,10 +255,18 @@ async function measureBuildOutput(
     dirs = await buildDirsOf(path, reader);
   } catch (error) {
     if (error instanceof OutOfBudget) return null;
-    if (error instanceof Unreadable) return { dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: true };
+    if (error instanceof Unreadable)
+      return { dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: true, gitActivityAt: null };
     throw error;
   }
-  const result: Measurement = { dirs: dirs.length, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
+  const result: Measurement = {
+    dirs: dirs.length,
+    measuredDirs: 0,
+    failedDirs: 0,
+    bytes: 0,
+    unreadable: false,
+    gitActivityAt: await lastGitActivity(path, reader),
+  };
   for (const dir of dirs) {
     operation.signal.throwIfAborted();
     if (Date.now() > deadline) continue;
@@ -292,7 +360,16 @@ export async function runDiscoveryCensusIfDue(
         const placement = { path, kind, folder, adoptable: !isBroadFolder(folder) };
         const kept: CensusFind = earlier
           ? { ...earlier, ...placement }
-          : { ...placement, evaluatedAt: 0, dirs: 0, measuredDirs: 0, failedDirs: 0, bytes: 0, unreadable: false };
+          : {
+              ...placement,
+              evaluatedAt: 0,
+              dirs: 0,
+              measuredDirs: 0,
+              failedDirs: 0,
+              bytes: 0,
+              unreadable: false,
+              gitActivityAt: null,
+            };
         const complete =
           earlier &&
           earlier.evaluatedAt > 0 &&

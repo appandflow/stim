@@ -42,6 +42,7 @@ function find(over: Partial<CensusFind> & Pick<CensusFind, 'path'>): CensusFind 
     failedDirs: 0,
     bytes: GB,
     unreadable: false,
+    gitActivityAt: null,
     ...over,
   };
 }
@@ -197,6 +198,38 @@ describe('discoveryReport', () => {
     expect(discoveryReport({ ...withScan, census: missing }).census).toBe('absent');
     expect(discoveryReport({ ...withScan, census: { status: 'unreadable' } }).census).toBe('unreadable');
     expect(discoveryReport({ ...withScan, census: { status: 'read', census: null } }).census).toBe('unusable');
+  });
+});
+
+describe('members', () => {
+  it('lists the checkouts oldest git activity first, unknown last, as ISO times or null', () => {
+    const [group] = report([
+      find({ path: '/Users/me/dev/unknown' }),
+      find({ path: '/Users/me/dev/new', gitActivityAt: now - day }),
+      find({ path: '/Users/me/dev/old', gitActivityAt: now - 40 * day }),
+    ]).groups;
+    expect(group?.members).toEqual([
+      { path: '/Users/me/dev/old', gitActivityAt: new Date(now - 40 * day).toISOString() },
+      { path: '/Users/me/dev/new', gitActivityAt: new Date(now - day).toISOString() },
+      { path: '/Users/me/dev/unknown', gitActivityAt: null },
+    ]);
+  });
+
+  it('prints the date or unknown for each, and shows no date for a census made from an older scan', () => {
+    const finds = [
+      find({ path: '/Users/me/dev/old', gitActivityAt: now - 40 * day }),
+      find({ path: '/Users/me/dev/x' }),
+    ];
+    const text = discoveryLines(report(finds), home).join('\n');
+    expect(text).toContain('~/dev/old: last git activity 2026-10-11');
+    expect(text).toContain('~/dev/x: last git activity unknown');
+    const stale = discoveryReport({
+      scan: { status: 'read', scan: { ...scan, ranAt: scan.ranAt + 1 } },
+      census: census(finds),
+      setting: noRoots,
+      home,
+    });
+    expect(stale.groups[0]?.members.every(({ gitActivityAt }) => gitActivityAt === null)).toBe(true);
   });
 });
 
