@@ -13,6 +13,15 @@ export interface StepTally {
 }
 
 const ERROR_MAX = 200;
+const WRITER_FIELDS = new Set(['src', 'level', 'event', 'msg', 'ts']);
+
+function describe(error: unknown): string {
+  try {
+    return (error instanceof Error ? error.message : String(error)).slice(0, ERROR_MAX);
+  } catch {
+    return 'unprintable error';
+  }
+}
 
 /**
  * Runs `run` and writes one `daemon_step` record to the daemon log: when it started, how long it took, how many items
@@ -45,7 +54,7 @@ export async function timedStep<T>(
     return result;
   } catch (error) {
     outcome = signal?.aborted || (error instanceof Error && error.name === 'AbortError') ? 'aborted' : 'threw';
-    if (outcome === 'threw') failure = (error instanceof Error ? error.message : String(error)).slice(0, ERROR_MAX);
+    if (outcome === 'threw') failure = describe(error);
     throw error;
   } finally {
     try {
@@ -57,7 +66,7 @@ export async function timedStep<T>(
         `${step}${fields?.rung === undefined ? '' : ` ${String(fields.rung)}`} ${outcome} in ${durationMs}ms${count === undefined ? '' : `; ${count} items`}`,
         {
           step,
-          ...fields,
+          ...Object.fromEntries(Object.entries(fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
           startedAt: new Date(startedAt).toISOString(),
           durationMs,
           ...(count === undefined ? {} : { items: count }),

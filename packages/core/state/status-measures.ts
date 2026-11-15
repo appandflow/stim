@@ -212,14 +212,6 @@ export function readDiskUsage(path: string): DiskMeasure | null {
   };
 }
 
-/** How long the walk that wrote `path`'s cached measurement took, in milliseconds; null for an entry written without it. */
-export function readDiskUsageWalkMs(path: string): number | null {
-  const entry = readJsonObject(diskUsageCacheFile(path));
-  if (!entry || entry.path !== path) return null;
-  const { walkMs } = entry;
-  return typeof walkMs === 'number' && Number.isFinite(walkMs) && walkMs >= 0 ? walkMs : null;
-}
-
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
 export function readDiskUsageFailure(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));

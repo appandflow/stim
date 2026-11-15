@@ -537,7 +537,7 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 `rank_source_dependencies`, `plan_rung6`, `plan_worktrees`, `plan_history`,
 `dormant_dependencies`). A record has `step`, `startedAt`, `durationMs`, `items`
 (the items it visited or returned, when it counts any), and `outcome`
-(`finished`, `threw` or `aborted`); a rung adds `rung` and `level`, and a step
+(`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
 that threw adds `error`. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
 spent its time in. The records change nothing a pass does.

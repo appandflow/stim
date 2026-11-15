@@ -7,7 +7,7 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
-  readDiskUsageWalkMs,
+  readJsonObject,
 } from '@stim-cli/core/state';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -154,12 +154,12 @@ test('a walk records how long it took, and an entry written without it still rea
   const walked = await refreshMeasure(plain, { ...options, now: () => clock, claim: true });
 
   expect(walked.outcome).toBe('measured');
-  expect(readDiskUsageWalkMs(plain)).toBe(1234);
+  expect(readJsonObject(diskUsageCacheFile(plain))?.walkMs).toBe(1234);
   expect(readDiskUsage(plain)).toEqual(walked.measure);
 
   const { walkMs: _walkMs, ...legacy } = JSON.parse(readFileSync(diskUsageCacheFile(plain), 'utf8'));
   writeFileSync(diskUsageCacheFile(plain), JSON.stringify(legacy));
-  expect(readDiskUsageWalkMs(plain)).toBeNull();
+  expect(readJsonObject(diskUsageCacheFile(plain))?.walkMs).toBeUndefined();
   expect(readDiskUsage(plain)).toEqual(walked.measure);
   expect((await refreshMeasure(plain, { ...options, now: () => clock })).outcome).toBe('fresh');
 });

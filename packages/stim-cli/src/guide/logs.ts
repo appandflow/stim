@@ -359,7 +359,7 @@ step. It is written when the step ends, whether it finished, threw or was
 aborted, so a step that took hours shows where the time went. Fields: step,
 startedAt (ISO time), durationMs, items (when the step counts any), outcome
 (finished, threw or aborted), error (threw only, at most 200 characters), and
-for a rung: rung and level (the level the rung ran at). A loop's record falls
+for a rung: rung and pressureLevel (the level the rung ran at). A loop's record falls
 between its rung's startedAt and its end. Steps and what items counts:
   rung                          a pressure ladder rung; the actions it recorded
   idle_stage_candidates,
@@ -378,7 +378,8 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record, never one per item. A tick at normal writes one
 (dormant_candidates); at high up to 16 and at critical up to 22; the dormant
 dependency step adds about 7 an hour. The records change nothing a pass does.
-Each disk-usage cache entry also records walkMs, how long its walk took;
+Each disk-usage cache entry also records walkMs, in milliseconds, from just
+before the install signature and target reads to the end of the folder walk;
 nothing reads it yet.
 
 BUILD LEDGER

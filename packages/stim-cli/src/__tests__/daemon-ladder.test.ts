@@ -1267,7 +1267,7 @@ describe('rung timing records', () => {
         logLevel: 'debug',
         step: 'rung',
         rung: 2,
-        level: 'high',
+        pressureLevel: 'high',
         startedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
         durationMs: 100,
         items: 0,

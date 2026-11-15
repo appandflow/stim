@@ -999,7 +999,7 @@ export async function runLadder(
     try {
       await timedStep(input.log, 'rung', () => RUNG_ACTS[rung](context, causes), {
         signal: input.operation?.signal,
-        fields: { rung, level: context.level },
+        fields: { rung, pressureLevel: context.level },
         items: () => actions.length - before,
       });
     } catch (error) {
