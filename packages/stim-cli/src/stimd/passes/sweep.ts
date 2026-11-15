@@ -347,7 +347,6 @@ export async function planWorktrees({
   protectRecentMs = 0,
   refresh,
   idleDays = null,
-  skipDeferred = false,
   operation,
   deviceActivity,
 }: {
@@ -359,8 +358,6 @@ export async function planWorktrees({
   sizes?: readonly MaintenanceSize[];
   protectRecentMs?: number;
   refresh?: boolean;
-  /** A background pass does not inspect the reduce-only checkouts left for a later pass. */
-  skipDeferred?: boolean;
   operation?: StimContext;
   /** Reads owned device activity for an operation; a new listing when absent. */
   deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
@@ -370,7 +367,6 @@ export async function planWorktrees({
     olderThan: idleDays,
     now,
     operation,
-    skipDeferred,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
   });

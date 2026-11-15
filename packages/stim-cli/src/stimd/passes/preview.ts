@@ -251,7 +251,6 @@ export async function plannedMaintenance(
       idleDays: sweep && settings.removeIdleWorktrees && settings.olderThanDays > 0 ? settings.olderThanDays : null,
       operation,
       deviceActivity,
-      skipDeferred: background,
     });
     merge('worktree', planned);
     result.worktreeSweep = planned.sweep;
