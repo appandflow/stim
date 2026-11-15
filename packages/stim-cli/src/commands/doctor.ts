@@ -237,9 +237,10 @@ function idleAfterDays(env: NodeJS.ProcessEnv): number | null {
 const DISCOVERY_TITLE = 'Checkouts Stim does not fully manage';
 
 function discoverySection(report: DiscoveryReport, env: NodeJS.ProcessEnv): string[] {
-  const lines = isScopedHome(env)
-    ? ['A scoped Stim home never scans the home folder, so it lists nothing.']
-    : discoveryLines(report, homedir());
+  const lines =
+    report.scan.status === 'absent' && isScopedHome(env)
+      ? ['A scoped Stim home never scans the home folder, so it lists nothing.']
+      : discoveryLines(report, homedir());
   return lines.map((line) => (line ? `  ${line}` : line));
 }
 
