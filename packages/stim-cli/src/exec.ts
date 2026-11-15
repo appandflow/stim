@@ -15,6 +15,7 @@ import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
 import { redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
+import { logReportChild } from './report-child-log.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
 import { processGroupAlive } from './ownership-claim.ts';
 
@@ -179,6 +180,9 @@ function describeReportCommand(file: string, args: readonly string[], redact?: r
   return text.length > REPORT_COMMAND_MAX_LENGTH ? `${text.slice(0, REPORT_COMMAND_MAX_LENGTH - 3)}...` : text;
 }
 
+type CancelReason = 'timeout' | 'overflow' | 'exit' | 'close' | 'report_budget' | 'abort' | 'unknown';
+type Refusal = 'unverified' | 'did_not_close' | 'descendants';
+
 function reportChild(
   child: ChildProcess,
   signal?: AbortSignal,
@@ -186,7 +190,8 @@ function reportChild(
   contained = false,
   selectedContext?: StimContext,
   command?: string,
-): { cancel: () => Promise<void>; closed: Promise<void> } | undefined {
+  timeoutMs?: number,
+): { cancel: (reason?: CancelReason) => Promise<void>; closed: Promise<void> } | undefined {
   const context = selectedContext ?? ambientContext();
   const report = reportSignal(context);
   signal ??= report;
@@ -202,10 +207,19 @@ function reportChild(
     child.once('close', () => {
       ended = true;
       finishNativeClose();
-      void cancel().then(resolve, reject);
+      void cancel('close').then(resolve, reject);
     });
   });
   const pid = child.pid;
+  const spawnedAt = performance.now();
+  let exitedAt: number | undefined;
+  let exitStatus: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  child.once('exit', (code, exitSignal) => {
+    exitedAt = performance.now();
+    exitStatus = { code, signal: exitSignal };
+  });
+  let cancelledAt = spawnedAt;
+  let cancelReason: CancelReason = 'unknown';
   const named = `${pid}${command ? ` running \`${command}\`` : ''}`;
   const cleanupSettled = () =>
     ended && (pid === undefined || (process.platform === 'win32' ? contained : !processGroupAlive(pid)));
@@ -221,7 +235,32 @@ function reportChild(
     }
     return 'unknown';
   };
-  const refuse = (message: string): never => {
+  const recordRefused = (refusal: Refusal) => {
+    if (pid === undefined) return;
+    const write = () => {
+      if (exitedAt === undefined) return;
+      const cancelToExitMs = Math.round(exitedAt - cancelledAt);
+      logReportChild(
+        `report child ${named} exited ${cancelToExitMs} ms after its cancel (${cancelReason}, refused: ${refusal})`,
+        {
+          pid,
+          command,
+          cancelReason,
+          refusal,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+          spawnToCancelMs: Math.round(cancelledAt - spawnedAt),
+          cancelToExitMs,
+          exitCode: exitStatus?.code ?? null,
+          exitSignal: exitStatus?.signal ?? null,
+          captured: captured?.ok === true,
+          ...(captured && !captured.ok ? { captureReason: captured.reason } : {}),
+        },
+      );
+    };
+    if (exitedAt === undefined) child.once('exit', write);
+    else write();
+  };
+  const refuse = (message: string, refusal: Refusal): never => {
     const failure = Object.assign(new Error(message), {
       code: 'STIM_CLAIM_UNAVAILABLE',
       reportCleanup: true,
@@ -235,12 +274,21 @@ function reportChild(
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.unref();
+    recordRefused(refusal);
     rejectClosed(error);
     throw error;
   };
   let cancelled: Promise<void> | undefined;
-  const cancel = () =>
+  const cancel = (reason?: CancelReason) =>
     (cancelled ??= (async () => {
+      cancelledAt = performance.now();
+      cancelReason =
+        reason ??
+        (signal.aborted
+          ? signal.reason instanceof Error && 'code' in signal.reason && signal.reason.code === 'STIM_REPORT_TIMEOUT'
+            ? 'report_budget'
+            : 'abort'
+          : 'unknown');
       let identity = observe();
       if (pid !== undefined) {
         const deadline = performance.now() + 1000;
@@ -251,6 +299,7 @@ function reportChild(
         if (identity === 'unknown') {
           refuse(
             `Cannot verify cleanup for report child ${named}${captured && !captured.ok ? ` (its identity was not captured at spawn: ${captured.reason})` : ''}; its process or descendants were left untouched.`,
+            'unverified',
           );
         }
       }
@@ -302,14 +351,14 @@ function reportChild(
         await awaitClose();
         if (!ended) await new Promise<void>((resolve) => setImmediate(resolve));
         if (!ended && observe() === 'gone') await awaitClose();
-        if (!ended) refuse(`Report child ${named} did not close within the cleanup budget.`);
+        if (!ended) refuse(`Report child ${named} did not close within the cleanup budget.`, 'did_not_close');
       }
       if (
         pid !== undefined &&
         process.platform !== 'win32' &&
         !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
       )
-        refuse(`Report child ${named} still has descendants after cleanup.`);
+        refuse(`Report child ${named} still has descendants after cleanup.`, 'descendants');
     })());
   if (report) trackReportResource(context, closed, cancel, signal, undefined, cleanupSettled);
   else {
@@ -543,7 +592,7 @@ const defaultExecutor: Executor = {
         else quietly(() => observed.started(watch, pid));
       }
       let lifetime: ReturnType<typeof reportChild>;
-      let cancel: (() => Promise<void>) | undefined;
+      let cancel: ((reason?: Parameters<NonNullable<typeof lifetime>['cancel']>[0]) => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let poll: ReturnType<typeof setInterval> | undefined;
       let phase: 'starting' | 'running' | 'closing' = markers ? 'starting' : 'running';
@@ -581,12 +630,13 @@ const defaultExecutor: Executor = {
           contained,
           context,
           describeReportCommand(file, args, redact),
+          timeout,
         );
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
           child.once('exit', () => {
             stopTimers();
-            void cancel?.().catch(reject);
+            void cancel?.('exit').catch(reject);
           });
         void lifetime?.closed.catch(reject);
         if (observed && watch !== undefined && child.pid !== undefined)
@@ -627,7 +677,7 @@ const defaultExecutor: Executor = {
           if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
           bufferedBytes = MAX_BUFFER;
           overflowed = true;
-          if (cancel) void cancel().catch(reject);
+          if (cancel) void cancel('overflow').catch(reject);
           else {
             child.kill('SIGKILL');
             child.stdin?.destroy();
@@ -641,7 +691,7 @@ const defaultExecutor: Executor = {
         timer = setTimeout(() => {
           timedOut = true;
           clearInterval(poll);
-          if (cancel) void cancel().catch(reject);
+          if (cancel) void cancel('timeout').catch(reject);
           else {
             child.kill(killSignal ?? 'SIGTERM');
             child.stdin?.destroy();
