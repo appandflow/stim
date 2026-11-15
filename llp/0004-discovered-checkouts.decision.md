@@ -132,30 +132,30 @@ command that adds it to `maintenance.discoverRoots`; that listing is not part of
 this change.
 
 Project detection (`recognises`) reads files synchronously, and a stalled mount,
-an iCloud file waiting for a download or a FIFO would block the thread. When the
-scan or the revalidation decides whether a folder is a checkout, every read
-detection makes is bounded by construction. Detection inspects the folder, up to
-50 children of each of its `apps`, `examples` and `packages` folders, those
-container folders themselves and every ancestor up to `/`; each inspection reads
-`package.json`, checks the existence of `settings.gradle(.kts)`, `gradlew(.bat)`,
-`Package.swift`, `exact.mjs` and `app.json`, and lists the folder, and an Xcode
-container without an app dependency makes it parse project files that name other
-files. So one check, `folderSafety`, applies to every folder the walk passes from
-the home folder down and to each folder detection inspects below the one being
-decided (`nestedSafety`), with no condition: a detection file that is not a
-regular file, or an Xcode container with no app dependency in `package.json`, makes
-the folder unsafe; a regular `package.json` is read once through the bounded
-reader first. An unsafe folder makes its whole subtree unrecognisable and the walk
-does not descend into it. A manifest read that does not answer ends the scan
-truncated with the folder unreadable (`truncation: read`), or leaves a cached find
-unselected and in the file. Revalidation checks the chain from the home folder to
-the entry with the same function, memoised per discovery call, and reads the
-entry's own metadata (`lstat`, `stat`, `realpath`) through the bounded reader too.
-Not bounded, and stated as such: the ancestor reads above the home folder (`/Users`
-and `/`); a file that becomes unreadable between the bounded read and detection;
-and everything a pass later reads synchronously inside a checkout once it is
-discovered (artifact collection, app roots, state), which is the same for
-registered and sibling-discovered checkouts today. Registered projects and
+an iCloud file waiting for a download or a FIFO would block the thread. Before
+detection runs on a folder, the scan or the revalidation proves its reads cannot
+block, as far as this list goes. For the folder, each ancestor from the home
+folder down (`folderSafety`), and each folder detection inspects below it
+(`nestedSafety`: each `apps`, `examples` and `packages` container and up to 50
+children of each), with every name compared case-insensitively on every volume:
+a detection file (`package.json`, `settings.gradle(.kts)`, `gradlew(.bat)`,
+`Package.swift`, `exact.mjs`, `app.json`) that is not a regular file makes the
+folder unsafe; so does an `ios` or `android` entry that is not a real directory
+(detection resolves them with `realpath` as React Native's owned roots), an Xcode
+container with no app dependency in `package.json` (detection parses the project
+files it names), and a symlinked container; every regular `package.json` is read
+once through the bounded reader first. An unsafe folder, or an unsafe result for
+anything detection inspects below it, makes its whole subtree unrecognisable: no
+detection runs on it or below it, and the walk does not descend. A read that does
+not answer ends the scan truncated with the folder unreadable (`truncation: read`),
+or leaves a cached find unselected and in the file. Revalidation applies the same
+functions to the chain from the home folder to the entry, memoised per discovery
+call, and reads the entry's own metadata (`lstat`, `stat`, `realpath`) through the
+bounded reader. Not bounded, and stated as such: the ancestor reads above the home
+folder (`/Users` and `/`); a file that becomes unreadable between the bounded read
+and detection; and everything a pass later reads synchronously inside a checkout
+once it is discovered (artifact collection, app roots, state), which is the same
+for registered and sibling-discovered checkouts today. Registered projects and
 sibling discovery recognise as before. An Xcode container without an app
 dependency is not a scan checkout, though sibling and root discovery still
 recognise it.

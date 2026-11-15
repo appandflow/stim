@@ -192,6 +192,34 @@ describe('scanForCheckouts', () => {
     ]);
   });
 
+  it('makes the whole subtree unrecognisable when a child that detection inspects is unsafe, so a sibling is not a find either', async () => {
+    mkdirSync(join(home, 'mono', 'apps', 'x'), { recursive: true });
+    const regular = (name: string) => ({
+      name,
+      isFile: () => true,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    });
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    const fifo = { name: 'package.json', isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false };
+    const listing = async (path: string) => {
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return [directory('x'), directory('y')];
+      if (path === join(home, 'mono', 'apps', 'y')) return [fifo];
+      return [regular('settings.gradle'), regular('gradlew')];
+    };
+    const detect = vi.fn<(path: string) => boolean>((path) => path.endsWith('x'));
+    const recognition = { ...REAL_RECOGNITION_IO, readEntries: listing };
+    expect((await scanForCheckouts(home, detect, { entries: listing, recognition })).found).toEqual([]);
+    expect(detect).not.toHaveBeenCalled();
+  });
+
   it('stops at its time budget and says so', async () => {
     project('dev', 'one');
     const scan = await scanForCheckouts(home, marked, { budgetMs: -1 });

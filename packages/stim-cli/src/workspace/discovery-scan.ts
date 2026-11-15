@@ -138,7 +138,8 @@ export async function scanForCheckouts(
         stop('read');
         return;
       }
-      if (nested === 'safe' && isCheckout(folder)) {
+      if (nested === 'unsafe') return;
+      if (isCheckout(folder)) {
         outcome.found.push(folder);
         return;
       }

@@ -1234,9 +1234,10 @@ dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
 recognised project and goes seven levels deep within 45 seconds. Before project
 detection runs on a folder, the manifests detection reads are proved safe, for
 the folder, each ancestor down from the home folder, its apps, examples and
-packages folders and their children: a manifest that is not a regular file, or an
-Xcode container with no app dependency in package.json, makes that subtree not a
-scan checkout, and a manifest or file metadata read that does not answer in 3
+packages folders and their children: a manifest (any case) that is not a regular file, an
+ios or android entry that is not a real directory, a symlinked apps, examples or
+packages folder, or an Xcode container with no app dependency in package.json,
+makes that subtree not a scan checkout, and a manifest or file metadata read that does not answer in 3
 seconds ends the scan (cached finds stay unselected, not dropped). Not bounded:
 the ancestors above the home folder, a file that becomes unreadable between that
 check and detection, and what a pass reads inside a checkout once discovered. The result is

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { REAL_RECOGNITION_IO, scanEntryValid } from '../workspace/scan-rules.ts';
+import { REAL_RECOGNITION_IO, folderSafety, nestedSafety, scanEntryValid } from '../workspace/scan-rules.ts';
 
 describe('scanEntryValid with a hand-edited scan result', () => {
   let home: string;
@@ -120,6 +120,40 @@ describe('scanEntryValid with a hand-edited scan result', () => {
         expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io })).toBe('invalid');
       }
       expect(detect).not.toHaveBeenCalled();
+    });
+
+    describe('names compare case-insensitively, as a case-insensitive volume reads them', () => {
+      const symlink = (name: string) => ({
+        name,
+        isFile: () => false,
+        isDirectory: () => false,
+        isSymbolicLink: () => true,
+      });
+      const where = '/work/x';
+
+      it('finds a FIFO manifest, a symlinked container and a symlinked or non-directory ios or android root whatever the case', async () => {
+        expect(await folderSafety(where, [fifo('PACKAGE.JSON')], 10)).toBe('unsafe');
+        expect(await folderSafety(where, [fifo('App.JSON')], 10)).toBe('unsafe');
+        expect(await folderSafety(where, [symlink('iOS')], 10)).toBe('unsafe');
+        expect(await folderSafety(where, [file('Android')], 10)).toBe('unsafe');
+        expect(await folderSafety(where, [folder('IOS'), folder('android')], 10)).toBe('safe');
+        expect(await nestedSafety(where, [symlink('APPS')], 10)).toBe('unsafe');
+        expect(await nestedSafety(where, [symlink('Packages')], 10)).toBe('unsafe');
+      });
+
+      it('reads a mixed-case regular manifest through the bounded reader instead of skipping it', async () => {
+        const reads: string[] = [];
+        const io = {
+          ...REAL_RECOGNITION_IO,
+          readText: async (path: string) => {
+            reads.push(path);
+            return '{}';
+          },
+        };
+        expect(await folderSafety(where, [file('Package.JSON')], 10, io)).toBe('safe');
+        expect(reads).toEqual([join(where, 'Package.JSON')]);
+        expect(await folderSafety(where, [file('PACKAGE.JSON'), folder('App.XCODEPROJ')], 10, io)).toBe('unsafe');
+      });
     });
 
     it('treats a metadata read that does not answer as pending, before any detection', async () => {

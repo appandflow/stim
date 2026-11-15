@@ -126,19 +126,26 @@ export function scanSkipper(home: string): (path: string) => boolean {
 }
 
 /** The files of a folder that project detection reads or stats: the manifests every integration's `inspect` looks at. */
+/**
+ * Compared case-insensitively on every volume: a case-insensitive one reads `Package.JSON` as `package.json`, and a case-
+ * sensitive one only loses a folder it could have accepted, the safe direction.
+ */
 const DETECTION_FILES = new Set([
   'package.json',
   'settings.gradle',
   'settings.gradle.kts',
   'gradlew',
   'gradlew.bat',
-  'Package.swift',
+  'package.swift',
   'exact.mjs',
   'app.json',
 ]);
 const PROJECT_FOLDERS = ['apps', 'examples', 'packages'];
 const PROJECT_FOLDER_ENTRIES = 50;
-const XCODE_CONTAINER = /\.(xcodeproj|xcworkspace)$/;
+const XCODE_CONTAINER = /\.(xcodeproj|xcworkspace)$/i;
+/** React Native's owned roots, which detection resolves with `realpath` when it walks up from a native layout. */
+const OWNED_ROOTS = new Set(['ios', 'android']);
+const folded = (name: string): string => name.toLowerCase();
 
 interface Entry {
   name: string;
@@ -184,20 +191,25 @@ export async function folderSafety(
   io: RecognitionIo = REAL_RECOGNITION_IO,
 ): Promise<Safety> {
   if (hungRead() !== null) return 'unreadable';
-  const detection = entries.filter((entry) => DETECTION_FILES.has(entry.name));
+  const detection = entries.filter((entry) => DETECTION_FILES.has(folded(entry.name)));
   if (detection.some((entry) => !entry.isFile())) return 'unsafe';
+  if (entries.some((entry) => OWNED_ROOTS.has(folded(entry.name)) && !entry.isDirectory())) return 'unsafe';
   const hasContainer = entries.some((entry) => XCODE_CONTAINER.test(entry.name));
-  if (!detection.some((entry) => entry.name === 'package.json')) return hasContainer ? 'unsafe' : 'safe';
-  try {
-    const text = await answered(folder, () => io.readText(join(folder, 'package.json')), timeoutMs);
-    let declares = false;
+  const manifests = detection.filter((entry) => folded(entry.name) === 'package.json');
+  if (manifests.length === 0) return hasContainer ? 'unsafe' : 'safe';
+  let declares = false;
+  for (const manifest of manifests) {
+    let text: string;
     try {
-      declares = declaresAppDependency(JSON.parse(text));
+      text = await answered(folder, () => io.readText(join(folder, manifest.name)), timeoutMs);
+    } catch (error) {
+      return error instanceof Unanswered ? 'unreadable' : 'unsafe';
+    }
+    try {
+      declares ||= declaresAppDependency(JSON.parse(text));
     } catch {}
-    return hasContainer && !declares ? 'unsafe' : 'safe';
-  } catch (error) {
-    return error instanceof Unanswered ? 'unreadable' : 'unsafe';
   }
+  return hasContainer && !declares ? 'unsafe' : 'safe';
 }
 
 /**
@@ -213,12 +225,10 @@ export async function nestedSafety(
 ): Promise<Safety> {
   const read = (path: string) => answered(path, () => io.readEntries(path), timeoutMs);
   try {
-    for (const name of PROJECT_FOLDERS) {
-      const entry = entries.find((candidate) => candidate.name === name);
-      if (!entry) continue;
+    for (const entry of entries.filter((candidate) => PROJECT_FOLDERS.includes(folded(candidate.name)))) {
       if (entry.isSymbolicLink()) return 'unsafe';
       if (!entry.isDirectory()) continue;
-      const container = join(folder, name);
+      const container = join(folder, entry.name);
       const members = await read(container);
       const own = await folderSafety(container, members, timeoutMs, io);
       if (own !== 'safe') return own;
