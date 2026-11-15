@@ -76,8 +76,9 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   project detection recognises and discovery does not reach. The daemon runs it
   weekly and, while the disk level is above normal, at most hourly; a command
   never runs it. It reads `~/Documents`, skips `~/Desktop`, `~/Downloads`,
-  `~/Library`, other media folders, dot-folders, symlinks, other volumes and
-  dependency, build and cache folders, stops at a recognised project and goes
+  `~/Library`, other media folders, symlinks, other volumes, dependency, build
+  and cache folders, dot-folders below the first level and the named tool homes
+  among the home folder's dot-folders (see below), and the Stim home, stops at a recognised project and goes
   seven levels deep. A folder the system refuses is skipped and recorded, never
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
@@ -87,6 +88,24 @@ hold that keeps a worktree inside a dot-folder of its main checkout
 
 A folder named in `maintenance.discoverRoots` keeps the full rules. A scoped
 `STIM_HOME` discovers nothing from either source.
+
+Reason for entering home dot-folders: checkouts live there too, for example
+about 18 checkouts and 80 GB of Cargo `target/` under `~/.exact/exact2` (#5757),
+so a blanket skip of dot-folders would miss the layout that started this work.
+The scan enters a dot-folder directly in the home folder unless it is in a
+named prune list of tool homes, package and build caches and runtimes
+(`.git`, `.npm`, `.yarn`, `.bun`, `.gradle`, `.cargo`, `.rustup`, `.nvm`,
+`.rvm`, `.cache`, `.android`, `.vscode`, `.cursor`, `.agent-device`, `.claude`,
+`.codex` and others in `HOME_DOT_PRUNED`) or named like a cache (`*-cache`).
+The list comes from entry counts to depth four on one machine, led by `.gradle`
+(67 thousand), `.agent-device` (45 thousand), the two Metro cache folders
+(25 and 17 thousand), `.npm`, `.bun`, `.rvm` and `.yarn` (15 thousand each).
+`.codex` is reached through its worktrees folder, and the Stim home is never
+scanned. Dot-folders deeper down (`.worktrees`, `.claude/worktrees`) are
+skipped because git reaches their worktrees. The scan's finds under a home
+dot-folder pass the protection rule for the system temporary directory only:
+the scan itself decides which dot-folders to enter, so the dot-folder part of
+`isProtectedLocation` does not apply to them, and they stay reduce-only.
 
 Reason: on one MacBook `~/.codex/worktrees` held 53 worktrees and 12 GB that
 Stim listed once as outside the folders it manages, with no size and no way

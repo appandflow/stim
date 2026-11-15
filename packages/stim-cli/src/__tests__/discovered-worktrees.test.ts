@@ -17,7 +17,10 @@ import * as reads from '../workspace/discovered-reads.ts';
 import { discoveredRemovalHold } from '../workspace/discovered-removal.ts';
 import { worktreeInScope } from '../workspace/discovery.ts';
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+  isTemporaryLocation: () => false,
+}));
 
 const day = 86_400_000;
 

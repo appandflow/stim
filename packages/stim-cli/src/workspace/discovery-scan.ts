@@ -2,7 +2,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
+import { configDir, isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryScanFile,
   maintenanceDir,
@@ -13,7 +13,8 @@ import {
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { loadConfig } from './config.ts';
-import { recognises } from './discovery.ts';
+import { inside, recognises } from './discovery.ts';
+import { isTemporaryLocation } from './protected-locations.ts';
 
 const HOUR_MS = 60 * 60_000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
@@ -32,6 +33,53 @@ const HOME_SKIPPED = new Set([
   'Music',
   'Pictures',
   'Public',
+]);
+
+// @ref LLP 0004#tool-folders-and-the-full-scan -- the home dot-folders the scan does not enter
+/**
+ * Dot-folders directly in the home folder that hold many files and no projects: tool homes, package and build caches,
+ * runtimes, editor state and other tools' own state. Counted on one machine (entries to depth four): .gradle 67k,
+ * .agent-device 45k, .member-app-metro-cache 25k, .dartwords-metro-cache 17k, .npm 16k, .bun 16k, .rvm 15k, .yarn 15k,
+ * .android 7k, .vscode 6k, .cursor 5k, .claude 3k, .cache 2k, .ivy2 2k, .cargo 2k. `.codex` is reached through its
+ * worktrees folder, and `.stim` is the Stim home. Every other home dot-folder is entered, such as `.exact`.
+ */
+const HOME_DOT_PRUNED = new Set([
+  '.git',
+  '.Trash',
+  '.stim',
+  '.stim-npm',
+  '.stim-audits',
+  '.codex',
+  '.claude',
+  '.gradle',
+  '.agent-device',
+  '.npm',
+  '.pnpm-store',
+  '.yarn',
+  '.bun',
+  '.cargo',
+  '.rustup',
+  '.nvm',
+  '.rvm',
+  '.cache',
+  '.android',
+  '.cocoapods',
+  '.vscode',
+  '.cursor',
+  '.antigravity',
+  '.local',
+  '.config',
+  '.docker',
+  '.m2',
+  '.ivy2',
+  '.gem',
+  '.expo',
+  '.zplug',
+  '.virtualenvs',
+  '.wrangler',
+  '.foundry',
+  '.pw-profiles',
+  '.swiftpm',
 ]);
 
 /** Folders at any depth that hold many files and no projects: dependencies, build output and tool caches. */
@@ -53,9 +101,14 @@ const PRUNED = new Set([
 ]);
 
 // @ref LLP 0004#tool-folders-and-the-full-scan -- what the scan prunes
-/** Whether the scan descends into a folder named `name`, `depth` levels below the home folder (1 is a child of it). */
+/**
+ * Whether the scan descends into a folder named `name`, `depth` levels below the home folder (1 is a child of it).
+ * Dot-folders are entered only directly in the home folder and not when they are in `HOME_DOT_PRUNED` or named like a
+ * cache; deeper ones, such as `.worktrees`, are skipped because git reaches their worktrees.
+ */
 export function scanDescends(name: string, depth: number): boolean {
-  if (name.startsWith('.') || PRUNED.has(name)) return false;
+  if (name.startsWith('.')) return depth === 1 && !HOME_DOT_PRUNED.has(name) && !name.endsWith('-cache');
+  if (PRUNED.has(name)) return false;
   return depth !== 1 || !HOME_SKIPPED.has(name);
 }
 
@@ -77,7 +130,11 @@ const errorCode = (error: unknown) => (error instanceof Error && 'code' in error
 export async function scanForCheckouts(
   home: string,
   isCheckout: (path: string) => boolean,
-  { budgetMs = BUDGET_MS, signal }: { budgetMs?: number; signal?: AbortSignal } = {},
+  {
+    budgetMs = BUDGET_MS,
+    signal,
+    skip = () => false,
+  }: { budgetMs?: number; signal?: AbortSignal; skip?: (path: string) => boolean } = {},
 ): Promise<ScanOutcome> {
   const outcome: ScanOutcome = { found: [], unreadable: [], visited: 0, truncated: false };
   const deadline = Date.now() + budgetMs;
@@ -113,6 +170,7 @@ export async function scanForCheckouts(
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink() || !scanDescends(entry.name, depth + 1)) continue;
       const path = join(folder, entry.name);
+      if (skip(path)) continue;
       if ((await lstat(path).catch(() => null))?.dev !== volume) continue;
       await walk(path, depth + 1);
     }
@@ -177,7 +235,11 @@ export async function runDiscoveryScanIfDue(
   const store = (scan: Omit<DiscoveryScan, 'version' | 'ranAt' | 'durationMs' | 'trigger'>) =>
     writeScan({ version: 1, ranAt: now, durationMs: Date.now() - now, trigger, ...scan });
   try {
-    const outcome = await scanForCheckouts(canonicalPath(home), recognises, { signal: operation.signal });
+    const stimHome = canonicalPath(configDir());
+    const homeIsTemporary = isTemporaryLocation(home);
+    const skip = (path: string) =>
+      inside(canonicalPath(path), stimHome) || (!homeIsTemporary && isTemporaryLocation(path));
+    const outcome = await scanForCheckouts(canonicalPath(home), recognises, { signal: operation.signal, skip });
     store({ ...outcome, found: outcome.found.toSorted() });
   } catch {
     if (operation.signal.aborted) {

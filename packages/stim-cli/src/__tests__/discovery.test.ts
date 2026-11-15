@@ -22,7 +22,10 @@ import {
   type DiscoveryChild,
 } from '../workspace/discovery.ts';
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+  isTemporaryLocation: () => false,
+}));
 
 describe('isBroadFolder', () => {
   it('refuses the home folder, a folder holding it and the filesystem root, and accepts a folder below it', () => {

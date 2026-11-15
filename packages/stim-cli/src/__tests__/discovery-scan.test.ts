@@ -23,8 +23,8 @@ import {
 const marked = (path: string) => existsSync(join(path, 'package.json'));
 
 describe('scanDescends', () => {
-  it('skips dot-folders, dependency and build folders everywhere, and the excluded folders of the home folder only', () => {
-    for (const name of ['.git', '.cache', 'node_modules', 'Pods', 'build', 'target', 'Library'])
+  it('skips dependency and build folders everywhere, and the excluded folders of the home folder only', () => {
+    for (const name of ['node_modules', 'Pods', 'build', 'target', 'Library'])
       expect(scanDescends(name, 3)).toBe(false);
     for (const name of ['Desktop', 'Downloads', 'Movies']) {
       expect(scanDescends(name, 1)).toBe(false);
@@ -32,6 +32,13 @@ describe('scanDescends', () => {
     }
     expect(scanDescends('Documents', 1)).toBe(true);
     expect(scanDescends('dev', 1)).toBe(true);
+  });
+
+  it('enters a dot-folder of the home folder unless it is a tool home or cache, and no deeper dot-folder', () => {
+    expect(scanDescends('.exact', 1)).toBe(true);
+    for (const name of ['.git', '.npm', '.gradle', '.cache', '.stim', '.codex', '.member-app-metro-cache'])
+      expect(scanDescends(name, 1)).toBe(false);
+    for (const name of ['.worktrees', '.exact', '.claude']) expect(scanDescends(name, 2)).toBe(false);
   });
 });
 
@@ -52,6 +59,7 @@ describe('scanForCheckouts', () => {
     project('Documents', 'a');
     project('dev', 'deep', 'er', 'b');
     project('dev', 'c');
+    project('.exact', 'exact2');
     mkdirSync(join(home, 'dev', 'c', 'inner'));
     project('dev', 'c', 'inner');
     for (const skipped of [
@@ -59,16 +67,20 @@ describe('scanForCheckouts', () => {
       ['Downloads', 'x'],
       ['dev', 'node_modules', 'x'],
       ['dev', '.hidden', 'x'],
+      ['.npm', 'x'],
       ['dev', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'too-deep'],
     ])
       project(...skipped);
     symlinkSync(join(home, 'Documents', 'a'), join(home, 'dev', 'linked'));
     const scan = await scanForCheckouts(home, marked);
-    expect(scan.found.toSorted()).toEqual([
-      join(home, 'Documents', 'a'),
-      join(home, 'dev', 'c'),
-      join(home, 'dev', 'deep', 'er', 'b'),
-    ]);
+    expect(scan.found.toSorted()).toEqual(
+      [
+        join(home, 'Documents', 'a'),
+        join(home, 'dev', 'c'),
+        join(home, 'dev', 'deep', 'er', 'b'),
+        join(home, '.exact', 'exact2'),
+      ].toSorted(),
+    );
     expect(scan.truncated).toBe(false);
     expect(scan.unreadable).toEqual([]);
   });

@@ -6,7 +6,7 @@ import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { isProtectedLocation } from './protected-locations.ts';
+import { isProtectedLocation, isTemporaryLocation } from './protected-locations.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
@@ -167,7 +167,7 @@ export function broadDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv
   return configuredRoots(config, env).roots.filter((root) => existsSync(root) && isBroadFolder(canonicalPath(root)));
 }
 
-const inside = (path: string, folder: string) => path === folder || path.startsWith(`${folder}${sep}`);
+export const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}${sep}`);
 
 /** Whether `path` lies inside a tool folder (see `TOOL_FOLDERS`) of the home folder `home`. */
 export function inToolFolder(path: string, home: string): boolean {
@@ -323,7 +323,9 @@ async function computeDiscovered(
         .filter((path) => !isBroadFolder(path))
         .map((path) => ({ path, origin: 'scan', from: 'full scan', recognised: true }));
   const allowed = [...children, ...scanned].filter(
-    (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
+    (child) =>
+      canonicalRoots.some((root) => inside(child.path, root)) ||
+      (child.origin === 'scan' ? !isTemporaryLocation(child.path) : !isProtectedLocation(child.path)),
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });

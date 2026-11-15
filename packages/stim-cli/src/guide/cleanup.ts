@@ -1214,7 +1214,9 @@ and the checkouts of the full scan. The scan is a pruned walk of the home
 folder, run by the daemon weekly and, when the disk level rises above normal, at
 most hourly; no command runs it. It reads ~/Documents (macOS may
 ask once), skips ~/Desktop, ~/Downloads, ~/Library, the media folders, other
-volumes, dot-folders, symlinks and dependency or build folders, stops at a
+volumes, symlinks, dependency or build folders, deeper dot-folders and the tool
+homes and caches among the home folder's dot-folders (.npm, .gradle, .cache and
+the like; .exact is entered), stops at a
 recognised project and goes seven levels deep. A folder the system refuses is
 skipped and recorded. The result is kept in maintenance/discovery-scan.json
 under the Stim home (when it ran, what it found, what it could not read) and

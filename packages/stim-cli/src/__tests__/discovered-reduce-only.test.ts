@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
@@ -22,7 +22,11 @@ import {
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
   const real = await original<typeof import('../workspace/protected-locations.ts')>();
-  return { ...real, isProtectedLocation: () => false };
+  return {
+    ...real,
+    isProtectedLocation: (path: string) => real.isProtectedLocation(path, { home: homedir(), temps: [] }),
+    isTemporaryLocation: () => false,
+  };
 });
 
 const day = 86_400_000;
@@ -90,6 +94,29 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect((await discoveredOutside({ projects: { [main]: {} }, repos: {} }, [main])).map(({ path }) => path)).toEqual([
       other,
     ]);
+  });
+
+  it('discovers a checkout under a home dot-folder only when the scan result names it, as reduce-only', async () => {
+    const exact = join(base, 'home', '.exact', 'exact2');
+    mkdirSync(exact, { recursive: true });
+    writeFileSync(join(exact, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    const config = { projects: { [main]: {} }, repos: {} };
+    expect(await discoverCheckouts(config, [main])).toEqual([]);
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    const scan = {
+      version: 1,
+      ranAt: 1,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [exact],
+      unreadable: [],
+      truncated: false,
+    };
+    writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+    expect(
+      (await discoverCheckouts(config, [main])).map(({ path, origin, reduceOnly }) => [path, origin, reduceOnly]),
+    ).toEqual([[exact, 'scan', true]]);
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {

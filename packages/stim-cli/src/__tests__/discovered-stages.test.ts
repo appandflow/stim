@@ -21,7 +21,10 @@ const fail = (): never => {
   throw new Error('no candidate');
 };
 
-vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
+vi.mock('../workspace/protected-locations.ts', () => ({
+  isProtectedLocation: () => false,
+  isTemporaryLocation: () => false,
+}));
 
 describe('a discovered checkout in the idle stages', () => {
   let base: string;
