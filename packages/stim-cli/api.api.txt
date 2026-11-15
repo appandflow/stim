@@ -360,6 +360,7 @@
 [*] interface DiscoveredCheckout { @@1 from: string;
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
+[*] interface DiscoveredCheckout { @@1 reduceOnly?: boolean;
 [*] interface DoctorReport {
 [*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
 [*] interface DoctorReport { @@1 @internal maintenance: ReturnType<typeof maintenanceStatus> & {
@@ -1499,7 +1500,7 @@
 [*] type DeviceToolRequest = { @branch4 @@1 platform: "android";
 [*] type DeviceToolRequest = { @branch4 @@1 state: "on" | "off";
 [*] type DeviceToolRequest = { @branch4 @@1 tool: "network";
-[*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
+[*] type DiscoveryOrigin = "worktree" | "sibling" | "root" | "scan";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
 [*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & {
