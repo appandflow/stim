@@ -814,6 +814,7 @@ export async function collectWorktreeSweep({
   now,
   graceMs,
   refresh = true,
+  skipDeferred = false,
   operation,
 }: {
   idle: boolean;
@@ -821,6 +822,12 @@ export async function collectWorktreeSweep({
   now: number;
   graceMs?: number;
   refresh?: boolean;
+  /**
+   * Leaves out the reduce-only checkouts discovery defers to a later pass, so a background pass inspects at most its
+   * window of them. A reduce-only checkout is never removed (`discoveredRemovalHold` decides before any evidence is read),
+   * so leaving one out cannot change what is removed. Reports keep every one.
+   */
+  skipDeferred?: boolean;
   operation?: StimContext;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
@@ -835,7 +842,12 @@ export async function collectWorktreeSweep({
   const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const discoveredPaths = new Set(discovered.map(({ path }) => path));
   const reduceOnlyPaths = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
-  const candidates = await candidateRootsAsync(operation, discovered);
+  const deferredPaths = new Set(
+    skipDeferred ? discovered.filter((entry) => entry.deferred).map(({ path }) => path) : [],
+  );
+  const candidates = (await candidateRootsAsync(operation, discovered)).filter(
+    (root) => !deferredPaths.has(canonicalPath(root)),
+  );
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   const matched: ReturnType<typeof matchWorktreeEntry>[] = [];

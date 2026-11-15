@@ -1277,9 +1277,10 @@ each have one; the scan runs on the passes thread) no other launcher or scan
 read starts and a scheduled scan is skipped. A scan stops at the first read that
 times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
 their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
-checkout's after idle.sourceDormantDays), reduced by the rules below. Passes
-evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
-stim gc --dry-run lists all of them and says which are left for a later pass. A
+checkout's after idle.sourceDormantDays), reduced by the rules below. A background
+maintenance pass evaluates, and inspects with git, at most 40 of them at a time,
+in a window that moves every 15 minutes; stim gc and its dry run inspect and list
+all of them and say which are left for a later pass. A
 folder named in maintenance.discoverRoots
 keeps the full rules. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine

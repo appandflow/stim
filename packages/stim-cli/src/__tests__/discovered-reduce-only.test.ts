@@ -16,6 +16,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as discovery from '../workspace/discovery.ts';
 import * as idleStop from '../stimd/passes/idle-stop.ts';
 import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
@@ -537,6 +538,43 @@ describe('checkouts found through a tool folder or the full scan', () => {
     const stage = await stoppedOutputCandidates(config, { devices: [], simsFailed: false }, day);
     expect(stage.map((entry) => entry.path)).toEqual([codex]);
     expect(existsSync(codex)).toBe(true);
+  });
+
+  it('inspects no deferred reduce-only worktree in a background sweep, and still lists every one in a report', async () => {
+    const first = worktree(join(base, 'home', '.codex', 'worktrees', 'aa11', 'main'), 'first');
+    const second = worktree(join(base, 'home', '.codex', 'worktrees', 'bb22', 'main'), 'second');
+    const real = discovery.discoverCheckouts;
+    vi.spyOn(discovery, 'discoverCheckouts').mockImplementation(async (...args) => {
+      const found = await real(...args);
+      return found.map((entry) => {
+        const deferred = entry.path === second;
+        return deferred ? Object.assign({}, entry, { deferred }) : entry;
+      });
+    });
+    const inspected: string[] = [];
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'git' && args.includes('status'))
+          inspected.push(String(options?.cwd ?? args[args.indexOf('-C') + 1]));
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    const run = (skipDeferred: boolean) =>
+      collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false, skipDeferred });
+
+    const background = await run(true);
+    expect(background.worktrees.map((entry) => entry.path)).toContain(first);
+    expect(background.worktrees.map((entry) => entry.path)).not.toContain(second);
+    expect(inspected).toContain(first);
+    expect(inspected).not.toContain(second);
+
+    inspected.length = 0;
+    const report = await run(false);
+    expect(report.worktrees.map((entry) => entry.path)).toEqual(expect.arrayContaining([first, second]));
+    expect(inspected).toContain(second);
+    resetExecutor();
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {

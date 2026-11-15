@@ -84,9 +84,14 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
   reads that file, so a maintenance pass or `stim gc` never walks the disk.
-- Passes evaluate at most 40 reduce-only checkouts at a time, in a window over
-  them that moves every 15 minutes. Discovery still lists every one, and the
-  report says which are left for a later pass.
+- A background maintenance pass evaluates and inspects (git status, activity,
+  HEAD, unpushed, pins; the artifact, dependency, stage and Cargo routes) at most
+  40 reduce-only checkouts at a time, in a window over them that moves every 15
+  minutes; the worktree sweep leaves the others out entirely (`skipDeferred`),
+  which cannot change what is removed because a reduce-only checkout is held
+  from removal before any evidence is read. Discovery still lists every one, and
+  `stim gc` and its dry run inspect and list all of them, saying which are left
+  for a later pass. The ladder's finished-worktree rung does not skip them.
 - The stored result keeps the schedule (last attempt, last attempt that did not
   fail, last attempt at low disk) and the finds. A failed or truncated scan
   keeps the previous finds, and a finished one keeps those under a folder it
