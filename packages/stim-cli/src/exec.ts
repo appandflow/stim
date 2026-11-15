@@ -152,6 +152,10 @@ function spawnReportJob(
       'Bypass',
       '-File',
       fileURLToPath(new URL('../dist/windows-report.ps1', import.meta.url)),
+      '-NodePath',
+      process.execPath,
+      '-EntryPath',
+      fileURLToPath(new URL('../dist/windows-report.mjs', import.meta.url)),
     ],
     {
       ...opts,
@@ -161,8 +165,6 @@ function spawnReportJob(
         STIM_REPORT_CHILD: JSON.stringify({
           file,
           args,
-          node: process.execPath,
-          entry: fileURLToPath(new URL('../dist/windows-report.mjs', import.meta.url)),
           ...markers,
         }),
       },

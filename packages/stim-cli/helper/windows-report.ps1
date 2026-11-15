@@ -1,3 +1,5 @@
+param([string]$NodePath, [string]$EntryPath)
+
 $ErrorActionPreference = 'Stop'
 $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
     [Reflection.AssemblyName]::new('StimReportJob'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
@@ -33,10 +35,9 @@ try {
 }
 # Child jobs inherit containment; closing the helper's sole job handle kills descendants.
 # https://learn.microsoft.com/windows/win32/procthread/job-objects
-$request = $env:STIM_REPORT_CHILD | ConvertFrom-Json
 $start = [System.Diagnostics.ProcessStartInfo]::new()
-$start.FileName = $request.node
-$start.Arguments = '"' + $request.entry + '"'
+$start.FileName = $NodePath
+$start.Arguments = '"' + $EntryPath + '"'
 $start.UseShellExecute = $false
 $child = [System.Diagnostics.Process]::Start($start)
 $child.WaitForExit()
