@@ -15,11 +15,12 @@ export interface StepTally {
 const ERROR_MAX = 200;
 const WRITER_FIELDS = new Set(['src', 'level', 'event', 'msg', 'ts']);
 
-function describe(error: unknown): string {
+function classify(error: unknown, signal: AbortSignal | undefined): { outcome: StepOutcome; failure?: string } {
   try {
-    return (error instanceof Error ? error.message : String(error)).slice(0, ERROR_MAX);
+    if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) return { outcome: 'aborted' };
+    return { outcome: 'threw', failure: (error instanceof Error ? error.message : String(error)).slice(0, ERROR_MAX) };
   } catch {
-    return 'unprintable error';
+    return { outcome: 'threw' };
   }
 }
 
@@ -53,8 +54,7 @@ export async function timedStep<T>(
     result = await run(tally);
     return result;
   } catch (error) {
-    outcome = signal?.aborted || (error instanceof Error && error.name === 'AbortError') ? 'aborted' : 'threw';
-    if (outcome === 'threw') failure = describe(error);
+    ({ outcome, failure } = classify(error, signal));
     throw error;
   } finally {
     try {

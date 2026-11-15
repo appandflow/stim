@@ -115,3 +115,16 @@ test('an evidence loop returns what it returned without a log, and writes its re
   expect(timed).toEqual(plain);
   expect(log.mock.calls[0]?.[3]).toMatchObject({ step: 'dormant_candidates', items: 0, outcome: 'finished' });
 });
+
+test('an error whose name cannot be read is still the error that is rethrown, recorded as threw', async () => {
+  const odd = new Error('odd');
+  Object.defineProperty(odd, 'name', {
+    get() {
+      throw new Error('no name');
+    },
+  });
+
+  await expect(timedStep(log, 'plan_history', () => Promise.reject(odd))).rejects.toBe(odd);
+
+  expect(log.mock.calls[0]?.[3]).toMatchObject({ outcome: 'threw' });
+});

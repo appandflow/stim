@@ -378,7 +378,7 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record, never one per item. A tick at normal writes one
 (dormant_candidates); at high up to 16 and at critical up to 22; the dormant
 dependency step adds about 7 an hour. The records change nothing a pass does.
-Each disk-usage cache entry also records walkMs, in milliseconds, from just
+Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
 nothing reads it yet.
 
