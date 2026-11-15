@@ -37,7 +37,9 @@ review of #5519, not by the maintainer.
 A discovered linked worktree is acted on only inside its repository's main
 checkout folder, a folder that holds a known project, or a
 `maintenance.discoverRoots` folder. Nothing under the system temporary directory
-or a dot-folder directly inside the home directory is ever touched. The home
+or a dot-folder directly inside the home directory is ever touched, unless it
+lies inside a `maintenance.discoverRoots` folder: a path inside such a folder
+is never a protected location, matched after symlinks resolve. The home
 directory and `/` are never a folder that holds known projects. A scoped
 `STIM_HOME` discovers only from its own `maintenance.discoverRoots`.
 
@@ -46,7 +48,13 @@ Reason: `git worktree list` also returns worktrees other tools own, such as
 folders under the temporary directory. Stim cannot tell what those tools still
 need. A scratch home must not reach the repositories of the real one.
 
-Chosen by the coordinator and the review of #5519, not by the maintainer.
+Maintainer decision: "Def need to fix it if its the case, paths added to
+discover root need to always be considered", 2026-11-14 (#5757), for a folder
+named in `maintenance.discoverRoots` under a home dot-folder or the temporary
+directory. The exception covers both kinds of protected location.
+
+Everything else in this section was chosen by the coordinator and the review of
+#5519, not by the maintainer.
 
 ## Removing a discovered worktree needs more evidence
 
@@ -82,7 +90,7 @@ Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 
 ## Links
 
-- Issues: #5512, #5515. Pull request: #5519.
+- Issues: #5512, #5515, #5757. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovered-removal.ts`,
   `packages/stim-cli/src/workspace/protected-locations.ts`,
