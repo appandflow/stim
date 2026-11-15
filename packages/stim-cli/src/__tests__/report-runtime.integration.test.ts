@@ -10,9 +10,10 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
 
+const cleanupBudget = vi.hoisted(() => ({ ms: 1000 }));
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
-  groupExitBudgetMs: () => 1000,
+  groupExitBudgetMs: () => cleanupBudget.ms,
 }));
 
 function runReport<T>(scope: StimContext, work: (operation: StimContext) => Promise<T>): Promise<T> {
@@ -231,6 +232,47 @@ test.each([true])('failed initial birth capture never signals the unverifiable c
     capture.mockRestore();
     reapFixtureChild(owned);
     await nativeClosed;
+  }
+});
+
+test('an uncaptured child that exits by itself within the cleanup budget settles without a refusal or a signal', async () => {
+  cleanupBudget.ms = 5000;
+  const controller = new AbortController();
+  let ready: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  try {
+    const reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 1800)'], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) =>
+            child.once('close', (code, signal) => {
+              exit = { code, signal };
+              resolve();
+            }),
+          );
+          child.stdout?.once('data', () => ready());
+        },
+      }),
+    ).catch((error: unknown) => error);
+    await started;
+    controller.abort(new Error('cancel fixture'));
+    const failure = await reading;
+    expect(failure).toMatchObject({ message: 'cancel fixture' });
+    expect(failure).not.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    await nativeClosed;
+    expect(exit).toEqual({ code: 0, signal: null });
+  } finally {
+    capture.mockRestore();
+    cleanupBudget.ms = 1000;
   }
 });
 

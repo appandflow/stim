@@ -243,7 +243,20 @@ function reportChild(
     (cancelled ??= (async () => {
       let identity = observe();
       if (pid !== undefined) {
-        const deadline = performance.now() + 1000;
+        const uncaptured = captured !== null && !captured.ok;
+        const waitMs = uncaptured ? groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS) : 1000;
+        const deadline = performance.now() + waitMs;
+        if (uncaptured && identity === 'unknown' && child.exitCode === null && child.signalCode === null) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            new Promise<void>((resolve) => child.once('exit', () => resolve())),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, waitMs);
+            }),
+          ]);
+          clearTimeout(timer);
+          identity = observe();
+        }
         while (identity === 'unknown' && performance.now() < deadline) {
           await delay(50);
           identity = observe();
