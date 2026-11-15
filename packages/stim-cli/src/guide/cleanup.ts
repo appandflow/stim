@@ -1199,7 +1199,8 @@ inside its repository's main checkout folder, a folder holding a known project,
 or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
 manages and gets no action of any kind. Nothing under the system temporary
-directory or a dot-folder directly inside the home directory is ever touched.
+directory or a dot-folder directly inside the home directory is ever touched,
+except inside a maintenance.discoverRoots folder, which is always considered.
 A worktree nested in a registered root is left to that workspace. The home
 directory and / are never a folder that holds known projects. A scoped
 STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery

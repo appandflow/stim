@@ -209,7 +209,7 @@ describe('the Cargo target cap over a root target/', () => {
     ).rejects.toThrow(/abort/i);
   });
 
-  it('never measures a checkout under a home dot-folder or the temp directory, though discovery lists its folder', async () => {
+  it('measures a checkout inside a named discover root even under a home dot-folder or the temp directory', async () => {
     const dotfolder = join(base, 'home', '.tools');
     const scratch = join(base, 'scratch');
     const ok = join(base, 'home', 'Developer');
@@ -234,7 +234,9 @@ describe('the Cargo target cap over a root target/', () => {
 
     const sizes = await measureCargoTargets(Date.now());
 
-    expect(sizes.map(({ dir }) => dir)).toEqual([join(ok, 'app', 'target')]);
+    expect(sizes.map(({ dir }) => dir).toSorted()).toEqual(
+      [dotfolder, scratch, ok].map((folder) => join(folder, 'app', 'target')).toSorted(),
+    );
   });
 
   it('skips a root target whose files git does not ignore, and one without the Cargo tag', async () => {

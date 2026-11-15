@@ -156,14 +156,18 @@ const inside = (path: string, folder: string) => path === folder || path.startsW
 
 /**
  * Whether Stim acts on a discovered linked worktree: it lies in its repository's own main checkout folder, in a folder
- * that holds a known project, or in a `maintenance.discoverRoots` folder, and not in a protected location.
+ * that holds a known project, or in a `maintenance.discoverRoots` folder, and not in a protected location. A path inside
+ * a `maintenance.discoverRoots` folder is never protected.
  */
 export function worktreeInScope(
   path: string,
   { main, folders, roots }: { main: string; folders: readonly string[]; roots: readonly string[] },
   isProtected: (path: string) => boolean = isProtectedLocation,
 ): boolean {
-  return !isProtected(path) && [main, ...folders, ...roots].some((folder) => inside(path, folder));
+  return (
+    roots.some((folder) => inside(path, folder)) ||
+    (!isProtected(path) && [main, ...folders].some((folder) => inside(path, folder)))
+  );
 }
 
 interface Discovery {
@@ -176,8 +180,9 @@ interface Discovery {
  * The checkouts this Stim home discovers beyond its registered workspaces: linked worktrees of the repositories of its
  * projects (`git worktree list`) inside the folders Stim manages, recognised direct children of the folders holding
  * those checkouts, and recognised direct children of `maintenance.discoverRoots`. Nothing under the system temporary
- * directory or a dot-folder of the home directory is ever included. A scoped STIM_HOME discovers only from that
- * setting, so a scratch home never reaches the repositories of another. Nothing is registered, written or persisted.
+ * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots`
+ * folder. A scoped STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of
+ * another. Nothing is registered, written or persisted.
  */
 export async function discoverCheckouts(
   config: Config | null,
@@ -260,19 +265,20 @@ async function computeDiscovered(
       repositories.push(repository);
     }
   }
-  const managed = [...folders.keys(), ...canonicalRoots];
   const worktrees: { path: string; from: string }[] = [];
   const outside: Discovery['outside'] = [];
   for (const { entries, main } of repositories) {
     for (const entry of entries) {
       const path = canonicalPath(entry.path);
       if (path === canonicalPath(main)) continue;
-      if (worktreeInScope(path, { main: canonicalPath(main), folders: managed, roots: [] }))
+      if (worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots }))
         worktrees.push({ path, from: main });
       else outside.push({ path, from: main });
     }
   }
-  const allowed = children.filter((child) => !isProtectedLocation(child.path));
+  const allowed = children.filter(
+    (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
+  );
   const knownRoots = known.map(canonicalPath);
   const selected = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
   const listed = new Set(selected.map(({ path }) => path));
