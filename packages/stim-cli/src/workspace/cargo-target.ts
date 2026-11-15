@@ -1,6 +1,9 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { configDir } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
@@ -335,24 +338,7 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
  * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
  * open, and a profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a build holds, stays.
  */
-export async function trimCargoTarget(
-  registeredTarget: string,
-  {
-    needBytes,
-    incremental = 'toNeed',
-    units = 'none',
-    lowPriority = false,
-    now = Date.now(),
-    signal,
-  }: {
-    needBytes: number;
-    incremental?: 'toNeed' | 'all';
-    units?: 'none' | 'toNeed' | 'all';
-    lowPriority?: boolean;
-    now?: number;
-    signal?: AbortSignal;
-  },
-): Promise<CargoTrimResult> {
+export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   let target: string;
   try {
@@ -360,6 +346,60 @@ export async function trimCargoTarget(
   } catch {
     return { ...result, kept: [`${registeredTarget} cannot be resolved to its on-disk path`] };
   }
+  // @ref LLP 0005#never-delete-what-a-build-took-back -- one trim of a target at a time across processes
+  let claim: ClaimHandle | null | undefined;
+  try {
+    const attempt = tryAcquireClaim({
+      root: join(
+        configDir(),
+        'maintenance',
+        'cargo-trim',
+        `${createHash('sha256').update(target).digest('hex').slice(0, 24)}.claims`,
+      ),
+      mode: 'exclusive',
+      label: 'Cargo target trim',
+      details: { target },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired;
+    if (!claim) {
+      const holder = attempt.held;
+      return {
+        ...result,
+        kept: [`another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`],
+      };
+    }
+  } catch (error) {
+    return { ...result, kept: [`its trim claim cannot be taken: ${error instanceof Error ? error.message : error}`] };
+  }
+  try {
+    return await trimClaimed(target, options);
+  } finally {
+    releaseClaim(claim);
+  }
+}
+
+interface CargoTrimOptions {
+  needBytes: number;
+  incremental?: 'toNeed' | 'all';
+  units?: 'none' | 'toNeed' | 'all';
+  lowPriority?: boolean;
+  now?: number;
+  signal?: AbortSignal;
+}
+
+async function trimClaimed(
+  target: string,
+  {
+    needBytes,
+    incremental = 'toNeed',
+    units = 'none',
+    lowPriority = false,
+    now = Date.now(),
+    signal,
+  }: CargoTrimOptions,
+): Promise<CargoTrimResult> {
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const aside = join(target, ASIDE);
   let keepAside = false;
   if (existsSync(join(aside, STRANDED)))

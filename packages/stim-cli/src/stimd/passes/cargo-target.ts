@@ -210,7 +210,6 @@ function cargoTrimPolicy(level: PressureLevel): {
 
 const LEVELS = { normal: undefined, high: 2, critical: 3 } as const;
 
-/** The profile directories of `dir` outside the stale paths `gone`. */
 function profilesOutside(dir: string, gone: readonly string[]): string[] {
   return (cargoProfileDirs(dir) ?? []).filter(
     (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
@@ -323,12 +322,6 @@ export async function planCargoTargets({
   return plan;
 }
 
-/**
- * The trim of every recognised `target/` at high or critical disk level, planned from folder structure, lock files
- * and Exact's ledger alone: no size scan, no `du` and no load gate come first, because the pressure rule removes the
- * same things whatever a target weighs. The level is `level` when given and else that of the volume the `target/` is
- * on; a target at normal is left to the cap, which needs bytes. Planned bytes are 0: the trim reports what it removed.
- */
 export async function planCargoTargetsAtPressure({
   settings,
   pinned,
@@ -390,8 +383,6 @@ export async function planCargoTargetsAtPressure({
   return plan;
 }
 
-const trimming = new Set<string>();
-
 async function stillManaged(root: string, operation?: StimContext): Promise<boolean> {
   const canonical = canonicalPath(root);
   if (listedRoots().some((listed) => canonicalPath(listed) === canonical)) return true;
@@ -408,21 +399,6 @@ export async function trimCargoTargetAction(
 ): Promise<ActionOutcome> {
   const root = action.workspace;
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
-  if (trimming.has(action.target)) return kept('another trim of it runs in this process');
-  trimming.add(action.target);
-  try {
-    return await trimGuarded(action, root, operation, lowPriority);
-  } finally {
-    trimming.delete(action.target);
-  }
-}
-
-async function trimGuarded(
-  action: MaintenanceAction,
-  root: string,
-  operation: StimContext | undefined,
-  lowPriority: boolean,
-): Promise<ActionOutcome> {
   if (!(await stillManaged(root, operation)))
     return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });

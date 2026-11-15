@@ -375,15 +375,9 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
-/** A Cargo `target/` trim at one level runs again no sooner than this, so a checkout in use is not cleared every tick. */
 const CARGO_TRIM_RETRY_MS = 10 * 60_000;
 const cargoTrimmedAt = new Map<string, number>();
 
-/**
- * Rung 3's first step, before any shared cache is touched: every recognised Cargo `target/` on a volume at high or
- * critical loses what LLP 0005 says, planned from structure alone with no size scan and no load gate. The daemon's
- * ladder runs it at most every 10 minutes per level; `stim gc` plans these targets in its maintenance plan instead.
- */
 async function cargoTargetsStep(context: RungContext): Promise<void> {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- the trim needs no size scan or load gate
   if (context.force) return;
@@ -391,7 +385,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   const key = `${configDir()}\0${context.level}`;
   const last = cargoTrimmedAt.get(key);
   if (last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
-  cargoTrimmedAt.set(key, now);
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const plan = await planCargoTargetsAtPressure({
     settings: context.settings,
     pinned: maintenancePinnedReader(context.operation),
@@ -400,9 +394,12 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     ...(context.operation ? { operation: context.operation } : {}),
   });
   for (const action of plan.actions) {
+    const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
+    if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
+  cargoTrimmedAt.set(key, now);
 }
 
 /**

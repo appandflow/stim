@@ -1,13 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maintenanceStateFile, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
 import { deferCheck } from '../stimd/passes/defer.ts';
+import { due } from '../stimd/passes/due.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as fsUtil from '../fs-util.ts';
+import * as daemonPasses from '../daemon/passes.ts';
+import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
@@ -124,4 +127,45 @@ test('a target on a volume at high is planned for trimming from its structure, w
   expect((await plan('normal')).actions).toEqual([]);
   expect((await plan('high', { ...resolveMaintenanceSettings(), cargoTargetMaxGb: 0 })).actions).toEqual([]);
   expect(walk).not.toHaveBeenCalled();
+});
+
+test.skipIf(process.platform === 'win32')(
+  'an acting run at high trims a Cargo target before it measures any size, and a dry run trims nothing',
+  async () => {
+    vi.spyOn(daemonPasses, 'runDormantReduction').mockResolvedValue([]);
+    vi.spyOn(daemonPasses, 'runForcedLadder').mockResolvedValue(null);
+    const incremental = join(target, 'debug', 'incremental');
+    let presentAtMeasure: boolean | undefined;
+    vi.spyOn(measurements, 'measureSizes').mockImplementation(async () => {
+      presentAtMeasure ??= existsSync(incremental);
+      return [];
+    });
+
+    await runMaintenanceAtLevel({ level: 'high', act: false });
+    expect(presentAtMeasure).toBe(true);
+    expect(existsSync(incremental)).toBe(true);
+
+    presentAtMeasure = undefined;
+    const run = await runMaintenanceAtLevel({ level: 'high', act: true });
+
+    expect(presentAtMeasure).toBe(false);
+    expect(existsSync(incremental)).toBe(false);
+    expect(run.actions).toContainEqual(expect.objectContaining({ kind: 'trim-cargo', target, outcome: 'done' }));
+  },
+);
+
+test('a check deferred at normal is due at once once the disk level is above normal', () => {
+  const state: MaintenanceState = {
+    version: 1,
+    lastAt: {},
+    deferredAt: { size: Date.now() - 1000 },
+    pressure: null,
+    sizes: [],
+    lastPass: null,
+    recent: [],
+    plan: [],
+  };
+  const settings = { worktreeCheckMinutes: 10, sweepHours: 24, removeFinishedWorktrees: true };
+  expect(due(state, settings, Date.now(), 'normal')).not.toContain('size');
+  expect(due(state, settings, Date.now(), 'high')).toContain('size');
 });

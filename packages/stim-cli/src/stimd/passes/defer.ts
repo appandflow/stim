@@ -5,10 +5,6 @@ const DEFERRAL_CEILING_MS: number = 3 * 3_600_000;
 /** The Cargo target cap measures on its own at most this often while the size scan is deferred. */
 const CAP_CHECK_MS: number = 60 * 60_000;
 
-/**
- * Whether a check is deferred now: the host is loaded, the disk level is normal, and the check has not been deferred for
- * the ceiling yet. Above normal nothing waits for load, since a full disk fails the builds the deferral protects.
- */
 export function deferCheck(
   state: MaintenanceState,
   check: MaintenanceCheck,

@@ -61,12 +61,16 @@ size:
 
 The pressure trim needs no byte count, so it never waits for a size scan, a
 `du` or host load (LLP 0001, Pressure acts without waiting for measurement or
-load). The daemon's pressure ladder plans it from folder structure, lock files
+load). The pressure ladder, the daemon's and the one a build command runs before it
+builds, plans it from folder structure, lock files
 and Exact's ledger at the start of rung 3, before any shared cache is trimmed,
-and runs it at most every 10 minutes per level; an acting `stim gc` runs it
+and runs it; the daemon runs it at most every 10 minutes per level, a command
+once, and a command leaves its own workspace's `target/` alone. An acting `stim gc` runs it
 before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep`, the lock, `lsof` and `ps` checks and the rename with its
-re-check apply unchanged.
+re-check apply unchanged. Every trim of a target, from any process, holds that
+target's exclusive ownership claim (LLP 0007); one that cannot take it keeps the
+target and names the holder.
 
 Maintainer decision: "we def should not have to wait on full disk measurement
 to be able to remove caches", 2026-11-14.

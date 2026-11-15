@@ -144,14 +144,21 @@ export async function runMaintenanceAtLevel({
   const outside = await discoveredOutside(loadConfig(), listedRoots(), operation);
   const now = Date.now();
   if (act && level !== 'normal') {
-    const early = await planCargoTargetsAtPressure({
-      settings,
-      pinned: maintenancePinnedReader(operation),
-      now,
-      signal: operation?.signal,
-      ...(operation ? { operation } : {}),
-      ...(chosen ? { level: chosen } : {}),
-    });
+    let early: Awaited<ReturnType<typeof planCargoTargetsAtPressure>> = { actions: [], blocked: [], skips: [] };
+    try {
+      early = await planCargoTargetsAtPressure({
+        settings,
+        pinned: maintenancePinnedReader(operation),
+        now,
+        signal: operation?.signal,
+        ...(operation ? { operation } : {}),
+        ...(chosen ? { level: chosen } : {}),
+      });
+    } catch (error) {
+      if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+      operation?.signal.throwIfAborted();
+      blocked.push(`Cargo target trim could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+    }
     for (const action of early.actions) {
       operation?.signal.throwIfAborted();
       let outcome: ActionOutcome;

@@ -320,9 +320,8 @@ function throwUnverifiedCleanup(error: unknown): void {
   if (error instanceof Error && 'reportCleanup' in error) throw error;
 }
 
-/** The disk level of the volumes the last pressure check measured. */
-function recordedDiskLevel(state: MaintenanceState): PressureLevel {
-  return diskPressure(state.pressure?.disk ?? [], diskThresholds(loadConfig()).thresholds).level;
+function recordedDiskLevel(state: MaintenanceState, env?: NodeJS.ProcessEnv): PressureLevel {
+  return diskPressure(state.pressure?.disk ?? [], diskThresholds(loadConfig(), env).thresholds).level;
 }
 
 async function deferIfLoaded(
@@ -338,7 +337,7 @@ async function deferIfLoaded(
   keepState: () => void,
   cap: { ran: boolean },
 ): Promise<boolean> {
-  if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state))) return false;
+  if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state, operation?.env))) return false;
   record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
     target: check,
     reason: 'host load exceeds 4 per core',
@@ -423,7 +422,7 @@ export async function runMaintenance(
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt);
+    const checks = due(state, settings, startedAt, recordedDiskLevel(state, tick?.operation.env));
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;

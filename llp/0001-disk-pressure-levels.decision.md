@@ -103,7 +103,8 @@ Maintainer decision: "Lets make sure that if disk space is low we do any needed
 measurement right away since disk space is prio over cpu use", 2026-11-14.
 
 Chosen by the coordinator, not the maintainer: the Cargo trim runs as the first
-step of ladder rung 3, at most every 10 minutes per level in the daemon, so a
+step of ladder rung 3, at most every 10 minutes per level in the long-lived daemon (a build command's
+ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 

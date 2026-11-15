@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { staleCargoPaths, staleCargoTargetPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
 
@@ -203,5 +203,46 @@ test('a profile whose Cargo 1.97 build lock is held stays, whichever of the lock
     expect(result.kept).toEqual(['debug: a build holds its .cargo-build-lock']);
   } finally {
     resetExecutor();
+  }
+});
+
+test('a second trim of a target keeps what the first moved aside and reports that it was kept', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-cargo-trim-home-'));
+  vi.stubEnv('STIM_HOME', home);
+  try {
+    makeProfile('debug', 3 * DAY);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let paused: () => void = () => {};
+    const reachedPause = new Promise<void>((done) => (paused = done));
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'lsof' && args.some((arg: string) => arg.includes('.stim-trimmed'))) {
+          paused();
+          await gate;
+          return '';
+        }
+        return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+      },
+    });
+    const first = trimCargoTarget(target, { needBytes: 0 });
+    await reachedPause;
+    const staged = join(realpathSync.native(target), '.stim-trimmed', '0', '.fingerprint');
+    expect(existsSync(staged)).toBe(true);
+
+    const second = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(second.removed).toEqual([]);
+    expect(second.kept.join(' ')).toContain('another trim of it holds');
+    expect(existsSync(staged)).toBe(true);
+    release();
+    expect((await first).removed).toEqual(['debug']);
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+  } finally {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
   }
 });
