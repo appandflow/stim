@@ -402,12 +402,14 @@ export async function runMaintenance(
     crashLine(error);
     return;
   }
+  let scanAfter = false;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {
     const resolved = resolveMaintenanceSettings();
     const settings = report && resolved.mode === 'on' ? { ...resolved, mode: 'report' as const } : resolved;
     if (settings.mode === 'off') return;
+    scanAfter = true;
     const state: MaintenanceState = readMaintenanceState() ?? {
       version: 1,
       lastAt: {},
@@ -417,7 +419,6 @@ export async function runMaintenance(
       recent: [],
       plan: [],
     };
-    await runDiscoveryScanIfDue(tick);
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);
@@ -738,6 +739,7 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
+    if (scanAfter) await runDiscoveryScanIfDue(tick);
   }
 }
 

@@ -6,15 +6,18 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { artifactCheckoutsAsync } from '../stimd/passes/artifacts.ts';
+import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import {
-  boundReduceOnly,
+  windowReduceOnly,
   discoverCheckouts,
   discoveredOutside,
   type DiscoveredCheckout,
@@ -96,27 +99,68 @@ describe('checkouts found through a tool folder or the full scan', () => {
     ]);
   });
 
+  const writeScan = (found: string[]) => {
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    const scan = {
+      version: 2,
+      ranAt: 1,
+      completedAt: 1,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found,
+      unreadable: [],
+      truncated: false,
+    };
+    writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+  };
+
   it('discovers a checkout under a home dot-folder only when the scan result names it, as reduce-only', async () => {
     const exact = join(base, 'home', '.exact', 'exact2');
     mkdirSync(exact, { recursive: true });
     writeFileSync(join(exact, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     const config = { projects: { [main]: {} }, repos: {} };
     expect(await discoverCheckouts(config, [main])).toEqual([]);
-    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
-    const scan = {
-      version: 1,
-      ranAt: 1,
-      durationMs: 1,
-      trigger: 'weekly',
-      visited: 1,
-      found: [exact],
-      unreadable: [],
-      truncated: false,
-    };
-    writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+    writeScan([exact]);
     expect(
       (await discoverCheckouts(config, [main])).map(({ path, origin, reduceOnly }) => [path, origin, reduceOnly]),
     ).toEqual([[exact, 'scan', true]]);
+  });
+
+  it('drops a cached checkout that was replaced by a symlink to a folder the scan never enters, and plans nothing under it', async () => {
+    const moved = join(base, 'elsewhere', 'app');
+    mkdirSync(moved, { recursive: true });
+    writeFileSync(join(moved, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    mkdirSync(join(base, 'home', 'Documents'), { recursive: true });
+    const stale = join(base, 'home', 'Documents', 'app');
+    symlinkSync(moved, stale);
+    writeScan([stale, moved]);
+    const config = { projects: { [main]: {} }, repos: {} };
+    expect(await discoverCheckouts(config, [main])).toEqual([]);
+    const planned = await artifactCheckoutsAsync(new AbortController().signal);
+    expect(planned.filter((entry) => entry.path.includes('elsewhere') || entry.path.includes('Documents'))).toEqual([]);
+  });
+
+  it('holds a scan-found linked worktree at the removal plan', async () => {
+    const found = worktree(join(base, 'home', 'Documents', 'feature-wt'), 'feature');
+    writeScan([found]);
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(planned.worktrees.find((entry) => entry.path === found)).toMatchObject({
+      discovered: true,
+      reduceOnly: true,
+      skipped: expect.stringContaining('never removes'),
+    });
+  });
+
+  it('clears the build output of an idle reduce-only worktree in the dormant stage and leaves the worktree', async () => {
+    const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
+    mkdirSync(join(codex, 'android', 'app', 'build'), { recursive: true });
+    age(codex);
+    const config = { projects: { [main]: {} }, repos: {} };
+    const stage = await stoppedOutputCandidates(config, { devices: [], simsFailed: false }, day);
+    expect(stage.map((entry) => entry.path)).toEqual([codex]);
+    expect(existsSync(codex)).toBe(true);
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {
@@ -139,7 +183,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
   });
 });
 
-describe('boundReduceOnly', () => {
+describe('windowReduceOnly', () => {
   const entry = (n: number, reduceOnly = true): DiscoveredCheckout => ({
     path: `/p/${String(n).padStart(3, '0')}`,
     origin: 'scan',
@@ -147,20 +191,22 @@ describe('boundReduceOnly', () => {
     ...(reduceOnly ? { reduceOnly: true } : {}),
   });
   const window = 15 * 60_000;
+  const handled = (found: DiscoveredCheckout[]) => found.filter((e) => !e.deferred).map((e) => e.path);
 
-  it('keeps every full-rule checkout, and a moving window of at most the limit of the reduce-only ones', () => {
+  it('lists every checkout, defers all but a moving window of the reduce-only ones, and takes each in turn', () => {
     const all = [entry(1, false), ...Array.from({ length: 10 }, (_, i) => entry(i + 10))];
     const now = 100 * window;
-    const first = boundReduceOnly(all, now, 4);
-    expect(first.filter((e) => e.reduceOnly)).toHaveLength(4);
-    expect(first[0]).toBe(all[0]);
+    const first = windowReduceOnly(all, now, 4);
+    expect(first.map((e) => e.path)).toEqual(all.map((e) => e.path));
+    expect(first.filter((e) => e.reduceOnly && !e.deferred)).toHaveLength(4);
+    expect(first[0]?.deferred).toBeUndefined();
     const seen = new Set<string>();
-    for (let i = 0; i < 10; i++) for (const e of boundReduceOnly(all, now + i * window, 4)) seen.add(e.path);
+    for (let i = 0; i < 10; i++) for (const path of handled(windowReduceOnly(all, now + i * window, 4))) seen.add(path);
     expect(seen.size).toBe(all.length);
   });
 
-  it('returns everything when the reduce-only ones fit the limit', () => {
+  it('defers nothing when the reduce-only ones fit the limit', () => {
     const all = [entry(1), entry(2)];
-    expect(boundReduceOnly(all, 0, 4)).toEqual(all);
+    expect(windowReduceOnly(all, 0, 4)).toEqual(all);
   });
 });

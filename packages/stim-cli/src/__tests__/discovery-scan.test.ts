@@ -12,13 +12,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testContext } from './_context.ts';
-import { discoveryScanFile, readDiscoveryScan } from '@stim-cli/core/state';
-import {
-  discoveryScanDue,
-  runDiscoveryScanIfDue,
-  scanDescends,
-  scanForCheckouts,
-} from '../workspace/discovery-scan.ts';
+import { discoveryScanFile, parseDiscoveryScan, readDiscoveryScan } from '@stim-cli/core/state';
+import { discoveryScanDue, mergeFound, runDiscoveryScanIfDue, scanForCheckouts } from '../workspace/discovery-scan.ts';
+import { scanDescends } from '../workspace/scan-rules.ts';
 
 const marked = (path: string) => existsSync(join(path, 'package.json'));
 
@@ -36,7 +32,17 @@ describe('scanDescends', () => {
 
   it('enters a dot-folder of the home folder unless it is a tool home or cache, and no deeper dot-folder', () => {
     expect(scanDescends('.exact', 1)).toBe(true);
-    for (const name of ['.git', '.npm', '.gradle', '.cache', '.stim', '.codex', '.member-app-metro-cache'])
+    for (const name of [
+      '.git',
+      '.npm',
+      '.gradle',
+      '.cache',
+      '.stim',
+      '.stim-agent',
+      '.stim-release',
+      '.codex',
+      '.member-app-metro-cache',
+    ])
       expect(scanDescends(name, 1)).toBe(false);
     for (const name of ['.worktrees', '.exact', '.claude']) expect(scanDescends(name, 2)).toBe(false);
   });
@@ -108,14 +114,67 @@ describe('scanForCheckouts', () => {
 
 describe('discoveryScanDue', () => {
   const now = Date.UTC(2026, 10, 14);
-  const ago = (ms: number) => ({ ranAt: now - ms });
-  it('runs weekly, an hour after a rise in the disk level, and when no scan or a future one is recorded', () => {
+  const at = (ranAgo: number, completedAgo = ranAgo, lowAgo = 1e12) => ({
+    ranAt: now - ranAgo,
+    completedAt: now - completedAgo,
+    lowScanAt: now - lowAgo,
+  });
+  const hour = 3_600_000;
+  const day = 24 * hour;
+
+  it('runs weekly from the last scan that did not fail, and when none or a future one is recorded', () => {
     expect(discoveryScanDue(null, now, false)).toBe(true);
-    expect(discoveryScanDue(ago(-1000), now, false)).toBe(true);
-    expect(discoveryScanDue(ago(6 * 86_400_000), now, false)).toBe(false);
-    expect(discoveryScanDue(ago(7 * 86_400_000), now, false)).toBe(true);
-    expect(discoveryScanDue(ago(30 * 60_000), now, true)).toBe(false);
-    expect(discoveryScanDue(ago(61 * 60_000), now, true)).toBe(true);
+    expect(discoveryScanDue(at(-1000), now, false)).toBe(true);
+    expect(discoveryScanDue(at(6 * day), now, false)).toBe(false);
+    expect(discoveryScanDue(at(7 * day), now, false)).toBe(true);
+  });
+
+  it('retries a failed scan after an hour, not after a week, and never twice within an hour', () => {
+    expect(discoveryScanDue(at(30 * 60_000, 8 * day), now, false)).toBe(false);
+    expect(discoveryScanDue(at(2 * hour, 8 * day), now, false)).toBe(true);
+  });
+
+  it('scans while the disk level is above normal when no scan ran during it for an hour, even right after the weekly one', () => {
+    expect(discoveryScanDue(at(2 * hour), now, true)).toBe(true);
+    expect(discoveryScanDue(at(2 * hour, 2 * hour, 3 * hour), now, true)).toBe(true);
+    expect(discoveryScanDue(at(2 * hour, 2 * hour, 90 * 60_000), now, true)).toBe(true);
+    expect(discoveryScanDue(at(30 * 60_000, 30 * 60_000, 30 * 60_000), now, true)).toBe(false);
+  });
+});
+
+describe('mergeFound', () => {
+  const outcome = (found: string[], unreadable: string[], truncated: boolean) => ({
+    found,
+    unreadable,
+    truncated,
+    visited: 1,
+  });
+  it('keeps the previous finds under an unreadable folder, drops the others, and keeps all of them when truncated', () => {
+    const previous = ['/h/Documents/a', '/h/dev/b'];
+    expect(mergeFound(previous, outcome(['/h/dev/c'], ['/h/Documents'], false))).toEqual([
+      '/h/Documents/a',
+      '/h/dev/c',
+    ]);
+    expect(mergeFound(previous, outcome(['/h/dev/c'], [], true))).toEqual(['/h/Documents/a', '/h/dev/b', '/h/dev/c']);
+  });
+});
+
+describe('a scan file that is corrupt or in an older format', () => {
+  it('is no result', () => {
+    expect(
+      parseDiscoveryScan({
+        version: 1,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [],
+        unreadable: [],
+        truncated: false,
+      }),
+    ).toBeNull();
+    expect(parseDiscoveryScan({ version: 2, ranAt: 1 })).toBeNull();
+    expect(parseDiscoveryScan('nope')).toBeNull();
   });
 });
 
@@ -123,12 +182,13 @@ describe('runDiscoveryScanIfDue', () => {
   let base: string;
   const normal = [{ volume: '/', freeMb: 500_000 }];
   const low = [{ volume: '/', freeMb: 10_000 }];
-  const tick = (disk = normal, env: NodeJS.ProcessEnv = {}) => ({
-    operation: testContext({ env }),
+  const tick = (disk = normal, env: NodeJS.ProcessEnv = {}, operation = testContext({ env })) => ({
+    operation,
     measured: { measurement: { disk } },
   });
-  const memory = () => ({ attemptedAt: 0, wasLow: false });
-  const scanned = () => readDiscoveryScan()?.trigger;
+  const hour = 3_600_000;
+  const t0 = Date.UTC(2026, 10, 14);
+  const options = (now: number) => ({ home: join(base, 'home'), now });
 
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-scan-run-')));
@@ -146,55 +206,61 @@ describe('runDiscoveryScanIfDue', () => {
   });
 
   it('never scans for a command, only for a daemon tick', async () => {
-    await runDiscoveryScanIfDue(undefined, { home: join(base, 'home'), memory: memory() });
+    await runDiscoveryScanIfDue(undefined, options(t0));
     expect(readDiscoveryScan()).toBeNull();
   });
 
   it('never scans in a scoped home and writes nothing', async () => {
     vi.stubEnv('STIM_HOME', join(base, 'state'));
-    await runDiscoveryScanIfDue(tick(normal, { STIM_HOME: join(base, 'state') }), {
-      home: join(base, 'home'),
-      memory: memory(),
-    });
+    await runDiscoveryScanIfDue(tick(normal, { STIM_HOME: join(base, 'state') }), options(t0));
     expect(existsSync(join(base, 'state'))).toBe(false);
   });
 
-  it('stamps the result under the Stim home and does not scan again until it is due', async () => {
-    const options = { home: join(base, 'home'), memory: memory() };
-    await runDiscoveryScanIfDue(tick(), options);
+  it('stores the result and its schedule under the Stim home, and not again until due', async () => {
+    await runDiscoveryScanIfDue(tick(), options(t0));
     expect(readDiscoveryScan()).toMatchObject({
       trigger: 'weekly',
+      ranAt: t0,
+      completedAt: t0,
+      lowScanAt: 0,
       found: [join(base, 'home', 'dev', 'app')],
       truncated: false,
     });
     expect(discoveryScanFile().startsWith(join(base, 'machine'))).toBe(true);
     const before = readFileSync(discoveryScanFile(), 'utf8');
-    await runDiscoveryScanIfDue(tick(), options);
+    await runDiscoveryScanIfDue(tick(), options(t0 + 2 * hour));
     expect(readFileSync(discoveryScanFile(), 'utf8')).toBe(before);
   });
 
-  it('scans once the disk level rises above normal an hour after the last scan, not again while it stays low', async () => {
-    const options = { home: join(base, 'home'), memory: memory() };
-    const backdate = () => {
-      writeFileSync(discoveryScanFile(), JSON.stringify({ ...readDiscoveryScan(), ranAt: Date.now() - 2 * 3_600_000 }));
-      options.memory.attemptedAt = 0;
-    };
-    await runDiscoveryScanIfDue(tick(), options);
-    backdate();
-    await runDiscoveryScanIfDue(tick(low), options);
-    expect(scanned()).toBe('low-disk');
-    backdate();
-    await runDiscoveryScanIfDue(tick(low), options);
-    expect(Date.now() - (readDiscoveryScan()?.ranAt ?? 0)).toBeGreaterThan(3_600_000);
+  it('scans again an hour or more after a scan when the disk level is above normal, whatever a worker remembers', async () => {
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    await runDiscoveryScanIfDue(tick(low), options(t0 + 2 * hour));
+    expect(readDiscoveryScan()).toMatchObject({
+      trigger: 'low-disk',
+      ranAt: t0 + 2 * hour,
+      lowScanAt: t0 + 2 * hour,
+      completedAt: t0 + 2 * hour,
+    });
   });
 
-  it('does not walk again within the interval when the result cannot be stored, and does not throw', async () => {
-    writeFileSync(join(base, 'machine', '.stim'), 'a file where the Stim home folder belongs');
-    const options = { home: join(base, 'home'), memory: memory() };
-    await expect(runDiscoveryScanIfDue(tick(), options)).resolves.toBeUndefined();
-    expect(options.memory.attemptedAt).toBeGreaterThan(0);
-    const attempted = options.memory.attemptedAt;
-    await runDiscoveryScanIfDue(tick(), options);
-    expect(options.memory.attemptedAt).toBe(attempted);
+  it('keeps the previous finds when a scan fails and records the attempt', async () => {
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    rmSync(join(base, 'home'), { recursive: true });
+    await runDiscoveryScanIfDue(tick(low), options(t0 + 2 * hour));
+    expect(readDiscoveryScan()).toMatchObject({
+      ranAt: t0 + 2 * hour,
+      completedAt: t0,
+      truncated: true,
+      found: [join(base, 'home', 'dev', 'app')],
+    });
+  });
+
+  it('lets an abort escape instead of returning normally, and stores nothing', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      runDiscoveryScanIfDue(tick(normal, {}, testContext({ signal: controller.signal })), options(t0)),
+    ).rejects.toThrow(/abort/i);
+    expect(readDiscoveryScan()).toBeNull();
   });
 });

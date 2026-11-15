@@ -357,6 +357,7 @@
 [*] interface DevicePlacement { @@1 machine?: string;
 [*] interface DevicePlacement { @@1 reason: string;
 [*] interface DiscoveredCheckout {
+[*] interface DiscoveredCheckout { @@1 deferred?: boolean;
 [*] interface DiscoveredCheckout { @@1 from: string;
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;

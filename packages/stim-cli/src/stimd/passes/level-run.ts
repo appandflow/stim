@@ -214,8 +214,9 @@ export async function runMaintenanceAtLevel({
   for (const checkout of found) {
     const mine = actions.filter((action) => ownerOf(action.target) === checkout.path);
     const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
-    const kept =
-      taken || idleMs <= 0 || !existsSync(checkout.path)
+    const kept = checkout.deferred
+      ? 'left for a later pass: at most 40 checkouts found through a tool folder or the full scan are handled at a time'
+      : taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
         : await discoveredKeepReason(checkout.path, idleMs, operation, reads);
     if (kept && /source entries to check|cannot be read/.test(kept))

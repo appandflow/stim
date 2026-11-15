@@ -232,10 +232,9 @@ async function idleWorkspaces(
   const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
   const discovered = discover
-    ? (await discoverCheckouts(config, listedRoots(), reading.operation)).map(({ path }): [string, ProjectRecord] => [
-        path,
-        {},
-      ])
+    ? (await discoverCheckouts(config, listedRoots(), reading.operation))
+        .filter(({ deferred }) => !deferred)
+        .map(({ path }): [string, ProjectRecord] => [path, {}])
     : [];
   for (const [path, project] of [...Object.entries(config.projects), ...discovered]) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;

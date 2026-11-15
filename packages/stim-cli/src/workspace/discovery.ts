@@ -7,6 +7,7 @@ import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/c
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { isProtectedLocation, isTemporaryLocation } from './protected-locations.ts';
+import { scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
@@ -32,6 +33,11 @@ export interface DiscoveredCheckout {
   from: string;
   /** Found through a tool folder or the full scan: Stim reduces its outputs and never removes it. */
   reduceOnly?: boolean;
+  /**
+   * A reduce-only checkout outside the window of at most `MAX_REDUCE_ONLY` that this discovery hands to the passes that
+   * evaluate each checkout; a later window takes it. Reports still list it.
+   */
+  deferred?: boolean;
 }
 
 export interface DiscoveryChild {
@@ -167,7 +173,7 @@ export function broadDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv
   return configuredRoots(config, env).roots.filter((root) => existsSync(root) && isBroadFolder(canonicalPath(root)));
 }
 
-export const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}${sep}`);
+const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}${sep}`);
 
 /** Whether `path` lies inside a tool folder (see `TOOL_FOLDERS`) of the home folder `home`. */
 export function inToolFolder(path: string, home: string): boolean {
@@ -175,11 +181,11 @@ export function inToolFolder(path: string, home: string): boolean {
 }
 
 /**
- * At most `limit` of the checkouts found only through a tool folder or the full scan, a window over them that moves
- * with `now`, so every one is handled within a few windows and one pass pays for a bounded number. The rest are left
- * out of this discovery and stay as they are.
+ * Marks all but `limit` of the checkouts found only through a tool folder or the full scan as `deferred`: a window over
+ * them that moves with `now`, so every one is handled within a few windows and one pass evaluates a bounded number.
+ * Every checkout stays in the list, so no report or classification loses one.
  */
-export function boundReduceOnly(
+export function windowReduceOnly(
   found: readonly DiscoveredCheckout[],
   now: number,
   limit: number = MAX_REDUCE_ONLY,
@@ -188,7 +194,7 @@ export function boundReduceOnly(
   if (only.length <= limit) return [...found];
   const start = (Math.floor(now / REDUCE_ONLY_WINDOW_MS) * limit) % only.length;
   const kept = new Set(Array.from({ length: limit }, (_, i) => only[(start + i) % only.length]));
-  return found.filter((entry) => !entry.reduceOnly || kept.has(entry));
+  return found.map((entry) => (entry.reduceOnly && !kept.has(entry) ? { ...entry, deferred: true } : entry));
 }
 
 /**
@@ -226,8 +232,9 @@ export async function discoverCheckouts(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
+  now: number = Date.now(),
 ): Promise<DiscoveredCheckout[]> {
-  return (await discovery(config, known, operation)).found;
+  return (await discovery(config, known, operation, now)).found;
 }
 
 /** What discovery reached outside the folders Stim manages. */
@@ -241,17 +248,32 @@ export async function discoveredOutside(
 
 const memo = new WeakMap<StimContext, Promise<Discovery>>();
 
-function discovery(config: Config | null, known: readonly string[], operation?: StimContext): Promise<Discovery> {
-  if (!operation) return computeDiscovered(config, known, operation);
+function discovery(
+  config: Config | null,
+  known: readonly string[],
+  operation?: StimContext,
+  now: number = Date.now(),
+): Promise<Discovery> {
+  if (!operation) return computeDiscovered(config, known, operation, now);
   let found = memo.get(operation);
-  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation)));
+  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation, now)));
   return found;
+}
+
+/** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
+function revalidatedScan(): DiscoveryChild[] {
+  const home = canonicalPath(homedir());
+  const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
+  return (readDiscoveryScan()?.found ?? [])
+    .filter((path) => isAbsolute(path) && scanEntryValid(path, rules))
+    .map((path) => ({ path, origin: 'scan', from: 'full scan', recognised: true }));
 }
 
 async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
+  now: number = Date.now(),
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
@@ -315,13 +337,7 @@ async function computeDiscovered(
       else outside.push({ path, from: main });
     }
   }
-  const scanned: DiscoveryChild[] = scoped
-    ? []
-    : (readDiscoveryScan()?.found ?? [])
-        .filter((path) => isAbsolute(path) && existsSync(path))
-        .map(canonicalPath)
-        .filter((path) => !isBroadFolder(path))
-        .map((path) => ({ path, origin: 'scan', from: 'full scan', recognised: true }));
+  const scanned: DiscoveryChild[] = scoped ? [] : revalidatedScan();
   const allowed = [...children, ...scanned].filter(
     (child) =>
       canonicalRoots.some((root) => inside(child.path, root)) ||
@@ -329,7 +345,7 @@ async function computeDiscovered(
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
-  const selected = boundReduceOnly(everything, Date.now());
+  const selected = windowReduceOnly(everything, now);
   const listed = new Set(everything.map(({ path }) => path));
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {

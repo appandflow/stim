@@ -162,7 +162,9 @@ describe('discoverCheckouts', () => {
     app(docs);
     mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
     const scan = {
-      version: 1,
+      version: 2,
+      completedAt: 1,
+      lowScanAt: 0,
       ranAt: 1,
       durationMs: 1,
       trigger: 'weekly',

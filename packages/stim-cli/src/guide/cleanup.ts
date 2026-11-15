@@ -29,7 +29,7 @@ The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
 (every 5 minutes), directory sizes (hourly), finished worktrees (every 15
 minutes) and the age sweep (daily); the daemon also rescans the home folder for
-checkouts weekly, or hourly at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
+checkouts after the pass, weekly and also at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
 plans only idle stops, and the cap trims follow the size, worktree and sweep
 checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
@@ -1211,19 +1211,29 @@ a discovered repository and pull requests come from the cache.
 Two more sources find checkouts that Stim only reduces and never removes
 (reduce-only): linked worktrees of known repositories in ~/.codex/worktrees,
 and the checkouts of the full scan. The scan is a pruned walk of the home
-folder, run by the daemon weekly and, when the disk level rises above normal, at
-most hourly; no command runs it. It reads ~/Documents (macOS may
-ask once), skips ~/Desktop, ~/Downloads, ~/Library, the media folders, other
-volumes, symlinks, dependency or build folders, deeper dot-folders and the tool
-homes and caches among the home folder's dot-folders (.npm, .gradle, .cache and
-the like; .exact is entered), stops at a
-recognised project and goes seven levels deep. A folder the system refuses is
-skipped and recorded. The result is kept in maintenance/discovery-scan.json
-under the Stim home (when it ran, what it found, what it could not read) and
-discovery reads that file, so a pass or gc never walks the disk. Reduce-only
-checkouts have their build outputs and, in a linked worktree, node_modules and
-Pods reduced by the rules below; at most 40 of them are handled at a time, in a
-window that moves every 15 minutes. A folder named in maintenance.discoverRoots
+folder, run by the daemon after a maintenance pass has acted (never before its
+cleanup, never by a command): weekly, and also while the disk level is above
+normal when no scan has run for an hour; a failed scan is retried after an hour.
+The schedule is kept with the result, so a restarted daemon forgets nothing. It
+reads ~/Documents (macOS may ask once; a folder that does not answer within 3
+seconds, such as one waiting for that answer, is recorded as unreadable and is
+read on the next scan), skips ~/Desktop, ~/Downloads, ~/Library, the media
+folders, other volumes, symlinks, dependency or build folders, deeper
+dot-folders, the Stim home and every dot-folder starting with .stim, the build
+worker root, and the tool homes and caches among the home folder's other
+dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
+recognised project and goes seven levels deep within 45 seconds. The result is
+kept in maintenance/discovery-scan.json under the Stim home (when it ran, what
+it found, what it could not read) and discovery reads that file, so a pass or gc
+never walks the disk. A scan that fails or stops early keeps the previous finds,
+and a finished one keeps those under a folder it could not read. Discovery checks
+each recorded checkout again before using it: still a real folder (not a
+symlink), on the home volume, below no skipped folder and still a project;
+anything else is dropped. Reduce-only checkouts have their build outputs and, in
+a linked worktree, node_modules and Pods reduced by the rules below. Passes
+evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
+stim gc --dry-run lists all of them and says which are left for a later pass. A
+folder named in maintenance.discoverRoots
 keeps the full rules. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes

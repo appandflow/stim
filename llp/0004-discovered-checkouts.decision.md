@@ -74,8 +74,8 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   `~/.codex/worktrees`. The list is one constant with that one path.
 - The full scan: a pruned walk of the home folder for checkouts that Stim's
   project detection recognises and discovery does not reach. The daemon runs it
-  weekly and, while the disk level is above normal, at most hourly; a command
-  never runs it. It reads `~/Documents`, skips `~/Desktop`, `~/Downloads`,
+  weekly and, while the disk level is above normal, when no scan has run for an
+  hour; a command never runs it. It reads `~/Documents`, skips `~/Desktop`, `~/Downloads`,
   `~/Library`, other media folders, symlinks, other volumes, dependency, build
   and cache folders, dot-folders below the first level and the named tool homes
   among the home folder's dot-folders (see below), and the Stim home, stops at a recognised project and goes
@@ -83,8 +83,16 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
   reads that file, so a maintenance pass or `stim gc` never walks the disk.
-- At most 40 reduce-only checkouts are handled per discovery, in a window over
-  them that moves every 15 minutes.
+- Passes evaluate at most 40 reduce-only checkouts at a time, in a window over
+  them that moves every 15 minutes. Discovery still lists every one, and the
+  report says which are left for a later pass.
+- The stored result keeps the schedule (last attempt, last attempt that did not
+  fail, last attempt at low disk) and the finds. A failed or truncated scan
+  keeps the previous finds, and a finished one keeps those under a folder it
+  could not read, so a worse result never replaces a better one. Discovery
+  revalidates each find before using it: a real folder, not a symlink, on the
+  home volume, below no skipped folder, still recognised.
+- The scan runs after a maintenance pass has acted, so it never delays cleanup.
 
 A folder named in `maintenance.discoverRoots` keeps the full rules. A scoped
 `STIM_HOME` discovers nothing from either source.
@@ -96,7 +104,9 @@ The scan enters a dot-folder directly in the home folder unless it is in a
 named prune list of tool homes, package and build caches and runtimes
 (`.git`, `.npm`, `.yarn`, `.bun`, `.gradle`, `.cargo`, `.rustup`, `.nvm`,
 `.rvm`, `.cache`, `.android`, `.vscode`, `.cursor`, `.agent-device`, `.claude`,
-`.codex` and others in `HOME_DOT_PRUNED`) or named like a cache (`*-cache`).
+`.codex` and others in `HOME_DOT_PRUNED`, and by prefix every `.stim*` folder: the Stim
+home and other Stim state, where the build worker's client checkouts must never become
+reduce-only) or named like a cache (`*-cache`).
 The list comes from entry counts to depth four on one machine, led by `.gradle`
 (67 thousand), `.agent-device` (45 thousand), the two Metro cache folders
 (25 and 17 thousand), `.npm`, `.bun`, `.rvm` and `.yarn` (15 thousand each).
@@ -146,10 +156,10 @@ Chosen by the implementing lane, not by the maintainer or the coordinator: the
 bound of 40 reduce-only checkouts per discovery in a window that moves every 15
 minutes (not "least recently handled first"), the depth of seven, the folders
 pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
-`~/Applications` left out, the low-disk scan running once per rise of the disk
-level (the daemon's high or critical disk level, `disk.minFreeGb`) at most
-hourly rather than hourly for as long as the disk stays low, and the scan
-running only in the daemon.
+`~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
+normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the
+retry of a failed scan after an hour, and the scan running only in the daemon
+after the pass.
 
 Not part of this change: points 4, 5 and 7, which belong to the doctor listing
 and the low-disk line.
