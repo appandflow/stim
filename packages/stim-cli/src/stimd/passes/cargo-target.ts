@@ -210,6 +210,13 @@ function cargoTrimPolicy(level: PressureLevel): {
 
 const LEVELS = { normal: undefined, high: 2, critical: 3 } as const;
 
+/** The profile directories of `dir` outside the stale paths `gone`. */
+function profilesOutside(dir: string, gone: readonly string[]): string[] {
+  return (cargoProfileDirs(dir) ?? []).filter(
+    (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
+  );
+}
+
 async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
   const { thresholds } = diskThresholds(loadConfig());
   return diskPressure(await readVolumeSpaceAsync([dir], signal), thresholds).level;
@@ -281,11 +288,10 @@ export async function planCargoTargets({
     const gone = stale.paths.map((path) => join(dir, path));
     let freeable = await bytesOf(gone, signal, lowPriority);
     if (policy.incremental === 'all' || freeable < overBytes) {
-      const remaining = (cargoProfileDirs(dir) ?? []).filter(
-        (profile) => !gone.some((path) => profile === path || profile.startsWith(`${path}/`)),
-      );
       freeable += await bytesOf(
-        remaining.map((profile) => join(profile, 'incremental')).filter(existsSync),
+        profilesOutside(dir, gone)
+          .map((profile) => join(profile, 'incremental'))
+          .filter(existsSync),
         signal,
         lowPriority,
       );
@@ -317,6 +323,75 @@ export async function planCargoTargets({
   return plan;
 }
 
+/**
+ * The trim of every recognised `target/` at high or critical disk level, planned from folder structure, lock files
+ * and Exact's ledger alone: no size scan, no `du` and no load gate come first, because the pressure rule removes the
+ * same things whatever a target weighs. The level is `level` when given and else that of the volume the `target/` is
+ * on; a target at normal is left to the cap, which needs bytes. Planned bytes are 0: the trim reports what it removed.
+ */
+export async function planCargoTargetsAtPressure({
+  settings,
+  pinned,
+  now,
+  signal,
+  operation,
+  level,
+  diskLevel = measuredDiskLevel,
+}: {
+  settings: MaintenanceSettings;
+  pinned: (workspace: string) => boolean | Promise<boolean>;
+  now: number;
+  signal?: AbortSignal;
+  operation?: StimContext;
+  level?: PressureLevel;
+  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
+}): Promise<MaintenancePlan> {
+  const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
+  if (settings.cargoTargetMaxGb === 0) return plan;
+  const registered = Object.keys(loadConfig()?.projects ?? {});
+  const { measured } = selectCargoTargets(await cargoTargetCandidates(registered, operation), Infinity, now);
+  for (const { root: workspace, dir } of measured) {
+    signal?.throwIfAborted();
+    const tightened = level ?? (await diskLevel(dir, signal));
+    if (tightened === 'normal') continue;
+    const problem = await regenerableDirProblem(workspace, dir, signal, { processes: false });
+    if (problem) {
+      plan.skips.push({ target: dir, reason: problem, workspace });
+      continue;
+    }
+    if (await pinned(workspace)) {
+      plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
+      continue;
+    }
+    const stale = staleCargoTargetPaths(dir, now);
+    if ('refusal' in stale) {
+      plan.skips.push({ target: dir, reason: stale.refusal, workspace });
+      continue;
+    }
+    const gone = stale.paths.map((path) => join(dir, path));
+    const idleUnits = cargoTrimPolicy(tightened).units === 'all' && idleCargoUnitPaths(dir, now, gone).length > 0;
+    const worth =
+      gone.length > 0 ||
+      idleUnits ||
+      profilesOutside(dir, gone).some((profile) => existsSync(join(profile, 'incremental'))) ||
+      existsSync(join(dir, '.stim-trimmed'));
+    if (!worth) continue;
+    plan.actions.push({
+      kind: 'would-clear-build-dirs',
+      target: dir,
+      workspace,
+      bytes: 0,
+      overBytes: 0,
+      ...(LEVELS[tightened] ? { level: LEVELS[tightened] } : {}),
+      olderThanDays: 1,
+      reason: `disk is at the ${tightened} level for ${dir}; trims the profiles unused for a day, then the incremental caches (all of them)${idleUnits ? ', then the build units unused for a day (all of them)' : ''}`,
+    });
+  }
+  return plan;
+}
+
+const trimming = new Set<string>();
+
 async function stillManaged(root: string, operation?: StimContext): Promise<boolean> {
   const canonical = canonicalPath(root);
   if (listedRoots().some((listed) => canonicalPath(listed) === canonical)) return true;
@@ -333,6 +408,21 @@ export async function trimCargoTargetAction(
 ): Promise<ActionOutcome> {
   const root = action.workspace;
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
+  if (trimming.has(action.target)) return kept('another trim of it runs in this process');
+  trimming.add(action.target);
+  try {
+    return await trimGuarded(action, root, operation, lowPriority);
+  } finally {
+    trimming.delete(action.target);
+  }
+}
+
+async function trimGuarded(
+  action: MaintenanceAction,
+  root: string,
+  operation: StimContext | undefined,
+  lowPriority: boolean,
+): Promise<ActionOutcome> {
   if (!(await stillManaged(root, operation)))
     return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });

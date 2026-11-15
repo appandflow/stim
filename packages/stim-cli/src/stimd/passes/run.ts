@@ -14,8 +14,10 @@ import {
   type MaintenanceState,
   type MaintenanceRecord,
   type MaintenanceSize,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
+import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
@@ -318,6 +320,11 @@ function throwUnverifiedCleanup(error: unknown): void {
   if (error instanceof Error && 'reportCleanup' in error) throw error;
 }
 
+/** The disk level of the volumes the last pressure check measured. */
+function recordedDiskLevel(state: MaintenanceState): PressureLevel {
+  return diskPressure(state.pressure?.disk ?? [], diskThresholds(loadConfig()).thresholds).level;
+}
+
 async function deferIfLoaded(
   state: MaintenanceState,
   check: MaintenanceCheck,
@@ -331,7 +338,7 @@ async function deferIfLoaded(
   keepState: () => void,
   cap: { ran: boolean },
 ): Promise<boolean> {
-  if (!deferCheck(state, check, Date.now(), sizeScanDeferred())) return false;
+  if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state))) return false;
   record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
     target: check,
     reason: 'host load exceeds 4 per core',

@@ -1,14 +1,26 @@
-import type { MaintenanceCheck, MaintenanceState } from '@stim-cli/core/state';
+import type { MaintenanceCheck, MaintenanceState, PressureLevel } from '@stim-cli/core/state';
 
 /** The size scan deferred for host load runs anyway once it has been deferred this long. */
 const DEFERRAL_CEILING_MS: number = 3 * 3_600_000;
 /** The Cargo target cap measures on its own at most this often while the size scan is deferred. */
 const CAP_CHECK_MS: number = 60 * 60_000;
 
-/** Whether a check is deferred now: the host is loaded and the check has not been deferred for the ceiling yet. */
-export function deferCheck(state: MaintenanceState, check: MaintenanceCheck, now: number, loaded: boolean): boolean {
+/**
+ * Whether a check is deferred now: the host is loaded, the disk level is normal, and the check has not been deferred for
+ * the ceiling yet. Above normal nothing waits for load, since a full disk fails the builds the deferral protects.
+ */
+export function deferCheck(
+  state: MaintenanceState,
+  check: MaintenanceCheck,
+  now: number,
+  loaded: boolean,
+  diskLevel: PressureLevel,
+): boolean {
+  // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- load defers nothing above normal
   const since = state.deferredSince?.[check];
-  return loaded && !(check === 'size' && since !== undefined && now - since >= DEFERRAL_CEILING_MS);
+  return (
+    loaded && diskLevel === 'normal' && !(check === 'size' && since !== undefined && now - since >= DEFERRAL_CEILING_MS)
+  );
 }
 
 export function markDeferred(state: MaintenanceState, check: MaintenanceCheck, now: number): void {

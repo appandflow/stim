@@ -40,8 +40,8 @@ the least recently measured first, so every target is reached within a few
 scans. Reason: a size walk of a large `target/` can take its full 120-second
 limit, and the walks run one at a time.
 
-The cap is planned at the hourly size scan, and hourly on its own while host
-load defers that scan; the size scan itself runs after at most 3 hours of
+At normal, the cap is planned at the hourly size scan, and hourly on its own
+while host load defers that scan; the size scan itself runs after at most 3 hours of
 deferral. Reason: agents build under load, which is when `target/` grows
 fastest.
 
@@ -58,6 +58,21 @@ size:
 - critical: it also loses build units no build used for a day, only where
   Exact's `.exact-sweep.json` ledger exists, shows use and is at most 3 days
   old. One unit per crate name, the most recently used, always stays.
+
+The pressure trim needs no byte count, so it never waits for a size scan, a
+`du` or host load (LLP 0001, Pressure acts without waiting for measurement or
+load). The daemon's pressure ladder plans it from folder structure, lock files
+and Exact's ledger at the start of rung 3, before any shared cache is trimmed,
+and runs it at most every 10 minutes per level; an acting `stim gc` runs it
+before it measures anything. It reports the bytes the trim removed. Cap 0,
+`maintenance.keep`, the lock, `lsof` and `ps` checks and the rename with its
+re-check apply unchanged.
+
+Maintainer decision: "we def should not have to wait on full disk measurement
+to be able to remove caches", 2026-11-14.
+
+Maintainer decision: "Lets make sure that if disk space is low we do any needed
+measurement right away since disk space is prio over cpu use", 2026-11-14.
 
 Reason: Cargo keeps every old build of a crate, so a `target/` in daily use
 grows without bound, and a checkout in use is never cleared by the idle rules.
@@ -109,4 +124,5 @@ maintainer.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,
+  `packages/stim-cli/src/daemon/ladder.ts` (`cargoTargetsStep`),
   `packages/core/state/settings-registry.ts` (`maintenance.cargoTargetMaxGb`).

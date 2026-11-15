@@ -455,6 +455,45 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
+  test('at high rung 3 trims the incremental data of a Cargo target first, once per 10 minutes, with no size scan', async () => {
+    vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100000000');
+    vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
+    vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+    const app = join(projects, 'rust-app');
+    mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'init'],
+    ])
+      execSync(`git -C ${app} -c user.name=t -c user.email=t@t ${args.join(' ')}`);
+    const target = join(app, 'target');
+    const incremental = join(target, 'debug', 'incremental');
+    const fill = () => {
+      mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+      mkdirSync(incremental, { recursive: true });
+      writeFileSync(join(incremental, 'data'), 'x'.repeat(50_000));
+    };
+    fill();
+    writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    upsertProject(app, { metroPort: null });
+    const remeasure = async () => pressure('high');
+
+    const first = await runLadder(input(true, remeasure), pressure('high'));
+
+    expect(existsSync(incremental)).toBe(false);
+    expect(existsSync(join(target, 'debug', '.fingerprint'))).toBe(true);
+    expect(first.actions.map((action) => [action.rung, action.kind, action.target, action.outcome])).toEqual([
+      [3, 'trim-cargo', target, 'done'],
+    ]);
+
+    fill();
+    await runLadder(input(true, remeasure), pressure('high'));
+    expect(existsSync(incremental)).toBe(true);
+  });
+
   test('at high disk pressure rung 1 deletes the outputs of a stopped workspace idle 2 minutes, not of one used since', async () => {
     const outputs = (name: string, usedAgoMs: number) => {
       const { root } = workspace(name, usedAgoMs, 'Shutdown');
