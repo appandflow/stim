@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
@@ -12,7 +13,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { stimBuildDigest } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { stimBuildDigest, stimdClaimRoot } from '@stim-cli/core/state';
 import {
   installJob,
   installService,
@@ -435,12 +437,70 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
   it.each(['old', null] as const)('uninstalls a %s job without waiting on an unrelated listener', async (job) => {
     launchd.job = job;
     launchd.unrelatedPort = 7787;
-    const started = Date.now();
-    expect((await finish(uninstallService(label))).join('\n')).toContain(`Uninstalled ${label}`);
-    expect(Date.now()).toBe(started);
+    const { acquired: claim } = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' });
+    assert(claim);
+    try {
+      const started = Date.now();
+      expect((await finish(uninstallService(label))).join('\n')).toContain(`Uninstalled ${label}`);
+      expect(Date.now()).toBe(started);
+      expect(existsSync(plist)).toBe(false);
+      expect(launchd.job).toBe(null);
+      expect(launchd.unrelatedPort).toBe(7787);
+    } finally {
+      releaseClaim(claim);
+    }
+  });
+
+  it('retains the stopped unit until the installed home daemon releases its port', async () => {
+    const installedHome = join(home, 'state');
+    const { acquired: claim } = tryAcquireClaim({ root: stimdClaimRoot(installedHome), mode: 'exclusive' });
+    assert(claim);
+    vi.stubEnv('STIM_HOME', join(home, 'caller'));
+    launchd.stopDelay = Infinity;
+    launchd.listenerOutput = `${process.pid}\n`;
+    try {
+      await expect(uninstallService(label)).rejects.toThrow(
+        `Stim daemon PID ${process.pid} for ${installedHome} is still listening on port 7787`,
+      );
+      expect(launchd.job).toBeNull();
+      expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
+      await expect(uninstallService(label)).rejects.toThrow('is still listening on port 7787');
+    } finally {
+      releaseClaim(claim);
+    }
+    launchd.busyUntil = 0;
+    expect(await finish(uninstallService(label))).toContainEqual(expect.stringContaining(`Uninstalled ${label}`));
     expect(existsSync(plist)).toBe(false);
-    expect(launchd.job).toBe(null);
-    expect(launchd.unrelatedPort).toBe(7787);
+  });
+
+  it('does not attribute a listener to the caller home when the unit uses another home', async () => {
+    vi.stubEnv('STIM_HOME', join(home, 'caller'));
+    const { acquired: claim } = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' });
+    assert(claim);
+    launchd.unrelatedPort = 7787;
+    launchd.listenerOutput = `${process.pid}\n`;
+    try {
+      expect(await finish(uninstallService(label))).toContainEqual(expect.stringContaining(`Uninstalled ${label}`));
+      expect(existsSync(plist)).toBe(false);
+    } finally {
+      releaseClaim(claim);
+    }
+  });
+
+  it('retains the unit when its daemon is still live and the busy port has no attributable listener', async () => {
+    const { acquired: claim } = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' });
+    assert(claim);
+    launchd.stopDelay = Infinity;
+    launchd.listenerOutput = '';
+    try {
+      await expect(uninstallService(label)).rejects.toThrow(
+        'Port 7787 is still in use and its owner could not be verified',
+      );
+      expect(launchd.job).toBeNull();
+      expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
+    } finally {
+      releaseClaim(claim);
+    }
   });
 
   it('keeps the stim-server conflict error when the old port has an unrelated server and no job is loaded', async () => {
