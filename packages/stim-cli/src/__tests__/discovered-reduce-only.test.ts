@@ -276,7 +276,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
       expect(existsSync(modules)).toBe(true);
     });
 
-    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
       'keeps it when a launcher directory cannot be read, naming the directory',
       async () => {
         const { modules } = scanFoundWorktree();
