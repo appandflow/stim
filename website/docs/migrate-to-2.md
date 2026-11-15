@@ -27,7 +27,11 @@ An npm installation can run directly. If you want a managed machine engine, use 
 
 2.0 workers use peer compatibility version 3 and build compatibility version 6. If `stim remote update <machine>` can reach and update the worker, use it. If the old worker cannot negotiate an update, upgrade it locally and reinstall its service with `stim service install`, retaining its service options. On Windows, reinstall the service even after an engine update so the scheduled task runs the new build. If an old server still holds the serving port, stop that server or choose a different port with `stim serve --port <port>` and point the clients at it.
 
-Update the phone app alongside Desktop if you use it. In-place upgrades on Windows and Linux, upgrades with paired clients, and mixed-version app and engine combinations are still being verified. [In-place upgrade checks](https://github.com/appandflow/stim/issues/5590) · [App and engine compatibility checks](https://github.com/appandflow/stim/issues/5593)
+If `stim service uninstall` reports that the service's daemon is still listening after an engine handoff, the service definition and any route it owns are kept. Let that daemon finish its work, stop the reported daemon, and retry `stim service uninstall --label <label>`. [Ubuntu uninstall check](https://github.com/appandflow/stim/actions/runs/43663535775/job/132657852299)
+
+The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified the same bundle on macOS, Linux, and Windows. macOS and Linux exercised legacy daemon takeover. Windows started its first resident daemon while the 1.40 Metro was still running. [Upgrade results](https://github.com/appandflow/stim/issues/5590#issuecomment-6888597398)
+
+Update the phone app alongside Desktop if you use it. Upgrades with paired clients and mixed-version app and engine combinations are still being verified. [App and engine compatibility checks](https://github.com/appandflow/stim/issues/5593)
 
 ## First native build after the upgrade
 
@@ -48,6 +52,7 @@ stim gc --dry-run --pressure high`}
 - `--delete` is gone. Use plain `stim gc` to apply the measured level after reviewing a dry run.
 - `--cache`, `--older-than`, and `--worktrees` are gone. Review the [maintenance settings](./settings.md#automatic-maintenance) for age and worktree policy. Use `--pressure normal`, `high`, or `critical` to choose a level for one pass.
 - `normal` includes age and dormancy cleanup, such as eligible worktree dependencies, parked devices, and unused iOS simulator runtimes. It can also clear dependencies from a dormant source checkout. `high` also applies pressure cleanup to idle workspaces and trims caches. `critical` can empty shared Stim caches and clean other tools' caches on the default home. An explicit `--pressure critical` runs the last stage even if space is recovered earlier. [Full cleanup rules](./commands.md#gc)
+- Review configured `maintenance.discoverRoots` in the dry run. A root you explicitly configured brings eligible checkouts under the cleanup rules even if the root is in a home dot-folder or the system temp directory. [Discovery scope](./worktrees.md#checkouts-stim-never-ran-in)
 
 If you relied on the 1.40 defaults, review these values. An explicitly configured value still takes precedence.
 
