@@ -448,6 +448,7 @@ export async function trimCargoTargetAction(
     signal: operation?.signal,
     measure,
     ...(stop ? { stop } : {}),
+    ...(managed.reduceOnly ? { launchers: freshLaunchers(operation) } : {}),
   });
   if (!measure) {
     const after = before ? await targetVolume(action.target, operation?.signal) : null;

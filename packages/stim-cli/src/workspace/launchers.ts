@@ -30,19 +30,39 @@ const ABSENT = ['ENOENT', 'ENOTDIR'];
 const absent = (error: unknown) => error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
 
 const READ_TIMEOUT_MS = 3000;
-/** How long a reading taken just before a deletion may be reused by the next deletion of the same operation. */
-const FRESH_MS = 5000;
 
-/** `read`'s result, or an ETIMEDOUT rejection when it has not answered in time, as a hung mount would not. */
-async function answered<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
+/**
+ * The one launcher read that timed out and has not settled. While it is pending, no new read starts: a hung mount holds
+ * exactly one libuv thread however many readings are asked for, and every reading reports it incomplete at once.
+ * Module state, so the bound is per thread of the process; in the daemon only the passes thread reads launchers.
+ */
+let hung: { directory: string } | null = null;
+/** Readings run one at a time, so the single read in flight is the only one outstanding. */
+let queue: Promise<unknown> = Promise.resolve();
+
+class Unanswered extends Error {}
+
+/** `read`'s result, or an `Unanswered` rejection when it has not answered in time; the read itself cannot be cancelled. */
+async function answered<T>(directory: string, start: () => Promise<T>, timeoutMs: number): Promise<T> {
+  const read = start();
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       read,
       new Promise<never>((_, fail) => {
-        timer = setTimeout(() => fail(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), timeoutMs);
+        timer = setTimeout(() => fail(new Unanswered('timed out')), timeoutMs);
       }),
     ]);
+  } catch (error) {
+    if (error instanceof Unanswered) {
+      const mine = { directory };
+      hung = mine;
+      const settled = () => {
+        if (hung === mine) hung = null;
+      };
+      read.then(settled, settled);
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -50,7 +70,8 @@ async function answered<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
 
 /**
  * Reads the entries of each launcher directory and resolves the symlinks among them, once per reader. A wrapper
- * script that merely names a path is not followed. Every call to the directory has 3 seconds to answer.
+ * script that merely names a path is not followed. Every call to the directory has 3 seconds to answer; one that does
+ * not ends the reading at once as incomplete, and no reading starts a read while an earlier one is still pending.
  */
 export function launcherReader(
   signal?: AbortSignal,
@@ -65,28 +86,37 @@ export function launcherReader(
     const found: LauncherScan = { targets: [], incomplete: [] };
     for (const directory of directories) {
       signal?.throwIfAborted();
+      if (hung) return { targets: found.targets, incomplete: [...found.incomplete, hung.directory] };
       try {
-        for (const name of await answered(io.readdir(directory), timeoutMs)) {
+        for (const name of await answered(directory, () => io.readdir(directory), timeoutMs)) {
           const entry = join(directory, name);
           try {
-            if (!(await answered(io.isSymlink(entry), timeoutMs))) continue;
-            found.targets.push(await answered(io.realpath(entry), timeoutMs));
+            if (!(await answered(directory, () => io.isSymlink(entry), timeoutMs))) continue;
+            found.targets.push(await answered(directory, () => io.realpath(entry), timeoutMs));
           } catch (error) {
             if (!absent(error)) throw error;
           }
         }
       } catch (error) {
         signal?.throwIfAborted();
-        if (!absent(error)) found.incomplete.push(directory);
+        if (absent(error)) continue;
+        found.incomplete.push(directory);
+        if (error instanceof Unanswered) return found;
       }
     }
     return found;
   };
-  return () => (scan ??= read());
+  return () => {
+    if (!scan) {
+      const run = queue.then(read, read);
+      queue = run;
+      scan = run;
+    }
+    return scan;
+  };
 }
 
 const readers = new WeakMap<StimContext, () => Promise<LauncherScan>>();
-const fresh = new WeakMap<StimContext, { at: number; scan: Promise<LauncherScan> }>();
 
 const newReader = (
   operation: StimContext | undefined,
@@ -107,25 +137,16 @@ export function launchersOf(
 }
 
 /**
- * The launcher reader for the check that immediately precedes a deletion. It never uses the operation's planning
- * reading, which can be minutes old: a launcher may have appeared or a directory become unreadable since. Deletions of
- * one operation within 5 seconds of each other share one fresh reading, so many deletions in a row do not each pay the
- * read (55 to 72 ms here).
+ * A launcher reader that reads anew on every call, never the operation's planning reading, which can be minutes old. A
+ * deletion route calls it at the moment it reads the processes that use the path, and no earlier, so a launcher is
+ * treated like a running process: the window that remains is the one after that read.
  */
 export function freshLaunchers(
   operation: StimContext | undefined,
   signal?: AbortSignal,
   directories?: readonly string[],
 ): () => Promise<LauncherScan> {
-  if (!operation) return () => newReader(operation, signal, directories)();
-  return () => {
-    const now = Date.now();
-    const prior = fresh.get(operation);
-    if (prior && now >= prior.at && now - prior.at < FRESH_MS) return prior.scan;
-    const scan = newReader(operation, signal, directories)();
-    fresh.set(operation, { at: now, scan });
-    return scan;
-  };
+  return () => newReader(operation, signal, directories)();
 }
 
 /**

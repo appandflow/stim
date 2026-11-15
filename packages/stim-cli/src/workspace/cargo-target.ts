@@ -6,6 +6,7 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-cl
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
+import type { LauncherScan } from './launchers.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
@@ -299,10 +300,16 @@ function inUse(used: readonly string[], dir: string): boolean {
 }
 
 /**
- * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; null when
- * either cannot be read, which keeps everything.
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, and for a
+ * reduce-only checkout the paths under it that an executable on PATH resolves to, from a launcher reading taken at the
+ * same moment; null when any of them cannot be read, which keeps everything.
  */
-async function readTargetUse(target: string, signal?: AbortSignal, lowPriority = false): Promise<string[] | null> {
+async function readTargetUse(
+  target: string,
+  signal?: AbortSignal,
+  lowPriority = false,
+  launchers?: () => Promise<LauncherScan>,
+): Promise<string[] | null> {
   const exec = getExecutor();
   try {
     const run = (file: string, args: string[], timeoutMs: number) =>
@@ -311,7 +318,13 @@ async function readTargetUse(target: string, signal?: AbortSignal, lowPriority =
         : exec.runFileAsync(file, args, { timeoutMs, signal });
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
-    return targetPathsInUse(target, lsof, ps);
+    const used = targetPathsInUse(target, lsof, ps);
+    if (!launchers) return used;
+    const scan = await launchers();
+    if (scan.incomplete.length) return null;
+    const prefix = `${folded(target)}/`;
+    for (const path of scan.targets) if (folded(path).startsWith(prefix)) used.push(folded(path));
+    return used;
   } catch {
     signal?.throwIfAborted();
     return null;
@@ -385,6 +398,11 @@ interface CargoTrimOptions {
   stop?: AbortSignal;
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
+  /**
+   * For a reduce-only checkout: a fresh reading of the executables on PATH, taken wherever the processes using the target
+   * are read, so a path one of them resolves to is kept like a path a process runs from.
+   */
+  launchers?: () => Promise<LauncherScan>;
 }
 
 async function trimClaimed(
@@ -398,9 +416,13 @@ async function trimClaimed(
     signal,
     stop,
     measure = true,
+    launchers,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const cannotRead = launchers
+    ? 'the files processes hold open or the executables on PATH cannot be read'
+    : 'the files processes hold open cannot be read';
   const stopped = (): boolean => stop?.aborted === true;
   const measured = (path: string): Promise<number> =>
     measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
@@ -419,8 +441,8 @@ async function trimClaimed(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const first = await readTargetUse(target, signal, lowPriority);
-  if (first === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
+  const first = await readTargetUse(target, signal, lowPriority, launchers);
+  if (first === null) return { ...result, kept: [cannotRead] };
   let used: string[] = first;
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
@@ -504,8 +526,8 @@ async function trimClaimed(
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
     if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, signal, lowPriority);
-    if (fresh === null) return { ...none, kept: 'the files processes hold open cannot be read' };
+    const fresh = await readTargetUse(target, signal, lowPriority, launchers);
+    if (fresh === null) return { ...none, kept: cannotRead };
     let swept = 0;
     let bytes = 0;
     // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
@@ -577,11 +599,11 @@ async function trimClaimed(
   const refreshed = stopped()
     ? null
     : incremental === 'all' || result.bytes < needBytes
-      ? await readTargetUse(target, signal, lowPriority)
+      ? await readTargetUse(target, signal, lowPriority, launchers)
       : used;
   if (stopped()) {
     if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
-  } else if (refreshed === null) result.kept.push('the files processes hold open cannot be read');
+  } else if (refreshed === null) result.kept.push(cannotRead);
   else used = refreshed;
   if (refreshed !== null && (incremental === 'all' || result.bytes < needBytes)) {
     const candidates: { path: string; bytes: number }[] = [];

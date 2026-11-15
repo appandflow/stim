@@ -288,3 +288,34 @@ test('a trim stopped at a deadline keeps every unit it has not moved, finishes t
     resetExecutor();
   }
 });
+
+test('a launcher on PATH that appears after the first reading keeps what it points into at the later reading, and an incomplete reading keeps everything', async () => {
+  try {
+    makeProfile('release', 0);
+    mkdirSync(join(target, 'release', 'incremental', 'x'), { recursive: true });
+    const real = realpathSync.native(target);
+    stubProcesses({});
+    let readings = 0;
+    const launchers = async () => ({
+      targets: readings++ === 0 ? [] : [`${real}/release/incremental/x/tool`],
+      incomplete: [],
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 1, incremental: 'all', launchers });
+
+    expect(readings).toBe(2);
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual(['release/incremental: a process uses it']);
+    expect(existsSync(join(target, 'release', 'incremental', 'x'))).toBe(true);
+
+    makeProfile('debug', 3 * DAY);
+    const unreadable = await trimCargoTarget(target, {
+      needBytes: 0,
+      launchers: async () => ({ targets: [], incomplete: ['/locked'] }),
+    });
+    expect(unreadable.removed).toEqual([]);
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+  } finally {
+    resetExecutor();
+  }
+});

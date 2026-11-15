@@ -49,13 +49,35 @@ describe('the PATH launcher scan', () => {
     expect(launcherReason('/work/app', unresolved)).toContain('cannot be ruled out');
   });
 
-  it('treats a directory that does not answer in time as not inspected, and names the way to restore reduction', async () => {
-    const hung = { ...io({ '/bin1': ['tool'] }), readdir: () => new Promise<string[]>(() => {}) };
-    const pending = launcherReader(undefined, { directories: ['/hung'], io: hung, timeoutMs: 10 })();
+  it('ends a reading at once as incomplete when a read does not answer, and starts no read while it is pending', async () => {
+    let started = 0;
+    let release: (names: string[]) => void = () => {};
+    const stuck = {
+      ...io({ '/bin1': ['tool'] }),
+      readdir: (path: string) => {
+        if (path !== '/hung') return Promise.resolve([]);
+        started++;
+        return new Promise<string[]>((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+    const reading = () => launcherReader(undefined, { directories: ['/hung', '/bin1'], io: stuck, timeoutMs: 10 })();
+
+    const first = reading();
     await vi.advanceTimersByTimeAsync(10);
-    const result = await pending;
+    const result = await first;
     expect(result.incomplete).toEqual(['/hung']);
     expect(launcherReason('/work/app', result)).toContain('permissions');
+
+    const later = await Promise.all([reading(), reading(), reading()]);
+    expect(later.map((entry) => entry.incomplete)).toEqual([['/hung'], ['/hung'], ['/hung']]);
+    expect(started).toBe(1);
+
+    release([]);
+    await vi.advanceTimersByTimeAsync(0);
+    const recovered = await launcherReader(undefined, { directories: ['/bin1'], io: stuck })();
+    expect(recovered.incomplete).toEqual([]);
   });
 });
 

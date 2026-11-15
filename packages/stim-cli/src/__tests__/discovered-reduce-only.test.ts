@@ -15,6 +15,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as runningFrom from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
 import {
   artifactCheckoutsAsync,
@@ -308,6 +309,27 @@ describe('checkouts found through a tool folder or the full scan', () => {
         status: 'kept',
         detail: expect.stringContaining('on PATH'),
       });
+      expect(existsSync(modules)).toBe(true);
+    });
+
+    it('keeps it when a launcher appears after the process read that precedes the deletion', async () => {
+      const { modules } = scanFoundWorktree();
+      const link = join(base, 'home', 'bin', 'tool');
+      mkdirSync(join(base, 'home', 'bin'));
+      const shared = operation();
+      const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, shared);
+      expect(planned.candidates.map((entry) => entry.path)).toEqual([modules]);
+      const real = runningFrom.readRunningProcessesAsync;
+      let reads = 0;
+      vi.spyOn(runningFrom, 'readRunningProcessesAsync').mockImplementation(async (...args) => {
+        if (++reads === 2) symlinkSync(join(modules, '.bin', 'tool'), link);
+        return real(...args);
+      });
+      expect(await clear(modules, shared)).toMatchObject({
+        status: 'kept',
+        detail: expect.stringContaining('on PATH'),
+      });
+      expect(reads).toBeGreaterThanOrEqual(2);
       expect(existsSync(modules)).toBe(true);
     });
 

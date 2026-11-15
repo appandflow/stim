@@ -15,6 +15,7 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { launcherReason, type LauncherScan } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -209,10 +210,23 @@ export async function idleOutputs(path: string, config: Config): Promise<{ paths
   return { paths, kept };
 }
 
-export async function deleteOutputs(paths: readonly string[]): Promise<number> {
+/**
+ * Deletes `paths`, measuring each first. For a reduce-only checkout `guard` reads the executables on PATH anew after the
+ * measurement, immediately before each removal, and keeps a path whose checkout one resolves into, saying so in `kept`.
+ */
+export async function deleteOutputs(
+  paths: readonly string[],
+  guard?: { checkout: string; launchers: () => Promise<LauncherScan>; kept: string[] },
+): Promise<number> {
   let freed = 0;
   for (const path of paths) {
-    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const launcher = guard ? launcherReason(guard.checkout, await guard.launchers()) : null;
+    if (launcher) {
+      guard?.kept.push(`kept ${path}: ${launcher}`);
+      continue;
+    }
+    freed += bytes;
     await rm(path, { recursive: true, force: true });
   }
   return freed;

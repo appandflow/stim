@@ -39,6 +39,7 @@ import { getProject, loadConfig, type Config, type ProjectRecord } from '../work
 import { checkoutRoleOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -352,7 +353,12 @@ export async function clearStoppedOutputs(
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await idleOutputs(path, config);
             if (!outputs.paths.length) return null;
-            const bytes = await deleteOutputs(outputs.paths);
+            const bytes = await deleteOutputs(
+              outputs.paths,
+              candidate.reduceOnly
+                ? { checkout: path, launchers: freshLaunchers(operation), kept: outputs.kept }
+                : undefined,
+            );
             return {
               outcome: 'done',
               bytes,
