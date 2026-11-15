@@ -124,6 +124,7 @@ import {
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
@@ -774,6 +775,7 @@ async function runStimdInner(
   const inDaemonContext = AsyncLocalStorage.snapshot();
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
+  setReportChildLog(log);
   const path = stimdSocket();
   const bootAt = Date.now();
   const leftover = readClaimSet(stimdClaimRoot()).dead;

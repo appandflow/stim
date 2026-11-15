@@ -3,6 +3,7 @@ import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
 
 type ThreadName = 'passes' | 'measure';
@@ -232,6 +233,7 @@ else if (thread && parentPort) {
   const port = parentPort;
   const dependencyCadence: BigInt64Array | undefined = workerData.dependencyCadence;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
+  setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
   let lane: MaintenanceLane | undefined;
   serveThreadJobs<ThreadInput>(

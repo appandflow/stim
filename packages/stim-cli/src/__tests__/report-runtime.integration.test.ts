@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
@@ -230,6 +231,54 @@ test.each([true])('failed initial birth capture never signals the unverifiable c
   } finally {
     capture.mockRestore();
     reapFixtureChild(owned);
+    await nativeClosed;
+  }
+});
+
+test('a refused uncaptured child is recorded with the time it outlived its cancel', async () => {
+  const controller = new AbortController();
+  let ready: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const records: { event: string; fields: Record<string, unknown> }[] = [];
+  setReportChildLog((_level, event, _msg, fields) => void records.push({ event, fields }));
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  let nativeClosed: Promise<void> = Promise.resolve();
+  try {
+    const reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+        timeoutMs: 20_000,
+        signal: controller.signal,
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.stdout?.once('data', () => ready());
+        },
+      }),
+    ).catch((error: unknown) => error);
+    await started;
+    controller.abort(new Error('cancel fixture'));
+    expect(await reading).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    await vi.waitFor(() => expect(records).toHaveLength(1), { timeout: 10_000 });
+    expect(records[0]).toMatchObject({
+      event: 'daemon_report_child_exited',
+      fields: {
+        cancelReason: 'abort',
+        refusal: 'unverified',
+        timeoutMs: 20_000,
+        captured: false,
+        captureReason: 'ACCESS_DENIED',
+        exitCode: 0,
+        exitSignal: null,
+      },
+    });
+    expect(records[0]?.fields.command).toContain(`${basename(process.execPath)} -e`);
+    expect(records[0]?.fields.cancelToExitMs).toBeGreaterThanOrEqual(1500);
+  } finally {
+    setReportChildLog(undefined);
+    capture.mockRestore();
     await nativeClosed;
   }
 });
