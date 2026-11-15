@@ -1238,8 +1238,8 @@ previous finds. It can overrun the budget by at most one read's 3 second timeout
 plus the time project detection itself takes on the folder it is recognising,
 which is synchronous and cannot be interrupted. Revalidation of cached finds has
 no total budget: each read is bounded by the 3 second timeout, and the number of
-reads by detection's own caps (50 children per container, seven folders in the
-chain). Before project
+reads by detection's own caps (50 children per container, the home folder and up to
+seven below it). Before project
 detection runs on a folder, the manifests detection reads are proved safe, for
 the folder, each ancestor down from the home folder, its apps, examples and
 packages folders and their children: a manifest (any case) that is not a regular file, an
@@ -1273,8 +1273,9 @@ directory that hangs ends the reading as incomplete at once, and while that read
 is pending (at most one per thread: the daemon's main thread and passes thread
 each have one; the scan runs on the passes thread) no other launcher or scan
 read starts and a scheduled scan is skipped. A scan stops at the first read that
-times out, keeping the previous finds. Reduce-only checkouts have their build outputs and, in
-a linked worktree, node_modules and Pods reduced by the rules below. Passes
+times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
+their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
+checkout's after idle.sourceDormantDays), reduced by the rules below. Passes
 evaluate at most 40 of them at a time, in a window that moves every 15 minutes;
 stim gc --dry-run lists all of them and says which are left for a later pass. A
 folder named in maintenance.discoverRoots
@@ -1286,8 +1287,13 @@ and build, dist, target, .cache and similar folders skipped only where git
 ignores them), its last commit and its git writes, for idle.dormantDays. A
 process running from or working in it, an agent session in it, a pin by
 maintenance.keep, more source files than the scan reads, or evidence that
-cannot be read keeps it. Its regenerable build outputs go when it is idle; a
-linked one also loses node_modules and Pods, a main checkout keeps them. A
+cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
+node_modules and Pods go too: a linked worktree's after idle.dormantDays (default
+1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
+never), by the same evidence. That holds for every kind of discovered checkout
+(children of the folders holding registered checkouts, children of
+maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
+and a PATH launcher keeps a reduce-only one. A
 target directory at a checkout root whose CACHEDIR.TAG starts with the standard
 CACHEDIR.TAG signature line and whose files git ignores counts as build output
 for every checkout.

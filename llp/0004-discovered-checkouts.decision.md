@@ -138,7 +138,7 @@ as `budget`, keeping the previous finds. It can overrun the budget by at most on
 read's 3 second timeout plus the time detection itself takes on the folder it is
 recognising, which is synchronous and not interruptible. Revalidation has no total
 budget; each read has the 3 second timeout, and the number of reads is bounded by
-detection's own caps (50 children per container, seven folders in the chain).
+detection's own caps (50 children per container, the home folder and up to seven below it).
 
 Project detection (`recognises`) reads files synchronously, and a stalled mount,
 an iCloud file waiting for a download or a FIFO would block the thread. Before
@@ -219,9 +219,13 @@ launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
 keeps every reduce-only checkout for that operation, with a reason naming the
 directory. A wrapper script that only names a path is not followed.
 
-A scan-found source checkout follows the existing discovered rule and loses
-`node_modules` and Pods after `idle.sourceDormantDays` (7); the maintainer has
-not confirmed that consequence.
+Every source (main) checkout, registered or discovered by any route (siblings,
+`maintenance.discoverRoots` children, tool folders, the scan), follows the
+existing dormant rule and loses `node_modules` and Pods after
+`idle.sourceDormantDays` (7), a linked worktree's after `idle.dormantDays` (1)
+(`daemon/dependencies.ts` `takeIdleDependencies`, over `idleStageCandidates`'
+discovered list); the maintainer has not confirmed that consequence for the scan
+finds, and the guide wrongly said a main checkout keeps them before this change.
 
 Reason: on one MacBook `~/.codex/worktrees` held 53 worktrees and 12 GB that
 Stim listed once as outside the folders it manages, with no size and no way

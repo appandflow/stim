@@ -140,7 +140,7 @@ export async function scanForCheckouts(
         stop('read');
         return;
       }
-      if (nested === 'unsafe') return;
+      if (nested === 'unsafe' || exhausted()) return;
       if (isCheckout(folder)) {
         outcome.found.push(folder);
         return;

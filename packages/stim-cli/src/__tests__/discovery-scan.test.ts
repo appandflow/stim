@@ -273,6 +273,35 @@ describe('scanForCheckouts', () => {
     expect(reads).toBeLessThan(10);
   });
 
+  it('rejects the scan as an abort when the abort arrives during the nested checks of the last folder', async () => {
+    mkdirSync(join(home, 'mono', 'apps', 'app'), { recursive: true });
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    const controller = new AbortController();
+    const listing = async (path: string) => {
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return [directory('app')];
+      return [];
+    };
+    const recognition = {
+      ...REAL_RECOGNITION_IO,
+      readEntries: async (path: string) => {
+        if (path === join(home, 'mono', 'apps', 'app')) controller.abort();
+        return listing(path);
+      },
+    };
+    const detect = vi.fn<(path: string) => boolean>(() => true);
+    await expect(
+      scanForCheckouts(home, detect, { entries: listing, recognition, signal: controller.signal }),
+    ).rejects.toThrow(/abort/i);
+    expect(detect).not.toHaveBeenCalled();
+  });
+
   it('stops at its time budget and says so', async () => {
     project('dev', 'one');
     const scan = await scanForCheckouts(home, marked, { budgetMs: -1 });
@@ -508,6 +537,41 @@ describe('runDiscoveryScanIfDue', () => {
       truncated: true,
       found: [join(base, 'home', 'dev', 'app')],
     });
+  });
+
+  it('leaves the stored result and its finds unchanged when an abort arrives during the nested checks of the last folder', async () => {
+    await runDiscoveryScanIfDue(tick(), options(t0));
+    const before = readFileSync(discoveryScanFile(), 'utf8');
+    mkdirSync(join(base, 'home', 'mono', 'apps', 'app'), { recursive: true });
+    const directory = (name: string) => ({
+      name,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
+    const controller = new AbortController();
+    const listing = async (path: string) => {
+      const home = join(base, 'home');
+      if (path === home) return [directory('mono')];
+      if (path === join(home, 'mono')) return [directory('apps')];
+      if (path === join(home, 'mono', 'apps')) return [directory('app')];
+      return [];
+    };
+    const recognition = {
+      ...REAL_RECOGNITION_IO,
+      readEntries: async (path: string) => {
+        if (path.endsWith('app')) controller.abort();
+        return listing(path);
+      },
+    };
+    await expect(
+      runDiscoveryScanIfDue(tick(normal, {}, testContext({ signal: controller.signal })), {
+        ...options(t0 + 8 * 24 * hour),
+        scanOptions: { entries: listing, recognition },
+      }),
+    ).rejects.toThrow(/abort/i);
+    expect(readFileSync(discoveryScanFile(), 'utf8')).toBe(before);
+    expect(readDiscoveryScan()?.found).toEqual([join(base, 'home', 'dev', 'app')]);
   });
 
   it('lets an abort escape instead of returning normally, and stores nothing', async () => {

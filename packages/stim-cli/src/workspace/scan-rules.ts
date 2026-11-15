@@ -229,7 +229,7 @@ export async function folderSafety(
  * container folder, with its own `package.json`) and up to 50 children of each. A symlinked container, or any unsafe or
  * unreadable member, makes the result that. The ancestors of `folder` are the caller's: they have passed `folderSafety`.
  * `stop` is asked before every read, so a scan's budget is honoured between them (`stopped`); revalidation passes none,
- * and is bounded per read and by detection's own caps (50 children per container, at most seven folders in the chain).
+ * and is bounded per read and by detection's own caps (50 children per container; the chain is the home folder and up to seven below it).
  */
 export async function nestedSafety(
   folder: string,
@@ -238,37 +238,41 @@ export async function nestedSafety(
   io: RecognitionIo = REAL_RECOGNITION_IO,
   stop?: Stop,
 ): Promise<Safety> {
-  const read = (path: string) => answered(path, () => io.readEntries(path), timeoutMs);
-  try {
-    for (const entry of entries.filter((candidate) => PROJECT_FOLDERS.includes(folded(candidate.name)))) {
-      if (entry.isSymbolicLink()) return 'unsafe';
-      if (!entry.isDirectory()) continue;
-      const container = join(folder, entry.name);
-      if (stop?.()) return 'stopped';
-      const members = await read(container);
-      const own = await folderSafety(container, members, timeoutMs, io, stop);
-      if (own !== 'safe') return own;
-      for (const child of members
-        .filter((member) => member.isDirectory() && !member.isSymbolicLink())
-        .slice(0, PROJECT_FOLDER_ENTRIES)) {
-        const path = join(container, child.name);
-        if (stop?.()) return 'stopped';
-        let inner: Entry[];
-        try {
-          inner = await read(path);
-        } catch (error) {
-          if (error instanceof Unanswered) return 'unreadable';
-          if (absent(error)) continue;
-          return 'unsafe';
-        }
-        const result = await folderSafety(path, inner, timeoutMs, io, stop);
-        if (result !== 'safe') return result;
-      }
+  /** The listing, or why it cannot be trusted; `stop` is never asked inside it, so an abort is never caught as a read error. */
+  const list = async (path: string): Promise<Entry[] | Safety> => {
+    try {
+      return await answered(path, () => io.readEntries(path), timeoutMs);
+    } catch (error) {
+      return error instanceof Unanswered ? 'unreadable' : 'unsafe';
     }
-    return 'safe';
-  } catch (error) {
-    return error instanceof Unanswered ? 'unreadable' : 'unsafe';
+  };
+  for (const entry of entries.filter((candidate) => PROJECT_FOLDERS.includes(folded(candidate.name)))) {
+    if (entry.isSymbolicLink()) return 'unsafe';
+    if (!entry.isDirectory()) continue;
+    const container = join(folder, entry.name);
+    if (stop?.()) return 'stopped';
+    const members = await list(container);
+    if (typeof members === 'string') return members;
+    const own = await folderSafety(container, members, timeoutMs, io, stop);
+    if (own !== 'safe') return own;
+    for (const child of members
+      .filter((member) => member.isDirectory() && !member.isSymbolicLink())
+      .slice(0, PROJECT_FOLDER_ENTRIES)) {
+      const path = join(container, child.name);
+      if (stop?.()) return 'stopped';
+      let inner: Entry[];
+      try {
+        inner = await answered(path, () => io.readEntries(path), timeoutMs);
+      } catch (error) {
+        if (error instanceof Unanswered) return 'unreadable';
+        if (absent(error)) continue;
+        return 'unsafe';
+      }
+      const result = await folderSafety(path, inner, timeoutMs, io, stop);
+      if (result !== 'safe') return result;
+    }
   }
+  return 'safe';
 }
 
 /** A folder's listing and `folderSafety`, for the chain of folders above a cached entry. */
