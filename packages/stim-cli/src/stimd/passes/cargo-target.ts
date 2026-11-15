@@ -12,7 +12,6 @@ import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
-import { lowestFree } from './measure.ts';
 import {
   cargoProfileDirs,
   idleCargoUnitPaths,
@@ -393,6 +392,13 @@ async function stillManaged(root: string, operation?: StimContext): Promise<bool
   );
 }
 
+async function targetVolume(target: string, signal?: AbortSignal): Promise<{ freeMb: number; device: number } | null> {
+  const [volume] = await readVolumeSpaceAsync([target], signal);
+  return volume?.device !== undefined && Number.isFinite(volume.freeMb)
+    ? { freeMb: volume.freeMb, device: volume.device }
+    : null;
+}
+
 export async function trimCargoTargetAction(
   action: MaintenanceAction,
   operation?: StimContext,
@@ -406,7 +412,7 @@ export async function trimCargoTargetAction(
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const measure = action.level === undefined;
-  const before = measure ? 0 : lowestFree(await readVolumeSpaceAsync([action.target], operation?.signal));
+  const before = measure ? null : await targetVolume(action.target, operation?.signal);
   const result = await trimCargoTarget(action.target, {
     needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
     ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
@@ -416,7 +422,8 @@ export async function trimCargoTargetAction(
     ...(stop ? { stop } : {}),
   });
   if (!measure) {
-    const freed = lowestFree(await readVolumeSpaceAsync([action.target], operation?.signal)) - before;
+    const after = before ? await targetVolume(action.target, operation?.signal) : null;
+    const freed = after && after.device === before?.device ? after.freeMb - (before?.freeMb ?? 0) : 0;
     result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
   }
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;

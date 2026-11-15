@@ -148,7 +148,7 @@ In on mode a pass runs, cheapest to rebuild first:
      pressure ladder runs it at the start of rung 3, before any shared cache
      is trimmed (the stim-daemon's at most every 10 minutes per level; the one
      start, ios and android run before they build runs it once and leaves the
-     workspace being built alone), one process at a time per target/ on the machine, whatever its Stim home, and an acting stim gc runs
+     workspace being built alone), one process at a time per target/ for each user account, whatever its Stim home, and an acting stim gc runs
      it before it measures anything. At normal the cap is planned at the hourly
      size scan, or hourly on its own while host load defers the size scan (the
      cap is never held back by load, and its du runs at low priority, one

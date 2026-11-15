@@ -38,12 +38,12 @@ cannot answer whether a record on disk still describes its writer.
 
 A process ID can be reused after a crash, and a busy build can outlive any age limit. The claim binds ownership to process identity. The claim-set lock closes the gap between a cleanup survey and a new claimant arriving. The shared protocol also lets cache packages recover claims without depending on the CLI. [Shared ownership claims](https://github.com/appandflow/stim/pull/681), [Claim-only directory locks](https://github.com/appandflow/stim/pull/5340).
 
-## One claim per Cargo target on the machine
+## One claim per Cargo target for each user account
 
 A trim of a Cargo `target/` holds an exclusive claim named by the canonical
 target path, at `~/.stim/machine/cargo-trim/` (`cargoTargetTrimClaims`, core's
-state paths), whatever `STIM_HOME` is, so no two Stim homes trim one target at
-once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
+state paths), whatever `STIM_HOME` is, so no two Stim homes of one user account
+trim one target at once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
 target, and the kept detail names the claim and the command that removes it;
 the trim does not raise `STIM_CLAIM_REFUSED` or `STIM_CLAIM_UNAVAILABLE`,
 because nothing was deleted and a run that goes on is safe. Release removes

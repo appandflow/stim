@@ -76,7 +76,10 @@ deleting `target/.stim-trimmed`, which the first may still need to put back. The
 claim is outside `target/` because `cargo clean` or the trim itself would delete
 it, and outside the project tree, as runtime state is. Under a headroom
 deadline the trim stops between units; at high and critical it walks nothing
-before removing, and reports the free space it gained.
+before removing, and reports the free space it gained of the target's own volume, or 0 when
+either sample is missing. The claim, the deadline stop, the free-space report
+and the absence of a per-run limit on targets were chosen by the coordinator and
+the reviews of #5763, not by the maintainer.
 
 Maintainer decision: "we def should not have to wait on full disk measurement
 to be able to remove caches", 2026-11-14.

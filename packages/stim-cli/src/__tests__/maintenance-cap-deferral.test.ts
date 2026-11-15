@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maintenanceStateFile, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
+import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { deferCheck } from '../stimd/passes/defer.ts';
 import { due } from '../stimd/passes/due.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as budget from '../stimd/passes/budget.ts';
 import * as fsUtil from '../fs-util.ts';
 import * as daemonPasses from '../daemon/passes.ts';
 import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
@@ -169,3 +170,30 @@ test('a check deferred at normal is due at once once the disk level is above nor
   expect(due(state, settings, Date.now(), 'normal')).not.toContain('size');
   expect(due(state, settings, Date.now(), 'high')).toContain('size');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a pressure trim reports the free-space gain of its own volume, and 0 when a sample is missing',
+  async () => {
+    const volume = (freeMb: number) => [{ volume: '/', freeMb, device: 1 }];
+    const action = {
+      kind: 'would-clear-build-dirs',
+      target,
+      workspace: join(target, '..'),
+      bytes: 0,
+      level: 2,
+      olderThanDays: 1,
+      reason: 'test',
+    } as const;
+    const samples = vi.spyOn(budget, 'readVolumeSpaceAsync');
+
+    samples.mockResolvedValueOnce(volume(1000)).mockResolvedValueOnce([]);
+    const missing = await trimCargoTargetAction(action);
+    expect(missing).toMatchObject({ status: 'done', bytes: 0 });
+
+    mkdirSync(join(target, 'debug', 'incremental'), { recursive: true });
+    writeFileSync(join(target, 'debug', 'incremental', 'data'), 'x');
+    samples.mockResolvedValueOnce(volume(1000)).mockResolvedValueOnce(volume(1005));
+    const measured = await trimCargoTargetAction(action);
+    expect(measured).toMatchObject({ status: 'done', bytes: 5 * 1024 * 1024 });
+  },
+);
