@@ -1254,7 +1254,9 @@ a stalled mount point there is not detected), and what a pass reads inside a che
 kept in maintenance/discovery-scan.json under the Stim home (when it ran, what
 it found, what it could not read) and discovery reads that file, so a pass or gc
 never walks the disk. A scan that fails or stops early keeps the previous finds,
-and a finished one keeps those under a folder it could not read. Discovery checks
+and a finished one keeps those under a folder it could not read, which includes a
+folder whose project check was denied by the system (it is listed unreadable, not
+rejected). Discovery checks
 each recorded checkout again before using it: still a real folder (not a
 symlink), on the home volume, below no skipped folder and still a project;
 anything else is dropped. Checkouts the scan finds under a dot-folder of the

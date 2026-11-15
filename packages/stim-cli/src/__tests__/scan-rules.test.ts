@@ -152,7 +152,7 @@ describe('scanEntryValid with a hand-edited scan result', () => {
         expect(await folderSafety(where, entries, 10, io)).toBe('safe');
       });
 
-      it('is unsafe, never safe, when a child that detection enumerates cannot be listed', async () => {
+      it('is denied, never safe, when a child that detection enumerates cannot be listed', async () => {
         const denied = Object.assign(new Error('EACCES'), { code: 'EACCES' });
         const gone = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
         const io = (failure: Error) => ({
@@ -164,7 +164,7 @@ describe('scanEntryValid with a hand-edited scan result', () => {
           },
         });
         const entries = [folder('apps')];
-        expect(await nestedSafety(where, entries, 10, io(denied))).toBe('unsafe');
+        expect(await nestedSafety(where, entries, 10, io(denied))).toBe('denied');
         expect(await nestedSafety(where, entries, 10, io(gone))).toBe('safe');
       });
 

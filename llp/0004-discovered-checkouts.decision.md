@@ -65,7 +65,8 @@ Everything else in this section was chosen by the coordinator and the review of
 ## Tool folders and the full scan
 
 Discovery also reads two more sources, and what they find is reduce-only: Stim
-reduces its build outputs and, in a linked worktree, `node_modules` and Pods by
+reduces its build outputs and its `node_modules` and Pods (a linked worktree's
+after `idle.dormantDays`, a source checkout's after `idle.sourceDormantDays`) by
 the discovered-checkout rules, and never removes the checkout or worktree. The
 hold that keeps a worktree inside a dot-folder of its main checkout
 (`.claude/worktrees`) applies to it.
@@ -89,7 +90,11 @@ hold that keeps a worktree inside a dot-folder of its main checkout
 - The stored result keeps the schedule (last attempt, last attempt that did not
   fail, last attempt at low disk) and the finds. A failed or truncated scan
   keeps the previous finds, and a finished one keeps those under a folder it
-  could not read, so a worse result never replaces a better one. Discovery
+  could not read, so a worse result never replaces a better one. A read the system
+  denies during the project checks (a manifest, a nested listing) is not a
+  structural fact: it lists the folder unreadable, runs no detection on it or
+  below it, leaves the scan untruncated and keeps its finds; in revalidation it is
+  `pending`. Discovery
   revalidates each find before using it: a real folder, not a symlink, on the
   home volume, below no skipped folder, still recognised.
 - The scan runs after a maintenance pass has acted, so it never delays cleanup.
@@ -251,6 +256,9 @@ decision leaves open:
    in a dot-folder of its main checkout (`.claude/worktrees`). Removal is what
    doctor suggests to the person. A folder named in `maintenance.discoverRoots`
    keeps the full discovered rules, removal of finished worktrees included.
+   (Added by the implementing lane, not part of the recorded reading: the rule
+   in force also removes a source checkout's `node_modules` and Pods after
+   `idle.sourceDormantDays`, as the section that states it describes.)
 2. Common paths start with `~/.codex/worktrees`. Other tools' folders are added
    only with evidence that the tool uses that path.
 3. "Once in a while" is weekly. On low disk the scan runs when a volume's level

@@ -177,7 +177,13 @@ export const REAL_RECOGNITION_IO: RecognitionIo = {
   realpath: (path) => realpath(path),
 };
 
-type Safety = 'safe' | 'unsafe' | 'unreadable' | 'stopped';
+/**
+ * `unsafe`: a structural fact, the folder is not a checkout and there is nothing to record. `denied`: a read failed for a
+ * reason that is neither a timeout nor "absent" (EACCES, EPERM, EIO), so the scan could not look, as when a folder's own
+ * listing fails: it is recorded unreadable and its finds are kept. `unreadable`: a read timed out or another is pending.
+ * `stopped`: the scan's limit ran out.
+ */
+type Safety = 'safe' | 'unsafe' | 'denied' | 'unreadable' | 'stopped';
 
 /** Asked before every read the gate makes: true when the scan's own limit (abort, time budget, folder cap) has run out. */
 type Stop = () => boolean;
@@ -213,7 +219,7 @@ export async function folderSafety(
     try {
       text = await answered(folder, () => io.readText(join(folder, manifest.name)), timeoutMs);
     } catch (error) {
-      return error instanceof Unanswered ? 'unreadable' : 'unsafe';
+      return error instanceof Unanswered ? 'unreadable' : 'denied';
     }
     try {
       declares &&= declaresAppDependency(JSON.parse(text));
@@ -243,7 +249,7 @@ export async function nestedSafety(
     try {
       return await answered(path, () => io.readEntries(path), timeoutMs);
     } catch (error) {
-      return error instanceof Unanswered ? 'unreadable' : 'unsafe';
+      return error instanceof Unanswered ? 'unreadable' : 'denied';
     }
   };
   for (const entry of entries.filter((candidate) => PROJECT_FOLDERS.includes(folded(candidate.name)))) {
@@ -266,7 +272,7 @@ export async function nestedSafety(
       } catch (error) {
         if (error instanceof Unanswered) return 'unreadable';
         if (absent(error)) continue;
-        return 'unsafe';
+        return 'denied';
       }
       const result = await folderSafety(path, inner, timeoutMs, io, stop);
       if (result !== 'safe') return result;
@@ -285,7 +291,7 @@ async function gateOf(
     const listing = await answered(folder, () => io.readEntries(folder), timeoutMs);
     return { listing, safety: await folderSafety(folder, listing, timeoutMs, io) };
   } catch (error) {
-    return { listing: [], safety: error instanceof Unanswered ? 'unreadable' : 'unsafe' };
+    return { listing: [], safety: error instanceof Unanswered ? 'unreadable' : 'denied' };
   }
 }
 

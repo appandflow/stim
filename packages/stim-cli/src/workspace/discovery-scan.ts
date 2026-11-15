@@ -124,7 +124,12 @@ export async function scanForCheckouts(
       return;
     }
     const safety = await folderSafety(folder, entries, readTimeoutMs, recognition, exhausted);
+    signal?.throwIfAborted();
     if (safety === 'stopped') return;
+    if (safety === 'denied') {
+      outcome.unreadable.push(folder);
+      return;
+    }
     if (safety === 'unreadable') {
       outcome.unreadable.push(folder);
       stop('read');
@@ -134,7 +139,12 @@ export async function scanForCheckouts(
     if (above) return;
     if (depth > 0) {
       const nested = await nestedSafety(folder, entries, readTimeoutMs, recognition, exhausted);
+      signal?.throwIfAborted();
       if (nested === 'stopped') return;
+      if (nested === 'denied') {
+        outcome.unreadable.push(folder);
+        return;
+      }
       if (nested === 'unreadable') {
         outcome.unreadable.push(folder);
         stop('read');
@@ -172,7 +182,8 @@ export async function scanForCheckouts(
  * `scanEntryValid`, not here.
  */
 export function mergeFound(previous: readonly string[], outcome: ScanOutcome): string[] {
-  const under = (path: string) => outcome.unreadable.some((folder) => path.startsWith(`${folder}${sep}`));
+  const under = (path: string) =>
+    outcome.unreadable.some((folder) => path === folder || path.startsWith(`${folder}${sep}`));
   const kept = outcome.truncated ? previous : previous.filter(under);
   return [...new Set([...outcome.found, ...kept])].toSorted();
 }
@@ -273,6 +284,7 @@ export async function runDiscoveryScanIfDue(
       skip: scanSkipper(realHome),
       ...scanOptions,
     });
+    operation.signal.throwIfAborted();
     writeScan({
       ...attempt,
       completedAt: outcome.truncation === 'read' ? (last?.completedAt ?? 0) : now,

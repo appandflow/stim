@@ -574,6 +574,77 @@ describe('runDiscoveryScanIfDue', () => {
     expect(readDiscoveryScan()?.found).toEqual([join(base, 'home', 'dev', 'app')]);
   });
 
+  describe('a read that fails for a reason other than a timeout or absence', () => {
+    const denied = () => Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    const later = () => options(t0 + 8 * 24 * hour);
+
+    it('keeps the previous find and lists its folder unreadable when its manifest read is denied', async () => {
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      const app = join(base, 'home', 'dev', 'app');
+      await runDiscoveryScanIfDue(tick(), {
+        ...later(),
+        scanOptions: {
+          recognition: {
+            ...REAL_RECOGNITION_IO,
+            readText: async () => {
+              throw denied();
+            },
+          },
+        },
+      });
+      expect(readDiscoveryScan()).toMatchObject({ found: [app], unreadable: [app], truncation: 'none' });
+    });
+
+    it('keeps the previous find and lists its folder unreadable when a nested listing is denied', async () => {
+      const mono = join(base, 'home', 'mono');
+      mkdirSync(join(mono, 'apps', 'app'), { recursive: true });
+      writeFileSync(join(mono, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      expect(readDiscoveryScan()?.found).toContain(mono);
+      await runDiscoveryScanIfDue(tick(), {
+        ...later(),
+        scanOptions: {
+          recognition: {
+            ...REAL_RECOGNITION_IO,
+            readEntries: async (path: string) => {
+              if (path === join(mono, 'apps', 'app')) throw denied();
+              return REAL_RECOGNITION_IO.readEntries(path);
+            },
+          },
+        },
+      });
+      expect(readDiscoveryScan()).toMatchObject({ unreadable: [mono], truncation: 'none' });
+      expect(readDiscoveryScan()?.found).toContain(mono);
+    });
+
+    it('rejects as an abort and leaves the file unchanged when the abort arrives during a final nested listing that also fails', async () => {
+      const mono = join(base, 'home', 'mono');
+      mkdirSync(join(mono, 'apps', 'app'), { recursive: true });
+      writeFileSync(join(mono, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      await runDiscoveryScanIfDue(tick(), options(t0));
+      const before = readFileSync(discoveryScanFile(), 'utf8');
+      const controller = new AbortController();
+      await expect(
+        runDiscoveryScanIfDue(tick(normal, {}, testContext({ signal: controller.signal })), {
+          ...later(),
+          scanOptions: {
+            recognition: {
+              ...REAL_RECOGNITION_IO,
+              readEntries: async (path: string) => {
+                if (path === join(mono, 'apps', 'app')) {
+                  controller.abort();
+                  throw denied();
+                }
+                return REAL_RECOGNITION_IO.readEntries(path);
+              },
+            },
+          },
+        }),
+      ).rejects.toThrow(/abort/i);
+      expect(readFileSync(discoveryScanFile(), 'utf8')).toBe(before);
+    });
+  });
+
   it('lets an abort escape instead of returning normally, and stores nothing', async () => {
     const controller = new AbortController();
     controller.abort();
