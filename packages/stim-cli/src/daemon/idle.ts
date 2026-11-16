@@ -16,7 +16,7 @@ import {
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
-import { freshLaunchers, launcherReason, launchersOf, launchingOf, type Launching } from '../workspace/launchers.ts';
+import { launcherReason, launchersOf, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -217,21 +217,20 @@ export async function idleOutputs(
 }
 
 /**
- * Deletes `paths`, measuring each first. It then reads the executables on PATH anew, with the reading `launching` gives,
- * immediately before the removals, so the reading follows the size walk and every process read before it, and keeps
- * every path when one resolves into the checkout, saying so in `kept`.
+ * Deletes `paths` one at a time: it measures a path, reads the executables on PATH anew (`launching.anew`) and removes
+ * the path, or keeps it and says so in `kept` when one resolves into the checkout. Each removal has a reading of its
+ * own, taken after the size walk and every process read before it, so none is older than the removal before it.
  */
 export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
-  const sizes: number[] = [];
-  for (const path of paths) sizes.push((await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0);
-  const launcher = launcherReason(launching.checkout, await launching.launchers());
-  if (launcher) {
-    kept.push(...paths.map((path) => `kept ${path}: ${launcher}`));
-    return 0;
-  }
   let freed = 0;
-  for (const [index, path] of paths.entries()) {
-    freed += sizes[index] ?? 0;
+  for (const path of paths) {
+    const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const launcher = launcherReason(launching.checkout, await launching.anew());
+    if (launcher) {
+      kept.push(`kept ${path}: ${launcher}`);
+      continue;
+    }
+    freed += bytes;
     await rm(path, { recursive: true, force: true });
   }
   return freed;
@@ -334,7 +333,7 @@ async function enterIdleStage(
             );
             const freed = await deleteOutputs(
               outputs.paths,
-              launchingOf(checkout, freshLaunchers(operation, operation?.signal), operation, operation?.signal),
+              launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
               outputs.kept,
             );
             await recordStage(path, minutes, shutDown, freed);

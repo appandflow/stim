@@ -212,8 +212,8 @@ processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads
 per check); a directory check that reads the processes itself (a Cargo `target/` in
 `regenerableDirProblem`) takes a new launcher reading right after that read;
 `deleteOutputs`, for a registered workspace and a discovered checkout alike, takes
-its own new launcher reading after the size walk and immediately before the
-removals, and no reading is carried from the idleness check across a later process
+a new launcher reading before each removal, after that path's size measurement,
+so none is older than the removal before it, and no reading is carried from the idleness check across a later process
 read; `clearArtifact` and `clearSourceTrees` read the launchers once after their
 last recheck, before the removal; the Cargo trim takes a new launcher reading at
 each of its three process reads and checks the whole owning checkout against it
@@ -598,7 +598,7 @@ fresh read per process read. In a scratch pass of four idle discovered
 checkouts and one linked worktree, the launcher reads were 1 plan + 12 output
 reads + 4 dependency reads when every check read anew, and are 1 plan + 8 output
 reads (the shared planning read, then per candidate one with the idleness process
-read and one after the size walk) and 3 dependency reads (one planning, one with
+read and one before each of its removals, one here) and 3 dependency reads (one planning, one with
 the recheck's process read, one before the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 

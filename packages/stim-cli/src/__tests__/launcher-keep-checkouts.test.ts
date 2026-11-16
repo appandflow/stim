@@ -339,6 +339,37 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
       expect(existsSync(join(path, 'target'))).toBe(true);
     });
 
+    it('reads the launchers before each removal, so a link created after the first removal keeps the second output', async () => {
+      const config = configOf();
+      saveConfig(config);
+      const twoOutputs = (name: string) => {
+        const path = join(roots(), name);
+        const tool = app(path);
+        mkdirSync(join(path, 'android', 'build'), { recursive: true });
+        writeFileSync(join(path, 'android', 'build', 'out'), 'x');
+        age(path);
+        return { path, tool, first: join(path, 'android', 'app', 'build'), second: join(path, 'android', 'build') };
+      };
+      const linked = twoOutputs('linked');
+      const free = twoOutputs('free');
+      const idle = await stoppedOutputCandidates(config, reading, day);
+      const candidateOf = (path: string) => idle.find((entry) => entry.path === path) ?? fail();
+
+      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+        if (dir === linked.second && !existsSync(linked.first)) link(join(linked.second, 'out'));
+        return 1;
+      });
+      const result = await clearStoppedOutputs(candidateOf(linked.path), config, day);
+      expect(existsSync(linked.first)).toBe(false);
+      expect(existsSync(linked.second)).toBe(true);
+      expect(result).toMatchObject({ detail: expect.stringContaining(`kept ${linked.second}: an executable on PATH`) });
+
+      unlinkSync(join(bin, 'tool'));
+      expect(await clearStoppedOutputs(candidateOf(free.path), config, day)).toMatchObject({ outcome: 'done' });
+      expect(existsSync(free.first)).toBe(false);
+      expect(existsSync(free.second)).toBe(false);
+    });
+
     it('keeps the build output when a launcher appears during the size walk, and clears it when none does', async () => {
       const path = join(roots(), 'app');
       const config = configOf();

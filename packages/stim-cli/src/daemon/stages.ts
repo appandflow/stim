@@ -380,12 +380,7 @@ export async function clearStoppedOutputs(
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(
               outputs.paths,
-              launchingOf(
-                candidate.checkout,
-                freshLaunchers(operation, operation?.signal),
-                operation,
-                operation?.signal,
-              ),
+              launchingOf(candidate.checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
               outputs.kept,
             );
             return {
