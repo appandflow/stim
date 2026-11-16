@@ -23,7 +23,7 @@ export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promi
 }
 
 export function configCorruptRepair(path: string = getConfigPath()): string {
-  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine, and a later \`stim gc\` removes the ones this home's ledger still lists. \`stim gc --dry-run\` lists stim-* devices it cannot verify, which can belong to other Stim homes; delete one only if you know this home created it.`;
+  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine, and once a config exists again \`stim gc\` removes the ones this home's ledger still lists. \`stim gc --dry-run\` lists stim-* devices it cannot verify, which can belong to other Stim homes; delete one only if you know this home created it.`;
 }
 
 function configCorrupt(reason: string, path: string = getConfigPath()): Error {
