@@ -54,7 +54,7 @@ async function spaceUsers(
 }
 
 const LOW_DISK_REMEDY =
-  'Run `stim status` to see what the stim-daemon reclaimed, `stim gc --dry-run` to see what else Stim can reclaim, then `stim gc`. Free space outside Stim from the largest uses listed, or lower disk.hardFloorGb.';
+  'Run `stim status` to see what the stim-daemon reclaimed, then `stim gc --dry-run` and `stim gc`. Free space from the largest uses listed, asking before deleting anything outside Stim. Lowering disk.hardFloorGb only removes the protection.';
 
 /**
  * Rung 7 of the pressure ladder, before `start`, `ios` and `android` do their work: while free disk on the

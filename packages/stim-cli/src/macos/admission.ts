@@ -28,9 +28,14 @@ export async function peekLocalMacosCapacity(
     if (record?.host) continue;
     const identity = record?.app ? inspectProcessIdentity(record.app) : 'gone';
     if (identity === 'unknown') {
-      throw Object.assign(new Error(`Cannot verify the macOS app in ${project}; local app capacity is unknown.`), {
-        code: 'STIM_MACOS_OWNER_UNVERIFIED',
-      });
+      throw Object.assign(
+        new Error(
+          `Cannot verify the macOS app in ${project}; local app capacity is unknown. Inspect that app's process and workspace record, do not replace a PID or token with another running app, then run \`stim stop\` in ${project}.`,
+        ),
+        {
+          code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        },
+      );
     }
     if (identity === 'same' || (await runningBundleInstancesAsync(project, context)).length > 0) running++;
     if (running >= limit.max) break;

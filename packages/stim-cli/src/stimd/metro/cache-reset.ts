@@ -70,7 +70,7 @@ export async function stopOwnedMetroForReset(root: string, signal?: AbortSignal)
       throw supervisorError(
         'STIM_SUPERVISOR_EXITED',
         `Cannot reset Metro: ${stopped.reason}.`,
-        'Stop it with the tool that started it, then retry. Stim leaves unverified processes alone.',
+        'Stop it with the tool that started it, then retry. If inspection is denied, retry with permission to inspect Stim processes. Do not infer ownership from a process name, port or timestamp.',
       );
     case 'external':
       throw supervisorError(

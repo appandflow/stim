@@ -135,7 +135,7 @@ async function selectXcode(
       resolved.error ?? {
         code: 'STIM_NO_SCHEME',
         message: `Could not select an app scheme in ${project.path}.`,
-        remedy: 'Pass --scheme <name>, or set ios.scheme.',
+        remedy: 'Pass --scheme <name>, or set ios.scheme; share the app scheme in Xcode if it is not listed.',
       }
     );
   }
@@ -475,7 +475,12 @@ export async function runProvision(
       d.note('Already changed before it stopped:');
       for (const line of already) d.note(`  ${redactKeyPath(line, auth)}`);
     }
-    return report({ ...failure, plan, changes });
+    return report({
+      ...failure,
+      ...(run.error || run.cancelled ? {} : { remedy: `${failure.remedy} Running it again is safe.` }),
+      plan,
+      changes,
+    });
   }
 
   const result: ProvisionResult = { ...plan, changes };

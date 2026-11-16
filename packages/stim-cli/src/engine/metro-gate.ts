@@ -85,7 +85,7 @@ export async function gateMetroOrigin({
     remedy:
       `Check that ${origin} forwards to port ${metroPort} on THIS machine. ` +
       'A tunnel built for a port this workspace no longer holds will answer normally and serve a different project. ' +
-      '`stim start` prints the port it reserved.',
+      'Re-run `stim start`, which prints the port it reserved, and rebuild a manual tunnel against that port.',
   };
 }
 

@@ -8,7 +8,7 @@ import {
   inspectProcessIdentity,
   processStartMicros,
 } from '../process-identity.ts';
-import { macosDir } from './state.ts';
+import { MACOS_OWNER_HINT, macosDir } from './state.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -69,9 +69,12 @@ export async function bundleInstancePidsAsync(
 }
 
 function unverified(pid: number, why: string): Error {
-  return Object.assign(new Error(`Cannot verify macOS app pid ${pid}: ${why}; no signal was sent.`), {
-    code: 'STIM_MACOS_OWNER_UNVERIFIED',
-  });
+  return Object.assign(
+    new Error(`Cannot verify macOS app pid ${pid}: ${why}; no signal was sent. ${MACOS_OWNER_HINT}`),
+    {
+      code: 'STIM_MACOS_OWNER_UNVERIFIED',
+    },
+  );
 }
 
 function bundleRecord(pid: number): MacosProcess | null {
