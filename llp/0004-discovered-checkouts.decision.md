@@ -289,7 +289,9 @@ No, only a command you run. A permission prompt from a background daemon has no
 visible cause." No command runs the scan, so the scan skips `~/Documents` as it
 skips `~/Desktop` and `~/Downloads`. Revalidation (`scanEntryValid`) drops a find
 an earlier scan recorded there. A `maintenance.discoverRoots` entry under it is
-not a scan find and is read as before.
+not a scan find and is read as before: the daemon reads every configured root on
+each pass, so a root under `~/Documents` makes macOS ask for permission once,
+which is the person's choice in naming it.
 
 Chosen by the implementing lane, not by the maintainer or the coordinator: the
 depth of seven, the folders

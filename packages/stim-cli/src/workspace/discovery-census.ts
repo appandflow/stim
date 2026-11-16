@@ -1,7 +1,7 @@
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isScopedHome, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   discoveryCensusFile,
@@ -15,9 +15,11 @@ import {
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
 import { answered, hungRead } from './bounded-read.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
 import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
 import { isBroadFolder, unmanagedScanFinds } from './discovery.ts';
+import { scanDescends } from './scan-rules.ts';
 import {
   ARTIFACT_DIRS,
   existingBuildDirsReads,
@@ -39,17 +41,28 @@ const BUDGET_MS = 90_000;
 /** When this process last tried a run, so a census that cannot be stored does not start walks on every tick. */
 const attempts = { at: 0 };
 
+/** Whether the current scan rules enter every folder from `home` down to `path`; a path outside `home` is not judged. */
+function descendable(home: string, path: string): boolean {
+  const names = relative(home, path).split(sep);
+  return names[0] === '..' || names.every((name, i) => scanDescends(name, i + 1));
+}
+
 /**
  * Whether a census run is due: none exists, the scan it came from is not the last one, `maintenance.discoverRoots`
- * changed, some directory is still waiting for a measurement and an hour passed, or a day passed.
+ * changed, a recorded find lies where the scan no longer descends, some directory is still waiting for a measurement
+ * and an hour passed, or a day passed.
  */
 export function censusDue(
-  last: Pick<DiscoveryCensus, 'at' | 'scanRanAt' | 'roots' | 'pending'> | null,
+  last:
+    | (Pick<DiscoveryCensus, 'at' | 'scanRanAt' | 'roots' | 'pending'> & { finds?: readonly { path: string }[] })
+    | null,
   scanRanAt: number,
   roots: readonly string[],
   now: number,
+  home?: string,
 ): boolean {
   if (!last || last.at > now || last.scanRanAt !== scanRanAt) return true;
+  if (home && last.finds?.some(({ path }) => !descendable(home, path))) return true;
   if (last.roots.length !== roots.length || last.roots.some((root, at) => root !== roots[at])) return true;
   return now - last.at >= (last.pending ? HOUR_MS : REFRESH_MS);
 }
@@ -369,7 +382,10 @@ export async function runDiscoveryCensusIfDue(
     const setting = machineSettingValue(DISCOVER_ROOTS_KEY, { config, env: operation.env });
     const roots = rootsOf(setting, homedir());
     const last = file.status === 'read' ? file.census : null;
-    if (!censusDue(last, scanFile.scan.ranAt, roots, now) || (now >= attempted.at && now - attempted.at < HOUR_MS))
+    if (
+      !censusDue(last, scanFile.scan.ranAt, roots, now, canonicalPath(homedir())) ||
+      (now >= attempted.at && now - attempted.at < HOUR_MS)
+    )
       return;
     attempted.at = now;
     const finds = await unmanagedScanFinds(config, listedRoots(), operation);
