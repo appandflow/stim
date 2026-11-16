@@ -1676,14 +1676,17 @@ describe('offloaded builds', () => {
     const holder = join(root, 'stderr-holder.pid');
     const port = await startWorker({ env: { FAKE_WORKER_STDERR_HOLDER: holder } });
     const { client } = await buildClient(port);
-    onTestFinished(() => {
-      if (existsSync(holder)) process.kill(Number(readFileSync(holder, 'utf8')), 'SIGKILL');
-    });
     await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
     client.socket.send(blob('x'));
     expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
-    expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
-    expect(alive(Number(readFileSync(holder, 'utf8')))).toBe(true);
+    const settled = (await progress(client)).at(-1);
+    const pid = Number(readFileSync(holder, 'utf8'));
+    try {
+      expect(settled).toMatchObject({ outcome: { ok: true } });
+      expect(alive(pid)).toBe(true);
+    } finally {
+      process.kill(pid, 'SIGKILL');
+    }
   });
 
   test.skipIf(!fakeTailscale)(
