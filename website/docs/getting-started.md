@@ -241,9 +241,9 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
 - Run `stim doctor` to check the machine and project setup.
 - Run `stim logs --errors` for Metro, app, and build errors since the last
   launch or bundle.
-- A refusal prints a code such as `STIM_METRO_TIMEOUT`. Run
-  `stim guide errors <CODE>` for its cause and remedy, or look it up on the
-  [troubleshooting page](./troubleshooting.md).
+- A refusal prints a code such as `STIM_METRO_TIMEOUT`, a message and a remedy.
+  Follow the remedy. When it names `stim guide errors <name>`, run that, or
+  read the same text on the [troubleshooting page](./troubleshooting.md).
 - If Stim itself looks wrong, [report a problem](./agent-skills.md#report-a-problem).
 
 Use [remote machines](./remote-machines.md) to build on an approved machine or
