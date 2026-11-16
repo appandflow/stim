@@ -235,18 +235,20 @@ function reportChild(
     }
     return 'unknown';
   };
-  const recordRefused = (refusal: Refusal) => {
+  let killedUncaptured = false;
+  const recordExit = (refusal?: Refusal) => {
     if (pid === undefined) return;
     const write = () => {
       if (exitedAt === undefined) return;
       const cancelToExitMs = Math.round(exitedAt - cancelledAt);
       logReportChild(
-        `report child ${named} exited ${cancelToExitMs} ms after its cancel (${cancelReason}, refused: ${refusal})`,
+        `report child ${named} exited ${cancelToExitMs} ms after its cancel (${cancelReason}${refusal ? `, refused: ${refusal}` : ''}${killedUncaptured ? ', killed with SIGKILL' : ''})`,
         {
           pid,
           command,
           cancelReason,
-          refusal,
+          ...(refusal ? { refusal } : {}),
+          ...(killedUncaptured ? { killedUncaptured } : {}),
           ...(timeoutMs === undefined ? {} : { timeoutMs }),
           spawnToCancelMs: Math.round(cancelledAt - spawnedAt),
           cancelToExitMs,
@@ -274,7 +276,7 @@ function reportChild(
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.unref();
-    recordRefused(refusal);
+    recordExit(refusal);
     rejectClosed(error);
     throw error;
   };
@@ -289,6 +291,21 @@ function reportChild(
             ? 'report_budget'
             : 'abort'
           : 'unknown');
+      // libuv reaps a batch of children before running their exit callbacks, so only a check-phase callback can trust an undelivered exit:
+      // https://github.com/libuv/libuv/blob/v1.51.0/src/unix/process.c#L101-L176
+      // @ref LLP 0007#a-report-child-whose-identity-was-not-captured-is-killed-after-its-cancel -- signalled only from a macrotask, before its exit is delivered
+      if (pid !== undefined && captured && !captured.ok && process.platform !== 'win32')
+        await new Promise<void>((resolve) => {
+          setImmediate(() => {
+            if (child.exitCode === null && child.signalCode === null) {
+              try {
+                process.kill(pid, 'SIGKILL');
+                killedUncaptured = true;
+              } catch {}
+            }
+            resolve();
+          });
+        });
       let identity = observe();
       if (pid !== undefined) {
         const deadline = performance.now() + 1000;
@@ -359,6 +376,7 @@ function reportChild(
         !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
       )
         refuse(`Report child ${named} still has descendants after cleanup.`, 'descendants');
+      if (killedUncaptured) recordExit();
     })());
   if (report) trackReportResource(context, closed, cancel, signal, undefined, cleanupSettled);
   else {
