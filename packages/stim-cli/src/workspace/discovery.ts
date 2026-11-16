@@ -3,11 +3,11 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
-import { machineSettingValue, readDiscoveryScan, type Config } from '@stim-cli/core/state';
+import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { isProtectedLocation } from './protected-locations.ts';
-import { scanEntryValid, scanSkipper } from './scan-rules.ts';
+import { absent, scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
@@ -68,30 +68,49 @@ const PROJECT_FOLDERS = ['apps', 'examples', 'packages'];
 const PROJECT_FOLDER_ENTRIES = 50;
 const READ_TIMEOUT_MS = 3000;
 
-function isProject(path: string): boolean {
+/** Whether project detection recognises the folder as a project; `'unknown'` when it could not read what decides that. */
+function projectState(path: string): boolean | 'unknown' {
   try {
-    return projectRegistry.selectDoctor(path).problem === null;
+    const { problem } = projectRegistry.selectDoctor(path);
+    return problem === null ? true : problem.kind === 'unreadable' ? 'unknown' : false;
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 
 /**
  * Whether Stim's project detection recognises the folder: it is a project itself, or a direct child of its `apps/`,
- * `examples/` or `packages/` is, as in a monorepo whose root holds no app.
+ * `examples/` or `packages/` is, as in a monorepo whose root holds no app. `'unknown'` when nothing recognised it and
+ * some read that decides this failed (a manifest that does not parse, a listing that cannot be read), so it may be one.
  */
-export function recognises(path: string): boolean {
-  if (isProject(path)) return true;
-  return PROJECT_FOLDERS.some((folder) => {
+export function recognition(path: string): boolean | 'unknown' {
+  let unknown = false;
+  const own = projectState(path);
+  if (own === true) return true;
+  if (own === 'unknown') unknown = true;
+  for (const folder of PROJECT_FOLDERS) {
+    let names: string[];
     try {
-      return readdirSync(join(path, folder), { withFileTypes: true })
+      names = readdirSync(join(path, folder), { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
         .slice(0, PROJECT_FOLDER_ENTRIES)
-        .some((entry) => isProject(join(path, folder, entry.name)));
-    } catch {
-      return false;
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (!absent(error)) unknown = true;
+      continue;
     }
-  });
+    for (const name of names) {
+      const child = projectState(join(path, folder, name));
+      if (child === true) return true;
+      if (child === 'unknown') unknown = true;
+    }
+  }
+  return unknown ? 'unknown' : false;
+}
+
+/** The recognition the walks, the sibling and root children and the deleting passes use: only a proven project counts. */
+function recognises(path: string): boolean {
+  return recognition(path) === true;
 }
 
 /** `read`'s result, or null when it fails or has not answered within the timeout, as a hung mount would not. */
@@ -143,6 +162,14 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): { roots
   };
 }
 
+/** The existing `maintenance.discoverRoots` folders discovery uses: symlinks resolved, too broad ones left out. */
+function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
+  return configuredRoots(config, env)
+    .roots.filter((root) => existsSync(root))
+    .map(canonicalPath)
+    .filter((root) => !isBroadFolder(root));
+}
+
 /** The `maintenance.discoverRoots` entries that do not name a folder, for doctor to report. */
 export function missingDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
   return configuredRoots(config, env).roots.filter((root) => {
@@ -189,6 +216,8 @@ export function worktreeInScope(
 
 interface Discovery {
   found: DiscoveredCheckout[];
+  /** Scan finds whose validity could not be established this time: neither selected nor dropped. */
+  scanPending: string[];
   /** Worktrees and folders the discovery reached that Stim does not manage: listed, never acted on. */
   outside: { path: string; from: string }[];
 }
@@ -222,36 +251,37 @@ export async function discoveredOutside(
 const memo = new WeakMap<StimContext, Promise<Discovery>>();
 
 function discovery(config: Config | null, known: readonly string[], operation?: StimContext): Promise<Discovery> {
-  if (!operation) return computeDiscovered(config, known, operation);
+  if (!operation) return computeDiscovered(config, known, readDiscoveryScan(), operation);
   let found = memo.get(operation);
-  if (!found) memo.set(operation, (found = computeDiscovered(config, known, operation)));
+  if (!found) memo.set(operation, (found = computeDiscovered(config, known, readDiscoveryScan(), operation)));
   return found;
 }
 
 /** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
-async function revalidatedScan(): Promise<DiscoveryChild[]> {
+async function revalidatedScan(scan: DiscoveryScan | null): Promise<{ valid: DiscoveryChild[]; pending: string[] }> {
   const home = canonicalPath(homedir());
-  const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
+  const rules = { home, isCheckout: recognition, skip: scanSkipper(home) };
   const valid: DiscoveryChild[] = [];
+  const pending: string[] = [];
   const ancestors = new Map();
-  for (const path of readDiscoveryScan()?.found ?? [])
-    if (isAbsolute(path) && (await scanEntryValid(path, { ...rules, ancestors })) === 'valid')
-      valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
-  return valid;
+  for (const path of scan?.found ?? []) {
+    if (!isAbsolute(path)) continue;
+    const state = await scanEntryValid(path, { ...rules, ancestors });
+    if (state === 'valid') valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
+    else if (state === 'pending') pending.push(path);
+  }
+  return { valid, pending };
 }
 
 async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
+  scan: DiscoveryScan | null,
   operation?: StimContext,
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
-  const { roots } = configuredRoots(config, env);
-  const canonicalRoots = roots
-    .filter((root) => existsSync(root))
-    .map(canonicalPath)
-    .filter((root) => !isBroadFolder(root));
+  const canonicalRoots = canonicalDiscoverRoots(config, env);
   const repositories: { entries: { path: string }[]; main: string }[] = [];
   const folders = new Map<string, string>();
   const children: DiscoveryChild[] = [];
@@ -307,7 +337,7 @@ async function computeDiscovered(
       else outside.push({ path, from: main });
     }
   }
-  const scanned: DiscoveryChild[] = scoped ? [] : await revalidatedScan();
+  const { valid: scanned, pending: scanPending } = scoped ? { valid: [], pending: [] } : await revalidatedScan(scan);
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
@@ -317,6 +347,76 @@ async function computeDiscovered(
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {
     found: everything,
+    scanPending,
     outside: outside.filter(({ path }) => !listed.has(path) && !coveredByKnown(path)),
+  };
+}
+
+/** What the last full scan found that this Stim home does not fully manage. */
+export interface UnmanagedScanFinds {
+  /** The `ranAt` of the scan result these were classified from. */
+  scanRanAt: number;
+  /** Scan finds discovery selects and no other route reaches: Stim reduces their outputs and never removes them. */
+  reduceOnly: string[];
+  /** Scan finds under a home dot-folder that no route reaches: Stim does nothing with them. */
+  dotFolder: string[];
+  /** Finds, of either kind, whose validity a read that did not answer left unestablished: neither managed nor gone. */
+  unchecked: string[];
+  /** The existing, non-broad `maintenance.discoverRoots` folders with symlinks resolved, as this classification used. */
+  canonicalRoots: string[];
+}
+
+const touches = (path: string, other: string): boolean =>
+  path === other || path.startsWith(`${other}${sep}`) || other.startsWith(`${path}${sep}`);
+
+/**
+ * The scan finds that are not managed through another route, classified from the complete discovery list: the finds
+ * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
+ * is unmanaged unless a registered project or a discovered checkout touches it. Lying inside a `maintenance.discoverRoots`
+ * folder or a tool folder is not coverage: discovery reaches only the direct children of a root and the worktrees git
+ * lists, and a find it did not select stays listed. (The scan prunes `.codex`, so a find under the tool folder cannot
+ * come from it.) Each dot-folder find is revalidated like a scan find. A find of either kind whose revalidation did
+ * not answer is `unchecked` (when no route covers it), never dropped. A scoped STIM_HOME scans nothing and so finds
+ * nothing. Null when there is no usable scan result.
+ *
+ * It computes discovery anew from the one scan result it reads and returns that result's `ranAt`, not through the
+ * per-operation memo the passes share: the memo can hold a discovery computed from an older scan result, and the census
+ * must classify the scan it records. The passes' own use of the memo is unchanged.
+ */
+export async function unmanagedScanFinds(
+  config: Config | null,
+  known: readonly string[],
+  operation: StimContext,
+): Promise<UnmanagedScanFinds | null> {
+  const scan = readDiscoveryScan();
+  if (!scan) return null;
+  const { found, scanPending } = await computeDiscovered(config, known, scan, operation);
+  const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
+  if (isScopedHome(operation.env))
+    return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [], unchecked: [], canonicalRoots: [] };
+  const home = canonicalPath(homedir());
+  const roots = canonicalDiscoverRoots(config, operation.env);
+  const knownRoots = known.map(canonicalPath);
+  const rules = { home, isCheckout: recognition, skip: scanSkipper(home) };
+  const ancestors = new Map();
+  const covered = (path: string): boolean =>
+    !isAbsolute(path) ||
+    knownRoots.some((root) => touches(path, root)) ||
+    found.some((checkout) => touches(path, checkout.path));
+  const dotFolder: string[] = [];
+  const unchecked = scanPending.filter((path) => !covered(path));
+  for (const path of scan.dotFolderFound) {
+    operation.signal.throwIfAborted();
+    if (covered(path)) continue;
+    const state = await scanEntryValid(path, { ...rules, ancestors });
+    if (state === 'valid') dotFolder.push(path);
+    else if (state === 'pending') unchecked.push(path);
+  }
+  return {
+    scanRanAt: scan.ranAt,
+    reduceOnly,
+    dotFolder: dotFolder.toSorted(),
+    unchecked: unchecked.toSorted(),
+    canonicalRoots: roots,
   };
 }

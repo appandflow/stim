@@ -299,8 +299,10 @@ async function gateOf(
  * Whether a checkout a scan recorded may still be used: it is a real directory (not a symlink), its canonical path is
  * the recorded one, it lies below the home folder on the home volume, no folder between the two is one the scan skips
  * (`scanDescends`, `skip`), every folder from the home folder down to it passes `folderSafety` (memoised in `ancestors`),
- * what it inspects below itself passes `nestedSafety`, and `isCheckout` still recognises it.
- * `invalid` drops it, such as a checkout moved away with a symlink left behind; `pending` means a read did not answer,
+ * what it inspects below itself passes `nestedSafety`, and `isCheckout` still recognises it (an `isCheckout` that
+ * could not read what decides it is `pending`, like a metadata read that did not answer).
+ * `invalid` drops it, such as a checkout moved away with a symlink left behind (a metadata read that fails for any reason
+ * but proven absence, ENOENT or ENOTDIR, such as a denied one, is `pending`, never `invalid`); `pending` means a read did not answer,
  * so it is not selected this time and stays in the scan file.
  */
 export async function scanEntryValid(
@@ -314,7 +316,8 @@ export async function scanEntryValid(
     ancestors = new Map(),
   }: {
     home: string;
-    isCheckout: (path: string) => boolean;
+    /** `'unknown'`: a read that decides it failed, so the folder may still be a checkout. */
+    isCheckout: (path: string) => boolean | 'unknown';
     skip: (path: string) => boolean;
     timeoutMs?: number;
     io?: RecognitionIo;
@@ -333,7 +336,7 @@ export async function scanEntryValid(
     if ((await answered(path, () => io.realpath(path), timeoutMs)) !== path) return 'invalid';
     if ((await answered(home, () => io.stat(home), timeoutMs)).dev !== info.dev) return 'invalid';
   } catch (error) {
-    return error instanceof Unanswered ? 'pending' : 'invalid';
+    return absent(error) ? 'invalid' : 'pending';
   }
   const chain = [
     home,
@@ -354,5 +357,6 @@ export async function scanEntryValid(
   }
   const nested = await nestedSafety(path, own, timeoutMs, io);
   if (nested !== 'safe') return nested === 'unsafe' ? 'invalid' : 'pending';
-  return isCheckout(path) ? 'valid' : 'invalid';
+  const recognised = isCheckout(path);
+  return recognised === 'unknown' ? 'pending' : recognised ? 'valid' : 'invalid';
 }

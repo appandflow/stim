@@ -23,6 +23,21 @@ describe('scanEntryValid with a hand-edited scan result', () => {
     expect(await scanEntryValid(project('dev', 'app'), rules())).toBe('valid');
   });
 
+  it('keeps an entry whose metadata read fails for anything but proven absence as pending, and drops one that is absent', async () => {
+    const path = project('dev', 'app');
+    const failing = (code: string) => ({
+      ...REAL_RECOGNITION_IO,
+      lstat: async (target: string) => {
+        if (target === path) throw Object.assign(new Error(code), { code });
+        return REAL_RECOGNITION_IO.lstat(target);
+      },
+    });
+    for (const code of ['EACCES', 'EPERM', 'EIO'])
+      expect(await scanEntryValid(path, { ...rules(), io: failing(code) })).toBe('pending');
+    for (const code of ['ENOENT', 'ENOTDIR'])
+      expect(await scanEntryValid(path, { ...rules(), io: failing(code) })).toBe('invalid');
+  });
+
   it('refuses entries the scan never finds: the filesystem root, another home, the Stim home, pruned and skipped folders', async () => {
     const other = realpathSync(mkdtempSync(join(tmpdir(), 'stim-scan-other-')));
     try {

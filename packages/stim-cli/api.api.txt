@@ -361,8 +361,17 @@
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
 [*] interface DiscoveredCheckout { @@1 reduceOnly?: boolean;
+[*] interface DiscoveryReport {
+[*] interface DiscoveryReport { @@1 census: "read" | "absent" | "unreadable" | "unusable" | "none";
+[*] interface DiscoveryReport { @@1 censusAt: number | null;
+[*] interface DiscoveryReport { @@1 censusCurrent: boolean;
+[*] interface DiscoveryReport { @@1 complete: boolean;
+[*] interface DiscoveryReport { @@1 groups: UnmanagedGroup[];
+[*] interface DiscoveryReport { @@1 rootsChangedSinceCensus: boolean;
+[*] interface DiscoveryReport { @@1 scan: ScanSummary;
 [*] interface DoctorReport {
 [*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
+[*] interface DoctorReport { @@1 @internal discovery: DiscoveryReport;
 [*] interface DoctorReport { @@1 @internal maintenance: ReturnType<typeof maintenanceStatus> & {
 [*] interface DoctorReport { @@1 deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
 [*] interface DoctorReport { @@1 findings: Finding[];
@@ -1410,6 +1419,21 @@
 [*] interface TunnelOutcome { @@1 provider?: string;
 [*] interface TunnelOutcome { @@1 reason?: string;
 [*] interface TunnelOutcome { @@1 status: string;
+[*] interface UnmanagedGroup {
+[*] interface UnmanagedGroup { @@1 bytes: number;
+[*] interface UnmanagedGroup { @@1 checkouts: number;
+[*] interface UnmanagedGroup { @@1 command: string | null;
+[*] interface UnmanagedGroup { @@1 commandProblem: "too-broad" | "already-named" | "setting-unreadable" | "unchecked" | null;
+[*] interface UnmanagedGroup { @@1 failed: number;
+[*] interface UnmanagedGroup { @@1 folder: string;
+[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder" | "unchecked";
+[*] interface UnmanagedGroup { @@1 measured: number;
+[*] interface UnmanagedGroup { @@1 members: Array<{
+[*] interface UnmanagedGroup { @@1 notMeasuredYet: number;
+[*] interface UnmanagedGroup { @@1 oldestMeasuredAt: number | null;
+[*] interface UnmanagedGroup { @@1 partial: number;
+[*] interface UnmanagedGroup { @@2 gitActivityAt: string | null;
+[*] interface UnmanagedGroup { @@2 path: string;
 [*] interface UnverifiedCleanup {
 [*] interface UnverifiedCleanup { @@1 child: number;
 [*] interface UnverifiedCleanup { @@1 message: string;
@@ -1662,6 +1686,16 @@
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@0 } ? Omit<Options, "wait"> & {
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
+[*] type ScanSummary = {
+[*] type ScanSummary = { @@1 ranAt: number;
+[*] type ScanSummary = { @@1 status: "read";
+[*] type ScanSummary = { @@1 trigger: "weekly" | "low-disk";
+[*] type ScanSummary = { @@1 truncation: ScanTruncation;
+[*] type ScanSummary = { @@1 unreadable: string[];
+[*] type ScanSummary = { @@1 visited: number;
+[*] type ScanSummary = { @branch1 @@0 } | {
+[*] type ScanSummary = { @branch1 @@1 status: "absent" | "unreadable" | "unusable";
+[*] type ScanTruncation = "none" | "budget" | "folders" | "read" | "failed";
 [*] type SettingScope = "machine" | "workspace" | "repo" | "committed";
 [*] type SettingsPayload = {
 [*] type SettingsPayload = { @@1 files: Partial<Record<SettingScope, string>>;

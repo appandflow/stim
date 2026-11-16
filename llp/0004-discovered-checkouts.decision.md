@@ -142,8 +142,8 @@ list. Reason: Stim cannot tell an installed tool from a checkout there, for
 example a Swift CLI cloned under `~/.mytool` whose launcher on PATH points into
 its ignored `.build/release`; clearing that output once idle would break the
 installed command. The record lets doctor report what the folder holds and the
-command that adds it to `maintenance.discoverRoots`; that listing is not part of
-this change.
+command that adds it to `maintenance.discoverRoots`; the listing is described in
+"The doctor listing and the low-disk line".
 
 The scan has a 45 second budget (and a 200 thousand folder cap, and an abort),
 checked before every read it makes, including every read of the safety checks
@@ -288,8 +288,154 @@ retry after an hour of a scan that failed or ended on a read that timed out, whi
 after the pass, and the PATH launcher keep. The scan is not deferred under host
 load; it takes about a second and a half on one MacBook.
 
-Not part of this change: points 4, 5 and 7, which belong to the doctor listing
-and the low-disk line.
+Points 4, 5 and 7 are implemented in "The doctor listing and the low-disk line".
+
+## The doctor listing and the low-disk line
+
+Maintainer direction, 2026-11-14 (#5762), verbatim, on the line Stim commands
+print when the disk is low: "do stim commands when low on disk space already log
+smt", then "could be part of that", then "smt like low disk space, found projects
+not managed by stim taking x space , command to add to discover roots". On the
+first of the two points it records for doctor, the decision above says: "doctor
+lists them and suggest adding as managed path or delete if idle for long time".
+Maintainer statement, 2026-11-14, as the issue records it (comment of 2026-11-15),
+verbatim: "like maybe not part of doctor since it could be slow". It was said about the
+scan itself, so doctor never walks the disk.
+
+What these words state: doctor lists the finds Stim does not fully manage and
+suggests adding the folder as a managed path, or deleting what has been idle a
+long time; the low-disk line carries how much they hold and the command that adds
+them; the scan stays out of doctor.
+
+Chosen by the implementing lane and the coordinator's brief, not by the
+maintainer:
+
+- The daemon writes the result. After a scan it classifies the scan's finds from
+  the complete discovery list and measures their recognised build output into
+  `maintenance/discovery-census.json`. Doctor and the low-disk line read that
+  file, the scan file and the `maintenance.discoverRoots` setting, and walk nothing.
+  Only the classification drops an entry, and only with evidence that a route
+  manages it; the report never hides a census entry, it chooses how to present it.
+  A group whose folder is a root discovery uses, or the setting names now, is shown
+  with no adopt command and words saying why its entries are listed. A group in a
+  root discovery ignores (a broad one such as `~`) is an ordinary group.
+- Two kinds, worded differently because they are different facts: reduce-only
+  scan finds (Stim reduces their outputs and never removes them), and finds under
+  a home dot-folder (Stim does nothing with them). Both are grouped by the
+  folder that holds them, the only folder `maintenance.discoverRoots` can name to
+  adopt them, with a command built from the current value plus that folder and
+  quoted for the shell. The home folder and a folder holding it cannot be named, so
+  such a group gets words and no command. The command adds the folder to the full
+  discovered-checkout rules, finished-worktree removal included, and for a
+  dot-folder find lets Stim act where it did not; the listing says so.
+- Size is the recognised build output only (the build directories maintenance
+  clears, a Cargo target with `CACHEDIR.TAG` or Exact's), not `node_modules` or
+  Pods, and not proof that a directory is deletable. It goes through
+  `refreshMeasure` and the disk-usage cache: one walk at a time on the machine, 10
+  seconds per directory, at most 25 checkouts and 90 seconds per run; a checkout
+  evaluated within a day is carried over. The checkouts due are taken in the order
+  they have waited longest (never tried, then the oldest attempt, `attemptedAt`, which
+  a run cut short by the budget also sets without touching the measurement), and what
+  a run leaves keeps the census pending, so the next one, an hour later, continues;
+  an evaluation older than a day when the census was made is never read as current.
+  A walk that failed or timed out is "could not be
+  measured" and a directory not reached is "not measured yet", never zero; a total
+  with either is "at least".
+- Every read of a checkout's layout goes through the shared bounded reader
+  (`answered`: 3 seconds, one outstanding timed-out read, none while one is
+  pending) with the abort and the run's budget checked first, driving the same
+  directory rules the deleting passes use. A path that does not exist is absent; a
+  denied or timed-out read is "could not be measured", never zero. Walks and their
+  bounds are the ones above. Idle evidence is not read: it walks a checkout's
+  source with no bound the census could apply without changing code the deleting
+  passes use, so doctor says Stim has not checked whether a checkout is in use or
+  holds uncommitted or unpushed work, and leaves deleting one to the person.
+- What is and is not bounded on the census path. Bounded (`answered`): the scan's
+  safety gate for each folder (`folderSafety`, `nestedSafety`), the census's own
+  layout reads and the git activity reads. Not bounded by the shared
+  reader, found by reading `computeDiscovered`, `unmanagedScanFinds`, `scanSkipper` and
+  `childrenOf` (the callees of project recognition and of the git helpers were not
+  traced): synchronous `existsSync` on each configured `maintenance.discoverRoots`
+  entry, each registered project root and each worktree entry of a repository;
+  synchronous `realpathSync` (through `canonicalPath`) on those, on the repository
+  folders, on the home folder, on every child `childrenOf` lists, on the known roots
+  and, in `scanSkipper`, on the Stim home, the build worker root and the temporary
+  directories (with a config read under the Stim home); `isProtectedLocation`
+  (`realpathSync`) on every worktree path and on every candidate child outside a
+  configured root, scan finds included; project recognition (`recognises`:
+  `projectRegistry.selectDoctor(path)` and a synchronous `readdirSync` of the folder's
+  `apps`, `examples` and `packages`) in `childrenOf` and at the end of
+  `scanEntryValid`; the `childrenOf` listings, which are raced against 3 seconds
+  rather than going through the shared reader; and git subprocesses
+  (`git worktree list` and `git symbolic-ref`, through the exec wrapper, abortable
+  and bounded by their own timeouts) in `resolveSourceCheckoutAsync`. The passes run
+  discovery the same way; what this change adds is that project recognition now also
+  runs on finds under home dot-folders.
+- Instead of idle, the census records one bounded fact per checkout, the last git
+  activity: the newest modification time of `HEAD`, `index` and `logs/HEAD` in the
+  checkout's git directory. That is `<checkout>/.git` for a main checkout, and for a
+  linked worktree the directory its `.git` file names after `gitdir:`, accepted
+  only when absolute and ending in `.git/worktrees/<name>`. The reads are `lstat`
+  and a 512 byte prefix of a regular `.git` file, through `answered`, under the
+  run's budget and abort checks; no symlink is followed and no git process runs.
+  Commits, checkouts, staging and reflog writes change the date; editing files
+  without touching git does not, so it never proves a checkout unused. A missing
+  or unusual git directory, a failed or timed-out read or a spent budget is
+  unknown, shown as unknown and never as old. Doctor lists each checkout with the
+  date, oldest first, unknown last, in text and as an ISO string or null in the
+  JSON, with no threshold and without the word idle: the date is the fact and the
+  person judges. Chosen by the implementing lane and the coordinator, not by the
+  maintainer.
+- The git directory is tied to the checkout the way git records it: a linked
+  worktree's `.git` file names a directory (a relative name resolves against the
+  checkout) ending in `.git/worktrees/<name>` that holds a regular `gitdir` file
+  naming this checkout's `.git` file, and its canonical path (bounded
+  `realpath`) equals its normalised path, so no component is a symlink; a `logs`
+  that is not a real directory gives unknown.
+- A scan find whose revalidation did not answer is neither managed nor gone: the
+  census carries it as `unchecked` with any earlier measurement and its age,
+  stays pending (retried within the hour, as is a checkout whose layout read
+  failed), and doctor prints "every checkout it found is managed" only for a
+  finished scan, a census made from it and no unchecked find. A project check
+  that could not read what decides it (a manifest that does not parse, a listing
+  that fails other than by absence) leaves the find unchecked in the same way,
+  while only proof that it is no longer a project drops it. The deleting passes
+  select only a find that is proven a project, as before.
+- The measuring walk is told the directory exists (`knownToExist`), because the
+  census established that through the bounded reader; `refreshMeasure` makes no
+  other synchronous call on the measured path (its cache, failure and claim files
+  are under the Stim home). Discovery's own reads of configured roots and
+  registered projects (`existsSync`, `realpath`) are the ones the passes already
+  make.
+- The per-command critical-disk hook makes no filesystem call on a configured
+  root or a find. It reads the daemon snapshot, the scan file, the census file and
+  the config (all under the Stim home), compares strings with the canonical roots
+  the census recorded, and adds no line once `maintenance.discoverRoots` changed
+  since the census. `stim doctor`, which a person runs on purpose and which already
+  canonicalises roots elsewhere, resolves symlinks of the configured roots with
+  `realpath`. The census writes its file under a directory lock in the state
+  directory.
+- The census classifies a discovery computed from the scan result it records
+  (not the per-operation memo the passes share) and records that `ranAt`; a census
+  from an older scan than the scan file shows its checkouts as not measured yet.
+  An unverified child cleanup propagates out of the pass unchanged (LLP 0007);
+  any other census error is contained and logged once as `maintenance_failure`.
+- The low-disk line is a second stderr line after the existing one, at critical
+  only, never on stdout or in JSON. It gives the total (with "at least" while some
+  is unmeasured) and the command for the largest reduce-only folder; a dot-folder
+  group counts in the total and is never the one named.
+- Doctor shows it as a section outside the findings, so it never changes a PASS or
+  the count, and carries it in `--json` as `discovery`, an internal field. Doctor
+  runs only inside a project, so the section does too.
+- The worktrees in `~/.codex/worktrees` reach discovery through git as reduce-only
+  worktrees and are not scan finds, so they are not listed.
+
+Open for the maintainer: whether the last git activity date is enough for "delete if
+idle for long time", or Stim should offer more (it states no number and does not
+read source activity); whether
+the low-disk line also appears at the high level; whether listing the
+`~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
+Desktop show the listing.
 
 ## Removing a discovered worktree needs more evidence
 
@@ -323,11 +469,51 @@ hidden from `git status`.
 
 Chosen by the coordinator and the reviews of #5519, not by the maintainer.
 
+## Known limits of the listing
+
+A find that contains, or lies inside, a registered project or a discovered checkout
+is treated as managed and is not listed, although only that project or checkout is
+managed. This is the symmetric coverage rule `selectDiscovered` applies to the
+deleting passes; a monorepo root with a registered app inside it is the common case.
+
+A find whose layout read is permanently denied is re-measured each run, after the
+checkouts that have waited longer, so it takes a slot of the 25 (`looked`) but never
+starves the others, until it is fixed or leaves the scan result.
+A find whose metadata read is denied, or whose project check could not read a
+manifest (one that does not parse, as a merge conflict leaves it) or a listing,
+is carried as unchecked without taking a slot, and the full scan records the folder
+of such a manifest in its `unreadable` list, so `mergeFound` keeps the earlier finds
+at or below it (without descending less or finding more),
+but the census stays pending and reruns discovery every hour. A find that stays
+unreadable or unchecked keeps the list from ever being called complete, and doctor
+says so each time: it prints that the list may be incomplete and never that
+everything is managed. After `maintenance.discoverRoots` changes, or a new scan, the
+census predates it until the daemon lists again (about an hour): doctor says so, and
+offers no command and no reason that discovery did not select the listed folders.
+After a project is registered the census is not rebuilt for up to a day and doctor
+cannot tell, since the census does not record the registered projects: the listing
+may then include checkouts that are managed now, with no notice. A non-absolute path
+in the scan file is dropped by revalidation and by the coverage test without
+notice; it cannot be a checkout the scanner found, and rejecting it when the file
+is read would make the file unusable for the scheduler, which then keeps none of the
+previous finds of a truncated scan. The census
+file is read without a lock (it is replaced atomically under a lock, so a reader
+sees the old or the new file). A `du` that exits non-zero (denied files) is recorded
+as a measured lower bound: its bytes count and the totals read "at least".
+
+A size is re-evaluated within a day of the census that recorded it, but an
+evaluation may reuse a disk-usage cache entry under a day old (`maxAgeMs` is one
+day in `measureBuildOutput`) and stamps `evaluatedAt` with the evaluation time, so a
+figure can rest on a walk up to two days old, and the "oldest measurement" date
+doctor prints is the evaluation time, not the walk time.
+
 ## Links
 
 - Issues: #5512, #5515, #5757, #5762. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
+  `packages/stim-cli/src/workspace/discovery-census.ts`,
+  `packages/stim-cli/src/workspace/discovery-report.ts`,
   `packages/stim-cli/src/workspace/discovered-removal.ts`,
   `packages/stim-cli/src/workspace/protected-locations.ts`,
   `packages/stim-cli/src/workspace/hidden-edits.ts`,

@@ -38,6 +38,7 @@ import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { isUnverifiedCleanup, runDiscoveryCensusIfDue } from '../../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
@@ -747,18 +748,39 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
-    if (scanAfter) await scanAfterPass(tick, passFailed);
+    if (scanAfter) await scanAfterPass(tick, passFailed, trigger);
   }
 }
 
 /**
- * The discovery scan, after the pass has released its claim. Not after a failed pass or a cancellation, and nothing it
- * throws can reach the caller: the pass's own error, such as an unverified child cleanup, is the one that must surface.
+ * The discovery scan and the census of what it found, after the pass has released its claim. Not after a failed pass or a
+ * cancellation. The scan's errors stay inside. The census's too, except an unverified child cleanup, which propagates
+ * unchanged for the daemon's cleanup containment (LLP 0007): this runs only after a pass that did not fail, so it masks
+ * no earlier error. A census failure it contains is recorded in the maintenance log.
  */
-async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean): Promise<void> {
+async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean, trigger: string): Promise<void> {
   if (passFailed || tick?.operation.signal.aborted) return;
   try {
     await runDiscoveryScanIfDue(tick);
+  } catch {}
+  let failure: string | void;
+  try {
+    failure = await runDiscoveryCensusIfDue(tick);
+  } catch (error) {
+    if (isUnverifiedCleanup(error)) throw error;
+    return;
+  }
+  if (!failure) return;
+  try {
+    const logger = maintenanceLogger(resolveMaintenanceSettings(), `census-${process.pid}`, trigger);
+    try {
+      logger.write('maintenance_failure', 'error', `The discovery census failed: ${failure}`, {
+        target: 'discovery census',
+        error: failure,
+      });
+    } finally {
+      logger.close();
+    }
   } catch {}
 }
 
