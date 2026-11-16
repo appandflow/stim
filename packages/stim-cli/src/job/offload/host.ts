@@ -1230,6 +1230,11 @@ export class BuildHost {
             } catch {}
             released = releaseClaims();
           }
+          const claimsReleased = {
+            area: !existsSync(claim.path),
+            ...(slot ? { slot: !existsSync(slot.path) } : {}),
+            ...(engineClaim ? { engine: !existsSync(engineClaim.path) } : {}),
+          };
           if (!released) {
             entry.cleanupSettled = false;
             entry.outcome = {
@@ -1308,11 +1313,6 @@ export class BuildHost {
             );
           }
           const ended = entry.outcome ?? outcome;
-          const claimsReleased = {
-            area: !existsSync(claim.path),
-            ...(slot ? { slot: !existsSync(slot.path) } : {}),
-            ...(engineClaim ? { engine: !existsSync(engineClaim.path) } : {}),
-          };
           jobLog.log('build.job.settled', {
             job: id,
             ok: ended.ok,

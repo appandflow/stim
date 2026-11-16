@@ -252,6 +252,7 @@ if (process.argv[2].startsWith('offer')) {
       const { spawn } = await import('node:child_process');
       spawn('sleep', ['3600'], { stdio: 'ignore' });
       process.stderr.write('fake worker: waiting on sleep\\n');
+      print({ type: 'log', record: { src: 'build', level: 'info', msg: 'waiting on sleep' } });
     }
     setInterval(() => {}, 1000);
   } else {

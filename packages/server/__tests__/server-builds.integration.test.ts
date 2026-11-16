@@ -1626,13 +1626,14 @@ describe('offloaded builds', () => {
       const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(await client.next()).toMatchObject({ phase: 'build' });
       expect(await client.next()).toMatchObject({ record: { msg: 'CompileC' } });
+      expect(await client.next()).toMatchObject({ record: { msg: 'waiting on sleep' } });
       if (reason === 'client-cancel') await client.request('build.cancel', { job });
       expect((await progress(client)).at(-1)).toMatchObject({
         outcome: {
           code: 'cleanup-unresolved',
           message: expect.stringMatching(
             new RegExp(
-              `^Build cleanup is unresolved\\..* before retrying\\. Stopped \\(${reason}\\) after no build output for \\d+s, last line: "CompileC"\\.$`,
+              `^Build cleanup is unresolved\\..* before retrying\\. Stopped \\(${reason}\\) after no build output for \\d+s, last line: "waiting on sleep"\\.$`,
             ),
           ),
         },
@@ -1656,7 +1657,7 @@ describe('offloaded builds', () => {
       expect(started).toMatchObject({ client: id, repo: 'app-1', workerPid: pid });
       expect(cancel).toMatchObject({
         reason,
-        lastOutput: 'CompileC',
+        lastOutput: 'waiting on sleep',
         group: {
           omitted: 0,
           processes: expect.arrayContaining([

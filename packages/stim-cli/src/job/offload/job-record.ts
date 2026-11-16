@@ -13,6 +13,7 @@ export type CancelReason =
   | 'connection-closed'
   | 'job-stopped'
   | 'bad-request'
+  | 'job-error'
   | 'timeout'
   | 'identity-unavailable'
   | 'group-outlived-worker';

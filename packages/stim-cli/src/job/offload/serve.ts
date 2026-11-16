@@ -115,7 +115,8 @@ export async function serveOffloadJob(
       } catch {
         return end(JOB_BAD_REQUEST);
       }
-      for (const frame of frames) queue = queue.then(() => handle(frame.data, frame.binary)).catch(() => end(1));
+      for (const frame of frames)
+        queue = queue.then(() => handle(frame.data, frame.binary)).catch(() => end(1, 'job-error'));
     };
     input.on('data', onData);
     input.once('end', () => void queue.then(() => end(0)));
