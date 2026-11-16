@@ -1295,6 +1295,11 @@ async function runStimdInner(
         }
         const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
         if (!framed) {
+          if (message.kind === 'probe') {
+            reply({ op: 'probe', pid: process.pid, build });
+            socket.end();
+            return;
+          }
           // compat C26 permanent
           if (message.kind !== 'cli' && message.kind !== 'api' && message.kind !== 'desktop') {
             reply({ op: 'error', code: 'unknown-kind', message: 'the first frame names no client kind' });
@@ -1790,60 +1795,13 @@ async function runStimdInner(
     if (!closing) void logs.ownedSync();
   };
   let runDirMisses = 0;
-  let rebinding = false;
-  let lastRebindFailure = '';
-  let replacedBy: string | null = null;
-  const socketId = (): string | null => {
-    try {
-      const { dev, ino } = lstatSync(path);
-      return `${dev}:${ino}`;
-    } catch {
-      return null;
-    }
-  };
-  let boundId = socketId();
-  // @ref LLP 0021#a-stimd-that-does-not-answer-is-reported-and-its-socket-is-bound-again -- only a missing file, never a present one
-  const rebindSocket = async () => {
-    if (process.platform === 'win32' || rebinding || closing || ending || runDirMisses > 0) return;
-    const present = socketId();
-    if (present !== null) {
-      if (present !== boundId && present !== replacedBy) {
-        replacedBy = present;
-        log('warn', 'socket_replaced', `another process made ${path}, so stimd leaves it and stays unreachable on it`);
-      }
-      return;
-    }
-    const holdsClaim = () => {
-      try {
-        return readClaimSet(stimdClaimRoot()).live.some((holder) => holder.claimId === own?.claimId);
-      } catch {
-        return false;
-      }
-    };
-    if (!holdsClaim()) return;
-    rebinding = true;
-    try {
-      server.close();
-      await listen(path, server);
-      boundId = socketId();
-      lastRebindFailure = '';
-      log('warn', 'socket_rebound', `the socket file ${path} was gone, so stimd bound it again`);
-    } catch (error) {
-      const failure = errorText(error);
-      if (failure !== lastRebindFailure) log('error', 'socket_rebind_failed', failure);
-      lastRebindFailure = failure;
-    } finally {
-      rebinding = false;
-    }
-  };
-  const homeWatch = setInterval(() => {
-    if (!attached) {
-      runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
-      if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
-    }
-    void rebindSocket();
-  }, homeWatchMs);
-  homeWatch.unref();
+  const homeWatch = attached
+    ? undefined
+    : setInterval(() => {
+        runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
+        if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
+      }, homeWatchMs);
+  homeWatch?.unref();
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,

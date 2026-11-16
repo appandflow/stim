@@ -13,10 +13,11 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { admissionLimits, saveConfig, loadConfig, type ProjectRecord } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
+import { EventEmitter } from 'node:events';
 import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
-import statusOp, { readVolumes } from '../commands/status.ts';
+import statusOp, { readVolumes, runStatusWatch } from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
@@ -394,6 +395,35 @@ test('status says a stimd that holds the claim and did not answer, in the text a
   const logs = await runStatus(process.platform);
   expect(logs.find((line) => line.startsWith('Daemon'))).toContain(`pid ${process.pid}), did not answer within 3 s`);
   expect((await runStatusJson(process.platform)).daemon.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 });
+}, 20_000);
+
+test('status --watch paints before the probe of a silent stimd ends, then says it once', async () => {
+  setExecutor({
+    ...getExecutor(),
+    spawn() {
+      return Object.assign(new EventEmitter(), { stdout: new EventEmitter(), kill: () => true });
+    },
+  });
+  holdDaemonClaim();
+  await serveStimdSocket(null);
+  const emitted: { at: number; unanswered: unknown }[] = [];
+  const started = Date.now();
+  const watch = runStatusWatch({
+    json: true,
+    emit: (text) => emitted.push({ at: Date.now() - started, unanswered: JSON.parse(text).daemon.unanswered }),
+    failed: (message) => {
+      throw new Error(message);
+    },
+  });
+  onTestFinished(() => watch.stop());
+  await vi.waitFor(() => expect(emitted.length).toBeGreaterThan(0), { timeout: 2000, interval: 20 });
+  expect(emitted[0]?.unanswered).toBeUndefined();
+  expect(emitted[0]?.at).toBeLessThan(3000);
+  await vi.waitFor(() => expect(emitted.at(-1)?.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 }), {
+    timeout: 8000,
+    interval: 50,
+  });
+  expect(emitted.filter((entry) => entry.unanswered !== undefined)).toHaveLength(1);
 }, 20_000);
 
 test('status says nothing new about a stimd that answers', async () => {

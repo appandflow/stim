@@ -164,7 +164,7 @@ export interface DaemonStatus {
   setting?: DaemonMode;
   running: { pid: number; since: string } | null;
   /**
-   * Set by `stim status` and `stim doctor` when a stimd holds the claim and sent no reply to a hello within
+   * Set by `stim status` and `stim doctor` when a stimd holds the claim and sent no reply to a probe within
    * `waitedMs`; `socketMissing` when its socket file does not exist. Absent when it answered.
    */
   unanswered?: { pid: number; waitedMs: number; socketMissing?: true };

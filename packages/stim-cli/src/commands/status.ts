@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
-import { probeDaemonAnswer } from '../daemon/answering.ts';
+import { probeDaemonAnswer, withAnswer } from '../daemon/answering.ts';
 import {
   crashLines,
   daemonLine,
@@ -260,7 +260,7 @@ export function renderStatus(
   });
 
   const maintenance = maintenanceStatus();
-  const daemon = { ...daemonStatus(), ...daemonAnswer };
+  const daemon = withAnswer(daemonStatus(), daemonAnswer);
   if (json) {
     const payload = {
       environments: states.map((state, i) =>
@@ -490,6 +490,23 @@ export function runStatusWatch({
   let machineDue = false;
   let answer: StatusSnapshot['daemonAnswer'] = {};
   let answerAt = 0;
+  let probing = false;
+  let stopped = false;
+  const probeAnswer = () => {
+    if (probing || Date.now() - answerAt < WATCH_ANSWER_INTERVAL_MS) return;
+    probing = true;
+    answerAt = Date.now();
+    void probeDaemonAnswer(daemonStatus())
+      .then((result) => {
+        const changed = JSON.stringify(result) !== JSON.stringify(answer);
+        answer = result;
+        if (changed && !stopped) scheduler.trigger('light');
+        return undefined;
+      })
+      .finally(() => {
+        probing = false;
+      });
+  };
   const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
@@ -530,10 +547,7 @@ export function runStatusWatch({
           sources?.watchProcesses(watchedPids(snapshot));
           if (first) scheduler.trigger('full', 0);
         }
-        if (now - answerAt >= WATCH_ANSWER_INTERVAL_MS) {
-          answer = await probeDaemonAnswer(daemonStatus());
-          answerAt = Date.now();
-        }
+        probeAnswer();
         snapshot.daemonAnswer = answer;
         measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full)), cwd).join('\n');
@@ -567,6 +581,7 @@ export function runStatusWatch({
   scheduler.trigger('full', 0);
   return {
     stop() {
+      stopped = true;
       clearInterval(fallback);
       clearInterval(machine);
       scheduler.stop();

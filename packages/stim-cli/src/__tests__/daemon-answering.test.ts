@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonStatus } from '@stim-cli/core/state';
-import { probeDaemonAnswer, unansweredFindings } from '../daemon/answering.ts';
-import { daemonLine } from '../daemon/status.ts';
-import { serveStimdSocket } from './_stimd-socket.ts';
+import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
+import { daemonLine, daemonStatus } from '../daemon/status.ts';
+import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
 const running = { pid: 4242, since: '2026-11-02T11:00:00.000Z' };
@@ -26,9 +26,21 @@ beforeEach(() => {
 });
 
 describe('probeDaemonAnswer', () => {
-  test('reports nothing for a stimd that replies to the hello', async () => {
-    await serveStimdSocket('{"op":"hello"}');
-    expect(await probeDaemonAnswer(status())).toEqual({});
+  const claimed = (): DaemonStatus => {
+    holdDaemonClaim();
+    return daemonStatus();
+  };
+
+  test('reports nothing for a stimd that replies', async () => {
+    const held = claimed();
+    await serveStimdSocket('{"op":"probe","pid":1}');
+    expect(await probeDaemonAnswer(held)).toEqual({});
+  });
+
+  test('counts the unknown-kind error of an older stimd as a reply', async () => {
+    const held = claimed();
+    await serveStimdSocket('{"op":"error","code":"unknown-kind"}');
+    expect(await probeDaemonAnswer(held)).toEqual({});
   });
 
   test('reports nothing and does not connect when no stimd holds the claim', async () => {
@@ -36,20 +48,37 @@ describe('probeDaemonAnswer', () => {
   });
 
   test('reports a stimd that accepts the connection and sends no reply within 3 s', async () => {
+    const held = claimed();
     await serveStimdSocket(null);
-    const probe = probeDaemonAnswer(status());
+    const probe = probeDaemonAnswer(held);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(await probe).toEqual({ unanswered: { pid: 4242, waitedMs: 3000 } });
+    expect(await probe).toEqual({ unanswered: { pid: process.pid, waitedMs: 3000 } });
+  });
+
+  test('drops a failed probe when the claim holder is no longer the one it was taken against', async () => {
+    claimed();
+    await serveStimdSocket(null);
+    const probe = probeDaemonAnswer(status({ running: { pid: process.pid, since: '2026-01-01T00:00:00.000Z' } }));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await probe).toEqual({});
   });
 
   test.skipIf(process.platform === 'win32')(
     'names a missing socket file (a Windows named pipe has no file)',
     async () => {
-      const probe = probeDaemonAnswer(status());
+      const held = claimed();
+      const probe = probeDaemonAnswer(held);
       await vi.advanceTimersByTimeAsync(3000);
-      expect(await probe).toEqual({ unanswered: { pid: 4242, waitedMs: 3000, socketMissing: true } });
+      expect(await probe).toEqual({ unanswered: { pid: process.pid, waitedMs: 3000, socketMissing: true } });
     },
   );
+});
+
+test('a probe result is only joined to the status of the stimd it was taken against', () => {
+  const answer = { unanswered: { pid: 4242, waitedMs: 3000 } };
+  expect(withAnswer(status(), answer).unanswered).toEqual(answer.unanswered);
+  expect(withAnswer(status({ running: { ...running, pid: 77 } }), answer)).not.toHaveProperty('unanswered');
+  expect(withAnswer(status({ running: null }), answer)).not.toHaveProperty('unanswered');
 });
 
 describe('a stimd that holds the claim and did not answer', () => {

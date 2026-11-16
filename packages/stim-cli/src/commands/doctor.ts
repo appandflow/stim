@@ -12,7 +12,7 @@ import {
   type DaemonStatus,
 } from '@stim-cli/core/state';
 import { clearCrashHold } from '../stimd/crash-hold.ts';
-import { probeDaemonAnswer, unansweredFindings } from '../daemon/answering.ts';
+import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
@@ -786,7 +786,7 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
-  const answered = { ...daemon, ...(await daemonAnswer) };
+  const answered = withAnswer(daemon, await daemonAnswer);
   findings.push(...unansweredFindings(answered));
   return {
     project: root,

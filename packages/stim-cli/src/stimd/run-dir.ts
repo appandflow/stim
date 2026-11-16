@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 
 const HOME_ENTRIES = new Set(['config.json', 'daemon', 'workspaces']);
 
-export function pathMissing(path: string): boolean {
+function missing(path: string): boolean {
   try {
     lstatSync(path);
     return false;
@@ -13,7 +13,7 @@ export function pathMissing(path: string): boolean {
 }
 
 export function runDirRemoved(run: string): boolean {
-  if (!pathMissing(run)) return false;
+  if (!missing(run)) return false;
   try {
     return readdirSync(dirname(run)).some((entry) => HOME_ENTRIES.has(entry));
   } catch {
