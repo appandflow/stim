@@ -932,7 +932,7 @@ stim logs --source build`}
 
 Placement logs show why each machine was selected or skipped. For request timings, set `debug.logs` on the worker and read its stim service log.
 
-When an offloaded build stops printing, its heartbeat says so after 5 minutes, for example `build       still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)`. With `debug.logs` on, the worker's `~/.stim/logs/debug/server.ndjson` records each offloaded build by job id: why it was cancelled or timed out, the processes its build was running just before the first signal, the last lines the build wrote to stderr, and whether its claims were released.
+When an offloaded build stops printing, its heartbeat says so after 5 minutes, for example `build       still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)`. With `debug.logs` on, the worker's `~/.stim/logs/debug/server.ndjson` records each offloaded build by job id: why it was cancelled or timed out, the processes its build was running just before the first signal, the worker process's last stderr lines, and whether its claims were released.
 
 ### Check this machine's stim setup
 

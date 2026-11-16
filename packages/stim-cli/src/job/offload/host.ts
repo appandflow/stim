@@ -1068,10 +1068,10 @@ export class BuildHost {
     }
     const stderrTail = keepTail(child.stderr);
     let lastOutput: { at: number; line: string | null } = { at: Date.now(), line: null };
-    let stopped: { reason: CancelReason; at: number } | null = null;
+    let stopped: { reason: CancelReason; silentMs: number; line: string | null } | null = null;
     let treeKilled: Promise<void> | null = null;
     const signalGroup = (signal: NodeJS.Signals) => {
-      if (child.pid === undefined) return;
+      if (child.pid === undefined || (process.platform === 'win32' && treeKilled)) return;
       jobLog.log('build.job.signal', {
         job: id,
         signal: process.platform === 'win32' ? 'taskkill' : signal,
@@ -1092,15 +1092,15 @@ export class BuildHost {
       caching.abort();
       if (killTimer || finished) return;
       if (!stopped) {
-        stopped = { reason, at: Date.now() };
-        const silentMs = stopped.at - lastOutput.at;
-        serviceLine('cancel', { job: id, client, reason, silentSeconds: Math.round(silentMs / 1000) });
+        const at = Date.now();
+        stopped = { reason, silentMs: at - lastOutput.at, line: lastOutput.line };
+        serviceLine('cancel', { job: id, client, reason, silentSeconds: Math.round(stopped.silentMs / 1000) });
         jobLog.log('build.job.cancel', {
           job: id,
           reason,
-          runningMs: stopped.at - started,
-          silentMs,
-          lastOutput: lastOutput.line,
+          runningMs: at - started,
+          silentMs: stopped.silentMs,
+          lastOutput: stopped.line,
           group: jobLog.enabled() ? groupProcesses(child.pid) : undefined,
         });
       }
@@ -1108,6 +1108,16 @@ export class BuildHost {
       killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
       killTimer.unref();
     };
+    jobLog.log('build.job.start', {
+      job: id,
+      client,
+      repo,
+      platform: job.platform,
+      workerPid: child.pid ?? null,
+      claims: [claim, slot, engineClaim].flatMap((held) =>
+        held ? [{ label: held.label, id: held.claimId, path: held.path }] : [],
+      ),
+    });
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
       if (!captured?.ok) cancel('identity-unavailable');
@@ -1126,16 +1136,6 @@ export class BuildHost {
         artifactCache: this.artifactCacheDir(client, repo),
       }),
     );
-    jobLog.log('build.job.start', {
-      job: id,
-      client,
-      repo,
-      platform: job.platform,
-      workerPid: child.pid ?? null,
-      claims: [claim, slot, engineClaim].flatMap((held) =>
-        held ? [{ label: held.label, id: held.claimId, path: held.path }] : [],
-      ),
-    });
     const timeout = setTimeout(() => cancel('timeout'), this.limits.timeoutMs);
     const entry: Job = {
       id,
@@ -1239,7 +1239,7 @@ export class BuildHost {
             };
           }
           if (!released && stopped && entry.outcome && !entry.outcome.ok)
-            entry.outcome.message = `The build was stopped (${stopped.reason}) after ${silenceText(stopped.at - lastOutput.at, lastOutput.line)}. ${entry.outcome.message}`;
+            entry.outcome.message = `Stopped (${stopped.reason}) after ${silenceText(stopped.silentMs)}. ${entry.outcome.message}${stopped.line === null ? '' : ` Last build output line: ${JSON.stringify(stopped.line)}.`}`;
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&

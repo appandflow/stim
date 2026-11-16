@@ -19,7 +19,7 @@ export function heartbeatPhase(phase: string, msg: string): boolean {
   return (text.startsWith(`${phase} `) ? text.slice(phase.length).trimStart() : text).startsWith('still ');
 }
 
-export function silenceText(silentMs: number, last: string | null): string {
+export function silenceText(silentMs: number, last: string | null = null): string {
   const silent = `no build output for ${formatElapsed(silentMs)}`;
   return last === null ? silent : `${silent}, last line: ${JSON.stringify(last)}`;
 }

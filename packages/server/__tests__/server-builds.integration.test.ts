@@ -1632,7 +1632,7 @@ describe('offloaded builds', () => {
           code: 'cleanup-unresolved',
           message: expect.stringMatching(
             new RegExp(
-              `^The build was stopped \\(${reason}\\) after no build output for \\d+s, last line: "CompileC"\\. `,
+              `^Stopped \\(${reason}\\) after no build output for \\d+s\\. Build cleanup is unresolved\\..* Last build output line: "CompileC"\\.$`,
             ),
           ),
         },
@@ -1670,6 +1670,20 @@ describe('offloaded builds', () => {
       expect(settled).toMatchObject({ ok: false, code: 'cleanup-unresolved', claimsReleased: { area: false } });
     },
   );
+
+  test.skipIf(!fakeTailscale)('settles a build whose worker left a detached process holding its stderr', async () => {
+    const holder = join(root, 'stderr-holder.pid');
+    const port = await startWorker({ env: { FAKE_WORKER_STDERR_HOLDER: holder } });
+    const { client } = await buildClient(port);
+    onTestFinished(() => {
+      if (existsSync(holder)) process.kill(Number(readFileSync(holder, 'utf8')), 'SIGKILL');
+    });
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+    client.socket.send(blob('x'));
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+    expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+    expect(alive(Number(readFileSync(holder, 'utf8')))).toBe(true);
+  });
 
   test.skipIf(!fakeTailscale)(
     'refuses paths outside the mirror, and closes the connection on a blob it did not ask for or whose bytes differ',

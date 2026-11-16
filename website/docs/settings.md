@@ -1029,10 +1029,13 @@ every request to another machine with its duration and result code. stim-server
 writes `server.ndjson` there and logs every request with its timings to its
 service log. On a build worker, `server.ndjson` also follows each offloaded
 build: its start and claims, why it was cancelled, the processes in its
-process group just before the first signal, each signal, its exit with the last
-lines of its stderr, and whether its claims were released. The service log gets
-one line for a cancel and one for a build that ended without an artifact. Records never carry arguments,
-environment values, tokens or tickets, nothing is sent anywhere, and the file
+process group just before the first signal (pid, parent, elapsed time and
+executable), each signal, its exit with the worker process's last stderr lines,
+and whether its claims were released. Whether or not `debug.logs` is on, the
+service log gets one line for a cancel and one for a build that ended without
+an artifact. Records never carry arguments, environment values, tokens or
+tickets, apart from whatever an offloaded build's last output line and the
+worker's stderr lines contain; nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 
 <StimTabs code="stim settings set debug.logs true --scope machine" />
