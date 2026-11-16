@@ -250,7 +250,7 @@ const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').joi
  * `buildDirsOf` lists (the checkout and each folder directly in its `apps` and `packages`), kept only when their
  * canonical path is inside the canonical root, as the gc worktree report keeps them, so a link to another checkout is
  * left out, each with whether the walk counts its private bytes (not for a fixed `ARTIFACT_DIRS.build` name). Every read
- * goes through the bounded reader. `'absent'` when the root does not exist, and null when a read
+ * goes through the bounded reader. `'absent'` when the root does not exist or no longer resolves to itself (a link now stands in its place), and null when a read
  * failed or did not answer; an abort propagates.
  */
 export async function buildOutputDirs(
@@ -261,7 +261,7 @@ export async function buildOutputDirs(
   const reader = boundedReader(io, Infinity, signal, timeoutMs);
   try {
     const canonical = await reader.real(root);
-    if (canonical === null) return 'absent';
+    if (canonical !== root) return 'absent';
     const kept = new Set<string>();
     for (const dir of await buildDirsOf(root, reader)) {
       const real = await reader.real(dir);

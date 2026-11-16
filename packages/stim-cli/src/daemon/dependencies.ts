@@ -592,27 +592,42 @@ export async function measureDependencyTrees(operation: StimContext): Promise<vo
   }
 }
 
+const BUILD_END_MARKER_MAX_AGE_MS = HOUR_MS;
+
+function dropMarkers(files: readonly string[]): void {
+  for (const file of files)
+    try {
+      rmSync(file, { force: true });
+    } catch {}
+}
+
 // @ref LLP 0001#the-folders-a-build-wrote-are-measured-by-the-daemon -- a marker waits for the walk claim, never for load
 /**
  * Measures the build output folders and the Cargo `target/` of every registered workspace whose build ended, and its
  * Stim workspace folder, through `refreshMeasure` with the cache bypassed, and returns how many folders it walked. The
  * folders are the ones the gc worktree report measures: inside the workspace, found through the census's bounded
  * reads. A marker is removed once its workspace was visited, and only the marker files listed before the walk, so a
- * build that ended meanwhile stays marked. A marker that is unreadable, or names a root this Stim home does not know,
- * is removed without a read inside that root. A held walk claim, or a read that does not answer, ends the pass and
- * keeps every marker not yet consumed. It never touches a dependency tree.
+ * build that ended meanwhile stays marked. A marker file that is unreadable, names a root this Stim home does not
+ * know, names a root that no longer resolves to itself, or is over an hour old is removed without a read inside that
+ * root. A layout that could not be read keeps the marker and measures nothing for that root. A held walk claim, or a
+ * read that does not answer, ends the pass and keeps every marker not yet consumed. It never touches a dependency tree.
  */
-export async function measureBuildEnds(operation: StimContext): Promise<number> {
-  const byRoot = new Map<string | null, string[]>();
-  for (const { file, path } of listBuildEndMarkers()) byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
+export async function measureBuildEnds(operation: StimContext, now: number = Date.now()): Promise<number> {
+  const byRoot = new Map<string, string[]>();
+  for (const { file, path, markedAt } of listBuildEndMarkers()) {
+    if (path === null || markedAt === null || now - markedAt > BUILD_END_MARKER_MAX_AGE_MS) dropMarkers([file]);
+    else byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
+  }
   let walked = 0;
   for (const [root, files] of byRoot) {
     operation.signal.throwIfAborted();
-    if (root !== null && getProject(root)) {
+    if (getProject(root)) {
       const found = await buildOutputDirs(root, operation.signal);
-      if (found === null && hungRead() !== null) return walked;
-      const folders = Array.isArray(found) ? found : [];
-      if (found !== 'absent') folders.push({ dir: workspaceDir(root), private: false });
+      if (found === null) {
+        if (hungRead() !== null) return walked;
+        continue;
+      }
+      const folders = found === 'absent' ? [] : [...found, { dir: workspaceDir(root), private: false }];
       for (const { dir, private: withPrivate } of folders) {
         const { outcome } = await refreshMeasure(dir, {
           timeoutMs: WALK_TIMEOUT_MS,
@@ -626,10 +641,7 @@ export async function measureBuildEnds(operation: StimContext): Promise<number> 
         walked++;
       }
     }
-    for (const file of files)
-      try {
-        rmSync(file, { force: true });
-      } catch {}
+    dropMarkers(files);
   }
   return walked;
 }

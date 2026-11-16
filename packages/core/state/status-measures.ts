@@ -43,6 +43,8 @@ export interface BuildEndMarker {
   file: string;
   /** The workspace the marker names, or null when its content cannot be read or does not match its file name. */
   path: string | null;
+  /** When the build ended (epoch milliseconds), or null when the file cannot be read. */
+  markedAt: number | null;
 }
 
 const buildEndMarkerName = /^[0-9a-f]{32}\.[0-9a-f-]{36}\.stale\.json$/;
@@ -74,10 +76,12 @@ export function listBuildEndMarkers(): BuildEndMarker[] {
     .toSorted()
     .map((name) => {
       const file = join(diskUsageCacheDir(), name);
-      const path = readJsonObject(file)?.path;
+      const entry = readJsonObject(file);
+      const path = entry?.path;
+      const markedAt = typeof entry?.markedAt === 'number' && Number.isFinite(entry.markedAt) ? entry.markedAt : null;
       const named =
         typeof path === 'string' && isAbsolute(path) && name.startsWith(cacheName(path).replace(/\.json$/, '.'));
-      return { file, path: named ? path : null };
+      return { file, path: named ? path : null, markedAt };
     });
 }
 

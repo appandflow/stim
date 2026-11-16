@@ -1275,7 +1275,7 @@ describe('macOS build placement and promotion', () => {
   it('marks the workspace for measurement when a local compile ends', async () => {
     await build({ buildMachine: 'local' });
     expect(localBuilds).toBe(1);
-    expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([realpathSync(root)]);
+    expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([root]);
   });
 
   it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {

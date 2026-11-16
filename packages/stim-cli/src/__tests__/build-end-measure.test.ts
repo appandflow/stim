@@ -135,6 +135,40 @@ it('leaves out a build folder reached through a link to another checkout', async
   expect(listBuildEndMarkers()).toHaveLength(0);
 });
 
+it('keeps the marker and measures nothing when the layout of the workspace cannot be read', async () => {
+  state.io = {
+    readNames: async () => [],
+    isDirectory: async () => false,
+    lstat: async () => ({ kind: 'other', mtimeMs: 0 }),
+    realpath: async () => {
+      throw Object.assign(new Error('input/output error'), { code: 'EIO' });
+    },
+    head: async () => null,
+  };
+  markBuildEnded(app);
+  await measureBuildEnds(operation());
+  expect(walked()).toEqual([]);
+  expect(listBuildEndMarkers()).toHaveLength(1);
+});
+
+it('drops a marker older than an hour without reading the workspace', async () => {
+  markBuildEnded(app);
+  await measureBuildEnds(operation(), Date.now() + 61 * 60_000);
+  expect(walked()).toEqual([]);
+  expect(listBuildEndMarkers()).toHaveLength(0);
+});
+
+it('does not walk a registered root that a link has replaced', async () => {
+  const elsewhere = join(base, 'elsewhere');
+  mkdirSync(join(elsewhere, 'android', 'app', 'build'), { recursive: true });
+  markBuildEnded(app);
+  rmSync(app, { recursive: true, force: true });
+  symlinkSync(elsewhere, app);
+  await measureBuildEnds(operation());
+  expect(walked()).toEqual([]);
+  expect(listBuildEndMarkers()).toHaveLength(0);
+});
+
 function stalledIo(): { io: CensusIo; release: () => void } {
   const waiting: (() => void)[] = [];
   const stall = <T>(value: T) => new Promise<T>((done) => waiting.push(() => done(value)));

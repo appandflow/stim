@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -125,7 +125,7 @@ test.each(['fails', 'succeeds'] as const)('marks the workspace once when a local
     return stage('built');
   });
   await fixtureRun.run().catch(() => {});
-  expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([realpathSync(scratch)]);
+  expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([scratch]);
 });
 
 test('marks nothing when the compile never began', async () => {

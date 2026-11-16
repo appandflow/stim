@@ -111,11 +111,14 @@ normal are not niced.
 ## The folders a build wrote are measured by the daemon
 
 When a local native compile ends, whether it succeeded, failed or was cancelled,
-the command writes a marker naming its canonical workspace root and nothing else.
-Every 30 seconds stimd starts its measure thread when markers exist and no
-measure job runs. The job walks only for a root this Stim home has registered,
-and drops a marker for any other root, or one it cannot read, without a read
-inside that root. For a known root it walks the build output folders the gc
+the command writes a marker naming the project root it already holds, with no
+read of the workspace. Every 30 seconds stimd starts its measure thread when
+markers exist and no measure job runs. The job walks only for a root this Stim
+home has registered whose canonical path still equals the marker's root, and
+drops a marker for any other root, an unreadable marker file, or a marker over
+an hour old, without a read inside that root. A workspace layout that cannot be
+read keeps the marker and measures nothing for that root; the hourly size scan
+covers the folders once the marker expires. For a known root it walks the build output folders the gc
 worktree report measures (inside the workspace, a Cargo `target/` included) and
 the Stim workspace folder, through the disk-usage cache with the cache bypassed,
 then removes the markers it listed before the walk. A build that ended meanwhile

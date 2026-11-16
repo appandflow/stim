@@ -378,7 +378,7 @@ between its rung's startedAt and its end. Steps and what items counts:
   build_end_measure             folders walked
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
-build_end_measure <=15. None alter a pass.
+build_end_measure one a pass. None alter a pass.
 Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
 nothing reads it yet.
