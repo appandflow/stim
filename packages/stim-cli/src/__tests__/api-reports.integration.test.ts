@@ -1153,7 +1153,7 @@ test('invalid access-request tickets refuse before inspecting machines or writin
   }
 });
 
-test('doctor preflight cannot signal a Git probe whose birth capture failed', async () => {
+test('doctor preflight kills only the Git probe whose birth capture failed', async () => {
   const item = fixture('preflight-identity');
   const controller = new AbortController();
   const executor = getExecutor();
@@ -1196,11 +1196,13 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
     );
   });
   try {
-    await expect(
-      createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
-    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-    expect(inspectProcessIdentity(owned)).toBe('same');
-    for (const record of targets) expect(inspectProcessIdentity(record)).toBe('same');
+    const failure = await createStim({ projectRoot: item.root, home: item.home, env: item.env })
+      .doctor({ signal: controller.signal })
+      .catch((error: unknown) => error);
+    const windows = process.platform === 'win32';
+    expect(failure instanceof Error && 'code' in failure && failure.code === 'STIM_CLAIM_UNAVAILABLE').toBe(windows);
+    expect(inspectProcessIdentity(owned) === 'same').toBe(windows);
+    for (const record of targets) expect(inspectProcessIdentity(record) === 'same').toBe(windows);
   } finally {
     capture.mockRestore();
     probe.mockRestore();

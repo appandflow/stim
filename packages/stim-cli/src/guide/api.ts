@@ -64,9 +64,10 @@ process with a 60 second execution budget. They accept signal and attempt
 owned cleanup before rejecting. Deadline expiry rejects with
 STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
 onProgress callback cancels the report and is propagated unchanged.
-If child identity cannot be verified after a one-second retry budget, cleanup
+On POSIX, a cancelled report child whose identity could not be captured at spawn is sent SIGKILL, to the child
+only and only before its exit is seen. If child identity cannot be verified after a one-second retry budget, cleanup
 refuses with STIM_CLAIM_UNAVAILABLE instead of cancellation or timeout. The
-child cleanup error names the launcher PID; unverifiable processes and descendants are left
+child cleanup error names the launcher PID and command; unverifiable processes and descendants are left
 untouched. On POSIX, a launcher that exited before identity capture can only finish
 successfully once its process group is proven gone.
 After a termination request, cleanup waits for a child to close, then for its

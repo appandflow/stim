@@ -235,18 +235,20 @@ function reportChild(
     }
     return 'unknown';
   };
-  const recordRefused = (refusal: Refusal) => {
+  let killedUncaptured = false;
+  const recordExit = (refusal?: Refusal) => {
     if (pid === undefined) return;
     const write = () => {
       if (exitedAt === undefined) return;
       const cancelToExitMs = Math.round(exitedAt - cancelledAt);
       logReportChild(
-        `report child ${named} exited ${cancelToExitMs} ms after its cancel (${cancelReason}, refused: ${refusal})`,
+        `report child ${named} exited ${cancelToExitMs} ms after its cancel (${cancelReason}${refusal ? `, refused: ${refusal}` : ''}${killedUncaptured ? ', killed with SIGKILL' : ''})`,
         {
           pid,
           command,
           cancelReason,
-          refusal,
+          ...(refusal ? { refusal } : {}),
+          ...(killedUncaptured ? { killedUncaptured } : {}),
           ...(timeoutMs === undefined ? {} : { timeoutMs }),
           spawnToCancelMs: Math.round(cancelledAt - spawnedAt),
           cancelToExitMs,
@@ -268,13 +270,20 @@ function reportChild(
     });
     const error = Object.assign(failed?.(failure) ?? failure, {
       reportResourceSettled: cleanupSettled,
-      ...(pid === undefined ? {} : { reportChild: { pid, processToken: captured?.ok ? captured.token : null } }),
+      ...(pid === undefined
+        ? {}
+        : {
+            reportChild: {
+              pid,
+              processToken: captured?.ok ? captured.token : null,
+            },
+          }),
     });
     child.stdin?.destroy();
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.unref();
-    recordRefused(refusal);
+    recordExit(refusal);
     rejectClosed(error);
     throw error;
   };
@@ -289,6 +298,23 @@ function reportChild(
             ? 'report_budget'
             : 'abort'
           : 'unknown');
+      // libuv reaps every ready child before it runs their exit callbacks, so JS running inside one of those
+      // callbacks can see an unexited handle whose pid is already free:
+      // https://github.com/libuv/libuv/blob/v1.51.0/src/unix/process.c#L101-L176
+      // A setImmediate callback runs in the check phase, never inside that batch.
+      // @ref LLP 0007#a-report-child-whose-identity-was-not-captured-is-killed-after-its-cancel -- signalled only from a macrotask, before its exit is delivered
+      if (pid !== undefined && captured && !captured.ok && process.platform !== 'win32')
+        await new Promise<void>((resolve) => {
+          setImmediate(() => {
+            if (child.exitCode === null && child.signalCode === null) {
+              try {
+                process.kill(pid, 'SIGKILL');
+                killedUncaptured = true;
+              } catch {}
+            }
+            resolve();
+          });
+        });
       let identity = observe();
       if (pid !== undefined) {
         const deadline = performance.now() + 1000;
@@ -359,6 +385,7 @@ function reportChild(
         !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
       )
         refuse(`Report child ${named} still has descendants after cleanup.`, 'descendants');
+      if (killedUncaptured) recordExit();
     })());
   if (report) trackReportResource(context, closed, cancel, signal, undefined, cleanupSettled);
   else {
@@ -422,7 +449,11 @@ function executableIn(file: string, env: NodeJS.ProcessEnv, cwd: string | URL): 
   // https://github.com/npm/node-which/issues/6
   for (const entry of directories) {
     const candidate = resolvePath(directory, entry.replace(/^"(.*)"$/, '$1'), file);
-    const found = which.sync(candidate, { nothrow: true, path: '', pathExt: value('PATHEXT') ?? '' });
+    const found = which.sync(candidate, {
+      nothrow: true,
+      path: '',
+      pathExt: value('PATHEXT') ?? '',
+    });
     if (found) return found;
   }
   return null;
@@ -490,7 +521,9 @@ const defaultExecutor: Executor = {
     args = [],
     { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent, redact },
   ) {
-    const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & { detached?: boolean } = {
+    const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & {
+      detached?: boolean;
+    } = {
       encoding: 'utf-8',
       stdio: detachedSilent ? 'ignore' : ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
@@ -730,7 +763,13 @@ const defaultExecutor: Executor = {
         } else if (timedOut) {
           reject(
             redactError(
-              nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
+              nameTimeout(
+                Object.assign(new Error(command), result, {
+                  code: 'ETIMEDOUT',
+                }),
+                command,
+                timeoutMs,
+              ),
               redact,
             ),
           );
@@ -834,7 +873,11 @@ const defaultExecutor: Executor = {
 const programOf = (command: string): string => basename(command.trim().split(/\s+/)[0] ?? '');
 
 function outcomeOf(error: unknown): Record<string, unknown> {
-  const { status, signal, code } = (error ?? {}) as { status?: number | null; signal?: string | null; code?: string };
+  const { status, signal, code } = (error ?? {}) as {
+    status?: number | null;
+    signal?: string | null;
+    code?: string;
+  };
   return {
     ok: false,
     ...(typeof status === 'number' ? { exit: status } : {}),
@@ -866,7 +909,10 @@ function fileSpan(file: string, args: readonly string[] | undefined, opts: ExecO
 function commandSpan(cmd: string, opts: ExecOptions): ChildSpan {
   return {
     name: programOf(cmd.replace(/^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '')).replace(/["']/g, ''),
-    args: { command: redactCommandLine(cmd, opts.redact), ...(opts.cwd ? { cwd: opts.cwd } : {}) },
+    args: {
+      command: redactCommandLine(cmd, opts.redact),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    },
   };
 }
 
@@ -887,7 +933,12 @@ function timedSync<A extends unknown[]>(
     debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = fn(...args);
-      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', {
+        program: name,
+        executionId: id,
+        ms: Math.round(performance.now() - started),
+        ok: true,
+      });
       end?.({ ok: true });
       return out;
     } catch (error) {
@@ -927,7 +978,12 @@ const debugExecutor: Executor = {
     debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = await defaultExecutor.runFileAsync(file, args, opts);
-      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', {
+        program: name,
+        executionId: id,
+        ms: Math.round(performance.now() - started),
+        ok: true,
+      });
       end?.({ ok: true });
       return out;
     } catch (error) {
@@ -950,7 +1006,11 @@ const debugExecutor: Executor = {
     });
     const end = trace.beginExec(name, { ...spanArgs, spawned: true });
     child.once('close', (exit, signal) =>
-      end({ ok: exit === 0, ...(exit !== null ? { exit } : {}), ...(signal ? { signal } : {}) }),
+      end({
+        ok: exit === 0,
+        ...(exit !== null ? { exit } : {}),
+        ...(signal ? { signal } : {}),
+      }),
     );
     return child;
   },
