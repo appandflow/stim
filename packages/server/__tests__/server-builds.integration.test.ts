@@ -1613,7 +1613,7 @@ describe('offloaded builds', () => {
       configure({ server: { maxLoadPerCore: 100_000 }, debug: { logs: true } });
       const port = await startWorker({
         env: { FAKE_WORKER_HANG: '1', FAKE_WORKER_SLEEP: '1' },
-        buildLimits: { killGraceMs: 100, ...(reason === 'timeout' ? { timeoutMs: 1500 } : {}) },
+        buildLimits: { killGraceMs: 100, ...(reason === 'timeout' ? { timeoutMs: 3000 } : {}) },
       });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
@@ -1679,13 +1679,11 @@ describe('offloaded builds', () => {
     await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
     client.socket.send(blob('x'));
     expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
-    const settled = (await progress(client)).at(-1);
-    const pid = Number(readFileSync(holder, 'utf8'));
     try {
-      expect(settled).toMatchObject({ outcome: { ok: true } });
-      expect(alive(pid)).toBe(true);
+      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+      expect(alive(Number(readFileSync(holder, 'utf8')))).toBe(true);
     } finally {
-      process.kill(pid, 'SIGKILL');
+      if (existsSync(holder)) process.kill(Number(readFileSync(holder, 'utf8')), 'SIGKILL');
     }
   });
 
