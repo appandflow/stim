@@ -4,7 +4,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync, startedBy } from './instances.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import { MACOS_OWNER_HINT, macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
@@ -31,9 +31,12 @@ export async function stopProcesses(
       const identity = inspectProcessIdentity(record);
       if (identity === 'gone' || identity === 'different') return false;
       if (identity !== 'same') {
-        throw Object.assign(new Error(`Cannot verify macOS owner pid ${record.pid}; no signal was sent.`), {
-          code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        });
+        throw Object.assign(
+          new Error(`Cannot verify macOS owner pid ${record.pid}; no signal was sent. ${MACOS_OWNER_HINT}`),
+          {
+            code: 'STIM_MACOS_OWNER_UNVERIFIED',
+          },
+        );
       }
       return true;
     });
@@ -86,7 +89,7 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   ) {
     throw Object.assign(
       new Error(
-        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying.`,
+        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying. Do not replace a PID or token with another running app.`,
       ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
@@ -97,7 +100,9 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
     throw Object.assign(
-      new Error('The macOS runtime claim cannot be released; inspect its recorded owner before cleanup.'),
+      new Error(
+        `The macOS runtime claim ${macosRuntimeClaim(root)} cannot be released. Inspect its recorded owner. Do not replace a PID or token with another running app. Run \`stim stop\` again.`,
+      ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
       },

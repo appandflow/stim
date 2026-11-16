@@ -1568,7 +1568,7 @@ async function removeOrRefuse(
     );
     output.error(
       chalk.dim(
-        `Reinstall the service from another build with \`stim service install --label ${service.label}\`, or remove it with \`stim service uninstall --label ${service.label}\`, then retry.`,
+        `\`--force\` does not override this. Reinstall the service from another build with \`stim service install --label ${service.label}\`, or remove it with \`stim service uninstall --label ${service.label}\`, then retry.`,
       ),
     );
     output.fail();

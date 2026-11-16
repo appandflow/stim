@@ -3102,8 +3102,7 @@ exit with a nonzero code and print an error code, message, and remedy. An empty
 A `start`, `ios` or `android` run that finds free disk under
 `disk.hardFloorGb` has the `stim-daemon` run its pressure ladder first
 and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
-free disk stays under it. Run `stim guide errors
-STIM_LOW_DISK` for the remedies.
+free disk stays under it. The refusal prints the remedies.
 
 ### JSON stability within 2.x
 

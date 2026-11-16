@@ -32,9 +32,12 @@ ownership-claim recovery. A remedy that needs a section names the exact
 names a section names one that renders; a test checks `stim-cli/src`, `ci/src`, `server/src`,
 the guide text, `website/docs` and the stim-cli README.
 
-Not yet enforced: that every refusal prints a remedy. About a quarter of the
-`code: 'STIM_...'` literals carry none, and the existing remedy lint accepts a
-null or empty one.
+Partly enforced: the `stim/refusal-remedy` lint rule counts every object literal
+with a `code: 'STIM_...'` string and no `remedy`, or a literal `null`, empty or
+`undefined` one, and `scripts/ratchet.mjs` fails when a package's count rises
+above `scripts/ratchet-baseline.json`. The count is not zero. The rule does not
+see a code assigned after construction, a class field, a dynamic code, a spread
+or `diagnostics` object, or a `remedy` computed at run time.
 
 ## A code with no section prints one line
 

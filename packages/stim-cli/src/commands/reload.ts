@@ -367,7 +367,7 @@ async function reloadUnrecorded(
           error: failure(
             'STIM_RELOAD_FAILED',
             probe.reason,
-            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload${platform ? ` ${platform}` : ''}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload${platform ? ` ${platform}` : ''}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server. Do not touch the device.`,
           ),
         }
       : refusal();
@@ -402,7 +402,7 @@ async function reloadUnrecorded(
           error: failure(
             'STIM_RELOAD_FAILED',
             reloaded.reason,
-            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server. Do not touch the device.`,
           ),
         }
       : { ok: false, error: unlaunchedRefusal(target, port, session) };
@@ -737,7 +737,7 @@ export async function runReload({
         : '';
     const device = `reload from the device in your existing automation session: run \`${snapshot}\`, then press the error screen's Reload button, or open the dev menu and press Reload when no error screen is showing. Only when neither is reachable, run \`${relaunch}\`; that restarts the app and loses in-memory state. Keep your existing --session flag, verify the expected UI afterward, and do not create another session.`;
     const remedy = reloaded.unreachable
-      ? `Metro is registered for this workspace but did not answer on port ${port}, so nothing is known about ${target.record.appId}. Run \`stim reload ${target.platform}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server before touching the app.`
+      ? `Metro is registered for this workspace but did not answer on port ${port}, so nothing is known about ${target.record.appId}. Run \`stim reload ${target.platform}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server. Do not touch the device.`
       : `Metro reports no peer for ${target.record.appId} right now. Stim broadcast a reload anyway, so check the expected UI on ${target.record.deviceId} first -- it may already have recovered. If not, the app reconnects every 2 seconds, so run \`stim reload ${target.platform}\` once more.${firstBundle} Then ${device}`;
     return {
       ok: false,
