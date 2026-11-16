@@ -1,4 +1,4 @@
-import { pathMissing, runDirRemoved } from './run-dir.ts';
+import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
@@ -1792,10 +1792,27 @@ async function runStimdInner(
   let runDirMisses = 0;
   let rebinding = false;
   let lastRebindFailure = '';
+  let replacedBy: string | null = null;
+  const socketId = (): string | null => {
+    try {
+      const { dev, ino } = lstatSync(path);
+      return `${dev}:${ino}`;
+    } catch {
+      return null;
+    }
+  };
+  let boundId = socketId();
   // @ref LLP 0021#a-stimd-that-does-not-answer-is-reported-and-its-socket-is-bound-again -- only a missing file, never a present one
   const rebindSocket = async () => {
-    if (process.platform === 'win32' || rebinding || closing || ending || runDirMisses > 0 || !pathMissing(path))
+    if (process.platform === 'win32' || rebinding || closing || ending || runDirMisses > 0) return;
+    const present = socketId();
+    if (present !== null) {
+      if (present !== boundId && present !== replacedBy) {
+        replacedBy = present;
+        log('warn', 'socket_replaced', `another process made ${path}, so stimd leaves it and stays unreachable on it`);
+      }
       return;
+    }
     const holdsClaim = () => {
       try {
         return readClaimSet(stimdClaimRoot()).live.some((holder) => holder.claimId === own?.claimId);
@@ -1808,6 +1825,7 @@ async function runStimdInner(
     try {
       server.close();
       await listen(path, server);
+      boundId = socketId();
       lastRebindFailure = '';
       log('warn', 'socket_rebound', `the socket file ${path} was gone, so stimd bound it again`);
     } catch (error) {

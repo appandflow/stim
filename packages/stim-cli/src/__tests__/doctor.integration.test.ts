@@ -2008,6 +2008,32 @@ test('doctor reports a stimd that holds the claim and did not answer, in --json 
   }
 }, 60_000);
 
+test('doctor says nothing new about a stimd that answers', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-answering-stimd-'));
+  const cwd = process.cwd();
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
+  holdDaemonClaim();
+  await serveStimdSocket('{"op":"hello"}');
+  const logs: string[] = [];
+  console.log = (line) => logs.push(String(line));
+  process.chdir(project);
+  try {
+    await runCli(
+      doctorOp(() => testStimVersions),
+      ['--json'],
+      { version: '1.2.3' },
+    );
+    const report = JSON.parse(logs.join('\n'));
+    expect(report.daemon).not.toHaveProperty('unanswered');
+    expect(report.findings.map((finding: { code?: string }) => finding.code)).not.toContain('stimd-not-answering');
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('doctor leaves the registry alone in a directory that is not an app', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-not-app-'));
   const cwd = process.cwd();

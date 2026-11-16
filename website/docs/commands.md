@@ -157,7 +157,7 @@ recover a physical iPhone console.
 
 When a stimd holds the claim but sends no reply to a hello within 3 seconds,
 `stim status` and `stim doctor` say `did not answer within 3 s`, with the pid, the
-age of its last tick and, when the socket file does not exist, that it is
+age of its last tick (doctor's finding code is `stimd-not-answering`) and, when the socket file does not exist, that it is
 missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
 `socketMissing`); it is absent when stimd answers. It reports one probe, so a
 machine under heavy load can show it for a stimd that answers later, and

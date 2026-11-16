@@ -1480,6 +1480,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await new Promise((done) => probe.once('connect', done));
       probe.destroy();
       await vi.waitFor(() => expect(connections).toBe(1));
+      expect(daemonRecords('socket_replaced')).toHaveLength(1);
       expect(daemonLog()).not.toContain('socket_rebound');
     } finally {
       await new Promise((done) => foreign.close(done));

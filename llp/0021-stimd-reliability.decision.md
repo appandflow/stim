@@ -130,7 +130,10 @@ The 15 s home watch of every stimd, attached or detached, also binds the socket
 again when its file is gone, on POSIX only (a Windows pipe has no file). It does
 so only while the stimd is not closing or ending, its run directory exists and the
 stimd claim still lists this process, logs `socket_rebound`, and never touches a
-path that exists, so another process's socket is left alone.
+path that exists: a file that is not the one it bound is logged once as
+`socket_replaced` and left alone. A stimd that shuts down while another process's
+socket sits at its path still removes that file, because closing a listener unlinks
+its path.
 
 ## Collect diagnostics with the existing reports
 
@@ -153,9 +156,10 @@ that its predecessor died uncleanly and counts it, uncaught errors go to
 count across clean exits, counts startup failures, does not blame the build for
 home-state faults and is shown in `stim status` and `stim doctor`; a handover that
 ends with no successor is logged and makes the client start one.
-Issue #5774 asked for the two parts of fix 1 that only report a stimd that does not
-answer and bind its socket again; the maintainer said "Work on all those and lmk
-tomorrow", 2026-11-15. How they are built
+The socket-presence check of fix 1 is also covered by that approval (issue #5579 names it). The implementing lane (issue #5774) chose the rest of
+the section on reporting and rebinding: the 3 s wait, the finding code and its cost level, and the
+watch running in attached stimds too. The maintainer's "Work on all those and lmk tomorrow",
+2026-11-15, made #5774 part of the 2.0 work; it did not choose these. How they are built
 was chosen by the implementing lane and the coordinating session: the history file,
 the `kept` mark on the claim, the boot-id comparison, the forced exit 5 s after a
 second signal, the classification of home faults, and the marker file. A review of
