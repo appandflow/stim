@@ -365,7 +365,6 @@ test('the rendered guide carries the warm --refresh contract, not just its sourc
   expect(options).toContain('keyed on the repository root');
   expect(options).toMatch(/worktree warm {4}--refresh/);
   expect(renderTopic('settings')).toContain('worktree.defaultBranch');
-  expect(renderSection('errors', 'STIM_LOCK_TIMEOUT')).toContain('warm-locks');
   // The refusal is on the unflagged path, so the plain-warm contract has to name it where a waiter looks.
   expect(options).toContain('STIM_DEPS_INCOMPLETE');
   for (const code of [CLAIM_REFUSED, CLAIM_UNAVAILABLE]) {

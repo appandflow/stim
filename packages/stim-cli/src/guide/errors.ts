@@ -80,28 +80,8 @@ the code, never on the message.`,
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim setup remedies.`,
     },
-    STIM_PREBUILD_FAILED: {
-      separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
-      summary: 'expo prebuild could not generate or regenerate the native directory',
-      body: () => `STIM_PREBUILD_FAILED
-  \`expo prebuild\` could not generate the missing native directory, or
-  update a stale one in place. The extracted output is above the code; the
-  transcript is in the global workspace logs/build-<platform>.ndjson file.
-  Stim updates an existing gitignored directory in place, so what an
-  earlier config wrote stays there; when the output points at leftovers of a
-  removed config plugin or an Expo SDK upgrade, delete the directory
-  (\`rm -rf ios\` or \`rm -rf android\`) and run again so Stim generates it
-  fresh. The same code refuses a native directory that the fingerprint leaves
-  out of the cache key while git tracks its files, or when git cannot answer:
-  Stim cannot show those files came from the current app config, and will
-  not run \`expo prebuild\` over tracked files. Stop excluding the
-  directory from the fingerprint (.fingerprintignore), or gitignore and
-  untrack it so Stim regenerates it. When git itself is failing, fix the
-  checkout first. In the source checkout, \`stim doctor --fix\` in a terminal runs
-  the same prebuild, and the pod install after it on iOS, without compiling, and
-  records the fingerprint \`worktree warm\` needs to carry the directory.`,
-    },
     STIM_DEPS_FAILED: {
+      separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',
       body: () => `STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
@@ -624,26 +604,6 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
   profile beside it.`,
     },
-    STIM_DEVICE_TOOL_FAILED: {
-      summary: 'simctl or adb failed, or the device did not report the change afterwards',
-      body: () => `STIM_DEVICE_TOOL_FAILED
-  The tool call exited non-zero or timed out, with its output in the message, or
-  the read-back after an Android permission or network change did not show the
-  requested state. For a permission, the app must declare the permission in its
-  manifest; when it declares none of the service's permissions the call refuses
-  with this code. Check the device with \`stim status\` and retry.`,
-    },
-    STIM_REMOTE_METRO_UNREACHABLE: {
-      separator: '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
-      summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
-      body: () => `STIM_REMOTE_METRO_UNREACHABLE
-  A remote start could not create its selected managed tunnel, or the device
-  could not be told where Metro is. Set metro.tunnel, or use
-  metro.publicUrl for an existing endpoint. A Re.Pack app (repack-child,
-  \`guide metro\`) refuses with this code on a --remote, tunnel or hosted run,
-  because Re.Pack writes its localhost origin into the bundle's asset and chunk
-  URLs: run it on a local simulator or emulator, or set metro.command.`,
-    },
     STIM_SHARE_REFUSED: {
       separator: '--- SHARE CODES (`stim share`) ---',
       summary: 'stim-server, or stim on Windows, would not start, stop or list a web share; the message names why',
@@ -662,27 +622,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   stim share action refuses at once, starting nothing; run it from the macOS
   or Linux host that runs the device). See stim guide share.`,
     },
-    STIM_WEB_NO_URL: {
-      separator: '--- WEB CODES (`stim web`) ---',
-      summary: 'not an Expo app and web.url is unset, so Stim does not know which page to open',
-      body: () => `STIM_WEB_NO_URL
-  Only Expo serves web from Metro, so for any other app Stim needs web.url.
-  stim web never starts a web server, for any framework. Start yours on a
-  named port and point web.url at it:
-    pnpm exec vite --port "$(stim ports get web)" --strictPort
-    stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
-  See stim guide web.`,
-    },
-    STIM_REMOTE_START_REQUIRED: {
-      separator: '--- DEV-SERVER CODES (`stim start`) ---',
-      summary: 'a running server cannot gain a remote tunnel; stop, then start --remote, or metro.publicUrl',
-      body: () => `STIM_REMOTE_START_REQUIRED
-  A healthy bare or Expo server was started without its required remote
-  tunnel. A running server cannot gain that option. For a Stim supervisor,
-  run \`stim stop\`, then \`stim start --remote\`. For an external server,
-  configure metro.publicUrl or let Stim supervise the server.`,
-    },
     STIM_BAD_ARG: {
+      separator: '--- DEV-SERVER CODES (`stim start`) ---',
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],
       body: () => `STIM_BAD_ARG / STIM_NO_PROJECT
@@ -796,30 +737,8 @@ Inspect what remains with previewGarbage() before retrying a mutation.
   app on a device.`,
     },
     STIM_LOCK_TIMEOUT: {
-      summary: 'a lock held past the wait; workspace-process and short directory locks',
-      body: () => `STIM_LOCK_TIMEOUT
-  The same locks, held by an ordinary command that is still running, for
-  longer than the wait -- 60s by default, 4 minutes for the remote-session lock
-  and for \`gc\` deleting EAS sessions under the EAS project lock (its sweep
-  skips at once while that lock is held), and ~90 minutes for the \`worktree warm\` lock, which one
-  \`--refresh\` can hold for a whole dependency install. The machine-wide EAS
-  project lock admits one EAS session start at a time. A \`--remote eas\` run
-  waits on it after its build with no overall limit, printing \`lock  waiting
-  for EAS remote start (pid 41233, in <workspace>, running for 1m12s) to
-  release the EAS project lock\` at once and \`still waiting for ...\` every 30
-  seconds. It refuses only when one holder has held the lock for longer than
-  the slowest EAS session start (39 minutes), naming that pid.
-  The \`worktree warm\` wait prints its
-  elapsed waiting time and holder every 30 seconds (\`lock        waiting 40s
-  for stim worktree warm --refresh (pid 41233)\`) and the refusal names the same holder
-  and the lock directory under ~/.stim/warm-locks.
-  A lock whose owner died is taken over automatically (its recorded
-  process identity is checked every poll), so this means another Stim command really
-  is working on this workspace: wait for it and retry. Inspect the named
-  holder before taking any recovery action. The same error code also covers
-  the short-lock timeout below.
-
-"Timed out waiting for the lock at <path>."
+      summary: 'a short directory lock held past its wait; the claim protocol behind it',
+      body: () => `STIM_LOCK_TIMEOUT  "Timed out waiting for the lock at <path>."
   Short locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
   the lock. These locks wait up to 12s and never expire based on age. When
@@ -898,43 +817,13 @@ emulator process <pid> is still running"
   adb cannot reach the emulator.`,
     },
     remove: {
-      summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',
-      body: () => `"Refusing to remove <path>: uncommitted changes / untracked files / commits
-not on any remote"  (worktree remove)
-  A native build rewrites tracked files, and Stim RESTORES the one class it can
-  prove is not work: a modified \`<app>/ios/Podfile.lock\` (tracked and
-  unstaged) whose text \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes,
-  holds too, or that is unchanged since gc deleted \`ios/Pods\` while the two
-  matched. When the only dirt left is such a lock, \`worktree remove\` runs the
-  checkout itself and says so. Known hole: a deliberate \`pod update\` (or a
-  hand-resolved lock) followed by an install leaves the same evidence, so
-  commit it before removing or it is restored as churn. Stim cannot tell what
-  \`pod install\` changed in \`*.xcodeproj/project.pbxproj\` from a hand edit,
-  so that file, and a lock without the evidence, count as uncommitted work.
-  ONE other dirty path and the whole set is refused, so this never eats real
-  work.
-  A tracked file marked assume-unchanged, or skip-worktree with the file on
-  disk, hides edits from git status, so \`worktree remove\` refuses and names
-  it with the command that shows the edit:
-  \`git -C <worktree> update-index --no-skip-worktree <file>\` (or
-  \`--no-assume-unchanged\`), then commit or discard it; \`--force\` is the last
-  resort. Files a sparse checkout leaves out are absent from disk and do not
-  count.
-  Untracked \`.watchman-cookie-*\` files, which watchman writes into the roots
-  it watches, are not work either: \`worktree remove\` deletes them itself and
-  ignores them when it counts dirty paths. Any other untracked file still
-  refuses.
-  When it does refuse, the refusal PRINTS THE DIRTY PATHS, and the restore
-  command under it carries those same paths: run it as printed rather than
-  reaching for --force.
-  It is built from what git reported, so in a monorepo it names
-  \`apps/<app>/ios/Podfile.lock\` rather than an \`ios/...\` example that would
-  fail with "did not match any file(s) known to git".
-  A setup script that rewrites tracked assets (brand icons, generated config)
-  produces the same refusal, with the same treatment: restore the paths the
-  refusal actually named.
-  Use --force only when you genuinely intend to discard work; it deletes
-  uncommitted and untracked files permanently.`,
+      summary: 'worktree remove restores a modified Podfile.lock only on proof it is pod install churn',
+      body: () => `worktree remove  (restored Podfile.lock)
+  Stim restores a modified \`<app>/ios/Podfile.lock\` itself only when
+  \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes, holds the same
+  text, or when the lock is unchanged since gc deleted \`ios/Pods\` while the
+  two matched. A deliberate \`pod update\` followed by an install leaves the
+  same evidence, so commit it before removing or it is restored as churn.`,
     },
     warm: {
       summary: 'worktree warm claim storage refusals and recovery',
