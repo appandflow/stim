@@ -624,6 +624,17 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
   profile beside it.`,
     },
+    STIM_REMOTE_METRO_UNREACHABLE: {
+      separator: '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
+      summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
+      body: () => `STIM_REMOTE_METRO_UNREACHABLE
+  A remote start could not create its selected managed tunnel, or the device
+  could not be told where Metro is. Set metro.tunnel, or use
+  metro.publicUrl for an existing endpoint. A Re.Pack app (repack-child,
+  \`guide metro\`) refuses with this code on a --remote, tunnel or hosted run,
+  because Re.Pack writes its localhost origin into the bundle's asset and chunk
+  URLs: run it on a local simulator or emulator, or set metro.command.`,
+    },
     STIM_SHARE_REFUSED: {
       separator: '--- SHARE CODES (`stim share`) ---',
       summary: 'stim-server, or stim on Windows, would not start, stop or list a web share; the message names why',
