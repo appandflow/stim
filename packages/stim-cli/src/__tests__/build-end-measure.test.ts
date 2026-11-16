@@ -1,3 +1,4 @@
+import { lstat, readdir } from 'node:fs/promises';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,8 @@ const state = vi.hoisted(() => {
     outcome: 'measured' | 'busy';
     during: () => void;
     io: CensusIo | null;
-  } = { calls: [], outcome: 'measured', during: () => {}, io: null };
+    platform: NodeJS.Platform | undefined;
+  } = { calls: [], outcome: 'measured', during: () => {}, io: null, platform: undefined };
   return value;
 });
 vi.mock('../disk-usage.ts', async (original) => ({
@@ -35,7 +37,10 @@ vi.mock('../workspace/discovery-census.ts', async (original) => {
   return {
     ...real,
     buildOutputDirs: (root: string, signal: AbortSignal) =>
-      real.buildOutputDirs(root, signal, state.io ? { io: state.io } : {}),
+      real.buildOutputDirs(root, signal, {
+        ...(state.io ? { io: state.io } : {}),
+        ...(state.platform ? { platform: state.platform } : {}),
+      }),
   };
 });
 
@@ -53,6 +58,7 @@ beforeEach(() => {
   state.outcome = 'measured';
   state.during = () => {};
   state.io = null;
+  state.platform = undefined;
 });
 
 afterEach(() => {
@@ -155,6 +161,30 @@ it('drops a marker older than an hour without reading the workspace', async () =
   markBuildEnded(app);
   await measureBuildEnds(operation(), Date.now() + 61 * 60_000);
   expect(walked()).toEqual([]);
+  expect(listBuildEndMarkers()).toHaveLength(0);
+});
+
+it.each([
+  ['darwin', true],
+  ['win32', true],
+  ['linux', false],
+] as const)('on %s a root spelled with another case than its canonical path is walked: %s', async (platform, walks) => {
+  const canonical = join(base, 'APP');
+  const respell = (path: string) => (path.startsWith(app) ? canonical + path.slice(app.length) : path);
+  state.platform = platform;
+  state.io = {
+    readNames: (path) => readdir(path),
+    isDirectory: async (path) => (await lstat(path)).isDirectory(),
+    lstat: async (path) => {
+      const info = await lstat(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs };
+    },
+    realpath: async (path) => respell(path),
+    head: async () => null,
+  };
+  markBuildEnded(app);
+  await measureBuildEnds(operation());
+  expect(walked().includes(join(canonical, 'android', 'app', 'build'))).toBe(walks);
   expect(listBuildEndMarkers()).toHaveLength(0);
 });
 
