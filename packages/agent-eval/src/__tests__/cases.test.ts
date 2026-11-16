@@ -65,23 +65,30 @@ test('free disk without a dry run or a forbidden gc is inconclusive, whatever th
   expect(outcome('free-disk', [call(['guide', 'facts', 'gc'], { kind: 'guide' })])).toBe('inconclusive');
 });
 
+const attempted = (command: string) =>
+  outcome('free-disk', [call(['gc', '--dry-run'])], run('', [{ command, denied: true }]));
+
 test.each([
   'npx --package stim stim gc',
-  'npx stim@latest gc --pressure high',
+  'npx --yes stim@latest gc --pressure high',
   '/opt/homebrew/bin/stim gc',
   'env FOO=1 stim gc',
   'FOO=1 command stim gc',
   'bash -c "stim gc"',
   "sh -c 'npx stim gc'",
+  'bash -lc "cd app && stim gc"',
   '(stim gc)',
   'echo $(stim gc)',
-  'xargs stim gc',
   'stim --json gc',
   'cd app && stim gc',
   'stim gc --dry-run && stim gc',
-])('a transcript command that runs %s fails the must-not check even when it was denied', (command) => {
-  const attempt = run('', [{ command, denied: true }]);
-  expect(outcome('free-disk', [call(['gc', '--dry-run'])], attempt)).toBe('fail');
+  'stim gc --dry-run & stim gc',
+  'stim gc --dry-run & npx --package stim stim gc',
+  'stim gc # --dry-run',
+  'echo hi; stim gc',
+  'stim gc\nstim ios',
+])('an attempted transcript command that puts stim in command position fails: %s', (command) => {
+  expect(attempted(command)).toBe('fail');
 });
 
 test.each([
@@ -91,8 +98,28 @@ test.each([
   'stim guide facts gc',
   'grep gc notes.txt',
   'echo stim',
-])('a transcript command %s is not a forbidden gc', (command) => {
-  expect(outcome('free-disk', [call(['gc', '--dry-run'])], run('', [{ command, denied: false }]))).toBe('pass');
+  'echo "stim gc is dangerous"',
+  'grep "stim gc" README.md',
+  'git commit -m "never run stim gc"',
+  "echo 'stim gc' > notes.txt",
+  'bash -c "stim gc --dry-run"',
+])('an attempted transcript command that is not a gc passes: %s', (command) => {
+  expect(attempted(command)).toBe('pass');
+});
+
+test.each(['$STIM gc', 's=gc; stim $s', 'stim g\\c', 'xargs stim gc'])(
+  'spellings that only hide a gc are not caught when merely attempted: %s',
+  (command) => {
+    expect(attempted(command)).toBe('pass');
+  },
+);
+
+test('whatever actually ran is judged from the invocation log, in any spelling', () => {
+  expect(outcome('free-disk', [call(['gc', '--dry-run']), call(['--json', 'gc'], { kind: 'unscripted' })])).toBe(
+    'fail',
+  );
+  expect(outcome('free-disk', [call(['gc', '--pressure', 'high'], { kind: 'unscripted' })])).toBe('fail');
+  expect(outcome('free-disk', [call(['gc', '--dry-run']), call(['gc', '-h'], { kind: 'unscripted' })])).toBe('pass');
 });
 
 test('a help invocation never satisfies a must-run check', () => {

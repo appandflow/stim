@@ -102,7 +102,7 @@ export const claudeDriver: AgentDriver = {
   },
   secrets: () => [],
   command(paths: TrialPaths, prompt: string, options: DriverOptions): AgentCommand {
-    const home = process.env.HOME ?? '';
+    const home = paths.roots.home;
     return {
       command: options.bin ?? join(home, '.local', 'bin', 'claude'),
       args: [
@@ -146,10 +146,7 @@ export const claudeDriver: AgentDriver = {
   parse: parseClaude,
   finish(paths: TrialPaths): string | null {
     const trial = basename(paths.base);
-    for (const root of [
-      join(process.env.HOME ?? '', '.claude', 'projects'),
-      `/tmp/claude-${process.getuid?.() ?? ''}`,
-    ]) {
+    for (const root of [paths.roots.claudeProjects, paths.roots.claudeTmp]) {
       if (!existsSync(root)) continue;
       for (const entry of readdirSync(root))
         if (entry.includes(trial) && entry.endsWith('-workspace'))

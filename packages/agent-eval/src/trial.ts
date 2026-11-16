@@ -12,7 +12,7 @@ import {
   existsSync,
   readdirSync,
 } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -21,6 +21,7 @@ import type {
   DriverOptions,
   EvalCase,
   Invocation,
+  Roots,
   StimEvalConfig,
   TrialPaths,
 } from './types.ts';
@@ -61,9 +62,10 @@ function git(cwd: string, home: string, args: string[]): void {
   );
 }
 
-function createPaths(): TrialPaths {
+function createPaths(roots: Roots): TrialPaths {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-eval-')));
   const paths: TrialPaths = {
+    roots,
     base,
     workspace: join(base, 'workspace'),
     bin: join(base, 'bin'),
@@ -125,16 +127,27 @@ function writeScriptedStim(paths: TrialPaths, evalCase: EvalCase, arm: Arm, prob
   chmodSync(npx, 0o755);
 }
 
-function readInvocations(paths: TrialPaths): Invocation[] {
+function readInvocations(paths: TrialPaths): { invocations: Invocation[]; error: string | null } {
   const log = join(paths.harness, 'invocations.jsonl');
-  if (!existsSync(log)) return [];
-  return readFileSync(log, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Invocation);
+  if (!existsSync(log)) return { invocations: [], error: null };
+  try {
+    const invocations = readFileSync(log, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const parsed: unknown = JSON.parse(line);
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Invocation).argv))
+          throw new Error('shape');
+        return parsed as Invocation;
+      });
+    return { invocations, error: null };
+  } catch {
+    return { invocations: [], error: 'the invocation log could not be read' };
+  }
 }
 
 export interface RunOptions extends DriverOptions {
+  roots: Roots;
   timeoutMs: number;
   signal?: AbortSignal;
   confine?: boolean;
@@ -153,6 +166,7 @@ const DRAIN_MS = 1000;
 const GRACE_MS = 2000;
 const SCAN_PS_MS = 5000;
 const SCAN_LSOF_MS = 30_000;
+const SCAN_BUFFER = 32 * 1024 * 1024;
 
 function unexited(child: ChildProcess): child is ChildProcess & { pid: number } {
   return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
@@ -185,7 +199,11 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
   if (process.platform === 'win32') return null;
   const failed = 'could not check for leftover processes';
   const name = basename(base);
-  const ps = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], { encoding: 'utf8', timeout: SCAN_PS_MS });
+  const ps = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], {
+    encoding: 'utf8',
+    timeout: SCAN_PS_MS,
+    maxBuffer: SCAN_BUFFER,
+  });
   if (ps.error || ps.status !== 0) return failed;
   const found = new Map<number, string>();
   for (const line of ps.stdout.split('\n')) {
@@ -196,7 +214,11 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
     if (pid === process.pid || pid === ps.pid || command.startsWith('ps -axo')) continue;
     if ((leader !== undefined && Number(match[2]) === leader) || command.includes(name)) found.set(pid, command);
   }
-  const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fpn'], { encoding: 'utf8', timeout: SCAN_LSOF_MS });
+  const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fpn'], {
+    encoding: 'utf8',
+    timeout: SCAN_LSOF_MS,
+    maxBuffer: SCAN_BUFFER,
+  });
   if (lsof.error || lsof.status === null || lsof.stdout === '') return failed;
   let owner = 0;
   for (const line of lsof.stdout.split('\n')) {
@@ -288,8 +310,8 @@ export async function runTrial(
   driver: AgentDriver,
   options: RunOptions,
 ): Promise<TrialOutcome> {
-  const paths = createPaths();
-  const probe = join(userInfo().homedir, `.stim-eval-probe-${basename(paths.base)}`);
+  const paths = createPaths(options.roots);
+  const probe = join(options.roots.home, `.stim-eval-probe-${basename(paths.base)}`);
   const started = Date.now();
   const confine = options.confine !== false;
   const stop = new AbortController();
@@ -299,6 +321,7 @@ export async function runTrial(
   let secrets: string[] = [];
   let failure: unknown = null;
   let watcher: ReturnType<typeof setInterval> | null = null;
+  let logError: string | null = null;
   try {
     writeFileSync(probe, randomBytes(8).toString('hex'), { mode: 0o600 });
     writeWorkspace(paths, evalCase.workspace.files);
@@ -308,10 +331,11 @@ export async function runTrial(
     await new Promise<void>((resolve) => setImmediate(resolve));
     if (options.signal?.aborted) result = NOT_STARTED;
     else {
-      if (confine)
-        watcher = setInterval(() => {
-          if (readInvocations(paths).some((each) => each.homeReadable === true)) stop.abort();
-        }, 250);
+      watcher = setInterval(() => {
+        const read = readInvocations(paths);
+        logError ??= read.error;
+        if (read.error || (confine && read.invocations.some((each) => each.homeReadable === true))) stop.abort();
+      }, 250);
       result = await runAgent(
         paths,
         driver.command(paths, evalCase.prompt, options),
@@ -335,9 +359,13 @@ export async function runTrial(
       problems.push(`the agent exited with ${result.code}`);
     if (result.leftover) problems.push(result.leftover);
     if (readdirSync(paths.stimHome).length > 0) problems.push('the real stim ran: the agent Stim home is not empty');
-    const invocations = readInvocations(paths);
-    const confinement = confine ? probeResult(invocations) : null;
+    const read = readInvocations(paths);
+    const invocations = read.invocations;
+    if (read.error ?? logError) problems.push(read.error ?? logError ?? '');
+    const confinement = confine && !read.error ? probeResult(invocations) : null;
     if (confinement) problems.push(confinement);
+    if (result.stdout.includes('invocations.jsonl') || result.stdout.includes(paths.harness))
+      problems.push('the transcript names the harness log file: the agent may have touched the measurement');
     const transcript = redact(result.stdout, secrets);
     const run = driver.parse(transcript);
     if (run.error) problems.push(run.error);

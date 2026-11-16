@@ -54,7 +54,15 @@ export interface AgentRun {
   error: string | null;
 }
 
+export interface Roots {
+  home: string;
+  claudeProjects: string;
+  claudeTmp: string;
+  codexHome: string;
+}
+
 export interface TrialPaths {
+  roots: Roots;
   base: string;
   workspace: string;
   bin: string;

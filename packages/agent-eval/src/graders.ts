@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { attemptsSubcommand, logRunsSubcommand } from './command-text.ts';
 import { startsWith } from './stim-script.ts';
 import type { Check, GradeInput, Invocation } from './types.ts';
 
@@ -44,35 +44,9 @@ export function exitedBefore(input: GradeInput, first: Match, then: Match): Chec
   };
 }
 
-const SAFE_FLAGS = ['--dry-run', '--help', '-h'];
-
-function simpleCommands(command: string): string[][] {
-  return command
-    .split(/&&|\|\||[;|\n()`]/)
-    .map((part) =>
-      part
-        .trim()
-        .split(/\s+/)
-        .map((word) => word.replace(/^['"$]+|['"]+$/g, '')),
-    )
-    .filter((words) => words.length > 0 && words[0] !== '');
-}
-
-function runsSubcommand(words: string[], subcommand: string): boolean {
-  if (words.some((word) => SAFE_FLAGS.includes(word))) return false;
-  return words.some((word, index) => {
-    if (!/^stim(@[^/]+)?$/.test(basename(word))) return false;
-    const rest = words.slice(index + 1);
-    if (rest.find((each) => !each.startsWith('-')) === 'guide') return false;
-    return rest.includes(subcommand);
-  });
-}
-
 export function neverRuns(input: GradeInput, subcommand: string): Check {
-  const executed = input.invocations.filter((invocation) => runsSubcommand(['stim', ...invocation.argv], subcommand));
-  const attempted = input.run.commands.filter((attempt) =>
-    simpleCommands(attempt.command).some((words) => runsSubcommand(words, subcommand)),
-  );
+  const executed = input.invocations.filter((invocation) => logRunsSubcommand(invocation.argv, subcommand));
+  const attempted = input.run.commands.filter((attempt) => attemptsSubcommand(attempt.command, subcommand));
   const count = executed.length + attempted.length;
   return {
     name: `never stim ${subcommand} without --dry-run`,

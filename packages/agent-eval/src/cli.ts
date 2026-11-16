@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { tmpdir, userInfo } from 'node:os';
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CASES } from './cases/index.ts';
 import { claudeDriver } from './drivers/claude.ts';
@@ -9,6 +9,7 @@ import { codexDriver } from './drivers/codex.ts';
 import { casePassed, markdownTable } from './report.ts';
 import { runEvals } from './run.ts';
 import { trapSignals } from './interrupt.ts';
+import { checkOutput, resolveRoots } from './roots.ts';
 import { REPO_ROOT, type Arm } from './trial.ts';
 import type { AgentDriver } from './types.ts';
 
@@ -23,7 +24,7 @@ const USAGE = `usage: pnpm --filter @stim-cli/agent-eval run eval [options]
   --max-runs <n>              ceiling on agent runs for this invocation (default 12)
   --timeout <seconds>         per-run timeout (default 300)
   --bin <path>                agent binary, for the chosen agent
-  --out <dir>                 results directory (default packages/agent-eval/results)
+  --out <dir>                 results directory inside the home folder (default ~/.stim-agent-eval/results)
 `;
 
 const { values } = parseArgs({
@@ -36,7 +37,7 @@ const { values } = parseArgs({
     'max-runs': { type: 'string', default: '12' },
     timeout: { type: 'string', default: '300' },
     bin: { type: 'string' },
-    out: { type: 'string', default: join(userInfo().homedir, '.stim-agent-eval', 'results') },
+    out: { type: 'string' },
     help: { type: 'boolean', default: false },
   },
 });
@@ -62,12 +63,8 @@ const unknown = wanted.filter((id) => !CASES.some((each) => each.id === id));
 if (unknown.length > 0)
   throw new Error(`unknown case ${unknown.join(', ')}; choose from ${CASES.map((each) => each.id).join(', ')}`);
 
-const unreadable = resolve(values.out);
-for (const root of [REPO_ROOT, tmpdir(), realpathSync(tmpdir())])
-  if (unreadable === root || unreadable.startsWith(`${root}${sep}`))
-    throw new Error(
-      `--out must be outside the checkout and the temporary directory, which the agents can read: ${root}`,
-    );
+const roots = resolveRoots(process.env);
+const out = checkOutput(values.out ?? join(roots.home, '.stim-agent-eval', 'results'), roots.home, REPO_ROOT, tmpdir());
 
 const arms: Arm[] = [{ name: 'with skill', skill: true, blank: [] }];
 if (values.without === 'skill') arms.push({ name: 'without skill', skill: false, blank: [] });
@@ -86,11 +83,12 @@ function privateDirectory(path: string): void {
 
 const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
 const startedAt = new Date().toISOString();
-const directory = join(values.out, `${startedAt.replaceAll(':', '-')}-${sha}`);
+const directory = join(out, `${startedAt.replaceAll(':', '-')}-${sha}`);
 privateDirectory(directory);
 
 const interrupt = trapSignals(process, (code) => process.exit(code));
 const outcome = await runEvals({
+  roots,
   signal: interrupt.signal,
   cases: CASES.filter((each) => wanted.includes(each.id)),
   drivers,

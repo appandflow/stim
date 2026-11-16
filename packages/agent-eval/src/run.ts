@@ -1,7 +1,7 @@
 import { guideBytes, verdict } from './graders.ts';
 import type { CellResult, TrialRecord } from './report.ts';
 import { runTrial, type Arm } from './trial.ts';
-import type { AgentDriver, EvalCase } from './types.ts';
+import type { AgentDriver, EvalCase, Roots } from './types.ts';
 
 export interface EvalOptions {
   cases: EvalCase[];
@@ -12,6 +12,7 @@ export interface EvalOptions {
   timeoutMs: number;
   model: string | null;
   bin: string | null;
+  roots: Roots;
   signal?: AbortSignal;
   confine?: boolean;
   onProgress(line: string): void;

@@ -71,8 +71,8 @@ export function parseCodex(transcript: string): AgentRun {
   return run;
 }
 
-function realAuth(): string {
-  return join(process.env.CODEX_HOME ?? join(process.env.HOME ?? '', '.codex'), 'auth.json');
+function realAuth(paths: TrialPaths): string {
+  return join(paths.roots.codexHome, 'auth.json');
 }
 
 interface LoginState {
@@ -116,7 +116,7 @@ export const codexDriver: AgentDriver = {
   name: 'codex',
   expectedSkills: (withSkill) => (withSkill ? ['stim'] : []),
   prepare(paths: TrialPaths, skill: string | null): void {
-    const auth = realAuth();
+    const auth = realAuth(paths);
     if (!existsSync(auth)) throw new Error('Codex login not found; run codex login first.');
     const target = realpathSync(auth);
     LOGINS.set(paths, { target, secrets: secretValues(readFileSync(target, 'utf8')) });

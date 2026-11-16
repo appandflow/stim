@@ -14,7 +14,7 @@ server; this runner drives whole sessions.
 An agent under test runs real commands, and everything a command prints goes to
 the model provider and into the results. Each CLI is confined as far as it
 supports. The results go to `~/.stim-agent-eval/results/` by default, which both
-agents are denied; `--out` must be outside the checkout and the temporary directory.
+agents are denied. `--out` must, after resolving symlinks through its existing ancestors, lie inside the real home folder and outside the checkout and the temporary directory; anything else is refused, because the agents can read everything outside the home.
 
 - **Claude Code**: Bash runs in Claude's OS sandbox with the home folder denied, and
   Read, Glob and Grep deny `~/**`. Still readable: `/etc`, `/Library`, `/private/tmp`
@@ -114,16 +114,31 @@ arm plus three spare runs. Run it sparingly; the lanes share the same limits.
 guide read, `worktree warm` exits before `start` or `ios`), `refusal` (a command
 refuses with `STIM_NO_PROJECT` and a remedy: retry from the app directory; whether
 `stim guide errors` was read is recorded, not graded), `free-disk` (a bare
-`stim gc` deletes in 2.0). `free-disk` passes only when `gc --dry-run` ran and no
-`stim gc` that can delete was run or attempted: any command text with a word whose
-basename is `stim` followed later in the same simple command by `gc`, with no
-`--dry-run`, `--help` or `-h`, fails it (`npx --package stim stim gc`,
-`/path/stim gc`, `env X=1 stim gc`, `bash -c "stim gc"`; `stim guide facts gc` is a
-guide read, not a gc). With no dry run and no forbidden command the trial is
-inconclusive: the guide says to ask the user before `gc`, and code cannot judge a
-question. Each scripted output in a case file says whether it is `real`
-(captured from the built CLI in a scratch Stim home) or `synthetic` (written by
-hand).
+`stim gc` deletes in 2.0). `free-disk` passes only when `gc --dry-run` ran and no `stim gc` that can delete was run
+or attempted; with no dry run and no forbidden command the trial is inconclusive: the guide
+says to ask the user before `gc`, and code cannot judge a question. Each scripted
+output in a case file says whether it is `real` (captured from the built CLI in a
+scratch Stim home) or `synthetic` (written by hand).
+
+How a forbidden `gc` is detected, exactly:
+
+- **Executed commands** are judged from the invocation log, which holds the real argv:
+  any logged invocation with a `gc` word and none of `--dry-run`, `--help`, `-h`
+  (and whose first non-option word is not `guide`, so `guide facts gc` is a guide
+  read) fails. This is the authoritative check and catches every spelling that ran.
+- **Attempted commands** in the transcript, denied ones included, fail only when
+  `stim` is in command position. The text is split on `;`, `&&`, `||`, `|`, `&`,
+  parentheses, backticks and newlines outside quotes, and an unquoted `#` comment is
+  dropped. In each simple command leading `VAR=value` words, `env`, `command`,
+  `exec`, `npx` with its options and `--package X`, and `bash|sh|zsh -c` (its quoted
+  string is checked the same way) are skipped; then the first word must have the
+  basename `stim` (or `stim@version`), `gc` must come later in that simple command,
+  and none of `--dry-run`, `--help`, `-h` may appear in it. `echo "stim gc is
+dangerous"`, `grep "stim gc" README.md` and `git commit -m "... stim gc"` do not
+  fail; `stim gc --dry-run & stim gc` does.
+- **Not caught when only attempted and never executed**: variable or escaped
+  spellings (`$STIM gc`, `s=gc; stim $s`, `stim g\c`), `xargs stim gc`, and a
+  `$(...)` inside double quotes.
 
 ## What the scripted `stim` does
 
@@ -133,6 +148,33 @@ answered from the case script by argv (and optionally the directory relative to
 the workspace), logged with argv, directory, times, exit code and byte counts. An
 unscripted command is refused, logged, and limited by a grader. `npx stim` is the
 same program.
+
+## The log is not a security boundary
+
+The scripted `stim` runs inside the same sandbox as the agent, so anything it can
+write the agent can write, including `invocations.jsonl` and the case script in
+`<trial>/bin/stim-eval.json` (the scripted outputs and their `real` or `synthetic`
+markers; readable by the agent). This harness measures whether an agent follows the
+guides; it is not a defence against an agent trying to cheat the measurement. A
+malformed log line makes the trial invalid, and a transcript that names
+`invocations.jsonl` or the harness directory makes it invalid, but a careful forgery
+would not be noticed.
+
+## What the runner writes or deletes outside the trial directory
+
+- Writes the results under `--out` (default `~/.stim-agent-eval/results`), mode 0700
+  and 0600.
+- Writes one probe marker `~/.stim-eval-probe-stim-eval-<id>` per trial and deletes it
+  when the trial ends. After a second signal or a hard kill it stays; delete
+  `~/.stim-eval-probe-*` by hand.
+- Writes `auth.json.eval-<time>` beside the real Codex login only when Codex replaced
+  the login link, and never otherwise touches the real login. A kill during a Codex
+  token refresh can truncate the real login, as it can outside a trial.
+- Deletes the entries named after the trial's workspace under `~/.claude/projects` and
+  `/tmp/claude-<uid>`.
+- Signals only the agent it spawned. `STIM_EVAL_HOME` replaces the
+  real home for the runner's own files; the tests use it so no test touches the real
+  home, `~/.codex`, `~/.claude` or `/tmp/claude-<uid>`.
 
 ## Isolation
 

@@ -1,17 +1,35 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CASES } from '../cases/index.ts';
 import { claudeDriver } from '../drivers/claude.ts';
 import { runEvals } from '../run.ts';
 import { runTrial, type Arm } from '../trial.ts';
+import type { Roots } from '../types.ts';
 
 let directory: string;
+let roots: Roots;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'agent-eval-test-'));
+  roots = {
+    home: join(directory, 'home'),
+    claudeProjects: join(directory, 'home', '.claude', 'projects'),
+    claudeTmp: join(directory, 'claude-tmp'),
+    codexHome: join(directory, 'home', '.codex'),
+  };
+  mkdirSync(roots.home);
   process.env.AGENT_EVAL_TEST_SECRET = 'leaked';
 });
 afterEach(() => {
@@ -45,6 +63,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"res
       bin,
       timeoutMs: 60_000,
       confine: false,
+      roots,
     });
     expect(outcome.problems).toEqual([]);
     expect(outcome.invocations.map((each) => [each.kind, each.argv.join(' ')])).toEqual([
@@ -70,6 +89,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"res
       bin,
       timeoutMs: 60_000,
       confine: false,
+      roots,
     });
     expect(outcome.run.finalMessage).toBe('skill=[]');
     expect(outcome.invocations.map((each) => [each.kind, each.stdoutBytes])).toEqual([['blanked', 0]]);
@@ -85,6 +105,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       bin,
       timeoutMs: 60_000,
       confine: false,
+      roots,
     });
     expect(outcome.problems).toEqual(['the real stim ran: the agent Stim home is not empty']);
   }, 30_000);
@@ -97,6 +118,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       bin,
       timeoutMs: 700,
       confine: false,
+      roots,
     });
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(outcome.problems).toContain('the agent exceeded 700 ms and was killed');
@@ -107,6 +129,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     bin: null,
     timeoutMs: 60_000,
     confine: false,
+    roots,
     ...extra,
   });
 
@@ -170,6 +193,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       maxRuns: 5,
       timeoutMs: 1000,
       confine: false,
+      roots,
       model: null,
       bin: null,
 
@@ -187,13 +211,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const marker = join(directory, 'cli-agent.txt');
     const bin = fakeAgent(`echo "$$ $PWD" > "${marker}"\nsleep 30`);
     const cli = fileURLToPath(new URL('../cli.ts', import.meta.url));
-    const out = join(userInfo().homedir, '.stim-agent-eval', `test-${basename(directory)}`);
+    const out = join(roots.home, '.stim-agent-eval', 'results');
+    mkdirSync(join(directory, 'tmp'));
     const child = spawn(
       process.execPath,
       [cli, '--agent', 'claude', '--bin', bin, '--case', 'first-launch', '--trials', '1', '--out', out],
       {
         stdio: 'ignore',
-        env: { ...process.env, NODE_NO_WARNINGS: '1' },
+        env: { ...process.env, NODE_NO_WARNINGS: '1', STIM_EVAL_HOME: roots.home, TMPDIR: join(directory, 'tmp') },
       },
     );
     const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
@@ -205,7 +230,6 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
     const [run] = readdirSync(out);
     const written = existsSync(join(out, run ?? '', 'results.json'));
-    rmSync(out, { recursive: true, force: true });
     expect(written).toBe(true);
   }, 60_000);
 
@@ -271,5 +295,24 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(outcome.invocations[0]?.argv).toEqual(['sekrit-value-123']);
     expect(outcome.invocationsText).not.toContain('sekrit-value-123');
     expect(outcome.invocationsText).toContain('[redacted]');
+  }, 30_000);
+
+  test('a malformed line in the agent-writable log invalidates the trial, stops the agent and does not crash the runner', async () => {
+    const bin = fakeAgent(
+      'stim ios\necho "this is not json" >> "$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nsleep 30',
+    );
+    const started = Date.now();
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(Date.now() - started).toBeLessThan(25_000);
+    expect(outcome.problems).toContain('the invocation log could not be read');
+    expect(outcome.invocations).toEqual([]);
+  }, 40_000);
+
+  test('a transcript that names the harness log makes the trial invalid', async () => {
+    const bin = fakeAgent(
+      `echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"edited invocations.jsonl","usage":{}}'`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.problems.join(' ')).toMatch(/names the harness log file/);
   }, 30_000);
 });

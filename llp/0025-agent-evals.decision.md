@@ -51,14 +51,23 @@ that must have run, ordering, forbidden commands and a limit on unscripted
 commands. Bytes of guide output read, turns and tokens are reported, not graded.
 A case passes only when every trial passed. A help invocation never satisfies a
 must-run check. A forbidden command is caught when it was executed (the scripted
-`stim` logs it) or when the transcript shows an attempt in which a word with the
-basename `stim` is followed later in the same simple command by the forbidden
-word; spellings that hide the word, such as a variable or a script, are not
+`stim` logs the real argv, which is authoritative) or when the transcript shows an
+attempt with `stim` in command position and the forbidden word later in the same simple
+command; spellings that hide the word, such as a variable or an escape, are not
 caught unless they ran. A trial whose forbidden action did not happen and whose
 required evidence is missing is inconclusive, neither a pass nor a failure, so
 `free-disk` passes only on a dry run; the guide's "ask the user before gc" is not
 judged by code. No model judges a trial; a judge arrives only where code cannot
 decide.
+
+## The measurement is not a security boundary
+
+The reviewers and the implementing agent chose this; the maintainer has not stated it
+in these words. The scripted `stim` runs in the agent's own sandbox, so the agent can
+write the invocation log and read the case script. The harness measures whether an
+agent follows the guides; it does not defend against an agent that forges the
+measurement. It rejects a malformed log and a transcript that names the log file, and
+builds no broker.
 
 ## Trials are confined and the maintainer's logins are protected
 

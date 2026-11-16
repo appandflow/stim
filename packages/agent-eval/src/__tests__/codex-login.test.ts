@@ -18,20 +18,18 @@ import type { TrialPaths } from '../types.ts';
 
 describe.skipIf(process.platform === 'win32')('codex login handling', () => {
   let root: string;
-  let previous: string | undefined;
   let paths: TrialPaths;
   let real: string;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'codex-login-'));
-    previous = process.env.CODEX_HOME;
     const home = join(root, 'real-codex');
     mkdirSync(home);
     real = join(home, 'auth.json');
     writeFileSync(real, '{"tokens":{"refresh_token":"original-token-1"}}');
-    process.env.CODEX_HOME = home;
     const base = join(root, 'trial');
     paths = {
+      roots: { home: root, claudeProjects: join(root, 'cp'), claudeTmp: join(root, 'ct'), codexHome: home },
       base,
       workspace: join(base, 'workspace'),
       bin: join(base, 'bin'),
@@ -44,8 +42,6 @@ describe.skipIf(process.platform === 'win32')('codex login handling', () => {
     codexDriver.prepare(paths, null);
   });
   afterEach(() => {
-    if (previous === undefined) delete process.env.CODEX_HOME;
-    else process.env.CODEX_HOME = previous;
     rmSync(root, { recursive: true, force: true });
   });
 
