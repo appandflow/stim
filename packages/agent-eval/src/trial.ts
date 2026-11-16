@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
@@ -22,6 +22,7 @@ import type {
   StimEvalConfig,
   TrialPaths,
 } from './types.ts';
+import { redact } from './redact.ts';
 
 export const PACKAGE_ROOT: string = fileURLToPath(new URL('..', import.meta.url));
 export const REPO_ROOT: string = join(PACKAGE_ROOT, '..', '..');
@@ -39,6 +40,7 @@ export interface TrialOutcome {
   run: AgentRun;
   invocations: Invocation[];
   problems: string[];
+  notes: string[];
   durationMs: number;
   transcript: string;
   stderr: string;
@@ -125,21 +127,46 @@ function readInvocations(paths: TrialPaths): Invocation[] {
 
 export interface RunOptions extends DriverOptions {
   timeoutMs: number;
+  quarantineDir: string;
+  signal?: AbortSignal;
 }
 
-function killGroup(pid: number): void {
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    return;
-  }
+interface AgentResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+  interrupted: boolean;
+  leftover: string | null;
+}
+
+const DRAIN_MS = 1000;
+
+function stopGroup(child: ChildProcess): void {
+  setImmediate(() => {
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      return;
+    }
+  });
+}
+
+function groupMembers(pgid: number): number {
+  const table = spawnSync('ps', ['-axo', 'pgid=,pid='], { encoding: 'utf8' }).stdout ?? '';
+  return table
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([group, pid]) => group === pgid && pid !== pgid).length;
 }
 
 function runAgent(
   paths: TrialPaths,
   command: { command: string; args: string[]; env: Record<string, string> },
   timeoutMs: number,
-): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
+  signal: AbortSignal | undefined,
+): Promise<AgentResult> {
   return new Promise((resolve) => {
     const child = spawn(command.command, command.args, {
       cwd: paths.workspace,
@@ -150,22 +177,47 @@ function runAgent(
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let interrupted = false;
+    let settled = false;
+    const finish = (code: number | null, extra: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      const pgid = child.pid;
+      const members = pgid === undefined || process.platform === 'win32' ? 0 : groupMembers(pgid);
+      const leftover =
+        members > 0
+          ? `${members} processes remain in the agent's process group after it exited and were not signalled`
+          : null;
+      resolve({ stdout, stderr: `${stderr}${extra}`, code, timedOut, interrupted, leftover });
+    };
+    const onAbort = (): void => {
+      interrupted = true;
+      stopGroup(child);
+    };
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child.pid) killGroup(child.pid);
+      stopGroup(child);
     }, timeoutMs);
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr: `${stderr}${error.message}`, code: null, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (child.pid) killGroup(child.pid);
-      resolve({ stdout, stderr, code, timedOut });
-    });
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+    child.on('error', (error) => finish(null, error.message));
+    child.on('exit', (code) => setTimeout(() => finish(code, ''), DRAIN_MS));
+    child.on('close', (code) => finish(code, ''));
   });
+}
+
+function finishDriver(driver: AgentDriver, paths: TrialPaths, killed: boolean, quarantineDir: string): string | null {
+  try {
+    return driver.finish(paths, { killed, quarantineDir });
+  } catch (error) {
+    return `the ${driver.name} cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 export async function runTrial(
@@ -176,26 +228,40 @@ export async function runTrial(
 ): Promise<TrialOutcome> {
   const paths = createPaths();
   const started = Date.now();
+  let result: AgentResult | null = null;
+  let secrets: string[] = [];
+  let failure: unknown = null;
   try {
     writeWorkspace(paths, evalCase.workspace.files);
     writeScriptedStim(paths, evalCase, arm);
     driver.prepare(paths, arm.skill ? readFileSync(SKILL_PATH, 'utf8') : null);
-    const result = await runAgent(paths, driver.command(paths, evalCase.prompt, options), options.timeoutMs);
-    driver.finish(paths);
+    secrets = driver.secrets(paths);
+    result = await runAgent(paths, driver.command(paths, evalCase.prompt, options), options.timeoutMs, options.signal);
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    const killed = result === null || result.timedOut || result.interrupted;
+    const note = finishDriver(driver, paths, killed, options.quarantineDir);
+    if (failure !== null || result === null) throw failure ?? new Error('the agent did not run');
     const problems: string[] = [];
     if (result.timedOut) problems.push(`the agent exceeded ${options.timeoutMs} ms and was killed`);
-    if (result.code !== 0 && !result.timedOut) problems.push(`the agent exited with ${result.code}`);
+    if (result.interrupted) problems.push('the run was interrupted and the agent was killed');
+    if (result.code !== 0 && !result.timedOut && !result.interrupted)
+      problems.push(`the agent exited with ${result.code}`);
+    if (result.leftover) problems.push(result.leftover);
     if (readdirSync(paths.stimHome).length > 0) problems.push('the real stim ran: the agent Stim home is not empty');
-    const run = driver.parse(result.stdout);
+    const transcript = redact(result.stdout, secrets);
+    const run = driver.parse(transcript);
     if (run.error) problems.push(run.error);
-    const invocations = readInvocations(paths);
     return {
       run,
-      invocations,
+      invocations: readInvocations(paths),
       problems,
+      notes: note ? [note] : [],
       durationMs: Date.now() - started,
-      transcript: result.stdout,
-      stderr: result.stderr,
+      transcript,
+      stderr: redact(result.stderr, secrets),
     };
   } finally {
     rmSync(paths.base, { recursive: true, force: true });

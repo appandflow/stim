@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { REPO_ROOT } from '../trial.ts';
 import type { AgentCommand, AgentDriver, AgentRun, AttemptedCommand, DriverOptions, TrialPaths } from '../types.ts';
 import { asArray, asNumber, asRecord, asString, minimalPath, parseLines, writeSkill } from './shared.ts';
 
@@ -19,6 +20,23 @@ const ALLOWED = [
   'Grep',
 ];
 const BUILT_IN_SKILLS = ['design', 'doctor'];
+
+function trialSettings(paths: TrialPaths): object {
+  return {
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      autoAllowBashIfSandboxed: false,
+      filesystem: {
+        denyRead: ['~/'],
+        allowRead: [dirname(dirname(process.execPath)), REPO_ROOT],
+        allowWrite: [paths.harness],
+      },
+    },
+    permissions: { deny: ['Read(~/**)'] },
+  };
+}
 
 export function parseClaude(transcript: string): AgentRun {
   const run: AgentRun = {
@@ -83,7 +101,9 @@ export const claudeDriver: AgentDriver = {
   expectedSkills: (withSkill) => (withSkill ? ['stim', ...BUILT_IN_SKILLS] : BUILT_IN_SKILLS),
   prepare(paths: TrialPaths, skill: string | null): void {
     if (skill !== null) writeSkill(join(paths.workspace, '.claude', 'skills'), skill);
+    writeFileSync(join(paths.bin, 'claude-settings.json'), JSON.stringify(trialSettings(paths)));
   },
+  secrets: () => [],
   command(paths: TrialPaths, prompt: string, options: DriverOptions): AgentCommand {
     const home = process.env.HOME ?? '';
     return {
@@ -100,6 +120,8 @@ export const claudeDriver: AgentDriver = {
         '--setting-sources',
         'project',
         '--strict-mcp-config',
+        '--settings',
+        join(paths.bin, 'claude-settings.json'),
         '--tools',
         TOOLS,
         '--permission-mode',
@@ -125,7 +147,7 @@ export const claudeDriver: AgentDriver = {
     };
   },
   parse: parseClaude,
-  finish(paths: TrialPaths): void {
+  finish(paths: TrialPaths): string | null {
     const trial = basename(paths.base);
     for (const root of [
       join(process.env.HOME ?? '', '.claude', 'projects'),
@@ -136,5 +158,6 @@ export const claudeDriver: AgentDriver = {
         if (entry.includes(trial) && entry.endsWith('-workspace'))
           rmSync(join(root, entry), { recursive: true, force: true });
     }
+    return null;
   },
 };

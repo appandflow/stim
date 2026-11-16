@@ -73,13 +73,19 @@ export interface DriverOptions {
   bin: string | null;
 }
 
+export interface FinishContext {
+  killed: boolean;
+  quarantineDir: string;
+}
+
 export interface AgentDriver {
   name: 'claude' | 'codex';
   expectedSkills(withSkill: boolean): string[];
   prepare(paths: TrialPaths, skill: string | null): void;
+  secrets(paths: TrialPaths): string[];
   command(paths: TrialPaths, prompt: string, options: DriverOptions): AgentCommand;
   parse(transcript: string): AgentRun;
-  finish(paths: TrialPaths): void;
+  finish(paths: TrialPaths, context: FinishContext): string | null;
 }
 
 export interface GradeInput {

@@ -5,6 +5,7 @@
 **Systems:** Repo
 **Author:** Claude
 **Date:** 2026-11-16
+**Related:** LLP 0007
 
 ## The runner is our own, on demand
 
@@ -46,10 +47,24 @@ The issue's fix idea proposes this; the maintainer has not
 stated it in these words.
 
 A case passes on checks over the invocation log and the transcript: commands
-that must have run, ordering, forbidden commands, a limit on unscripted
-commands, bytes of guide output read, and turns. A case passes only when every
-trial passes. No model judges a trial; a judge arrives only where code cannot
-decide.
+that must have run, ordering, forbidden commands and a limit on unscripted
+commands. Bytes of guide output read, turns and tokens are reported, not graded.
+A case passes only when every trial passes. A help invocation never satisfies a
+must-run check, and a forbidden command counts however it was spelled (`stim`,
+`npx stim`, inside a compound command), denied or not. No model judges a trial; a
+judge arrives only where code cannot decide.
+
+## Trials are confined and the maintainer's logins are protected
+
+The reviewer of record and Codex review chose these rules for the first pull
+request; the maintainer has not stated them. A trial confines each agent as far as
+its CLI supports (Claude's OS sandbox and read denies, a Codex permissions profile)
+and the README lists what stays readable. Results are private (0700 and 0600) and
+redacted for the trial's Codex login values and token shapes. The runner writes a
+refreshed Codex login over the real one only when that cannot replace a newer one,
+and otherwise keeps a private copy. Interruption stops the owned agent, and a
+process group is signalled only while its leader has not exited, by the rule of
+[LLP 0007](./0007-claims-and-child-cleanup.decision.md).
 
 The issue and code: [#5776](https://github.com/appandflow/stim/issues/5776),
 `packages/agent-eval/README.md`.

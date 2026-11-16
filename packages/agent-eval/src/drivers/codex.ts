@@ -1,6 +1,20 @@
-import { existsSync, lstatSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, TrialPaths } from '../types.ts';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { secretValues } from '../redact.ts';
+import { REPO_ROOT } from '../trial.ts';
+import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, FinishContext, TrialPaths } from '../types.ts';
 import {
   asNumber,
   asRecord,
@@ -73,13 +87,76 @@ function realAuth(): string {
   return join(process.env.CODEX_HOME ?? join(process.env.HOME ?? '', '.codex'), 'auth.json');
 }
 
+interface LoginState {
+  target: string;
+  digest: string;
+  secrets: string[];
+}
+
+const LOGINS = new WeakMap<TrialPaths, LoginState>();
+const SYSTEM_READS = [
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/System',
+  '/Library',
+  '/private/etc',
+  '/dev',
+  '/opt/homebrew',
+  '/Applications/Xcode.app',
+];
+
+function digest(content: Buffer): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function permissionProfile(paths: TrialPaths): string {
+  const access: Record<string, string> = {
+    ':minimal': 'read',
+    ':workspace_roots': 'write',
+    [paths.harness]: 'write',
+    [paths.bin]: 'read',
+    [paths.home]: 'read',
+    [join(paths.codexHome, 'skills')]: 'read',
+    [dirname(dirname(process.execPath))]: 'read',
+    [REPO_ROOT]: 'read',
+    ...Object.fromEntries(SYSTEM_READS.map((path) => [path, 'read'])),
+    '/tmp': 'deny',
+    '/private/tmp': 'deny',
+  };
+  return `{ ${Object.entries(access)
+    .map(([path, mode]) => `${JSON.stringify(path)} = ${JSON.stringify(mode)}`)
+    .join(', ')} }`;
+}
+
+function quarantine(paths: TrialPaths, refreshed: Buffer, directory: string, reasons: string[]): string {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+  const copy = join(directory, `auth-${basename(paths.base)}.json`);
+  writeFileSync(copy, refreshed, { mode: 0o600 });
+  return `the Codex login may need codex login again: ${reasons.join('; ')}. The refreshed copy is at ${copy}; the real auth.json was not touched`;
+}
+
+function writeBack(target: string, refreshed: Buffer): void {
+  const temp = join(dirname(target), `.auth.json.eval-${process.pid}-${randomBytes(4).toString('hex')}`);
+  try {
+    writeFileSync(temp, refreshed, { mode: 0o600, flag: 'wx' });
+    renameSync(temp, target);
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
 export const codexDriver: AgentDriver = {
   name: 'codex',
   expectedSkills: (withSkill) => (withSkill ? ['stim'] : []),
   prepare(paths: TrialPaths, skill: string | null): void {
     const auth = realAuth();
     if (!existsSync(auth)) throw new Error('Codex login not found; run codex login first.');
-    symlinkSync(auth, join(paths.codexHome, 'auth.json'));
+    const target = realpathSync(auth);
+    const content = readFileSync(target);
+    LOGINS.set(paths, { target, digest: digest(content), secrets: secretValues(content.toString('utf8')) });
+    symlinkSync(target, join(paths.codexHome, 'auth.json'));
     writeFileSync(join(paths.home, '.zprofile'), `export PATH="${paths.bin}:$PATH"\n`);
     if (skill !== null) writeSkill(join(paths.codexHome, 'skills'), skill);
   },
@@ -89,9 +166,8 @@ export const codexDriver: AgentDriver = {
       'web_search="disabled"',
       'skills.bundled.enabled=false',
       'model_reasoning_effort="low"',
-      'sandbox_workspace_write.exclude_slash_tmp=true',
-      'sandbox_workspace_write.exclude_tmpdir_env_var=true',
-      `sandbox_workspace_write.writable_roots=[${JSON.stringify(paths.harness)}]`,
+      'default_permissions="eval"',
+      `permissions.eval.filesystem=${permissionProfile(paths)}`,
     ];
     return {
       command: options.bin ?? resolveBinary('codex'),
@@ -100,8 +176,6 @@ export const codexDriver: AgentDriver = {
         '--json',
         '--ephemeral',
         '--ignore-rules',
-        '-s',
-        'workspace-write',
         '-C',
         paths.workspace,
         ...(options.model ? ['-m', options.model] : []),
@@ -120,13 +194,35 @@ export const codexDriver: AgentDriver = {
     };
   },
   parse: parseCodex,
-  finish(paths: TrialPaths): void {
+  secrets: (paths) => LOGINS.get(paths)?.secrets ?? [],
+  finish(paths: TrialPaths, context: FinishContext): string | null {
+    const state = LOGINS.get(paths);
     const link = join(paths.codexHome, 'auth.json');
-    if (lstatSync(link).isSymbolicLink()) return;
+    const kind = lstatSync(link, { throwIfNoEntry: false });
+    if (!state || !kind || kind.isSymbolicLink()) return null;
     const refreshed = readFileSync(link);
-    const real = realAuth();
-    const temp = `${real}.eval-${process.pid}`;
-    writeFileSync(temp, refreshed, { mode: 0o600 });
-    renameSync(temp, real);
+    if (digest(refreshed) === state.digest) return null;
+    const reasons: string[] = [];
+    if (context.killed) reasons.push('the run was killed by a timeout or a signal');
+    try {
+      JSON.parse(refreshed.toString('utf8'));
+    } catch {
+      reasons.push('the refreshed file is not valid JSON');
+    }
+    try {
+      if (digest(readFileSync(state.target)) !== state.digest)
+        reasons.push('the real auth.json changed during the trial');
+    } catch {
+      reasons.push('the real auth.json cannot be read');
+    }
+    if (reasons.length === 0) {
+      try {
+        writeBack(state.target, refreshed);
+        return null;
+      } catch (error) {
+        reasons.push(`writing the real auth.json failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return quarantine(paths, refreshed, context.quarantineDir, reasons);
   },
 };

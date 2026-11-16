@@ -12,6 +12,8 @@ export interface EvalOptions {
   timeoutMs: number;
   model: string | null;
   bin: string | null;
+  quarantineDir: string;
+  signal?: AbortSignal;
   onProgress(line: string): void;
   onTrial(
     cell: { agent: string; case: string; arm: string; index: number },
@@ -39,6 +41,7 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
         };
         cells.push(cell);
         for (let index = 1; index <= options.trials; index += 1) {
+          if (options.signal?.aborted) continue;
           if (runsUsed >= options.maxRuns) {
             options.onProgress(
               `run ceiling ${options.maxRuns} reached; ${driver.name} ${evalCase.id} ${arm.name} trial ${index} not run`,
@@ -49,7 +52,26 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
           options.onProgress(
             `run ${runsUsed}/${options.maxRuns}: ${driver.name} ${evalCase.id} ${arm.name} trial ${index}`,
           );
-          const outcome = await runTrial(evalCase, arm, driver, options);
+          let outcome;
+          try {
+            outcome = await runTrial(evalCase, arm, driver, options);
+          } catch (error) {
+            cell.trials.push({
+              index,
+              pass: false,
+              invalid: [
+                `the trial failed before it could be graded: ${error instanceof Error ? error.message : String(error)}`,
+              ],
+              checks: [],
+              guideBytes: 0,
+              turns: null,
+              tokens: 0,
+              costUsd: null,
+              durationMs: 0,
+            });
+            continue;
+          }
+          for (const note of outcome.notes) options.onProgress(note);
           const invalid = [...outcome.problems];
           const isolation = outcome.run.isolation;
           if (isolation) {
@@ -58,6 +80,7 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
             if (extra.length > 0) invalid.push(`unexpected skills in the agent: ${extra.join(', ')}`);
             if (isolation.mcpServers.length > 0)
               invalid.push(`MCP servers in the agent: ${isolation.mcpServers.join(', ')}`);
+            if (isolation.plugins.length > 0) invalid.push(`plugins in the agent: ${isolation.plugins.join(', ')}`);
           }
           const checks = evalCase.grade({ invocations: outcome.invocations, run: outcome.run });
           const tokens = outcome.run.tokens.input + outcome.run.tokens.output;
