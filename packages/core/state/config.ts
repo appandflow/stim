@@ -23,7 +23,7 @@ export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promi
 }
 
 export function configCorruptRepair(path: string = getConfigPath()): string {
-  return `Repair the file, or move it aside to start over, which orphans the devices it recorded; delete those by hand: mv "${path}" "${path}.broken"`;
+  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside drops the device records it holds; \`stim gc --dry-run\` then lists those stim-* devices as unrecognized, with the command that deletes each.`;
 }
 
 function configCorrupt(reason: string, path: string = getConfigPath()): Error {

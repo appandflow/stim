@@ -89,25 +89,19 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   ) {
     throw Object.assign(
       new Error(
-        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying.`,
+        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying. Do not replace a PID or token with another running app.`,
       ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        remedy:
-          'Verify the remaining group members belong to this workspace before stopping them. Do not replace a PID or token with another running app.',
+        remedy: 'Verify the remaining group members belong to this workspace before stopping them.',
       },
     );
   }
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
-    throw Object.assign(
-      new Error(
-        `The macOS runtime claim cannot be released; inspect its recorded owner before cleanup. ${MACOS_OWNER_HINT}`,
-      ),
-      {
-        code: 'STIM_MACOS_OWNER_UNVERIFIED',
-      },
-    );
+    throw Object.assign(new Error(`The macOS runtime claim cannot be released. ${MACOS_OWNER_HINT}`), {
+      code: 'STIM_MACOS_OWNER_UNVERIFIED',
+    });
   }
   return true;
 }

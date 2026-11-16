@@ -58,7 +58,14 @@ export function classifyFailure(
   const code: unknown = Reflect.get(error, 'code');
   const raw: unknown = Reflect.get(error, 'path') ?? Reflect.get(error, 'address');
   const path = typeof raw === 'string' ? raw : null;
-  if (code === 'STIM_CONFIG_CORRUPT') return { kind: 'home', remedy: bounded(error.message.replaceAll('\n', ' ')) };
+  if (code === 'STIM_CONFIG_CORRUPT') {
+    const message = error.message.replaceAll('\n', ' ');
+    const repair = message.lastIndexOf('Repair the file');
+    return {
+      kind: 'home',
+      remedy: repair < 0 ? bounded(message) : `${bounded(message.slice(0, repair))}${message.slice(repair)}`,
+    };
+  }
   const inside = path !== null && insideHome(path, home);
   if ((code === 'ENOSPC' || code === 'EDQUOT') && inside)
     return {

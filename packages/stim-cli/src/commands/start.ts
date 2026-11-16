@@ -17,7 +17,12 @@ import { resolveSupervisorTarget, type SupervisorStateRecord } from '../stimd/me
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import {
+  collisionRemedy,
+  ensureWorkspaceStorage,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { createPortProbe, isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
@@ -361,6 +366,7 @@ export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
           code: (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE',
           message: `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`,
           remedy:
+            collisionRemedy(error) ??
             'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
         });
       }
