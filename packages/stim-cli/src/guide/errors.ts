@@ -80,8 +80,28 @@ the code, never on the message.`,
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim setup remedies.`,
     },
-    STIM_DEPS_FAILED: {
+    STIM_PREBUILD_FAILED: {
       separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
+      summary: 'expo prebuild could not generate or regenerate the native directory',
+      body: () => `STIM_PREBUILD_FAILED
+  \`expo prebuild\` could not generate the missing native directory, or
+  update a stale one in place. The extracted output is above the code; the
+  transcript is in the global workspace logs/build-<platform>.ndjson file.
+  Stim updates an existing gitignored directory in place, so what an
+  earlier config wrote stays there; when the output points at leftovers of a
+  removed config plugin or an Expo SDK upgrade, delete the directory
+  (\`rm -rf ios\` or \`rm -rf android\`) and run again so Stim generates it
+  fresh. The same code refuses a native directory that the fingerprint leaves
+  out of the cache key while git tracks its files, or when git cannot answer:
+  Stim cannot show those files came from the current app config, and will
+  not run \`expo prebuild\` over tracked files. Stop excluding the
+  directory from the fingerprint (.fingerprintignore), or gitignore and
+  untrack it so Stim regenerates it. When git itself is failing, fix the
+  checkout first. In the source checkout, \`stim doctor --fix\` in a terminal runs
+  the same prebuild, and the pod install after it on iOS, without compiling, and
+  records the fingerprint \`worktree warm\` needs to carry the directory.`,
+    },
+    STIM_DEPS_FAILED: {
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',
       body: () => `STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS

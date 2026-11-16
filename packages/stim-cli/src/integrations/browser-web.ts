@@ -124,7 +124,7 @@ export function browserWebProject(root: string): WebProject {
           return failure(
             'STIM_WEB_NO_URL',
             'This is not an Expo app, so Stim does not know which page to open.',
-            "Stim never starts a web server. Start yours on the port `stim ports get web` prints, then set the page: `stim settings set web.url 'http://localhost:{port:web}/' --scope workspace`. See `stim guide web`.",
+            "Stim never starts a web server. Start yours on the port `stim ports get web` prints and make it fail rather than fall back to another port (vite: `--strictPort`), then set the page: `stim settings set web.url 'http://localhost:{port:web}/' --scope workspace`. See `stim guide web`.",
           );
         }
         if (web.url === null && !isPackageResolvable(root, 'react-native-web')) {
