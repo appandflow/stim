@@ -76,7 +76,7 @@ hold that keeps a worktree inside a dot-folder of its main checkout
 - The full scan: a pruned walk of the home folder for checkouts that Stim's
   project detection recognises and discovery does not reach. The daemon runs it
   weekly and, while the disk level is above normal, when no scan has run for an
-  hour; a command never runs it. It reads `~/Documents`, skips `~/Desktop`, `~/Downloads`,
+  hour; a command never runs it. It skips `~/Desktop`, `~/Documents`, `~/Downloads`,
   `~/Library`, other media folders, symlinks, other volumes, dependency, build
   and cache folders, dot-folders below the first level and the named tool homes
   among the home folder's dot-folders (see below), and the Stim home, stops at a recognised project and goes
@@ -276,8 +276,22 @@ decision leaves open:
    fast.
 5. The line Stim commands print on low disk also names what the scan found, its
    size and the command that adds it.
-6. `~/Desktop` and `~/Downloads` are not scanned. Other volumes are not scanned.
+6. `~/Desktop`, `~/Documents` and `~/Downloads` are not scanned. Other volumes are not
+   scanned. A folder of checkouts there is named in `maintenance.discoverRoots`,
+   which `stim doctor` says once the scan has run.
 7. "Idle for a long time" has no number yet.
+
+Maintainer decision, 2026-11-15 (#5775), supersedes the part of the 2026-11-14
+decision that accepts scanning `~/Documents`. It answers a list of decisions
+with recommendations, verbatim: "For rest for with ur recs". The one it accepts
+here, as put to the maintainer: "May the background daemon read `~/Documents`?
+No, only a command you run. A permission prompt from a background daemon has no
+visible cause." No command runs the scan, so the scan skips `~/Documents` as it
+skips `~/Desktop` and `~/Downloads`. Revalidation (`scanEntryValid`) drops a find
+an earlier scan recorded there. A `maintenance.discoverRoots` entry under it is
+not a scan find and is read as before: the daemon reads every configured root on
+each pass, so a root under `~/Documents` makes macOS ask for permission once,
+which is the person's choice in naming it.
 
 Chosen by the implementing lane, not by the maintainer or the coordinator: the
 depth of seven, the folders
@@ -509,7 +523,7 @@ doctor prints is the evaluation time, not the walk time.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5775. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

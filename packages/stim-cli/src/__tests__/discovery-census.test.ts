@@ -38,6 +38,13 @@ describe('censusDue', () => {
     expect(censusDue({ ...last, pending: true }, 5, ['/a'], t0 + hour)).toBe(true);
     expect(censusDue({ ...last, pending: true }, 5, ['/a'], t0 + hour - 1)).toBe(false);
   });
+
+  it('is due while a recorded find lies where the scan no longer descends, judged on the path alone', () => {
+    const find = (path: string) => ({ ...last, finds: [{ path }] });
+    expect(censusDue(find('/h/Documents/app'), 5, ['/a'], t0 + hour, '/h')).toBe(true);
+    expect(censusDue(find('/h/documents/app'), 5, ['/a'], t0 + hour, '/h')).toBe(true);
+    expect(censusDue(find('/h/dev/app'), 5, ['/a'], t0 + hour, '/h')).toBe(false);
+  });
 });
 
 describe('runDiscoveryCensusIfDue', () => {
