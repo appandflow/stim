@@ -1015,8 +1015,8 @@ async function runStimdInner(
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
-  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string) => {
-    dependencyWork = threads
+  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string): Promise<void> => {
+    const work = threads
       .run('measure', input)
       .then(() => undefined)
       .catch((error: unknown) => {
@@ -1028,6 +1028,8 @@ async function runStimdInner(
       .finally(() => {
         dependencyWork = undefined;
       });
+    dependencyWork = work;
+    return work;
   };
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
@@ -1798,7 +1800,7 @@ async function runStimdInner(
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
-    marked: () => listBuildEndMarkers().length > 0,
+    markers: () => listBuildEndMarkers().map((marker) => marker.file),
     start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
   });
   for (;;) {

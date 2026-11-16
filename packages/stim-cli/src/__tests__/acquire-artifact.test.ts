@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +25,7 @@ beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-acquire-artifact-'));
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
 });
 
@@ -124,8 +125,18 @@ test.each(['fails', 'succeeds'] as const)('marks the workspace once when a local
     return stage('built');
   });
   await fixtureRun.run().catch(() => {});
-  expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([scratch]);
-  vi.unstubAllEnvs();
+  expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([realpathSync(scratch)]);
+});
+
+test('marks nothing when the compile never began', async () => {
+  vi.stubEnv('STIM_HOME', join(scratch, 'stim-home'));
+  const fixtureRun = fixture(async () => 'unused');
+  fixtureRun.adapter.lifecycle = ((original) => (run: Parameters<typeof original>[0]) => ({
+    ...original(run),
+    resolve: async () => ({ kind: 'ready' as const, artifact: 'cached' }),
+  }))(fixtureRun.adapter.lifecycle);
+  await fixtureRun.run();
+  expect(listBuildEndMarkers()).toEqual([]);
 });
 
 test.each(['plain', 'class'] as const)('preserves a %s cleanup refusal when release diagnostics fail', async (kind) => {

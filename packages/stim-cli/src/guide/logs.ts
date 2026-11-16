@@ -375,11 +375,10 @@ between its rung's startedAt and its end. Steps and what items counts:
   plan_history                  the actions or worktrees the plan returned
   dormant_dependencies          the dormant dependency step, when it runs (at
                                 most hourly); the actions it took or kept
-  build_end_measure             the walk of folders a finished build wrote;
-                                the folders walked
-A step writes one record, never one per item. A tick at normal writes one
-(dormant_candidates); at high up to 16 and at critical up to 22; the dormant
-dependency step adds about 7 an hour. The records change nothing a pass does.
+  build_end_measure             folders walked
+A step writes one record. A normal tick writes one (dormant_candidates), a high
+one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
+build_end_measure <=15. None alter a pass.
 Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
 nothing reads it yet.

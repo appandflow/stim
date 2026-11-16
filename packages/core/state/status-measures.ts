@@ -41,7 +41,8 @@ export function diskUsageFailureFile(path: string): string {
  */
 export interface BuildEndMarker {
   file: string;
-  path: string;
+  /** The workspace the marker names, or null when its content cannot be read or does not match its file name. */
+  path: string | null;
 }
 
 const buildEndMarkerName = /^[0-9a-f]{32}\.[0-9a-f-]{36}\.stale\.json$/;
@@ -67,16 +68,17 @@ export function buildEndMarkerFilesOf(path: string): string[] {
     .map((name) => join(diskUsageCacheDir(), name));
 }
 
-/** The markers of finished builds that nothing has measured yet, oldest name first. */
+/** The markers of finished builds that nothing has measured yet, oldest name first, including unreadable ones. */
 export function listBuildEndMarkers(): BuildEndMarker[] {
-  const markers: BuildEndMarker[] = [];
-  for (const name of buildEndMarkerNames().toSorted()) {
-    const file = join(diskUsageCacheDir(), name);
-    const path = readJsonObject(file)?.path;
-    if (typeof path === 'string' && isAbsolute(path) && name.startsWith(cacheName(path).replace(/\.json$/, '.')))
-      markers.push({ file, path });
-  }
-  return markers;
+  return buildEndMarkerNames()
+    .toSorted()
+    .map((name) => {
+      const file = join(diskUsageCacheDir(), name);
+      const path = readJsonObject(file)?.path;
+      const named =
+        typeof path === 'string' && isAbsolute(path) && name.startsWith(cacheName(path).replace(/\.json$/, '.'));
+      return { file, path: named ? path : null };
+    });
 }
 
 /** The file that caches the pull request of the worktree at `path`. */

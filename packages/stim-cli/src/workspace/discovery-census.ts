@@ -245,6 +245,35 @@ async function lastGitActivity(path: string, reader: Reader): Promise<number | n
 
 const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
 
+/**
+ * The canonical build directories inside the workspace at `root`, for the daemon's build-end measurement: the ones
+ * `buildDirsOf` lists (the checkout and each folder directly in its `apps` and `packages`), kept only when their
+ * canonical path is inside the canonical root, as the gc worktree report keeps them, so a link to another checkout is
+ * left out, each with whether the walk counts its private bytes (not for a fixed `ARTIFACT_DIRS.build` name). Every read
+ * goes through the bounded reader. `'absent'` when the root does not exist, and null when a read
+ * failed or did not answer; an abort propagates.
+ */
+export async function buildOutputDirs(
+  root: string,
+  signal: AbortSignal,
+  { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
+): Promise<{ dir: string; private: boolean }[] | 'absent' | null> {
+  const reader = boundedReader(io, Infinity, signal, timeoutMs);
+  try {
+    const canonical = await reader.real(root);
+    if (canonical === null) return 'absent';
+    const kept = new Set<string>();
+    for (const dir of await buildDirsOf(root, reader)) {
+      const real = await reader.real(dir);
+      if (real !== null && (real === canonical || real.startsWith(canonical + sep))) kept.add(real);
+    }
+    return [...kept].map((dir) => ({ dir, private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)) }));
+  } catch (error) {
+    if (error instanceof Unreadable) return null;
+    throw error;
+  }
+}
+
 type Measurement = Pick<
   CensusFind,
   'dirs' | 'measuredDirs' | 'failedDirs' | 'partialDirs' | 'bytes' | 'unreadable' | 'gitActivityAt'

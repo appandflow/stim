@@ -27,6 +27,7 @@ import {
   parseMacosRecord,
   readMacosRecord,
   readBuildHistory,
+  listBuildEndMarkers,
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
@@ -1270,6 +1271,12 @@ describe('macOS build placement and promotion', () => {
       expect((await pending).app).toEqual(app);
     },
   );
+
+  it('marks the workspace for measurement when a local compile ends', async () => {
+    await build({ buildMachine: 'local' });
+    expect(localBuilds).toBe(1);
+    expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([realpathSync(root)]);
+  });
 
   it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
     const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
