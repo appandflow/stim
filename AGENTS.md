@@ -417,6 +417,12 @@ actions, safety rules, or topic routing change. The static
 skill changes only when its activation description, single routing command or
 source section changes.
 
+Rendered guide and skill sizes are budgeted in bytes in
+`packages/stim-cli/src/__tests__/guide-budget.json`, checked by
+`guide-budget.test.ts`. A change that crosses a budget cuts text elsewhere or
+raises the number deliberately in the same pull request. Lower a budget only
+when a change already shrinks that guide.
+
 When adding or changing a user-facing feature, update the affected website
 pages under `website/docs/` and their command examples alongside the CLI guides.
 Include a copyable agent prompt when it helps users try the feature. Keep
