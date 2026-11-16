@@ -184,7 +184,22 @@ it.each([
   };
   markBuildEnded(app);
   await measureBuildEnds(operation());
-  expect(walked().includes(join(canonical, 'android', 'app', 'build'))).toBe(walks);
+  expect(walked().includes(join(app, 'android', 'app', 'build'))).toBe(walks);
+  expect(listBuildEndMarkers()).toHaveLength(0);
+});
+
+it('does not walk a root that is a link to a sibling differing only by case', async () => {
+  state.platform = 'darwin';
+  state.io = {
+    readNames: async () => [],
+    isDirectory: async () => false,
+    lstat: async () => ({ kind: 'other', mtimeMs: 0 }),
+    realpath: async (path) => path.replace(/app$/, 'APP'),
+    head: async () => null,
+  };
+  markBuildEnded(app);
+  await measureBuildEnds(operation());
+  expect(walked()).toEqual([]);
   expect(listBuildEndMarkers()).toHaveLength(0);
 });
 

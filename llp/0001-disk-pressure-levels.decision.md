@@ -115,13 +115,18 @@ the command writes a marker naming the project root it already holds, with no
 read of the workspace. Every 30 seconds stimd starts its measure thread when
 markers exist and no measure job runs. The job walks only for a root this Stim
 home has registered whose bounded canonical path is still the marker's root (a
-difference of case alone counts as the same root on macOS and Windows), and
+difference of case alone counts as the same root on macOS and Windows only when
+the root itself is a real directory, not a link), and
 drops a marker for any other root, an unreadable marker file, or a marker over
 an hour old, without a read inside that root. A workspace layout that cannot be
 read keeps the marker and measures nothing for that root. An expired marker is
 dropped, and those folders are measured again at the next build end or when
 `stim gc` reports; nothing else refreshes them on a schedule, because the hourly
-size scan measures only the Stim workspace folders. A Windows 8.3 short-name root
+size scan measures only the Stim workspace folders. The disk-usage cache is keyed by the exact path string, so each folder is
+walked and keyed as the gc worktree report spells it, the registered root joined
+with the name as enumerated; the canonical path only bounds what may be walked. A
+case-only redirect through a replaced ancestor on a case-sensitive volume is not
+detected and only changes which folder's size is shown. A Windows 8.3 short-name root
 differs by more than case, so that workspace gets no build-end measurement. For a known root it walks the build output folders the gc
 worktree report measures (inside the workspace, a Cargo `target/` included) and
 the Stim workspace folder, through the disk-usage cache with the cache bypassed,

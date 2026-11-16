@@ -259,14 +259,16 @@ async function lastGitActivity(path: string, reader: Reader): Promise<number | n
 const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
 
 /**
- * The canonical build directories inside the workspace at `root`, for the daemon's build-end measurement: the ones
+ * The build directories inside the workspace at `root`, for the daemon's build-end measurement: the ones
  * `buildDirsOf` lists (the checkout and each folder directly in its `apps` and `packages`), kept only when their
  * canonical path is inside the canonical root, as the gc worktree report keeps them, so a link to another checkout is
  * left out, each with whether the walk counts its private bytes (not for a fixed `ARTIFACT_DIRS.build` name). Every read
  * goes through the bounded reader. `'absent'` when the root does not exist or its bounded canonical path is another
  * folder (a link now stands in its place); on darwin and win32 a path that differs only by case is the same folder, since
- * `realpathSync` keeps the spelling it was given and `fs.promises.realpath` returns the true case. The canonical path is
- * the boundary the kept folders must be inside. Null when a read failed or did not answer; an abort propagates.
+ * `realpathSync` keeps the spelling it was given and `fs.promises.realpath` returns the true case, and only when the root
+ * itself is a real directory, not a link. The canonical path is the boundary the folders must be inside, but each kept
+ * folder is returned spelled as the gc worktree report keys it (the root's spelling joined with the name as the
+ * enumeration spells it), since the disk-usage cache is keyed by the exact string. Null when a read failed or did not answer; an abort propagates.
  */
 export async function buildOutputDirs(
   root: string,
@@ -283,12 +285,14 @@ export async function buildOutputDirs(
     const caseless = platform === 'darwin' || platform === 'win32';
     if (canonical === null || (caseless ? canonical.toLowerCase() !== root.toLowerCase() : canonical !== root))
       return 'absent';
-    const kept = new Set<string>();
+    if (canonical !== root && (await reader.info(root))?.kind !== 'directory') return 'absent';
+    const kept = new Map<string, string>();
     for (const dir of await buildDirsOf(root, reader)) {
       const real = await reader.real(dir);
-      if (real !== null && (real === canonical || real.startsWith(canonical + sep))) kept.add(real);
+      if (real !== null && !kept.has(real) && (real === canonical || real.startsWith(canonical + sep)))
+        kept.set(real, dir);
     }
-    return [...kept].map((dir) => ({ dir, private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)) }));
+    return [...kept.values()].map((dir) => ({ dir, private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)) }));
   } catch (error) {
     if (error instanceof Unreadable) return null;
     throw error;
