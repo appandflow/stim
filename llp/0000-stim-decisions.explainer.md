@@ -122,3 +122,4 @@ govern the workflow.
 - [LLP 0023](./0023-public-api.decision.md) covers what the `stim` package exports as public API, the frozen plugin kinds, the JSON rule and the API report gate.
 - [LLP 0024](./0024-fingerprint-package-copies.decision.md) covers how installed package copies become fingerprint inputs.
 - [LLP 0025](./0025-agent-evals.decision.md) covers the on-demand agent eval runner, its scripted `stim` and its graders.
+- [LLP 0026](./0026-printed-remedies.decision.md) covers where the guidance for a refusal lives: the remedy a command prints, and the few procedures `stim guide errors` keeps.

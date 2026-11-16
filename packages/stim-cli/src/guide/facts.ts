@@ -562,6 +562,12 @@ leased until <time>" for each one.`,
                   invalid. level is the higher of disk and memory, each
                   "normal", "high" or "critical"; reasons names each
                   condition above normal (\`guide lifecycle budget\`)
+  discovery       unmanaged checkouts the home scan found (internal): { scan,
+                  census, censusAt, censusCurrent, complete (false: figures read
+                  "at least"), rootsChangedSinceCensus, groups: [{ folder, kind
+                  reduce-only | dot-folder | unchecked, checkouts, bytes,
+                  measured, partial, failed, notMeasuredYet, command,
+                  commandProblem, oldestMeasuredAt, members }] }
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",
@@ -703,8 +709,7 @@ ON FAILURE
   when Chrome closed (its profile is kept), else "skipped" (its identity could
   not be verified) or "failed", and ok is then false.
 
-  Branch on \`code\`, never on the message text. \`guide errors\` enumerates
-  every code.
+  Branch on \`code\`, never on the message text.
 
 RULES
   - Never hardcode or guess a udid/serial/port. Read them from the payload.

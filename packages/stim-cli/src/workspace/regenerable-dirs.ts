@@ -19,8 +19,8 @@ export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   dependencies: ['node_modules', 'ios/Pods'],
 };
 
-type DirRead = { names: string } | { directory: string } | { signature: string };
-type DirReads<T> = Generator<DirRead, T, string[] | boolean>;
+export type DirRead = { names: string } | { directory: string } | { signature: string };
+export type DirReads<T> = Generator<DirRead, T, string[] | boolean>;
 
 function* namesIn(path: string): DirReads<string[]> {
   const names = yield { names: path };
@@ -33,7 +33,7 @@ function* realDirectory(path: string): DirReads<boolean> {
 
 const CACHEDIR_SIGNATURE = 'Signature: 8a477f597d28d172789f06886806bc55';
 
-function signatureHeads(text: string): boolean {
+export function signatureHeads(text: string): boolean {
   return text.startsWith(CACHEDIR_SIGNATURE);
 }
 
@@ -178,7 +178,7 @@ export function discoveredBuildDirsAsync(root: string): Promise<string[]> {
   return readAsync(discoveredBuildDirsReads(root));
 }
 
-function* existingBuildDirsReads(root: string): DirReads<string[]> {
+export function* existingBuildDirsReads(root: string): DirReads<string[]> {
   const fixed = yield* existingDirsReads(root, ARTIFACT_DIRS.build);
   return [...fixed, ...(yield* discoveredBuildDirsReads(root))];
 }

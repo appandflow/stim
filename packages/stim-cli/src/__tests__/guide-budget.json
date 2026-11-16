@@ -1,0 +1,42 @@
+{
+  "unit": "bytes of UTF-8 text printed by stim guide without the status block; the skill is the file size",
+  "skill": 1000,
+  "index": 2000,
+  "reactNativePath": 13250,
+  "defaults": {
+    "section": 10000,
+    "topic": 16000
+  },
+  "topics": {
+    "agent": 3750,
+    "errors": 7750,
+    "api": 24000,
+    "metro": 27500,
+    "logs": 49250,
+    "lifecycle": 20750,
+    "cleanup": 29000,
+    "settings": 135750,
+    "share": 29250,
+    "macos": 35750
+  },
+  "sections": {
+    "agent react-native": 8750,
+    "agent device": 3750,
+    "agent ownership": 9500,
+    "agent report": 1500,
+    "facts payloads": 37250,
+    "facts gc": 26000,
+    "facts status": 51750,
+    "facts stats": 10500,
+    "lifecycle hosted-android": 12500,
+    "lifecycle hosted-ios": 23750,
+    "lifecycle pool": 13750,
+    "lifecycle builds": 38500,
+    "lifecycle concurrency": 12000,
+    "lifecycle budget": 17000,
+    "lifecycle options": 25000,
+    "lifecycle devices": 11000,
+    "cleanup gc": 72750,
+    "cleanup disk": 16250
+  }
+}

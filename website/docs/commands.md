@@ -16,8 +16,9 @@ Commands use `stim`. If Stim is not installed globally, replace `stim` with
 :::
 
 Run `stim <command> --help` for parser help. Run `stim guide` for the full
-reference that ships with the installed version. Every refusal code has an
-entry in the [troubleshooting reference](./troubleshooting.md).
+reference that ships with the installed version. A refusal prints its remedy;
+the [troubleshooting reference](./troubleshooting.md) covers the recovery
+procedures too long for a remedy.
 
 `start --json`, `ios --json`, `android --json` and `macos --json` report
 `agentDevice: { stateDir }`, an absolute path under
@@ -94,6 +95,11 @@ Fingerprint checks evaluate project configuration, including
 version from its `package.json` and runs `eas whoami` only with an `eas` on
 `PATH` outside the repository and its `node_modules/.bin` directories.
 `worktree warm`, `start`, `ios`, and `android` also run project code.
+
+Doctor also prints a section, "Checkouts Stim does not fully manage", from the
+last home folder scan and the daemon's measurement of what it found; `--json`
+carries it as `discovery`. It reads cached files and never scans or measures.
+See [checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in).
 
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
@@ -3073,8 +3079,9 @@ Prints version-matched reference text. Topics are agent, facts, metro, ports,
 logs, errors, lifecycle, cleanup, and settings. Those topics also cover caches,
 remote devices, and release builds. The errors, lifecycle, facts, and cleanup
 topics have sections: called bare they print a section index, and a named
-section prints on its own. `stim guide errors` lists every refusal code and
-`stim guide errors <CODE>` prints one.
+section prints on its own. A refusal prints its own remedy; `stim guide errors`
+lists the recovery procedures too long for one, and a remedy that needs one
+names the exact `stim guide errors <name>` command.
 
 The bare index and the agent topic open with a STATUS block when something is
 due: doctor for a platform that never ran in this app, ran more than seven

@@ -411,15 +411,26 @@ releases. Keep operational guidance in the version-matched guides.
 `guide agent` covers the normal workflow, safety, recovery actions, and topic
 routing. Put transparent build optimizations and cache internals in the relevant
 detailed topics, not the root agent guide. Detailed topics also own flag,
-payload, setting, backend, cleanup, and remedy references. Do not add a
-version check, compatibility branch, migration path, or any other failure
-fallback to the static skill. Only one skill ships.
+payload, setting, backend, and cleanup references. A new refusal puts what the
+agent does next in its printed remedy, and adds a `stim guide errors` section
+only for a procedure too long for a remedy; a remedy that needs one names the
+exact `stim guide errors <CODE>` command. An existing section stays until the
+remedy at every emitting site carries its action. `guide agent` sends an agent
+to the printed remedy first, and to `stim guide errors <CODE>` when the remedy
+is missing or does not settle the refusal. Do not add a version check, compatibility branch, migration path,
+or any other failure fallback to the static skill. Only one skill ships.
 
 Update the affected guide topics and their contract tests when commands,
-defaults, safety rules, or remedies change. Change `guide agent` when the agent's
+defaults, or safety rules change. Change `guide agent` when the agent's
 actions, safety rules, or topic routing change. The static
 skill changes only when its activation description, single routing command or
 source section changes.
+
+Rendered guide and skill sizes are budgeted in bytes in
+`packages/stim-cli/src/__tests__/guide-budget.json`, checked by
+`guide-budget.test.ts`. A change that crosses a budget cuts text elsewhere or
+raises the number deliberately in the same pull request. Lower a budget only
+when a change already shrinks that guide.
 
 When adding or changing a user-facing feature, update the affected website
 pages under `website/docs/` and their command examples alongside the CLI guides.
