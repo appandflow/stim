@@ -383,12 +383,13 @@ dependency step adds about 7 an hour. The records change nothing a pass does.
 Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
 nothing reads it yet.
-When a report child's cleanup is refused (STIM_CLAIM_UNAVAILABLE) inside stimd, the daemon log also gets
-one info record, event daemon_report_child_exited, when that child's own exit is seen. It never appears for a
-child that has not exited. Fields: pid, command (program and redacted, bounded arguments), cancelReason (timeout,
+When a report child's cleanup is refused (STIM_CLAIM_UNAVAILABLE) inside stimd, or a cancelled child whose identity
+was not captured is killed after its cancel (POSIX), the daemon log also gets one info record, event
+daemon_report_child_exited, when that child's own exit is seen. It never appears for a child that has not exited. Fields: pid, command (program and redacted, bounded arguments), cancelReason (timeout,
 report_budget, abort, overflow, exit, close or unknown; report_budget is the report's own budget, abort is any
 other abort), timeoutMs (when the call had one), spawnToCancelMs, cancelToExitMs (negative when the exit came before
-the cancel), exitCode, exitSignal, refusal (unverified, did_not_close or descendants), captured and captureReason.
+the cancel), exitCode, exitSignal, refusal (unverified, did_not_close or descendants; absent when the cleanup was not refused),
+killedUncaptured (true when the kill was sent), captured and captureReason.
 It changes nothing a pass does.
 
 BUILD LEDGER

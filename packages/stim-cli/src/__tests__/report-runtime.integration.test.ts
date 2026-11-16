@@ -193,7 +193,8 @@ test('cancellation does not signal a child whose captured identity no longer mat
   }
 });
 
-test.each([true])('failed initial birth capture never signals the unverifiable child (report=%s)', async (report) => {
+test.each([true])('on Windows a failed birth capture never signals the child (report=%s)', async (report) => {
+  if (process.platform !== 'win32') return;
   const controller = new AbortController();
   let started: () => void = () => {};
   const ready = new Promise<void>((resolve) => {
@@ -235,7 +236,13 @@ test.each([true])('failed initial birth capture never signals the unverifiable c
   }
 });
 
-test('a refused uncaptured child is recorded with the time it outlived its cancel', async () => {
+test('an uncaptured child whose kill fails is refused and recorded with the time it outlived its cancel', async () => {
+  let childPid: number | undefined;
+  const killOriginal = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === childPid && signal === 'SIGKILL') throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    return killOriginal(pid, signal);
+  });
   const controller = new AbortController();
   let ready: () => void = () => {};
   const started = new Promise<void>((resolve) => {
@@ -253,6 +260,7 @@ test('a refused uncaptured child is recorded with the time it outlived its cance
         timeoutMs: 20_000,
         signal: controller.signal,
         onSpawn: (child) => {
+          childPid = child.pid;
           nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
           child.stdout?.once('data', () => ready());
         },
@@ -279,6 +287,138 @@ test('a refused uncaptured child is recorded with the time it outlived its cance
   } finally {
     setReportChildLog(undefined);
     capture.mockRestore();
+    kill.mockRestore();
+    await nativeClosed;
+  }
+});
+
+test('a cancelled uncaptured child is killed from a macrotask and the report settles', async () => {
+  if (process.platform === 'win32') return;
+  const controller = new AbortController();
+  const records: { fields: Record<string, unknown> }[] = [];
+  setReportChildLog((_level, _event, _msg, fields) => void records.push({ fields }));
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  const killOriginal = process.kill.bind(process);
+  const sent: { pid: number; signal: string | number | undefined; fromImmediate: boolean }[] = [];
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 'SIGKILL')
+      sent.push({ pid, signal, fromImmediate: /processImmediate/.test(new Error().stack ?? '') });
+    return killOriginal(pid, signal);
+  });
+  let childPid: number | undefined;
+  let exitSignal: NodeJS.Signals | null | undefined;
+  let ready: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let nativeClosed: Promise<void> = Promise.resolve();
+  try {
+    const reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 30000)'], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          childPid = child.pid;
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.once('exit', (_code, endedBy) => {
+            exitSignal = endedBy;
+          });
+          child.stdout?.once('data', () => ready());
+        },
+      }),
+    ).catch((error: unknown) => error);
+    await started;
+    controller.abort(new Error('cancel fixture'));
+    expect(await reading).not.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    await nativeClosed;
+    expect(exitSignal).toBe('SIGKILL');
+    expect(sent).toEqual([{ pid: childPid, signal: 'SIGKILL', fromImmediate: true }]);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.fields).toMatchObject({ killedUncaptured: true, captured: false, exitSignal: 'SIGKILL' });
+    expect(records[0]?.fields).not.toHaveProperty('refusal');
+  } finally {
+    setReportChildLog(undefined);
+    capture.mockRestore();
+    kill.mockRestore();
+    await nativeClosed;
+  }
+});
+
+test('an uncaptured child whose exit was delivered before the cancel is not signalled', async () => {
+  if (process.platform === 'win32') return;
+  const controller = new AbortController();
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  const killOriginal = process.kill.bind(process);
+  const sent: number[] = [];
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 'SIGKILL') sent.push(pid);
+    return killOriginal(pid, signal);
+  });
+  let nativeClosed: Promise<void> = Promise.resolve();
+  try {
+    await runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'process.exit(0)'], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.once('exit', () => controller.abort(new Error('cancel after exit')));
+        },
+      }),
+    ).catch(() => {});
+    await nativeClosed;
+    expect(sent).toEqual([]);
+  } finally {
+    capture.mockRestore();
+    kill.mockRestore();
+    await nativeClosed;
+  }
+});
+
+test('a killed uncaptured leader with a live descendant is still refused', async () => {
+  if (process.platform === 'win32') return;
+  const controller = new AbortController();
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  const killOriginal = process.kill.bind(process);
+  const groupSignals: number[] = [];
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid < 0 && signal === 'SIGKILL') groupSignals.push(pid);
+    return killOriginal(pid, signal);
+  });
+  let childPid: number | undefined;
+  let ready: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let nativeClosed: Promise<void> = Promise.resolve();
+  const leader = `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 2500)'], { stdio: 'ignore' }); console.log('ready'); setTimeout(() => {}, 30000)`;
+  try {
+    const reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', leader], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          childPid = child.pid;
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.stdout?.once('data', () => ready());
+        },
+      }),
+    ).catch((error: unknown) => error);
+    await started;
+    controller.abort(new Error('cancel fixture'));
+    expect(await reading).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(groupSignals).toEqual([]);
+    const group = -(childPid ?? 0);
+    await vi.waitFor(() => expect(() => killOriginal(group, 0)).toThrow(/ESRCH/), { timeout: 10_000 });
+  } finally {
+    capture.mockRestore();
+    kill.mockRestore();
     await nativeClosed;
   }
 });

@@ -169,6 +169,50 @@ the reviews of #5547, not by the maintainer.
 
 Related: #5498, #5510, #5546.
 
+## A report child whose identity was not captured is killed after its cancel
+
+On POSIX, `reportChild.cancel` (`packages/stim-cli/src/exec.ts`) sends SIGKILL to a
+report child whose identity capture failed, to that child only: nothing goes to its
+process group. The signal is sent from a `setImmediate` callback that `cancel`
+awaits, and only when `child.exitCode` and `child.signalCode` are both still
+`null` there, in the same synchronous step as the check. Every later step is
+unchanged: the group check, the "still has descendants" refusal and the refusal
+when a state cannot be established. A kill that throws falls through to those
+steps. A captured child, a child whose exit was already delivered, and Windows
+are unchanged.
+
+Reason: the child's own `exit` is the only proof that Stim no longer holds its
+pid. Node sets `exitCode` or `signalCode` and clears the handle in `onexit`, but
+libuv's `uv__wait_children` first calls `waitpid` for every ready child and only
+then runs their exit callbacks one by one. JavaScript that runs between two of
+those callbacks (nextTicks and microtasks) can see an unexited handle whose pid is
+already free, which a probe of 40 children exiting together showed on Node 22 and 24. A `setImmediate` callback runs in the check phase of the same loop, after the
+poll phase that reaps, so it never runs inside a batch. Outside a batch, a child
+with `exitCode` and `signalCode` null has not been reaped by this process and
+holds its pid.
+
+- [`uv__wait_children`](https://github.com/libuv/libuv/blob/v1.51.0/src/unix/process.c#L101-L176), called only from the SIGCHLD watcher and from the kqueue poll.
+- [`uv_run`](https://github.com/libuv/libuv/blob/v1.51.0/src/unix/core.c#L436-L480): `uv__io_poll` runs before `uv__run_check`.
+- [`CheckImmediate`](https://github.com/nodejs/node/blob/v24.11.1/src/env.cc#L1548), the only caller of the immediate callback.
+- [`onexit`](https://github.com/nodejs/node/blob/v24.11.1/lib/internal/child_process.js#L270-L295).
+
+The kill uses `process.kill(pid, 'SIGKILL')` instead of `child.kill`, because a
+failed `child.kill` emits an `'error'` event that the exec promise turns into a
+rejection.
+
+Maintainer decision, 2026-11-15: "For rest for with ur recs", in answer to a list of open decisions each carrying a recommendation. The recommendations it accepts for this issue, as they were put to the maintainer:
+
+- "May Stim kill a report child whose identity it could not capture, through the handle it holds? Yes, the direct child only, and only before its exit event. The pid cannot have been reused while Stim has not reaped it."
+- "Signal its whole process group too? No. The proof covers only the child."
+- "Child exited but descendants are alive and unrecorded: keep refusing."
+- "Downgrade the refusal to a warning for report-only passes? No. B1 removes the case; revisit only if the new log records show it still happens."
+- "The longer-wait PR #5770: close it if you accept B1. It can outlast the shutdown watchdog and B1 replaces it."
+
+The macrotask condition was added by the coordinator after a lane found that the
+quoted proof fails inside a reap batch, not by the maintainer.
+
+Related: #5766, #5769, #5771.
+
 ## Code
 
 - [Ownership claims](../packages/core/ownership-claim.ts) and [short transactions](../packages/core/dir-lock.ts).
@@ -177,4 +221,5 @@ Related: #5498, #5510, #5546.
   owner's check.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
 - `packages/stim-cli/src/workspace/cargo-target.ts`: the Cargo target trim claim.
+- `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.
