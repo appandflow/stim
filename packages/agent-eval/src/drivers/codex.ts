@@ -1,6 +1,7 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { secretValues } from '../redact.ts';
+import { requireConfined } from '../roots.ts';
 import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, TrialPaths } from '../types.ts';
 import {
   asNumber,
@@ -105,7 +106,7 @@ export const codexDriver: AgentDriver = {
   prepare(paths: TrialPaths, skill: string | null): void {
     const auth = realAuth(paths);
     if (!existsSync(auth)) throw new Error('Codex login not found; run codex login first.');
-    const target = realpathSync(auth);
+    const target = requireConfined(auth, paths.roots.home, 'the Codex login', readablePaths());
     LOGINS.set(paths, { target, secrets: secretValues(readFileSync(target, 'utf8')) });
     symlinkSync(target, join(paths.codexHome, 'auth.json'));
     writeFileSync(join(paths.home, '.zprofile'), `export PATH="${paths.bin}:$PATH"\n`);

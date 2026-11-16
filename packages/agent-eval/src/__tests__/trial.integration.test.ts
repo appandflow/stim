@@ -371,4 +371,23 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       ['the trial failed before it could be graded: grader bug'],
     ]);
   }, 60_000);
+
+  test('a log line still being written is ignored until it ends and the trial stays healthy', async () => {
+    const head = '{"argv":["ios"],"cwd":"/w","cwdRelative":".","kind":"scripted","startedAt":1,';
+    const tail = '"endedAt":2,"exitCode":0,"stdoutBytes":0,"stderrBytes":0,"path":"","self":""}';
+    const bin = fakeAgent(
+      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '${head}' >> "$log"\nsleep 2\nprintf '%s\\n' '${tail}' >> "$log"\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.problems).toEqual([]);
+    expect(outcome.invocations).toHaveLength(2);
+  }, 40_000);
+
+  test('a log that ends in a cut record after the agent has exited is the invalid result', async () => {
+    const bin = fakeAgent(
+      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '{"argv":["ios"' >> "$log"`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.problems).toContain('the invocation log could not be read');
+  }, 40_000);
 });

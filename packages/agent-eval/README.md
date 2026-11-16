@@ -21,7 +21,7 @@ cannot prove.
 An agent under test runs real commands, and everything a command prints goes to
 the model provider and into the results. Each CLI is confined as far as it
 supports. The results go to `~/.stim-agent-eval/results/` by default, which both
-agents are denied. The home folder is the real one of the OS user; no option or environment variable changes it, the results location or the confinement.
+agents are denied. The home folder is the real one of the OS user; no option or environment variable changes it, the results location or the confinement. Before any agent starts, the results directory and the Codex login are resolved through symlinks and must lie inside that home and inside none of the readable paths below; otherwise the run is refused.
 
 - **Claude Code**: Bash runs in Claude's OS sandbox with the home folder denied, and
   Read, Glob and Grep deny `~/**`. Still readable: `/etc`, `/Library`, `/private/tmp`
@@ -58,7 +58,7 @@ first reason within 6 seconds.
 
 ## Codex login
 
-The trial links the real `auth.json` (the `CODEX_HOME` of the caller is honoured when it is inside the real home), so
+The trial links the real `auth.json` at `~/.codex/auth.json` (`CODEX_HOME` is not read), so
 Codex refreshes its own login exactly as it does outside a trial: its file backend
 opens the path with truncation and follows the link. The runner never writes the real
 `auth.json`. If Codex replaces the link with a regular file, the runner moves that
@@ -184,7 +184,7 @@ would not be noticed.
   `/tmp/claude-<uid>`.
 - Signals only the agent it spawned. The tests give the runner temp roots through the
   `main(argv, roots)` entry; the shipped `cli.ts` always uses the OS user's real home and
-  `~/.codex` (or a `CODEX_HOME` inside the real home).
+  `~/.codex` .
 
 ## Isolation
 

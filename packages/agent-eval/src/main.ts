@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CASES } from './cases/index.ts';
@@ -8,7 +8,8 @@ import { codexDriver } from './drivers/codex.ts';
 import { casePassed, markdownTable } from './report.ts';
 import { runEvals } from './run.ts';
 import { trapSignals } from './interrupt.ts';
-import { resultsRoot } from './roots.ts';
+import { prepareResultsRoot, requireConfined } from './roots.ts';
+import { readablePaths } from './drivers/shared.ts';
 import { REPO_ROOT, type Arm } from './trial.ts';
 import type { AgentDriver, Roots } from './types.ts';
 
@@ -79,7 +80,12 @@ export async function main(argv: string[], roots: Roots): Promise<number> {
 
   const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
   const startedAt = new Date().toISOString();
-  const directory = join(resultsRoot(roots), `${startedAt.replaceAll(':', '-')}-${sha}`);
+  const readable = readablePaths();
+  const results = prepareResultsRoot(roots, readable);
+  const login = join(roots.codexHome, 'auth.json');
+  if (drivers.includes(codexDriver) && existsSync(login))
+    requireConfined(login, roots.home, 'the Codex login', readable);
+  const directory = join(results, `${startedAt.replaceAll(':', '-')}-${sha}`);
   privateDirectory(directory);
 
   const interrupt = trapSignals(process, (code) => process.exit(code));

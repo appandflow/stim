@@ -146,18 +146,19 @@ function isInvocation(value: unknown): value is Invocation {
   );
 }
 
-function readInvocations(paths: TrialPaths): { invocations: Invocation[]; error: string | null } {
+function readInvocations(paths: TrialPaths, final: boolean): { invocations: Invocation[]; error: string | null } {
   const log = join(paths.harness, 'invocations.jsonl');
   if (!existsSync(log)) return { invocations: [], error: null };
   try {
-    const invocations = readFileSync(log, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const parsed: unknown = JSON.parse(line);
-        if (!isInvocation(parsed)) throw new Error('shape');
-        return parsed;
-      });
+    const text = readFileSync(log, 'utf8');
+    const lines = text.split('\n');
+    const tail = lines.pop() ?? '';
+    if (final && tail !== '') throw new Error('incomplete');
+    const invocations = lines.filter(Boolean).map((line) => {
+      const parsed: unknown = JSON.parse(line);
+      if (!isInvocation(parsed)) throw new Error('shape');
+      return parsed;
+    });
     return { invocations, error: null };
   } catch {
     return { invocations: [], error: 'the invocation log could not be read' };
@@ -350,7 +351,7 @@ export async function runTrial(
     if (options.signal?.aborted) result = NOT_STARTED;
     else {
       watcher = setInterval(() => {
-        const read = readInvocations(paths);
+        const read = readInvocations(paths, false);
         logError ??= read.error;
         if (read.error || (confine && read.invocations.some((each) => each.homeReadable === true))) stop.abort();
       }, 250);
@@ -377,7 +378,7 @@ export async function runTrial(
       problems.push(`the agent exited with ${result.code}`);
     if (result.leftover) problems.push(result.leftover);
     if (readdirSync(paths.stimHome).length > 0) problems.push('the real stim ran: the agent Stim home is not empty');
-    const read = readInvocations(paths);
+    const read = readInvocations(paths, true);
     const invocations = read.invocations;
     if (read.error ?? logError) problems.push(read.error ?? logError ?? '');
     const confinement = confine && !read.error ? probeResult(invocations) : null;
