@@ -271,8 +271,8 @@ reference:
 - [EAS development builds](https://stim.appandflow.com/docs/eas-builds).
 - [Commands](https://stim.appandflow.com/docs/commands) and
   [settings](https://stim.appandflow.com/docs/settings).
-- [Troubleshooting](https://stim.appandflow.com/docs/troubleshooting): every
-  refusal code and its remedy.
+- [Troubleshooting](https://stim.appandflow.com/docs/troubleshooting): recovery
+  procedures too long for a printed remedy.
 
 The installed CLI contains version-matched operational guidance:
 
