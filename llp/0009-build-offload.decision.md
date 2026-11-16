@@ -144,7 +144,16 @@ claim. Non-Android claims follow the worker process group. Android claims
 stay child-pending because Gradle daemons leave that group; cancellation
 releases them only after this repository's verified daemon identities exit.
 Unknown cleanup or a server crash retains unresolved repository and build-slot
-claims for manual inspection and recovery. stim-server evicts areas of approved
+claims for manual inspection and recovery, and the refusal names one command
+that removes the fingerprint work directory and every retained claim. A worker
+stopped with SIGTERM (a cancel, a closed connection or the build timeout)
+aborts its fingerprint evaluation, stops its Gradle daemons or Exact simulator,
+and reports a settled `cancelled` result only once every
+process group it started outside its own through exec is gone; the host then
+releases the claims after the worker's own group has exited, as for a finished
+build. A worker that does not report within the kill grace period is killed and
+keeps its claims. This SIGTERM rule was chosen by the implementer of #5792, not
+by the maintainer. stim-server evicts areas of approved
 clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
 floor, the least recently used not used in the last 3 hours, which under the
 floor also go; it keeps each client's most recently used area and retains one
