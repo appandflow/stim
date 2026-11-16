@@ -259,14 +259,7 @@ DISK PRESSURE
   tool's own command, only at critical and only while the earlier rungs left
   the disk short (\`stim guide cleanup gc\`); Xcode DerivedData outside Stim
   is never deleted. Every command prints one stderr line while the daemon's last tick, at most 10
-  minutes old, found the disk critical. When the daemon's census (DISCOVERED
-  CHECKOUTS NOT FULLY MANAGED) holds checkouts with measured build output, a
-  second stderr line says how much they hold ("at least" while some are not
-  measured), that adopting a folder gives it the full rules (finished linked
-  worktree removal included), and the command that adds the largest reduce-only
-  folder to maintenance.discoverRoots; a dot-folder group counts in the total and is never
-  the one named. It reads the daemon snapshot, the scan file, the census file and the config (all under the Stim home) and makes no call on a configured folder or a checkout (it compares strings with the roots the census recorded, and lists nothing once the setting changed since the census), never walks the disk, and goes to
-  stderr only, never into a JSON payload. It appears at critical only.
+  minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records
@@ -1287,121 +1280,9 @@ their node_modules and Pods (a linked worktree's after idle.dormantDays, a sourc
 checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
 evaluated on every pass, like a sibling-discovered checkout; the
 finished-worktree check inspects every discovered worktree with git (about 0.14
-seconds each where measured). A
-folder named in maintenance.discoverRoots
-keeps the full rules. A scoped STIM_HOME uses neither source.
-
-DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
-  After a scan the daemon (also on the passes thread, after the scan) writes
-  maintenance/discovery-census.json: the finds Stim does not fully manage,
-  classified from the complete discovery list, and the size of their build
-  output. Reduce-only: scan finds that discovery selects with origin scan.
-  Dot-folder: scan finds under a home dot-folder that no route reaches (a
-  registered project or a discovered checkout that touches it; lying below a
-  maintenance.discoverRoots folder is not coverage, since a root reaches only its
-  direct children) and that pass the same revalidation as a scan
-  find; Stim does nothing with them. A find that contains, or lies inside, a
-  registered project or a discovered checkout is treated as managed and not listed,
-  although only that project or checkout is managed. And the worktrees in ~/.codex/worktrees are not scan finds, so
-  they are not listed either.
-  Size is the recognised build output only: the directories maintenance clears
-  as build output for the checkout and for each folder directly in its apps and
-  packages (Android build and .gradle, .build, android .cxx, a .dd laid out as
-  DerivedData, a Cargo target that Exact owns or that carries CACHEDIR.TAG).
-  node_modules and Pods are not counted, and the size is not proof that the
-  directory could be deleted. Every read of a checkout's layout (listings, a
-  directory check, the first 64 bytes of a CACHEDIR.TAG that the listing shows as
-  a regular file) is asynchronous, goes through the shared bounded reader (3
-  seconds, one timed-out read outstanding per thread, none started while one is
-  pending) and checks the abort and the run's budget first; the directory rules
-  are the ones the deleting passes use, driven by that reader. A path that does
-  not exist is absent; a denied or timed-out read makes the checkout "could not
-  be measured", never a measured zero. Not bounded on this path (found by
-  reading computeDiscovered, unmanagedScanFinds, scanSkipper and childrenOf; the
-  callees of project recognition and of the git helpers were not traced): existsSync
-  on each configured discover root, registered project root and worktree entry;
-  realpathSync (canonicalPath) on those, the repository folders, the home folder,
-  every child listed, the known roots and, in scanSkipper, the Stim home, the build
-  worker root and the temporary directories; isProtectedLocation (realpathSync) on
-  every worktree path and candidate child outside a configured root; project
-  recognition (selectDoctor and a synchronous readdirSync of apps, examples and
-  packages) for each child and at the end of the revalidation of every scan find;
-  the child listings, which are raced against 3 seconds, not read through the shared
-  reader; and git subprocesses (git worktree list and git symbolic-ref through the
-  exec wrapper, abortable, with their own timeouts). The passes run them the same
-  way; the census adds that recognition now also runs on finds under home
-  dot-folders. A revalidation metadata read that fails for anything but proven
-  absence (a denied lstat, for one) leaves the find pending, never dropped. A du that
-  exits non-zero is a measured lower bound: the bytes count and the totals read "at
-  least"; the cache entry records it, and no other reader of the cache sees it. Sizes go through the disk-usage cache, one
-  walk at a time on the machine, 10 seconds per directory (a build directory the
-  gc worktree report sizes with private bytes is measured with them too), at most
-  25 checkouts and 90 seconds per run; a checkout measured within a day is
-  carried over without a read; the others are taken longest-waiting first (by last attempt), and what
-  a run leaves keeps its earlier entry (or is "not measured yet") and keeps the
-  census pending, so the next run, an hour later, continues; so does a
-  checkout whose layout could not be read. A find whose revalidation did not
-  answer (a read pending) is kept as its own kind, unchecked: neither listed as
-  managed nor dropped, with any earlier measurement and its age, and the census
-  stays pending so it is retried within the hour; so is a find whose project
-  check could not read a manifest or listing. Doctor prints that every
-  checkout it found is managed only for a finished scan, a census made from it
-  and no unchecked find. The measuring walk is told the directory exists
-  (refreshMeasure knownToExist), so it makes no synchronous probe of the
-  measured path. A walk that
-  fails or times out is "could not be measured", never zero; a total with any
-  unknown is "at least"; a group shows its oldest measurement date. The census
-  is written again after a new scan, when the machine's maintenance.discoverRoots
-  changes, and after a day. It classifies a discovery computed from the scan
-  result it records, not the per-operation discovery the passes share, and
-  records that result's ranAt; doctor shows no size from a census made from an
-  older scan than the scan file holds (those checkouts read "not measured yet").
-  An error that carries reportCleanup (a measuring child whose cleanup could not
-  be verified, or the STIM_CLAIM_UNAVAILABLE errors the operation's spawn claims
-  raise; a walk claim held elsewhere is only "busy", not an error) propagates out
-  of the pass unchanged for the daemon's cleanup containment (stim guide
-  lifecycle), and does so before an abort is considered; any other census error is
-  contained, writes nothing and is one maintenance_failure record (target
-  discovery census) in the cleanup log. The census reads no idle evidence: that
-  evidence walks the source of a checkout with no bound it could apply. It
-  records one cheap fact instead, the last git activity: the newest
-  modification time of HEAD, index and logs/HEAD in the checkout's git
-  directory (its .git directory, or for a linked worktree the .git/worktrees/<name>
-  directory its .git file names, relative names resolved against the checkout,
-  which must hold a gitdir file naming this checkout's .git file and whose
-  canonical path must equal its path, so no component is a symlink), by bounded
-  reads that never follow a symlink and run no git. Commits, checkouts, staging
-  and reflog writes change it; editing files without touching git does not. A
-  missing git directory, a name outside .git/worktrees, a read that fails or
-  times out, or a spent budget gives unknown, never old. Doctor lists each
-  checkout with that date, oldest first, unknown last, with no threshold, and
-  says Stim has not checked whether a checkout is in use or holds uncommitted or
-  unpushed work; deleting one is the person's call.
-  stim doctor prints it as the section "Checkouts Stim does not fully manage"
-  and carries it in --json as discovery (internal, no compatibility promise):
-  scan { status: read | absent | unreadable | unusable, ranAt, trigger,
-  truncation, visited, unreadable }, census (read | absent | unreadable |
-  unusable | none), censusAt, censusCurrent, and groups, one per containing
-  folder and kind, each { folder, kind, checkouts, bytes, measured, failed,
-  partial, notMeasuredYet, command, commandProblem (too-broad | already-named |
-  setting-unreadable | unchecked), oldestMeasuredAt, members: [{ path,
-  gitActivityAt (ISO time or null) }] }, plus complete and rootsChangedSinceCensus.
-  complete is one value, false when the scan stopped early, failed or could not
-  read a path, the census is pending, from another scan or older than a roots
-  change, or any group is unchecked or has a failed, partial or not yet measured
-  checkout; every figure ("at least") and the sentence that every checkout is
-  managed follow it. Doctor reads the two files and the setting and walks nothing,
-  and never hides a census entry: a group whose folder is a root discovery uses, or
-  that the setting names now (symlinks resolved), is shown with no command and the
-  reason, and a group in a root discovery ignores (a broad one such as ~) is an
-  ordinary group. The section shows only where doctor runs,
-  which is inside a project. command is stim settings set
-  maintenance.discoverRoots '<json>' --scope machine with the current value plus
-  the folder, quoted for the shell; it is null for the home folder or a folder
-  holding it (discoverRoots refuses those) and when the current value does not
-  read. Adding a folder gives its checkouts the full discovered-checkout rules,
-  finished-worktree removal included; for a dot-folder find it also lets Stim act
-  where it did not. The critical-disk line says so before the command.
+seconds each where measured). stim doctor lists the rest and the adopt
+command ("at least": incomplete). Adopting applies the full rules, worktree
+removal included: ask the user. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes
 (git-ignored files included; node_modules, Pods and nested worktrees skipped,

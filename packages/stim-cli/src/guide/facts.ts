@@ -562,18 +562,12 @@ leased until <time>" for each one.`,
                   invalid. level is the higher of disk and memory, each
                   "normal", "high" or "critical"; reasons names each
                   condition above normal (\`guide lifecycle budget\`)
-  discovery       the checkouts the last home folder scan found that Stim does
-                  not fully manage, from the daemon's cached result (internal,
-                  no compatibility promise; see \`guide cleanup\`): { scan, census,
-                  censusAt, censusCurrent, complete, rootsChangedSinceCensus, groups }, one group per containing
-                  folder and kind (reduce-only, dot-folder or unchecked) with checkouts,
-                  bytes of recognised build output, how many checkouts were
-                  measured, partial (a du that exited non-zero: a lower bound), failed or not measured yet, the command that adds
-                  the folder to maintenance.discoverRoots (null with
-                  commandProblem when it cannot), and the oldest measurement and each checkout's last git activity (ISO time
-                  or null for unknown). complete is false whenever the scan,
-                  the census or any entry is incomplete; every figure then reads
-                  "at least"
+  discovery       unmanaged checkouts the home scan found (internal): { scan,
+                  census, censusAt, censusCurrent, complete (false: figures read
+                  "at least"), rootsChangedSinceCensus, groups: [{ folder, kind
+                  reduce-only | dot-folder | unchecked, checkouts, bytes,
+                  measured, partial, failed, notMeasuredYet, command,
+                  commandProblem, oldestMeasuredAt, members }] }
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",
