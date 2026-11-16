@@ -407,11 +407,13 @@ releases. Keep operational guidance in the version-matched guides.
 `guide agent` covers the normal workflow, safety, recovery actions, and topic
 routing. Put transparent build optimizations and cache internals in the relevant
 detailed topics, not the root agent guide. Detailed topics also own flag,
-payload, setting, backend, and cleanup references. A refusal's printed remedy
-carries what the agent does next. `stim guide errors` keeps a section only for a
-procedure too long for a remedy, and a remedy that needs one names the exact
-`stim guide errors <CODE>` command; `guide agent` sends an agent to the printed
-remedy first. Do not add a version check, compatibility branch, migration path,
+payload, setting, backend, and cleanup references. A new refusal puts what the
+agent does next in its printed remedy, and adds a `stim guide errors` section
+only for a procedure too long for a remedy; a remedy that needs one names the
+exact `stim guide errors <CODE>` command. An existing section stays until the
+remedy at every emitting site carries its action. `guide agent` sends an agent
+to the printed remedy first, and to `stim guide errors <CODE>` when the remedy
+is missing or does not settle the refusal. Do not add a version check, compatibility branch, migration path,
 or any other failure fallback to the static skill. Only one skill ships.
 
 Update the affected guide topics and their contract tests when commands,

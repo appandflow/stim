@@ -1830,7 +1830,7 @@ IOS SCHEME SELECTION
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
   If selection fails, pass --scheme with an available name, set ios.scheme, or
-  share the app scheme in Xcode first.
+  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's

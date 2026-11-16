@@ -62,10 +62,10 @@ STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
 NEXT STEP
 
 On launch, use the printed UI command when interaction is needed. On failure,
-follow the printed remedy; read stim guide errors <CODE> only when it names one.
-Use stim logs --errors when the launch output lacks the cause or to verify
-recovery. STIM_NO_PROJECT from logs means there is no captured workspace
-timeline. Verify the expected UI before claiming the fix.
+follow the printed remedy; if it is missing or falls short, run
+stim guide errors <CODE>. Use stim logs --errors when the launch output lacks
+the cause or to verify recovery. STIM_NO_PROJECT from logs means there is no
+captured workspace timeline. Verify the expected UI before claiming the fix.
 
 When a command first prints "Open in Stim: <link>", share that link with the user once.
 Run stim guide for the full topic index.`,

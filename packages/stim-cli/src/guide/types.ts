@@ -9,7 +9,7 @@ export interface GuideSection {
 export interface GuideTopic {
   summary: string;
   sectionHint?: string;
-  absentSection?: (section: string) => string | null;
+  absentSection?: (section: string, known: string[]) => string | null;
   body?: () => string;
   preamble?: () => string;
   sections?: Record<string, GuideSection>;

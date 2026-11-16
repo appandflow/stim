@@ -172,9 +172,9 @@ test('a section name that no topic declares renders nothing', () => {
   expect(renderSection('logs', 'phone')).toBe(null);
 });
 
-function sourceTexts(root: URL): string[] {
+function sourceTexts(root: URL, extension = '.ts'): string[] {
   return readdirSync(root, { recursive: true, encoding: 'utf-8' })
-    .filter((file) => file.endsWith('.ts') && !/__tests__|\.test\.|node_modules/.test(file))
+    .filter((file) => file.endsWith(extension) && !/__tests__|\.test\.|node_modules/.test(file))
     .map((file) => readFileSync(new URL(file, root), 'utf-8'));
 }
 
@@ -183,10 +183,12 @@ test('every stim guide errors reference in a remedy, a guide or the router names
     ...['..', '../../../ci/src', '../../../server/src'].flatMap((dir) =>
       sourceTexts(new URL(`${dir}/`, import.meta.url)),
     ),
+    ...sourceTexts(new URL('../../../../website/docs/', import.meta.url), '.md'),
+    readFileSync(new URL('../../README.md', import.meta.url), 'utf-8'),
     ...allBodies(),
   ];
   const named = new Set(
-    texts.flatMap((text) => [...text.matchAll(/guide errors\s+([A-Za-z][\w-]*)/g)].map((m) => m[1])),
+    texts.flatMap((text) => [...text.matchAll(/guide\s+errors\s+([A-Za-z][\w-]*)/g)].map((m) => m[1])),
   );
   expect(named.size).toBeGreaterThan(0);
   expect([...named].filter((name) => !renderSection('errors', name ?? ''))).toEqual([]);
@@ -209,6 +211,24 @@ test('an errors code without a section prints one line that sends the reader to 
   }
   expect(logs).toHaveLength(1);
   expect(logs[0]).toMatch(/^STIM_NO_METRO .*remedy/);
+  expect(logs[0]).not.toContain('Did you mean');
+});
+
+test('a mistyped errors code names the sections it is close to', async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    await runCli(
+      guideOp(async () => null),
+      ['errors', 'STIM_CLAIM_REFUSE'],
+      { version: '9.9.9' },
+    );
+  } finally {
+    console.log = originalLog;
+  }
+  expect(logs[0]).toMatch(/^STIM_CLAIM_REFUSE has no guide section\./);
+  expect(logs[0]).toContain('Did you mean STIM_CLAIM_REFUSED?');
 });
 
 test('a sectioned topic prints its preamble and an index of every section', () => {

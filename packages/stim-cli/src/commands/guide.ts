@@ -138,7 +138,7 @@ export function guideOp(
       }
       const sectionBody = renderSection(topic, section);
       if (!sectionBody) {
-        const absent = topicByName(topic)?.absentSection?.(section);
+        const absent = topicByName(topic)?.absentSection?.(section, sectionNames(topic));
         if (absent) {
           console.log(absent);
           return;
