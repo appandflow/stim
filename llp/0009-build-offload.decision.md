@@ -147,7 +147,8 @@ Unknown cleanup or a server crash retains unresolved repository and build-slot
 claims for manual inspection and recovery, and the refusal names one command
 that removes the fingerprint work directory and every retained claim. A worker
 stopped with SIGTERM (a cancel, a closed connection or the build timeout)
-aborts its build and reports a settled `cancelled` result only once every
+aborts its fingerprint evaluation, stops its Gradle daemons or Exact simulator,
+and reports a settled `cancelled` result only once every
 process group it started outside its own through exec is gone; the host then
 releases the claims after the worker's own group has exited, as for a finished
 build. A worker that does not report within the kill grace period is killed and

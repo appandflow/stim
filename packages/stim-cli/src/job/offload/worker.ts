@@ -241,12 +241,12 @@ function cancelOnSigterm(): () => void {
   });
   const onSigterm = () => {
     cancelled.abort(new Error('The build was cancelled.'));
+    for (const cleanup of cancelCleanups) {
+      try {
+        cleanup();
+      } catch {}
+    }
     const finish = () => {
-      for (const cleanup of cancelCleanups) {
-        try {
-          cleanup();
-        } catch {}
-      }
       const line = resultWritten
         ? ''
         : `${JSON.stringify({ type: 'result', ok: false, code: 'cancelled', message: 'The build was cancelled.', fingerprintSettled: true })}\n`;
