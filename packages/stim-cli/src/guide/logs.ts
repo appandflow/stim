@@ -460,9 +460,9 @@ refusal; and "host_connect ... error=<reason_with_underscores>" when its connect
 machine fails; and, whatever debug.logs says, "build job cancel job=<id>
 client=<id> reason=<why> silentSeconds=<n>" and "build job ended job=<id>
 client=<id> code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>"
-(empty fields left out) for an offloaded build that is stopped or ends without
+(empty fields omitted) for an offloaded build that is stopped or ends without
 an artifact; a client that ends its build closes its connection, so why reads
-connection-closed. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true whois=<ms> probe=<ms> error=<code> reason="<message>"" (slow means 1000 ms or more;
 whois and probe are the hello's Tailscale identity lookup and its wait for

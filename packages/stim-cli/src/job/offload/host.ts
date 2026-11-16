@@ -1239,7 +1239,7 @@ export class BuildHost {
             };
           }
           if (!released && stopped && entry.outcome && !entry.outcome.ok)
-            entry.outcome.message = `Stopped (${stopped.reason}) after ${silenceText(stopped.silentMs)}. ${entry.outcome.message}${stopped.line === null ? '' : ` Last build output line: ${JSON.stringify(stopped.line)}.`}`;
+            entry.outcome.message = `${entry.outcome.message} Stopped (${stopped.reason}) after ${silenceText(stopped.silentMs, stopped.line)}.`;
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&

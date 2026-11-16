@@ -82,7 +82,7 @@ export async function serveOffloadJob(
     const end = (exit: number, why: CancelReason = exit === JOB_BAD_REQUEST ? 'bad-request' : 'connection-closed') => {
       if (!open) return;
       code = exit;
-      reason = why;
+      reason = stop.aborted ? 'job-stopped' : why;
       open = false;
       input.off('data', onData);
       resolve();

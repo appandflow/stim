@@ -1632,7 +1632,7 @@ describe('offloaded builds', () => {
           code: 'cleanup-unresolved',
           message: expect.stringMatching(
             new RegExp(
-              `^Stopped \\(${reason}\\) after no build output for \\d+s\\. Build cleanup is unresolved\\..* Last build output line: "CompileC"\\.$`,
+              `^Build cleanup is unresolved\\..* before retrying\\. Stopped \\(${reason}\\) after no build output for \\d+s, last line: "CompileC"\\.$`,
             ),
           ),
         },
