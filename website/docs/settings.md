@@ -1027,7 +1027,11 @@ writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
 every request to another machine with its duration and result code. stim-server
 writes `server.ndjson` there and logs every request with its timings to its
-service log. Records never carry arguments,
+service log. On a build worker, `server.ndjson` also follows each offloaded
+build: its start and claims, why it was cancelled, the processes in its
+process group just before the first signal, each signal, its exit with the last
+lines of its stderr, and whether its claims were released. The service log gets
+one line for a cancel and one for a build that ended without an artifact. Records never carry arguments,
 environment values, tokens or tickets, nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 

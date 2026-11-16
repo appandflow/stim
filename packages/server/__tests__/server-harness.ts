@@ -248,6 +248,11 @@ if (process.argv[2].startsWith('offer')) {
   print({ type: 'log', record: { src: 'build', level: 'info', msg: 'CompileC' } });
   if (process.env.FAKE_WORKER_HANG) {
     process.on('SIGTERM', () => {});
+    if (process.env.FAKE_WORKER_SLEEP) {
+      const { spawn } = await import('node:child_process');
+      spawn('sleep', ['3600'], { stdio: 'ignore' });
+      process.stderr.write('fake worker: waiting on sleep\\n');
+    }
     setInterval(() => {}, 1000);
   } else {
     if (process.env.FAKE_WORKER_GATE) {

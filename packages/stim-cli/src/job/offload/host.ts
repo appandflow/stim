@@ -98,6 +98,8 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
 import { exactOffloadParam, exactPinsParam, exactToolProblems } from '../../integrations/exact-offload.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
+import { groupProcesses, jobLog, keepTail, serviceLine, type CancelReason } from './job-record.ts';
+import { outputLine, silenceText } from '../../offload/output-silence.ts';
 
 const DIGEST_BYTES = 32;
 const MAX_MANIFEST_FILES = 200_000;
@@ -107,6 +109,7 @@ const ARTIFACT_CHUNK = 1024 * 1024;
 const MAX_BUFFERED = 16 * 1024 * 1024;
 const MAX_WORKER_LINE = 1024 * 1024;
 const GROUP_POLL_MS = 200;
+const STDERR_DRAIN_MS = 1000;
 
 type Refusal = { error: ProtocolError };
 
@@ -403,7 +406,7 @@ interface Job {
   swiftpmArtifact?: Record<string, unknown>;
   settled: boolean;
   cleanupSettled: boolean;
-  cancel: () => void;
+  cancel: (reason: CancelReason) => void;
   done: Promise<void>;
   send: (event: BuildProgressEvent) => void;
   session: BuildSession | null;
@@ -1051,7 +1054,7 @@ export class BuildHost {
       child = getExecutor().spawn(process.execPath, this.workerCommand('build'), {
         cwd: area,
         detached: true,
-        stdio: ['pipe', 'pipe', 'ignore'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         env: this.workerEnvironment(clientDir, area),
       });
       transfer();
@@ -1063,9 +1066,17 @@ export class BuildHost {
       }
       return refusal('build-refused', (error as Error).message);
     }
+    const stderrTail = keepTail(child.stderr);
+    let lastOutput: { at: number; line: string | null } = { at: Date.now(), line: null };
+    let stopped: { reason: CancelReason; at: number } | null = null;
     let treeKilled: Promise<void> | null = null;
     const signalGroup = (signal: NodeJS.Signals) => {
       if (child.pid === undefined) return;
+      jobLog.log('build.job.signal', {
+        job: id,
+        signal: process.platform === 'win32' ? 'taskkill' : signal,
+        group: child.pid,
+      });
       if (process.platform === 'win32') {
         treeKilled ??= killTree(child.pid);
         return;
@@ -1077,18 +1088,31 @@ export class BuildHost {
     let killTimer: NodeJS.Timeout | null = null;
     let finished = false;
     const caching = new AbortController();
-    const cancel = () => {
+    const cancel = (reason: CancelReason) => {
       caching.abort();
       if (killTimer || finished) return;
+      if (!stopped) {
+        stopped = { reason, at: Date.now() };
+        const silentMs = stopped.at - lastOutput.at;
+        serviceLine('cancel', { job: id, client, reason, silentSeconds: Math.round(silentMs / 1000) });
+        jobLog.log('build.job.cancel', {
+          job: id,
+          reason,
+          runningMs: stopped.at - started,
+          silentMs,
+          lastOutput: lastOutput.line,
+          group: jobLog.enabled() ? groupProcesses(child.pid) : undefined,
+        });
+      }
       signalGroup('SIGTERM');
       killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
       killTimer.unref();
     };
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      if (!captured?.ok) cancel();
+      if (!captured?.ok) cancel('identity-unavailable');
     } catch {
-      cancel();
+      cancel('identity-unavailable');
     }
     child.stdin?.on('error', () => {});
     child.stdin?.end(
@@ -1102,7 +1126,17 @@ export class BuildHost {
         artifactCache: this.artifactCacheDir(client, repo),
       }),
     );
-    const timeout = setTimeout(cancel, this.limits.timeoutMs);
+    jobLog.log('build.job.start', {
+      job: id,
+      client,
+      repo,
+      platform: job.platform,
+      workerPid: child.pid ?? null,
+      claims: [claim, slot, engineClaim].flatMap((held) =>
+        held ? [{ label: held.label, id: held.claimId, path: held.path }] : [],
+      ),
+    });
+    const timeout = setTimeout(() => cancel('timeout'), this.limits.timeoutMs);
     const entry: Job = {
       id,
       client,
@@ -1133,6 +1167,7 @@ export class BuildHost {
       if (value.type === 'phase' && typeof value.phase === 'string' && typeof value.msg === 'string') {
         entry.send({ event: 'build.progress', job: id, phase: value.phase, msg: value.msg });
       } else if (value.type === 'log' && isJsonObject(value.record)) {
+        lastOutput = { at: Date.now(), line: outputLine(value.record) ?? lastOutput.line };
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
         if (isJsonObject(value.cacheArtifact)) entry.cacheArtifact = value.cacheArtifact;
@@ -1156,6 +1191,18 @@ export class BuildHost {
       child.on('error', () => {
         if (child.pid === undefined) spawnFailed = true;
       });
+      child.on('exit', () => {
+        setTimeout(() => child.stderr?.destroy(), STDERR_DRAIN_MS).unref();
+      });
+      child.on('close', (code, signal) => {
+        jobLog.log('build.job.exit', {
+          job: id,
+          code,
+          signal,
+          result: entry.outcome ? (entry.outcome.ok ? 'ok' : entry.outcome.code) : null,
+          stderrTail: stderrTail(),
+        });
+      });
       child.on('close', () => {
         clearTimeout(timeout);
         const outcome: BuildJobOutcome =
@@ -1165,7 +1212,7 @@ export class BuildHost {
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         const abnormal = !entry.outcome;
         entry.outcome = outcome;
-        if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
+        if (child.pid !== undefined && processGroupAlive(child.pid)) cancel('group-outlived-worker');
         const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
@@ -1191,6 +1238,8 @@ export class BuildHost {
               message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then remove ${fingerprintTemp} and recover the repository claim at ${claim.path}${slot ? `, build-slot claim at ${slot.path}` : ''}${engineClaim ? `, and engine claim at ${engineClaim.path}` : ''} before retrying.`,
             };
           }
+          if (!released && stopped && entry.outcome && !entry.outcome.ok)
+            entry.outcome.message = `The build was stopped (${stopped.reason}) after ${silenceText(stopped.at - lastOutput.at, lastOutput.line)}. ${entry.outcome.message}`;
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&
@@ -1258,6 +1307,30 @@ export class BuildHost {
               `stim-server: could not retain the completed artifact for ${client}/${repo}: ${String(error)}`,
             );
           }
+          const ended = entry.outcome ?? outcome;
+          const claimsReleased = {
+            area: !existsSync(claim.path),
+            ...(slot ? { slot: !existsSync(slot.path) } : {}),
+            ...(engineClaim ? { engine: !existsSync(engineClaim.path) } : {}),
+          };
+          jobLog.log('build.job.settled', {
+            job: id,
+            ok: ended.ok,
+            code: ended.ok ? null : ended.code,
+            durationMs: Date.now() - started,
+            drained,
+            claimsReleased,
+          });
+          if (!ended.ok)
+            serviceLine('ended', {
+              job: id,
+              client,
+              code: ended.code,
+              stopped: stopped?.reason ?? null,
+              exit: child.exitCode,
+              signal: child.signalCode,
+              claimsReleased: Object.values(claimsReleased).every(Boolean),
+            });
           entry.settled = true;
           this.jobs.delete(entry);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
@@ -1279,12 +1352,12 @@ export class BuildHost {
   }
 
   /** Cancels a job and deletes its archive once its process group is gone. */
-  abandon(job: Job): void {
+  abandon(job: Job, reason: CancelReason): void {
     if (job.grace) clearTimeout(job.grace);
     job.grace = null;
     job.session = null;
     job.send = nowhere;
-    job.cancel();
+    job.cancel(reason);
     this.owned.delete(job.id);
     void job.done.then(() => {
       if (job.cleanupSettled) rmSync(dirname(job.archive), { recursive: true, force: true });
@@ -1330,9 +1403,9 @@ export class BuildHost {
     });
   }
 
-  async close(): Promise<void> {
+  async close(reason: CancelReason = 'job-stopped'): Promise<void> {
     this.closed = true;
-    for (const job of this.owned.values()) this.abandon(job);
+    for (const job of this.owned.values()) this.abandon(job, reason);
     await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
   }
@@ -1652,7 +1725,7 @@ export class BuildSession {
     });
     if ('error' in launched) return launched;
     if (this.closed) {
-      this.host.abandon(launched);
+      this.host.abandon(launched, 'connection-closed');
       return refusal('build-refused', 'This offload job is ending.');
     }
     this.jobs.set(launched.id, launched);
@@ -1676,7 +1749,7 @@ export class BuildSession {
   cancel(params: unknown): { result: Record<string, never> } | Refusal {
     const job = isJsonObject(params) && typeof params.job === 'string' ? this.jobs.get(params.job) : undefined;
     if (!job) return refusal('bad-request', 'No such build job on this connection.');
-    job.cancel();
+    job.cancel('client-cancel');
     return { result: {} };
   }
 
@@ -1793,10 +1866,10 @@ export class BuildSession {
   }
 
   /** Cancels this session's jobs: the client closed the connection, or the job is ending. */
-  close(): void {
+  close(reason: CancelReason = 'connection-closed'): void {
     this.closed = true;
     this.transfers.abort();
-    for (const job of this.jobs.values()) this.host.abandon(job);
+    for (const job of this.jobs.values()) this.host.abandon(job, reason);
     this.jobs.clear();
     if (this.incoming) rmSync(this.incoming.tmp, { force: true });
     this.incoming = null;

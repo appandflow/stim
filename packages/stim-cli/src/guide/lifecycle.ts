@@ -1413,7 +1413,11 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   The \`~\` value is an estimate, never a countdown; the third line is a
   project with no record to estimate from yet. \`guide facts stats\` says where
-  the number comes from.
+  the number comes from. A build on another machine ends its heartbeat with
+  \`(on <machine>)\`, and once that machine has relayed no build output for 5
+  minutes the heartbeat also says so and quotes the last line it relayed:
+
+    build       still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)
 
   The lifecycle commands use the same column. \`worktree warm\` reports
   copied and kept entries on stderr, with empty stdout:
