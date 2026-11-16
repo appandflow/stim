@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
-import { renderSection, renderTopic, sectionNames, topicNames } from '../commands/guide.ts';
+import { renderIndex, renderSection, renderTopic, sectionNames, topicNames } from '../commands/guide.ts';
 
 interface Budget {
   skill: number;
+  index: number;
   reactNativePath: number;
   defaults: { section: number; topic: number };
   topics: Record<string, number>;
@@ -16,7 +17,27 @@ const bytes = (text: string | null): number => Buffer.byteLength(text ?? '', 'ut
 
 const SKILL = readFileSync(new URL('../../skill/SKILL.md', import.meta.url));
 
+const VERSION = '2.0.0-next.20261115140758.gfa6f21c';
+
 const HINT = 'Cut text, or raise the number in packages/stim-cli/src/__tests__/guide-budget.json in this pull request.';
+
+function invalidBudgets(): string[] {
+  const values: [string, unknown][] = [
+    ['skill', budget.skill],
+    ['index', budget.index],
+    ['reactNativePath', budget.reactNativePath],
+    ['defaults.section', budget.defaults?.section],
+    ['defaults.topic', budget.defaults?.topic],
+    ...Object.entries(budget.topics ?? {}).map(([key, value]): [string, unknown] => [`topics.${key}`, value]),
+    ...Object.entries(budget.sections ?? {}).map(([key, value]): [string, unknown] => [`sections.${key}`, value]),
+  ];
+  return values
+    .filter(([, value]) => typeof value !== 'number' || !Number.isFinite(value))
+    .map(
+      ([key, value]) =>
+        `budget key "${key}" is ${JSON.stringify(value)}, not a finite number. Set it in the budget file.`,
+    );
+}
 
 function overages(entries: { name: string; size: number; budget: number }[]): string[] {
   return entries
@@ -28,7 +49,10 @@ function overages(entries: { name: string; size: number; budget: number }[]): st
 }
 
 test('rendered guide and skill sizes stay within the checked-in budget', () => {
-  const entries = [{ name: 'skill', size: SKILL.length, budget: budget.skill }];
+  const entries = [
+    { name: 'skill', size: SKILL.length, budget: budget.skill },
+    { name: 'guide (index)', size: bytes(renderIndex(VERSION)), budget: budget.index },
+  ];
   const unknown: string[] = [];
   const seenTopics = new Set<string>();
   const seenSections = new Set<string>();
@@ -66,5 +90,5 @@ test('rendered guide and skill sizes stay within the checked-in budget', () => {
     budget: budget.reactNativePath,
   });
 
-  expect([...overages(entries), ...unknown]).toEqual([]);
+  expect([...invalidBudgets(), ...overages(entries), ...unknown]).toEqual([]);
 });

@@ -1,6 +1,7 @@
 {
   "unit": "bytes of UTF-8 text printed by stim guide without the status block; the skill is the file size",
   "skill": 1000,
+  "index": 2000,
   "reactNativePath": 13250,
   "defaults": {
     "section": 10000,
