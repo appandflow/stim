@@ -6,8 +6,8 @@ import {
   asNumber,
   asRecord,
   asString,
-  checkoutReads,
   minimalPath,
+  readablePaths,
   parseLines,
   resolveBinary,
   unwrapShell,
@@ -81,17 +81,6 @@ interface LoginState {
 }
 
 const LOGINS = new WeakMap<TrialPaths, LoginState>();
-const SYSTEM_READS = [
-  '/usr',
-  '/bin',
-  '/sbin',
-  '/System',
-  '/Library',
-  '/private/etc',
-  '/dev',
-  '/opt/homebrew',
-  '/Applications/Xcode.app',
-];
 
 function permissionProfile(paths: TrialPaths): string {
   const access: Record<string, string> = {
@@ -101,9 +90,7 @@ function permissionProfile(paths: TrialPaths): string {
     [paths.bin]: 'read',
     [paths.home]: 'read',
     [join(paths.codexHome, 'skills')]: 'read',
-    [dirname(dirname(process.execPath))]: 'read',
-    ...Object.fromEntries(checkoutReads().map((path) => [path, 'read'])),
-    ...Object.fromEntries(SYSTEM_READS.map((path) => [path, 'read'])),
+    ...Object.fromEntries(readablePaths().map((path) => [path, 'read'])),
     '/tmp': 'deny',
     '/private/tmp': 'deny',
   };

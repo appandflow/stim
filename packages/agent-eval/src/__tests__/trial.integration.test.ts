@@ -210,15 +210,19 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   test('SIGINT to the CLI stops the live agent, cleans up, writes the results and exits 130', async () => {
     const marker = join(directory, 'cli-agent.txt');
     const bin = fakeAgent(`echo "$$ $PWD" > "${marker}"\nsleep 30`);
-    const cli = fileURLToPath(new URL('../cli.ts', import.meta.url));
-    const out = join(roots.home, '.stim-agent-eval', 'results');
     mkdirSync(join(directory, 'tmp'));
+    const entry = fileURLToPath(new URL('./entry.ts', import.meta.url));
     const child = spawn(
       process.execPath,
-      [cli, '--agent', 'claude', '--bin', bin, '--case', 'first-launch', '--trials', '1', '--out', out],
+      [entry, '--agent', 'claude', '--bin', bin, '--case', 'first-launch', '--trials', '1'],
       {
         stdio: 'ignore',
-        env: { ...process.env, NODE_NO_WARNINGS: '1', STIM_EVAL_HOME: roots.home, TMPDIR: join(directory, 'tmp') },
+        env: {
+          ...process.env,
+          NODE_NO_WARNINGS: '1',
+          TEST_ROOTS: JSON.stringify(roots),
+          TMPDIR: join(directory, 'tmp'),
+        },
       },
     );
     const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
@@ -228,9 +232,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(await exited).toBe(130);
     expect(alive(Number(pid))).toBe(false);
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
-    const [run] = readdirSync(out);
-    const written = existsSync(join(out, run ?? '', 'results.json'));
-    expect(written).toBe(true);
+    const results = join(roots.home, '.stim-agent-eval', 'results');
+    const [run] = readdirSync(results);
+    expect(existsSync(join(results, run ?? '', 'results.json'))).toBe(true);
   }, 60_000);
 
   test('a trial is invalid, and the agent is stopped, when the home marker is readable from the scripted stim', async () => {
@@ -315,4 +319,56 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(outcome.problems.join(' ')).toMatch(/names the harness log file/);
   }, 30_000);
+
+  test.each([
+    [
+      'a null argv word',
+      '{"argv":[null],"cwd":"/w","cwdRelative":".","kind":"scripted","startedAt":1,"endedAt":2,"exitCode":0,"stdoutBytes":0,"stderrBytes":0,"path":"","self":""}',
+    ],
+    ['a missing field', '{"argv":["ios"]}'],
+    [
+      'a wrong kind',
+      '{"argv":["ios"],"cwd":"/w","cwdRelative":".","kind":"x","startedAt":1,"endedAt":2,"exitCode":0,"stdoutBytes":0,"stderrBytes":0,"path":"","self":""}',
+    ],
+  ])(
+    '%s in the log makes the trial invalid before any grader sees it',
+    async (_, line) => {
+      const bin = fakeAgent(
+        `echo '${line}' >> "$(dirname "$(command -v stim)" 2>/dev/null)/../harness/invocations.jsonl"\nstim ios\nsleep 30`,
+      );
+      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+      expect(outcome.problems).toContain('the invocation log could not be read');
+    },
+    40_000,
+  );
+
+  test('a grader that throws is contained in its trial and the run continues', async () => {
+    const bin = fakeAgent(
+      `echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+    );
+    const throwing = {
+      ...firstLaunch,
+      grade: () => {
+        throw new Error('grader bug');
+      },
+    };
+    const outcome = await runEvals({
+      cases: [throwing],
+      drivers: [claudeDriver],
+      arms: [withSkill],
+      trials: 2,
+      maxRuns: 5,
+      timeoutMs: 20_000,
+      model: null,
+      bin,
+      confine: false,
+      roots,
+      onProgress: () => undefined,
+      onTrial: () => undefined,
+    });
+    expect(outcome.cells[0]?.trials.map((trial) => trial.invalid)).toEqual([
+      ['the trial failed before it could be graded: grader bug'],
+      ['the trial failed before it could be graded: grader bug'],
+    ]);
+  }, 60_000);
 });

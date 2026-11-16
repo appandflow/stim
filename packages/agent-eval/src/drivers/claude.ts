@@ -1,7 +1,16 @@
 import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { AgentCommand, AgentDriver, AgentRun, AttemptedCommand, DriverOptions, TrialPaths } from '../types.ts';
-import { asArray, asNumber, asRecord, asString, checkoutReads, minimalPath, parseLines, writeSkill } from './shared.ts';
+import {
+  asArray,
+  asNumber,
+  asRecord,
+  asString,
+  minimalPath,
+  toolReadablePaths,
+  parseLines,
+  writeSkill,
+} from './shared.ts';
 
 const TOOLS = 'Bash,Read,Glob,Grep,Skill';
 const ALLOWED = [
@@ -27,7 +36,7 @@ function trialSettings(paths: TrialPaths): object {
       autoAllowBashIfSandboxed: false,
       filesystem: {
         denyRead: ['~/'],
-        allowRead: [dirname(dirname(process.execPath)), ...checkoutReads()],
+        allowRead: toolReadablePaths(),
         allowWrite: [paths.harness],
       },
     },

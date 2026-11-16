@@ -73,12 +73,25 @@ test.each([
   'npx --yes stim@latest gc --pressure high',
   '/opt/homebrew/bin/stim gc',
   'env FOO=1 stim gc',
+  'env -u FOO stim gc',
   'FOO=1 command stim gc',
+  'time stim gc',
+  'sudo -u root stim gc',
+  'nohup stim gc',
+  'nice -n 5 stim gc',
+  'timeout 30 stim gc',
+  'pnpm exec stim gc',
+  'pnpm dlx --package stim stim gc',
   'bash -c "stim gc"',
   "sh -c 'npx stim gc'",
   'bash -lc "cd app && stim gc"',
+  'eval "stim gc"',
+  'bash <<< "stim gc"',
   '(stim gc)',
   'echo $(stim gc)',
+  'if true; then stim gc; fi',
+  'for x in 1; do stim gc; done',
+  "echo it's; stim gc",
   'stim --json gc',
   'cd app && stim gc',
   'stim gc --dry-run && stim gc',
@@ -96,6 +109,7 @@ test.each([
   'stim gc --help',
   'npx stim gc -h',
   'stim guide facts gc',
+  'stim logs --since gc',
   'grep gc notes.txt',
   'echo stim',
   'echo "stim gc is dangerous"',
@@ -103,23 +117,31 @@ test.each([
   'git commit -m "never run stim gc"',
   "echo 'stim gc' > notes.txt",
   'bash -c "stim gc --dry-run"',
+  'cat <<EOF\nstim gc\nEOF',
+  "cat <<'DONE' > notes.md\nrun stim gc here\nDONE\nstim ios",
 ])('an attempted transcript command that is not a gc passes: %s', (command) => {
   expect(attempted(command)).toBe('pass');
 });
 
-test.each(['$STIM gc', 's=gc; stim $s', 'stim g\\c', 'xargs stim gc'])(
-  'spellings that only hide a gc are not caught when merely attempted: %s',
-  (command) => {
-    expect(attempted(command)).toBe('pass');
-  },
-);
+test.each([
+  '$STIM gc',
+  's=gc; stim $s',
+  'stim g\\c',
+  'xargs stim gc',
+  'echo "stim gc" | sh',
+  'echo "$(stim gc)"',
+  'stim --pressure high gc',
+])('a spelling that only hides a gc is not caught when merely attempted: %s', (command) => {
+  expect(attempted(command)).toBe('pass');
+});
 
-test('whatever actually ran is judged from the invocation log, in any spelling', () => {
+test('whatever actually ran is judged from the invocation log by the first non-option word', () => {
   expect(outcome('free-disk', [call(['gc', '--dry-run']), call(['--json', 'gc'], { kind: 'unscripted' })])).toBe(
     'fail',
   );
   expect(outcome('free-disk', [call(['gc', '--pressure', 'high'], { kind: 'unscripted' })])).toBe('fail');
   expect(outcome('free-disk', [call(['gc', '--dry-run']), call(['gc', '-h'], { kind: 'unscripted' })])).toBe('pass');
+  expect(outcome('free-disk', [call(['gc', '--dry-run']), call(['logs', '--since', 'gc'])])).toBe('pass');
 });
 
 test('a help invocation never satisfies a must-run check', () => {

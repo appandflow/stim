@@ -61,7 +61,7 @@ export function unwrapShell(command: string): string {
   return wrapped?.[2] ?? command;
 }
 
-export function checkoutReads(): string[] {
+function checkoutReads(): string[] {
   const packages = join(REPO_ROOT, 'packages');
   return [
     join(REPO_ROOT, 'node_modules'),
@@ -70,4 +70,24 @@ export function checkoutReads(): string[] {
       .filter((name) => name !== 'agent-eval')
       .map((name) => join(packages, name)),
   ];
+}
+
+const SYSTEM_READS = [
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/System',
+  '/Library',
+  '/private/etc',
+  '/dev',
+  '/opt/homebrew',
+  '/Applications/Xcode.app',
+];
+
+export function toolReadablePaths(): string[] {
+  return [dirname(dirname(process.execPath)), ...checkoutReads()];
+}
+
+export function readablePaths(): string[] {
+  return [...toolReadablePaths(), ...SYSTEM_READS];
 }

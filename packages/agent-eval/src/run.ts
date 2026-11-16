@@ -54,8 +54,34 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
             `run ${runsUsed}/${options.maxRuns}: ${driver.name} ${evalCase.id} ${arm.name} trial ${index}`,
           );
           let outcome;
+          let record: TrialRecord;
           try {
             outcome = await runTrial(evalCase, arm, driver, options);
+            for (const note of outcome.notes) options.onProgress(note);
+            const invalid = [...outcome.problems];
+            const isolation = outcome.run.isolation;
+            if (isolation) {
+              const expected = driver.expectedSkills(arm.skill);
+              const extra = isolation.skills.filter((skill) => !expected.includes(skill));
+              if (extra.length > 0) invalid.push(`unexpected skills in the agent: ${extra.join(', ')}`);
+              if (isolation.mcpServers.length > 0)
+                invalid.push(`MCP servers in the agent: ${isolation.mcpServers.join(', ')}`);
+              if (isolation.plugins.length > 0) invalid.push(`plugins in the agent: ${isolation.plugins.join(', ')}`);
+            }
+            const checks =
+              invalid.length > 0 ? [] : evalCase.grade({ invocations: outcome.invocations, run: outcome.run });
+            record = {
+              index,
+              pass: verdict(checks) === 'pass' && invalid.length === 0,
+              inconclusive: verdict(checks) === 'inconclusive',
+              invalid,
+              checks,
+              guideBytes: guideBytes(outcome.invocations),
+              turns: outcome.run.turns,
+              tokens: outcome.run.tokens.input + outcome.run.tokens.output,
+              costUsd: outcome.run.costUsd,
+              durationMs: outcome.durationMs,
+            };
           } catch (error) {
             cell.trials.push({
               index,
@@ -73,31 +99,6 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
             });
             continue;
           }
-          for (const note of outcome.notes) options.onProgress(note);
-          const invalid = [...outcome.problems];
-          const isolation = outcome.run.isolation;
-          if (isolation) {
-            const expected = driver.expectedSkills(arm.skill);
-            const extra = isolation.skills.filter((skill) => !expected.includes(skill));
-            if (extra.length > 0) invalid.push(`unexpected skills in the agent: ${extra.join(', ')}`);
-            if (isolation.mcpServers.length > 0)
-              invalid.push(`MCP servers in the agent: ${isolation.mcpServers.join(', ')}`);
-            if (isolation.plugins.length > 0) invalid.push(`plugins in the agent: ${isolation.plugins.join(', ')}`);
-          }
-          const checks = evalCase.grade({ invocations: outcome.invocations, run: outcome.run });
-          const tokens = outcome.run.tokens.input + outcome.run.tokens.output;
-          const record: TrialRecord = {
-            index,
-            pass: verdict(checks) === 'pass',
-            inconclusive: verdict(checks) === 'inconclusive',
-            invalid,
-            checks,
-            guideBytes: guideBytes(outcome.invocations),
-            turns: outcome.run.turns,
-            tokens,
-            costUsd: outcome.run.costUsd,
-            durationMs: outcome.durationMs,
-          };
           cell.trials.push(record);
           options.onTrial(
             { agent: driver.name, case: evalCase.id, arm: arm.name, index },

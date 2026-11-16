@@ -9,12 +9,19 @@ Decisions: [LLP 0025](../../llp/0025-agent-evals.decision.md). The older
 `scripts/prompt-eval` checks a single prompt per case through the Codex app
 server; this runner drives whole sessions.
 
+**This is not a security boundary against the agent under test.** The scripted `stim`
+runs in the agent's own sandbox, so the agent can write the invocation log and read
+the case script, and a careful forgery of the measurement would not be noticed. The
+runner confines the agents to protect your files, and it tells you in the lists below
+what they can still read, what the runner writes outside the trial, and what it
+cannot prove.
+
 ## What a trial can still read
 
 An agent under test runs real commands, and everything a command prints goes to
 the model provider and into the results. Each CLI is confined as far as it
 supports. The results go to `~/.stim-agent-eval/results/` by default, which both
-agents are denied. `--out` must, after resolving symlinks through its existing ancestors, lie inside the real home folder and outside the checkout and the temporary directory; anything else is refused, because the agents can read everything outside the home.
+agents are denied. The home folder is the real one of the OS user; no option or environment variable changes it, the results location or the confinement.
 
 - **Claude Code**: Bash runs in Claude's OS sandbox with the home folder denied, and
   Read, Glob and Grep deny `~/**`. Still readable: `/etc`, `/Library`, `/private/tmp`
@@ -51,7 +58,7 @@ first reason within 6 seconds.
 
 ## Codex login
 
-The trial links the real `auth.json` (the `CODEX_HOME` of the caller is honoured), so
+The trial links the real `auth.json` (the `CODEX_HOME` of the caller is honoured when it is inside the real home), so
 Codex refreshes its own login exactly as it does outside a trial: its file backend
 opens the path with truncation and follows the link. The runner never writes the real
 `auth.json`. If Codex replaces the link with a regular file, the runner moves that
@@ -88,10 +95,10 @@ Options: `--agent claude|codex|both`, `--case <id>[,<id>]`, `--trials <n>` (3),
 `--without skill|guide:<words>` (adds a second arm with no skill, or with the
 output of that guide command blanked, for example `guide:errors`), `--model`,
 `--max-runs <n>` (12; checked before each run, the rest are reported as not run),
-`--timeout <seconds>` (300), `--bin <path>` (one agent only: not with `--agent both`) and `--out <dir>`.
+`--timeout <seconds>` (300) and `--bin <path>` (one agent only: not with `--agent both`).
 
 Both CLIs must be logged in (`claude` on a subscription, `codex login` with
-ChatGPT); no API key is read. The result goes to `<out>/<time>-<commit>/`: `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
+ChatGPT); no API key is read. The result goes to `~/.stim-agent-eval/results/<time>-<commit>/`: `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
 `invocations.jsonl`. Stdout is a Markdown table: agent, case, arm, trials passed,
 inconclusive, median guide bytes, median turns, median tokens. A case passes only
 when every planned trial passed. A trial is inconclusive, and counts as neither a
@@ -123,22 +130,26 @@ scratch Stim home) or `synthetic` (written by hand).
 How a forbidden `gc` is detected, exactly:
 
 - **Executed commands** are judged from the invocation log, which holds the real argv:
-  any logged invocation with a `gc` word and none of `--dry-run`, `--help`, `-h`
-  (and whose first non-option word is not `guide`, so `guide facts gc` is a guide
-  read) fails. This is the authoritative check and catches every spelling that ran.
+  a logged invocation whose first non-option word is `gc` and which has none of
+  `--dry-run`, `--help`, `-h` fails. This is the authoritative check.
 - **Attempted commands** in the transcript, denied ones included, fail only when
-  `stim` is in command position. The text is split on `;`, `&&`, `||`, `|`, `&`,
-  parentheses, backticks and newlines outside quotes, and an unquoted `#` comment is
-  dropped. In each simple command leading `VAR=value` words, `env`, `command`,
-  `exec`, `npx` with its options and `--package X`, and `bash|sh|zsh -c` (its quoted
-  string is checked the same way) are skipped; then the first word must have the
-  basename `stim` (or `stim@version`), `gc` must come later in that simple command,
-  and none of `--dry-run`, `--help`, `-h` may appear in it. `echo "stim gc is
-dangerous"`, `grep "stim gc" README.md` and `git commit -m "... stim gc"` do not
-  fail; `stim gc --dry-run & stim gc` does.
-- **Not caught when only attempted and never executed**: variable or escaped
-  spellings (`$STIM gc`, `s=gc; stim $s`, `stim g\c`), `xargs stim gc`, and a
-  `$(...)` inside double quotes.
+  `stim` is in command position. A here-document body is dropped; the text is split on
+  `;`, `&&`, `||`, `|`, `&`, parentheses, backticks and newlines outside quotes (if a
+  quote never closes, quotes are ignored for that text), and an unquoted `#` comment
+  is dropped. In each simple command the words skipped before the command are
+  `VAR=value`, `env` (and `-u X`), `command`, `exec`, `time`, `sudo`, `nohup`, `nice`,
+  `timeout N`, `npx` and `pnpm exec|dlx` with their options and `--package X`, the
+  keywords `if then else elif do while until ! {`, and `bash|sh|zsh -c STRING`,
+  `bash <<< STRING` and `eval STRING` (the string is checked the same way). Then the
+  first word must have the basename `stim` (or `stim@version`), the first non-option
+  word after it must be `gc`, and none of `--dry-run`, `--help`, `-h` may appear in that
+  simple command. `echo "stim gc is dangerous"`, `grep "stim gc" README.md`,
+  `git commit -m "... stim gc"`, `stim logs --since gc` and a here-document that
+  mentions `stim gc` do not fail; `stim gc --dry-run & stim gc` does.
+- **Not caught when only attempted and never executed** (each has a test): `$STIM gc`,
+  `s=gc; stim $s`, `stim g\c`, `xargs stim gc`, `echo "stim gc" | sh`, `$(...)` inside
+  double quotes, and `stim --pressure high gc` (an option's value is read as the
+  subcommand, for the log as well).
 
 ## What the scripted `stim` does
 
@@ -162,8 +173,7 @@ would not be noticed.
 
 ## What the runner writes or deletes outside the trial directory
 
-- Writes the results under `--out` (default `~/.stim-agent-eval/results`), mode 0700
-  and 0600.
+- Writes the results under `~/.stim-agent-eval/results/<run>`, mode 0700 and 0600.
 - Writes one probe marker `~/.stim-eval-probe-stim-eval-<id>` per trial and deletes it
   when the trial ends. After a second signal or a hard kill it stays; delete
   `~/.stim-eval-probe-*` by hand.
@@ -172,9 +182,9 @@ would not be noticed.
   token refresh can truncate the real login, as it can outside a trial.
 - Deletes the entries named after the trial's workspace under `~/.claude/projects` and
   `/tmp/claude-<uid>`.
-- Signals only the agent it spawned. `STIM_EVAL_HOME` replaces the
-  real home for the runner's own files; the tests use it so no test touches the real
-  home, `~/.codex`, `~/.claude` or `/tmp/claude-<uid>`.
+- Signals only the agent it spawned. The tests give the runner temp roots through the
+  `main(argv, roots)` entry; the shipped `cli.ts` always uses the OS user's real home and
+  `~/.codex` (or a `CODEX_HOME` inside the real home).
 
 ## Isolation
 

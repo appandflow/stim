@@ -127,6 +127,25 @@ function writeScriptedStim(paths: TrialPaths, evalCase: EvalCase, arm: Arm, prob
   chmodSync(npx, 0o755);
 }
 
+const KINDS = ['guide', 'scripted', 'unscripted', 'blanked'];
+
+function isInvocation(value: unknown): value is Invocation {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  const text = ['cwd', 'cwdRelative', 'path', 'self'].every((key) => typeof record[key] === 'string');
+  const numbers = ['startedAt', 'endedAt', 'exitCode', 'stdoutBytes', 'stderrBytes'].every(
+    (key) => typeof record[key] === 'number' && Number.isFinite(record[key]),
+  );
+  return (
+    text &&
+    numbers &&
+    Array.isArray(record.argv) &&
+    record.argv.every((word) => typeof word === 'string') &&
+    KINDS.includes(String(record.kind)) &&
+    (record.homeReadable === undefined || typeof record.homeReadable === 'boolean')
+  );
+}
+
 function readInvocations(paths: TrialPaths): { invocations: Invocation[]; error: string | null } {
   const log = join(paths.harness, 'invocations.jsonl');
   if (!existsSync(log)) return { invocations: [], error: null };
@@ -136,9 +155,8 @@ function readInvocations(paths: TrialPaths): { invocations: Invocation[]; error:
       .filter(Boolean)
       .map((line) => {
         const parsed: unknown = JSON.parse(line);
-        if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Invocation).argv))
-          throw new Error('shape');
-        return parsed as Invocation;
+        if (!isInvocation(parsed)) throw new Error('shape');
+        return parsed;
       });
     return { invocations, error: null };
   } catch {
