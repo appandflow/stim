@@ -82,6 +82,9 @@ tester.run('refusal-remedy', plugin.rules['refusal-remedy'], {
   invalid: [
     { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm' });", errors: 1 },
     { code: "fail({ code: 'STIM_NO_DEVICE' as const });", filename: 'refusal.ts', errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: null });", errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: '' });", errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: undefined });", errors: 1 },
   ],
 });
 
