@@ -19,6 +19,8 @@ import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
 import {
+  claimFilesRemoveCommand,
+  claimRemoveCommand,
   markClaimChildPending,
   processGroupAlive,
   releaseClaim,
@@ -1240,7 +1242,10 @@ export class BuildHost {
             entry.outcome = {
               ok: false,
               code: 'cleanup-unresolved',
-              message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then remove ${fingerprintTemp} and recover the repository claim at ${claim.path}${slot ? `, build-slot claim at ${slot.path}` : ''}${engineClaim ? `, and engine claim at ${engineClaim.path}` : ''} before retrying.`,
+              message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then run \`${[
+                claimRemoveCommand(fingerprintTemp),
+                ...[claim, slot, engineClaim].flatMap((held) => (held ? [claimFilesRemoveCommand(held.path)] : [])),
+              ].join(' && ')}\` before retrying.`,
             };
           }
           if (!released && stopped && entry.outcome && !entry.outcome.ok)

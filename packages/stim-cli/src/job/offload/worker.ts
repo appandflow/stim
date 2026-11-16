@@ -1,6 +1,6 @@
 import { dependencyInstall, reusableDependencies, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../../cli-operation.ts';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   reactNativeArtifactReceipt,
@@ -42,7 +42,9 @@ import type { CcacheActivity, CompilationCacheActivity } from '../../engine/buil
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../../engine/ccache.ts';
 import { assembleTaskFor } from '../../engine/gradle.ts';
 
-import { getExecutor, windowsSystemExecutable } from '../../exec.ts';
+import { getExecutor, observeDetachedChildren, windowsSystemExecutable } from '../../exec.ts';
+import { processGroupAlive } from '../../ownership-claim.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 import {
   fingerprint as computeFingerprint,
   fingerprintRuntime,
@@ -208,6 +210,64 @@ type WorkerResult =
 
 function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+let cancelled = new AbortController();
+const cancelCleanups = new Set<() => void>();
+let resultWritten = false;
+
+function emitResult(value: Record<string, unknown>): void {
+  if (resultWritten || cancelled.signal.aborted) return;
+  resultWritten = true;
+  emit({ type: 'result', ...value });
+}
+
+function cancelOnSigterm(): () => void {
+  const detached = new Map<string, { pid: number; processToken: string } | null>();
+  observeDetachedChildren({
+    begin() {
+      cancelled.signal.throwIfAborted();
+      const token = randomUUID();
+      detached.set(token, null);
+      return token;
+    },
+    started(token, pid) {
+      const captured = captureProcessIdentity(pid);
+      if (captured.ok) detached.set(token, { pid, processToken: captured.token });
+    },
+    settled(token) {
+      detached.delete(token);
+    },
+  });
+  const onSigterm = () => {
+    cancelled.abort(new Error('The build was cancelled.'));
+    for (const cleanup of cancelCleanups) {
+      try {
+        cleanup();
+      } catch {}
+    }
+    const finish = () => {
+      const line = resultWritten
+        ? ''
+        : `${JSON.stringify({ type: 'result', ok: false, code: 'cancelled', message: 'The build was cancelled.', fingerprintSettled: true })}\n`;
+      resultWritten = true;
+      process.stdout.write(line, () => process.exit(143));
+    };
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a cancelled worker reports settled only once its detached groups are gone
+    const poll = () => {
+      for (const [token, record] of detached)
+        if (record && inspectProcessIdentity(record) === 'gone' && !processGroupAlive(record.pid))
+          detached.delete(token);
+      if (detached.size === 0) finish();
+      else setTimeout(poll, 25);
+    };
+    poll();
+  };
+  process.once('SIGTERM', onSigterm);
+  return () => {
+    process.off('SIGTERM', onSigterm);
+    observeDetachedChildren(null);
+  };
 }
 
 function note(phase: string, msg: string): void {
@@ -935,6 +995,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
               ? 'production'
               : 'development',
         replay: { native: replaySettings.native, sources: replaySettings.sources, allowChanges },
+        signal: cancelled.signal,
       });
     const initial = await time('fingerprintMs', () => replay());
     if (isUncertain(initial)) return failed('no-fingerprint', initial.uncertain);
@@ -1320,9 +1381,8 @@ async function compileExact(
   let made: string | null = null;
   const stop = () => {
     if (made) deleteOwnedIosSimNow(made, 1500);
-    process.exit(143);
   };
-  process.once('SIGTERM', stop);
+  cancelCleanups.add(stop);
   let probe: Awaited<ReturnType<typeof exactProbeSimulator>> | null = null;
   let built: Awaited<ReturnType<typeof runExactIosBuild>>;
   try {
@@ -1342,7 +1402,7 @@ async function compileExact(
     );
   } finally {
     if (probe && typeof probe !== 'string') await probe.remove();
-    process.off('SIGTERM', stop);
+    cancelCleanups.delete(stop);
   }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
   const lines = built.diagnostics.map((each) => each.message);
@@ -1435,11 +1495,8 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
   removeDaemonIdleOverride();
   const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-  const stop = () => {
-    stopGradleDaemons(gradlew, 4000);
-    process.exit(143);
-  };
-  process.once('SIGTERM', stop);
+  const stop = () => stopGradleDaemons(gradlew, 4000);
+  cancelCleanups.add(stop);
   const logFile = join(workspaceLogsDir(root), 'build-android.ndjson');
   let cacheArtifact: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt } | undefined;
   note('build', `native Gradle ${options.variant ?? 'debug'}`);
@@ -1500,7 +1557,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       message: (error as Error).message,
     };
   } finally {
-    process.off('SIGTERM', stop);
+    cancelCleanups.delete(stop);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -1675,11 +1732,8 @@ async function compileAndroid(
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
   const onNote = (line: string) => note('build', line);
-  const stop = () => {
-    stopGradleDaemons(gradlewPath(layout), 4000);
-    process.exit(143);
-  };
-  process.once('SIGTERM', stop);
+  const stop = () => stopGradleDaemons(gradlewPath(layout), 4000);
+  cancelCleanups.add(stop);
   note(
     'build',
     `gradle ${layout.custom ? `${layout.module}:` : ''}${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`,
@@ -1711,7 +1765,7 @@ async function compileAndroid(
       ...(androidPackage ? { androidPackage } : {}),
     };
   } finally {
-    process.off('SIGTERM', stop);
+    cancelCleanups.delete(stop);
   }
 }
 
@@ -1721,17 +1775,21 @@ async function compileAndroid(
  * `build`, each reading its input from stdin and writing JSON lines to stdout.
  */
 export async function runOffloadWorker(mode: string | undefined, arg?: string): Promise<void> {
+  cancelled = new AbortController();
+  resultWritten = false;
+  const stopWatching = mode === 'build' ? cancelOnSigterm() : null;
   try {
     await workerMode(mode, arg);
   } catch (error) {
-    emit({
-      type: 'result',
+    emitResult({
       ok: false,
       code: 'worker-crashed',
       message: String((error as Error)?.message ?? error),
       fingerprintSettled: false,
     });
   }
+  if (cancelled.signal.aborted) await new Promise<never>(() => {});
+  stopWatching?.();
 }
 
 async function workerMode(mode: string | undefined, arg?: string): Promise<void> {
@@ -1802,8 +1860,7 @@ async function workerMode(mode: string | undefined, arg?: string): Promise<void>
     if (job.platform === 'android' && job.jdk) {
       const unavailable = useJdkMajor(job.jdk);
       if (unavailable)
-        return emit({
-          type: 'result',
+        return emitResult({
           ok: false,
           code: 'build-refused',
           message: unavailable,
@@ -1813,7 +1870,7 @@ async function workerMode(mode: string | undefined, arg?: string): Promise<void>
     const originalEnv = { ...process.env };
     useParentFingerprintOwnership(job.fingerprintTemp);
     try {
-      return emit({ type: 'result', ...(await build(job)), fingerprintSettled: true });
+      return emitResult({ ...(await build(job)), fingerprintSettled: true });
     } finally {
       for (const name of Object.keys(process.env)) if (!Object.hasOwn(originalEnv, name)) delete process.env[name];
       Object.assign(process.env, originalEnv);
