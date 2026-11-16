@@ -9,6 +9,7 @@ import { parseSimctlList } from './devices/ios.ts';
 import { pidExists } from './metro.ts';
 
 export const WATCH_DEBOUNCE_MS = 250;
+export const WATCH_ANSWER_INTERVAL_MS = 10_000;
 export const WATCH_FALLBACK_MS = 30_000;
 export const WATCH_LIGHT_INTERVAL_MS = 1_000;
 export const WATCH_TABLES_INTERVAL_MS = 5_000;

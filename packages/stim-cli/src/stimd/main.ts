@@ -1792,6 +1792,7 @@ async function runStimdInner(
   let runDirMisses = 0;
   let rebinding = false;
   let lastRebindFailure = '';
+  // @ref LLP 0021#a-stimd-that-does-not-answer-is-reported-and-its-socket-is-bound-again -- only a missing file, never a present one
   const rebindSocket = async () => {
     if (process.platform === 'win32' || rebinding || closing || ending || runDirMisses > 0 || !pathMissing(path))
       return;

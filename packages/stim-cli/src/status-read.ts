@@ -90,6 +90,7 @@ import {
   readLastBuilds,
   readDevicePlacement,
   withStateReadCache,
+  type DaemonStatus,
   type MachineUsageState,
   type StatusCapacity,
   archivedUsage,
@@ -199,6 +200,8 @@ export interface StatusSnapshot {
   simsAvailable: boolean;
   simctlError: string | null;
   cwdRoot: string | null;
+  /** Whether the running stimd answered a hello, set by the `status` command and left out when stimd reads status. */
+  daemonAnswer?: Pick<DaemonStatus, 'unanswered'>;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
   slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;

@@ -39,6 +39,7 @@ import {
 } from '../diagnostics/doctor.ts';
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import { runCli } from '../cli/define-op.ts';
+import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
 import { doctorOp, doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -1978,6 +1979,34 @@ test('doctor records its run per platform in the project record', async () => {
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test('doctor reports a stimd that holds the claim and did not answer, in --json and as a finding', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-silent-stimd-'));
+  const cwd = process.cwd();
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
+  holdDaemonClaim();
+  await serveStimdSocket(null);
+  const logs: string[] = [];
+  console.log = (line) => logs.push(String(line));
+  process.chdir(project);
+  try {
+    await runCli(
+      doctorOp(() => testStimVersions),
+      ['--json'],
+      { version: '1.2.3' },
+    );
+    const report = JSON.parse(logs.join('\n'));
+    expect(report.daemon.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 });
+    expect(report.findings.find((finding: { code?: string }) => finding.code === 'stimd-not-answering')).toMatchObject({
+      level: 'cost',
+    });
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    rmSync(project, { recursive: true, force: true });
+  }
+}, 60_000);
 
 test('doctor leaves the registry alone in a directory that is not an app', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-not-app-'));

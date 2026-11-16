@@ -15,6 +15,7 @@ import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
+import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
 import statusOp, { readVolumes } from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -385,6 +386,24 @@ test.each(['ios', 'android'] as const)(
     }
   },
 );
+
+test('status says a stimd that holds the claim and did not answer, in the text and in --json', async () => {
+  holdDaemonClaim();
+  await serveStimdSocket(null);
+
+  const logs = await runStatus(process.platform);
+  expect(logs.find((line) => line.startsWith('Daemon'))).toContain(`pid ${process.pid}), did not answer within 3 s`);
+  expect((await runStatusJson(process.platform)).daemon.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 });
+}, 20_000);
+
+test('status says nothing new about a stimd that answers', async () => {
+  holdDaemonClaim();
+  await serveStimdSocket('{"op":"hello"}');
+
+  const logs = await runStatus(process.platform);
+  expect(logs.find((line) => line.startsWith('Daemon'))).toContain(`running since`);
+  expect((await runStatusJson(process.platform)).daemon).not.toHaveProperty('unanswered');
+});
 
 async function runStatusJson(platform: NodeJS.Platform = 'darwin') {
   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);

@@ -116,6 +116,22 @@ instead of waiting out the handover wait. The next stimd removes the marker. The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 
+## A stimd that does not answer is reported, and its socket is bound again
+
+`stim status` and `stim doctor` send a hello to a stimd that holds the claim and
+wait 3 s for any reply, connecting again while the socket refuses or is missing.
+Without a reply they say so with the pid, the wait and the age of its last tick
+(`daemon.unanswered` in `--json`, the finding `stimd-not-answering`, a cost). The
+wording is an observation, never "dead" or "hung": event-loop stalls of up to 85 s
+were measured while awake. The probe starts no stimd, writes no claim and signals
+nothing; stopping or replacing a stimd that does not answer is not decided here.
+
+The 15 s home watch of every stimd, attached or detached, also binds the socket
+again when its file is gone, on POSIX only (a Windows pipe has no file). It does
+so only while the stimd is not closing or ending, its run directory exists and the
+stimd claim still lists this process, logs `socket_rebound`, and never touches a
+path that exists, so another process's socket is left alone.
+
 ## Collect diagnostics with the existing reports
 
 The [diagnostic procedure](../website/docs/dev-server-and-logs.md#collect-diagnostics-for-a-stimd-problem)
@@ -136,7 +152,10 @@ that its predecessor died uncleanly and counts it, uncaught errors go to
 `daemon.ndjson`, SIGHUP is handled on the detached path; the crash hold keeps its
 count across clean exits, counts startup failures, does not blame the build for
 home-state faults and is shown in `stim status` and `stim doctor`; a handover that
-ends with no successor is logged and makes the client start one. How they are built
+ends with no successor is logged and makes the client start one.
+Issue #5774 asked for the two parts of fix 1 that only report a stimd that does not
+answer and bind its socket again; the maintainer said "Work on all those and lmk
+tomorrow", 2026-11-15. How they are built
 was chosen by the implementing lane and the coordinating session: the history file,
 the `kept` mark on the claim, the boot-id comparison, the forced exit 5 s after a
 second signal, the classification of home faults, and the marker file. A review of
