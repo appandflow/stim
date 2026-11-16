@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launcherFindings } from '../diagnostics/launcher-evidence.ts';
@@ -61,3 +61,32 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     });
   },
 );
+
+describe('the doctor read of the launcher directories', () => {
+  let base: string;
+
+  beforeEach(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launcher-budget-')));
+    mkdirSync(join(base, 'bin'));
+    writeFileSync(join(base, 'real'), 'x');
+    for (let index = 0; index < 50; index++) symlinkSync(join(base, 'real'), join(base, 'bin', `tool-${index}`));
+    launcherDirs.list = [join(base, 'bin')];
+  });
+
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  it('reports incomplete evidence, never a complete result, when the budget ends the read mid-scan', async () => {
+    const budget = new AbortController();
+    const reading = launcherFindings({}, budget.signal);
+    budget.abort();
+    const [found] = await reading;
+    expect(found).toMatchObject({
+      code: 'launcher-evidence-incomplete',
+      detail: expect.stringContaining('did not finish'),
+    });
+  });
+
+  it('reports nothing when the whole read finishes within the budget', async () => {
+    expect(await launcherFindings({}, new AbortController().signal)).toEqual([]);
+  });
+});

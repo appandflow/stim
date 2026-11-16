@@ -217,8 +217,10 @@ export async function idleOutputs(
 }
 
 /**
- * Deletes `paths`, measuring each first. It reads the executables on PATH once the measurement is done, immediately
- * before the removals, and keeps every path when one resolves into the checkout, saying so in `kept`.
+ * Deletes `paths`, measuring each first. It checks the executables on PATH once the measurement is done, immediately
+ * before the removals, with the reading `launching` gives: for a registered workspace that reading is first taken here,
+ * after the sizes; for a discovered checkout it is the one taken with the idleness evidence's process read. It keeps
+ * every path when one resolves into the checkout, saying so in `kept`.
  */
 export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
   const sizes: number[] = [];
@@ -326,7 +328,7 @@ async function enterIdleStage(
             });
             const launching: Launching = {
               launchers: freshLaunchers(input.operation, input.operation?.signal),
-              checkout: await checkoutRootOf(path),
+              checkout: await checkoutRootOf(path, input.operation?.signal),
             };
             const outputs = await idleOutputs(path, config, {
               launchers: launchersOf(input.operation, input.operation?.signal),

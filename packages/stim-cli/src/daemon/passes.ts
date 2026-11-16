@@ -466,7 +466,7 @@ export async function runForcedLadder({
             (entry.outcome === 'would-idle'
               ? await idleOutputBytes(entry.path, config, {
                   launchers: launchersOf(operation, operation?.signal),
-                  checkout: await checkoutRootOf(entry.path),
+                  checkout: await checkoutRootOf(entry.path, operation?.signal),
                 })
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,

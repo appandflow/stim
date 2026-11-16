@@ -36,10 +36,10 @@ import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
-import { checkoutRoleOf, checkoutRootOf } from '../workspace/checkout-role.ts';
+import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, type LauncherScan, type Launching } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, type Checkout, type Launching } from '../workspace/launchers.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -67,7 +67,7 @@ export interface StageCandidate {
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
   /** The git worktree root that owns the workspace, which an executable on PATH can point anywhere into. */
-  checkout: string;
+  checkout: Checkout;
 }
 
 /** `idle.dormantDays` in milliseconds; 0 when the dormant stage is off. */
@@ -290,13 +290,7 @@ async function readIdleWorkspaces(
   }
   const idle = longestIdleFirst(readings);
   const candidates: StageCandidate[] = [];
-  for (const entry of idle)
-    candidates.push(
-      Object.assign(entry, {
-        role: await checkoutRoleOf(entry.path, reading.operation),
-        checkout: await checkoutRootOf(entry.path),
-      }),
-    );
+  for (const entry of idle) candidates.push(Object.assign(entry, await checkoutOwnerOf(entry.path, reading.operation)));
   return linkedFirst(candidates);
 }
 
@@ -317,17 +311,9 @@ export async function stillIdle(
     full = false,
     locked = true,
     setting = PRESSURE_THRESHOLD,
-    launchers,
-  }: {
-    operation?: StimContext;
-    full?: boolean;
-    locked?: boolean;
-    setting?: string;
-    /** The deletion operation's fresh launcher reading. */
-    launchers: () => Promise<LauncherScan>;
-  },
+  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string },
 ): Promise<boolean> {
-  const reads = discoveredReads(operation?.signal, operation, launchers);
+  const reads = discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal));
   return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads })) !== null;
 }
 

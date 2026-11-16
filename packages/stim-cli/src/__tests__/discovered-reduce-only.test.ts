@@ -310,6 +310,59 @@ describe('checkouts found through a tool folder or the full scan', () => {
     }
   });
 
+  it.each([
+    ['at the second process read, between the trim phases', 2, join('target', 'debug', 'incremental', 'x', 'tool')],
+    ['outside target/, elsewhere in the checkout, at the first process read', 1, join('bin', 'tool')],
+  ])(
+    'keeps the Cargo target when a launcher appears %s, read through the production launcher factory',
+    async (_, appearsAt, inside) => {
+      const tool = join(base, 'home', 'tools', 'mytool');
+      mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
+      mkdirSync(join(tool, 'bin'), { recursive: true });
+      mkdirSync(join(tool, 'target', 'debug', '.fingerprint'), { recursive: true });
+      mkdirSync(join(tool, 'target', 'debug', 'incremental', 'x'), { recursive: true });
+      writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      writeFileSync(join(tool, '.gitignore'), 'target/\n');
+      writeFileSync(join(tool, 'bin', 'tool'), '#!/bin/sh\n');
+      writeFileSync(join(tool, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      writeFileSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'), 'x'.repeat(10_000));
+      execFileSync('git', ['-C', tool, 'init', '-q']);
+      execFileSync('git', ['-C', tool, 'add', '-A']);
+      execFileSync('git', ['-C', tool, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+      writeScan([tool]);
+      vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+      mkdirSync(join(base, 'home', 'bin'));
+      const link = join(base, 'home', 'bin', 'tool');
+      const real = getExecutor();
+      let lsofReads = 0;
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'ps') return '';
+          if (file !== 'lsof') return real.runFileAsync(file, args, options);
+          if (++lsofReads === appearsAt) symlinkSync(join(tool, inside), link);
+          return '';
+        },
+      });
+      try {
+        const planned = await planCargoTargetsAtPressure({
+          settings: resolveMaintenanceSettings(),
+          pinned: () => false,
+          now: Date.now(),
+          level: 'high',
+          operation: testContext({ env: {} }),
+        });
+        const [action] = planned.actions;
+        if (!action) throw new Error('no trim was planned');
+        expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({ status: 'kept' });
+        expect(lsofReads).toBeGreaterThanOrEqual(appearsAt);
+        expect(existsSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'))).toBe(true);
+      } finally {
+        resetExecutor();
+      }
+    },
+  );
+
   it('keeps an output a launcher resolves into when it appears while deleteOutputs measures, and deletes it otherwise', async () => {
     const checkout = join(base, 'home', 'tools', 'out');
     const output = join(checkout, 'build');

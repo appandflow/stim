@@ -21,7 +21,9 @@ import { clearStoppedOutputs, stoppedOutputCandidates } from '../daemon/stages.t
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
-import { freshLaunchers } from '../workspace/launchers.ts';
+import { answered } from '../workspace/bounded-read.ts';
+import { freshLaunchers, launcherReason } from '../workspace/launchers.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
@@ -246,6 +248,43 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(await clearStoppedOutputs(candidate, config, day)).toMatchObject({ outcome: 'done' });
   });
 
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'leaves the owner of a checkout unknown, which keeps it, when a level cannot be read',
+    async () => {
+      const mono = join(base, 'dev', 'mono');
+      mkdirSync(join(mono, 'apps', 'native'), { recursive: true });
+      mkdirSync(join(mono, '.git'));
+      chmodSync(mono, 0o000);
+      try {
+        const owner = await checkoutRootOf(join(mono, 'apps', 'native'));
+        expect(owner).toEqual({ unknown: expect.stringContaining('EACCES') });
+        expect(launcherReason(owner, { targets: [], incomplete: [] })).toContain('cannot be ruled out');
+      } finally {
+        chmodSync(mono, 0o755);
+      }
+    },
+  );
+
+  it('leaves the owner unknown at once while an earlier read is still pending, and finds it once that settles', async () => {
+    const mono = join(base, 'dev', 'mono');
+    mkdirSync(join(mono, 'apps'), { recursive: true });
+    mkdirSync(join(mono, '.git'));
+    let release: (value: string) => void = () => {};
+    const stuck = answered('/stalled-mount', () => new Promise<string>((resolve) => (release = resolve)), 10).catch(
+      () => 'timed out',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await stuck).toBe('timed out');
+
+    const owner = await checkoutRootOf(join(mono, 'apps'));
+    expect(owner).toEqual({ unknown: expect.stringContaining('/stalled-mount') });
+    expect(launcherReason(owner, { targets: [], incomplete: [] })).not.toBeNull();
+
+    release('late');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await checkoutRootOf(join(mono, 'apps'))).toBe(mono);
+  });
+
   it('owns a registered app inside a monorepo by the worktree root, and a folder in no checkout by itself', async () => {
     const mono = join(base, 'dev', 'mono');
     mkdirSync(join(mono, 'apps', 'native'), { recursive: true });
@@ -256,7 +295,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(await checkoutRootOf(join(base, 'loose'))).toBe(join(base, 'loose'));
   });
 
-  it('reads the launcher directories once for planning and once for each deletion operation', async () => {
+  it('reads the launcher directories where it reads the running processes, once per process read, and once for planning', async () => {
     const roots = join(base, 'roots');
     const config: Config = { version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [roots] } };
     saveConfig(config);
@@ -272,26 +311,43 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     age(linked);
     ageGit(join(main, '.git', 'worktrees', 'linked'));
 
-    launcherDirs.state.reads = 0;
-    const idle = await stoppedOutputCandidates(config, reading, day);
-    expect(idle).toHaveLength(4);
-    expect(launcherDirs.state.reads).toBe(1);
-
-    launcherDirs.state.reads = 0;
-    const pass = testContext();
-    for (const candidate of idle) await clearStoppedOutputs(candidate, config, day, pass);
-    expect(launcherDirs.state.reads).toBe(1 + idle.length);
-
-    launcherDirs.state.reads = 0;
-    await runDormantDependencies({
-      config,
-      act: true,
-      log: () => {},
-      ...reading,
-      operation: testContext(),
-      force: true,
+    const real = getExecutor();
+    let processReads = 0;
+    setExecutor({
+      ...real,
+      runFileQuietAsync: (file, args, options) => {
+        if (file === 'ps' && !args.includes('pid=,ppid=')) processReads++;
+        return real.runFileQuietAsync(file, args, options);
+      },
     });
-    expect(existsSync(join(linked, 'node_modules'))).toBe(false);
-    expect(launcherDirs.state.reads).toBe(2);
+    try {
+      launcherDirs.state.reads = 0;
+      processReads = 0;
+      const idle = await stoppedOutputCandidates(config, reading, day);
+      expect(idle).toHaveLength(4);
+      expect([launcherDirs.state.reads, processReads]).toEqual([1, 1]);
+
+      launcherDirs.state.reads = 0;
+      processReads = 0;
+      const pass = testContext();
+      for (const candidate of idle) await clearStoppedOutputs(candidate, config, day, pass);
+      expect(processReads).toBe(idle.length);
+      expect(launcherDirs.state.reads).toBe(1 + processReads);
+
+      launcherDirs.state.reads = 0;
+      processReads = 0;
+      await runDormantDependencies({
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        operation: testContext(),
+        force: true,
+      });
+      expect(launcherDirs.state.reads).toBe(3);
+      expect(existsSync(join(linked, 'node_modules'))).toBe(false);
+    } finally {
+      resetExecutor();
+    }
   }, 60_000);
 });

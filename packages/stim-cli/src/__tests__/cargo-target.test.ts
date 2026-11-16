@@ -311,7 +311,7 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
 
     expect(readings).toBe(2);
     expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual(['release/incremental: a process uses it']);
+    expect(result.kept).toEqual([expect.stringContaining('on PATH')]);
     expect(existsSync(join(target, 'release', 'incremental', 'x'))).toBe(true);
 
     makeProfile('debug', 3 * DAY);

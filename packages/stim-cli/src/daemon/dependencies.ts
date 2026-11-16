@@ -17,7 +17,7 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
-import { freshLaunchers, type LauncherScan } from '../workspace/launchers.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { buildOutputDirs } from '../workspace/discovery-census.ts';
@@ -262,18 +262,15 @@ async function stillUnused(
   keys: readonly string[],
   worktree: string,
   idleMs: number,
-  launchers: () => Promise<LauncherScan>,
   operation?: StimContext,
   setting?: string,
 ): Promise<string | null> {
   const [first] = keys;
   if (!source)
-    return first && !(await stillIdle(first, idleMs, { operation, setting, launchers }))
-      ? 'it is no longer idle'
-      : null;
+    return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
   const held = new Set(workspaceKeys(keys));
   for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting, launchers })))
+    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
       return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
@@ -310,7 +307,7 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         launchers,
-        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, launchers, operation),
+        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         level,
         operation,
       },
@@ -369,7 +366,7 @@ export async function clearSourceDependencies(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         launchers,
-        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, launchers, operation, setting),
+        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
         level,
         operation,
       },

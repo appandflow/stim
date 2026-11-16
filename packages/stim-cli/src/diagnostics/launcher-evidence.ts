@@ -12,18 +12,24 @@ const FIX: Record<LauncherProblem['kind'], string> = {
 
 /**
  * A finding when the executables on PATH cannot all be inspected: cleanup then keeps every checkout, because any of
- * the unread ones could point into one. The read is bounded by the reader's 3 seconds per call and a 10 second budget
- * in all.
+ * the unread ones could point into one. The whole read, queue time included, ends at the deadline of `signal`, 10
+ * seconds by default, and a read that ends there reports incomplete evidence, never a complete result.
  */
-export async function launcherFindings(env: NodeJS.ProcessEnv): Promise<Finding[]> {
+export async function launcherFindings(
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal = AbortSignal.timeout(READ_BUDGET_MS),
+): Promise<Finding[]> {
   let problems: LauncherProblem[];
   try {
-    const signal = AbortSignal.timeout(READ_BUDGET_MS);
-    problems = (await launcherReader(signal, { directories: launcherDirectories(env) })()).incomplete;
+    const expired = new Promise<never>((_, reject) => {
+      const stop = () => reject(signal.reason);
+      if (signal.aborted) stop();
+      else signal.addEventListener('abort', stop, { once: true });
+    });
+    problems = (await Promise.race([launcherReader(signal, { directories: launcherDirectories(env) })(), expired]))
+      .incomplete;
   } catch {
-    problems = [
-      { kind: 'pending', path: 'the launcher directories', error: 'reading them did not finish in 10 seconds' },
-    ];
+    problems = [{ kind: 'pending', path: 'the launcher directories', error: 'reading them did not finish in time' }];
   }
   if (!problems.length) return [];
   const fixes = [...new Set(problems.map(({ kind }) => FIX[kind]))];

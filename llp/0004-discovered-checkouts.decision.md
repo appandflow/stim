@@ -202,27 +202,33 @@ those on PATH and the per-user bin folders a daemon started by launchd does not
 list: `~/.local/bin`, `~/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.volta/bin`,
 `~/Library/pnpm`, the active nvm bin, `/usr/local/bin` and `/opt/homebrew/bin`.
 A launcher resolving into a path is the same kind of fact as a process executing
-from it, so a deletion operation reads it after its running-process evidence,
-with a reading of its own, never the pass's planning reading (which can be
-minutes old and is shared by the operation). One deletion operation takes one
-such reading, at its first use, and shares it across its checks:
-`clearStoppedOutputs` (the idle evidence, then `deleteOutputs` after the sizes
-are measured, immediately before the removals), `clearArtifact` and
-`clearSourceTrees` (a final check after the recheck, before the removal), the
-Cargo trim (its three process reads) and the worktree removal guard. The early
-checks of those routes use the pass's shared planning reading. The plan-time
-whole-checkout keep stays. The window that remains is the one for a launcher
-that appears after that reading, and for a process that starts executing from the
-path after the last evidence read: Stim accepts it for processes and gives
-launchers no larger one. A Cargo target is checked against its owning checkout, not its app
+from it, so launcher evidence is read wherever the code reads running-process
+evidence, as part of the same snapshot, and is never reused across two process
+reads. Within one snapshot every check shares that one reading, so the cost is one
+launcher read per process read and nothing is memoized past a process re-read. The
+pass's planning reading (shared by the operation, possibly minutes old) serves
+planning and the early checks only. The routes: the idleness evidence reads the
+processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads`
+per check); `clearStoppedOutputs` keeps that reading for `deleteOutputs`, so for a
+discovered checkout the launcher read precedes the size measurement, and for a
+registered workspace, which has no process read in its idleness check, it is first
+taken in `deleteOutputs` after the sizes; `clearArtifact` and `clearSourceTrees`
+read the launchers once after their last recheck, before the removal; the Cargo
+trim takes a new launcher reading at each of its three process reads and checks the
+whole owning checkout against it before trimming anything; the worktree removal
+guard reads the processes and the launchers together. The plan-time
+whole-checkout keep stays. The window that remains is the one for a launcher or a
+process that appears after the last read of its snapshot: Stim accepts it for
+processes and gives launchers no larger one.
+A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
 reading as incomplete at once. A native read cannot be cancelled, so at most one
 read that timed out is outstanding per JavaScript isolate, shared by the launcher
 readings and the home scan (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
-therefore holds one libuv thread per isolate, and reduction of reduce-only
-checkouts stays off until that read settles. Two isolates in the daemon can
+therefore holds one libuv thread per isolate, and reduction of every checkout
+stays off until that read settles. Two isolates in the daemon can
 read launchers, the main thread and the passes thread, so up to two reads can be
 outstanding there; the scan runs only on the passes thread, and CLI commands are
 separate processes. A scan stops at the first read that times out: the result is
@@ -546,8 +552,8 @@ and Pods (`artifactReads`), Cargo targets, discovered-checkout idleness
 (`removeWorktrees`). `Launching` carries a launcher reader and a checkout for
 every caller; there is no variant without one. Stopping Metro or devices and
 archiving logs touch no launcher target and are not blocked. The reading is the
-operation's shared one at planning and a fresh one at each deletion check, as for
-processes. `reduceOnly` keeps its other meaning: such a checkout is never
+operation's shared one at planning and a fresh one with each process read of a
+deletion, as above. `reduceOnly` keeps its other meaning: such a checkout is never
 removed.
 
 Incomplete launcher evidence keeps every checkout, and is reported where it
@@ -561,7 +567,8 @@ risking a missed launcher. The pending-read slot is shared with the home scan, s
 a pending read of a folder that is not a launcher directory is reported as a read
 outside PATH, not as a PATH directory. `stim doctor` reports the finding
 `launcher-evidence-incomplete` with the path, the error and the fix, from a read
-bounded by 3 seconds per call and 10 seconds in all. Each daemon pass writes one
+bounded by 3 seconds per call and a 10 second deadline that covers queue time and
+every entry read, and a read that reaches the deadline is reported as incomplete. Each daemon pass writes one
 `launcher_evidence_incomplete` record, and each item's keep reason names the
 cause.
 
@@ -575,13 +582,18 @@ points anywhere in its checkout. The root is the worktree `artifactCheckoutsAsyn
 already resolved (Cargo), the `checkout` recorded on the idle candidate when it
 was read (`checkoutRootOf`: the nearest ancestor holding a `.git` entry, one
 lstat per level, no git process), and for a path in no checkout the path itself.
+The probe reads through the shared bounded reader with the abort checked between
+levels, climbs to the filesystem root (a `.git` in the home folder makes the home
+folder the owner, which keeps more), and leaves the owner unknown when a level
+cannot be read for any reason but proven absence: that keeps the checkout, never a
+narrower root.
 
 Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
-fresh read per deletion operation. In a scratch pass of four idle discovered
-checkouts and one linked worktree, the reads fell from 1 plan + 12 output
-reads + 4 dependency reads to 1 plan + 4 output reads (the operation's shared
-planning read, then one fresh read each) and 2 dependency reads (one planning,
-one fresh). The pressure ladder keeps going to later rungs when a kept checkout leaves the
+fresh read per process read. In a scratch pass of four idle discovered
+checkouts and one linked worktree, the launcher reads were 1 plan + 12 output
+reads + 4 dependency reads when every check read anew, and are 1 plan + 4 output
+reads (the shared planning read, then one fresh read per idleness process read)
+and 3 dependency reads (one planning, two fresh) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 
 ## Links

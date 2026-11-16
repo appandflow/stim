@@ -1264,11 +1264,11 @@ to manage one. A checkout that an executable on PATH (a symlink in a
 PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
 ~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
 resolves into is kept whole, by every pass that deletes its outputs,
-dependencies or Cargo target. A directory that cannot be read (not one that is
-missing, or one that does not answer within 3 seconds) keeps every
-checkout for that pass, and the reason names it and says fixing its permissions
-restores reduction. Each deletion reads the directories anew, at the moment it
-reads the processes using the path (not the pass's planning reading); a
+dependencies or Cargo target. A directory or entry that cannot be read (not one
+that is missing, or one that does not answer within 3 seconds) keeps every
+checkout for that pass; the reason and stim doctor (launcher-evidence-incomplete)
+name it and the fix. Each read of the processes using a path is paired with a
+launcher read of its own, never the planning reading; a
 directory that hangs ends the reading as incomplete at once, and while that read
 is pending (at most one per thread: the daemon's main thread and passes thread
 each have one; the scan runs on the passes thread) no other launcher or scan

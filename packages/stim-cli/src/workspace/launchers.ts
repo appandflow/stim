@@ -36,11 +36,12 @@ const REAL_IO: LauncherIo = {
 };
 
 const ABSENT = ['ENOENT', 'ENOTDIR'];
-const absent = (error: unknown) => error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
+export const absent = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
 
 const READ_TIMEOUT_MS = 3000;
 
-const describe = (error: unknown) =>
+export const describe = (error: unknown): string =>
   error instanceof Error && 'code' in error
     ? String(error.code)
     : error instanceof Error
@@ -84,6 +85,7 @@ export function launcherReader(
       }
       try {
         for (const name of await answered(directory, () => io.readdir(directory), timeoutMs)) {
+          signal?.throwIfAborted();
           const entry = join(directory, name);
           try {
             if (!(await answered(directory, () => io.isSymlink(entry), timeoutMs))) continue;
@@ -158,8 +160,9 @@ export function launchersOf(
 
 /**
  * A launcher reader that reads once, at its first call, never the operation's planning reading, which can be minutes
- * old. One deletion operation takes one and shares it across its checks, so a launcher is treated like a running
- * process read at the same moment: the window that remains is the one after that read.
+ * old. It is one evidence snapshot: a caller takes a new one wherever it reads running processes anew, and shares it
+ * only among the checks that follow the same process read, so a launcher is read where the processes are and is never
+ * reused across two process reads.
  */
 export function freshLaunchers(
   operation: StimContext | undefined,
@@ -169,10 +172,13 @@ export function freshLaunchers(
   return newReader(operation, signal, directories);
 }
 
+/** A checkout root, or why ownership of a path could not be established, which keeps it. */
+export type Checkout = string | { unknown: string };
+
 /** What a deletion path checks against PATH launchers: a launcher reading and the checkout it is checked against. */
 export interface Launching {
   launchers: () => Promise<LauncherScan>;
-  checkout: string;
+  checkout: Checkout;
 }
 
 /** The launcher problems that readings of the operation have met since the last call, each once. */
@@ -214,7 +220,9 @@ export function describeLauncherProblems(problems: readonly LauncherProblem[]): 
  * Why `folder` is kept for an executable on PATH: one resolves to a path inside it, or a launcher directory or entry
  * could not be inspected, so none can be ruled out. Null when every directory was read and none points into it.
  */
-export function launcherReason(folder: string, scan: LauncherScan): string | null {
+export function launcherReason(folder: Checkout, scan: LauncherScan): string | null {
+  if (typeof folder !== 'string')
+    return `an executable on PATH cannot be ruled out: ${folder.unknown}; Stim keeps the checkout until that can be read`;
   const root = canonicalPath(folder);
   const target = scan.targets.find((path) => path.startsWith(`${root}${sep}`));
   if (target) return `an executable on PATH runs from it (${target})`;
