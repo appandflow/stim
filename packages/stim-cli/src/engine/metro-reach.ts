@@ -80,8 +80,12 @@ export function detectProviders(onPath: (bin: string) => boolean, mode: TunnelMo
   return MANAGED_PROVIDERS.filter((p) => onPath(p));
 }
 
+export function endSentence(text: string): string {
+  const trimmed = text.trimEnd();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
 export function tunnelStartRemedy(reason: string, cancelled: boolean): string {
   if (cancelled) return reason;
-  const ended = /[.!?]$/.test(reason.trimEnd()) ? reason.trimEnd() : `${reason.trimEnd()}.`;
-  return `${ended} Set metro.tunnel to a provider that starts, or set metro.publicUrl to an existing endpoint.`;
+  return `${endSentence(reason)} Set metro.tunnel to a provider that starts, or set metro.publicUrl to an existing endpoint.`;
 }

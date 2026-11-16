@@ -35,6 +35,7 @@ const INSTALLER_CEILING_MS = 5 * 60 * 1000;
 
 interface WarmClaimHolder {
   pid: number;
+  child?: number;
   phase: WarmPhase;
   /** Maintenance holds it while it deletes a source checkout's dependencies; no warm runs. */
   maintenance?: true;
@@ -109,6 +110,7 @@ function asHolder(holder: ClaimHolder): WarmClaimHolder {
   return {
     ...(holder.details.purpose === MAINTENANCE_PURPOSE ? { maintenance: true as const } : {}),
     pid: holder.owner.pid,
+    ...(holder.child ? { child: holder.child.pid } : {}),
     phase: holder.details.phase === 'copy' ? 'copy' : holder.mode === 'exclusive' ? 'refresh' : 'copy',
   };
 }
@@ -239,7 +241,7 @@ function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: s
   const error = new Error(
     `Waited ${formatElapsed(elapsedMs)} for ${who} to release the warm lock on this repository. ` +
       'Wait for it to finish, then run the command again. ' +
-      `The lock is ${root}; remove it only after confirming that no stim worktree warm is running:\n  ${claimRemoveCommand(root)}`,
+      `The lock is ${root}; remove it only after confirming that no stim worktree warm and no install it started (the package manager or its postinstall scripts) still runs${holder?.child ? ` (the claim records child process group ${holder.child})` : ''}:\n  ${claimRemoveCommand(root)}`,
   ) as Error & { code?: string };
   error.code = 'STIM_LOCK_TIMEOUT';
   return error;

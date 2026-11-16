@@ -194,6 +194,20 @@ test.skipIf(process.platform === 'win32')(
       }).catch(() => {});
       expect(polls).toBe(1);
 
+      let clock = 0;
+      const timedOut = await acquireWarmClaim({
+        repositoryRoot: REPO,
+        phase: 'copy',
+        now: () => (clock += 1000),
+        ceilingMs: 3000,
+        sleep: async () => {},
+      }).catch((thrown: unknown) => thrown);
+      expect(timedOut).toMatchObject({
+        message: expect.stringContaining(
+          'no stim worktree warm and no install it started (the package manager or its postinstall scripts) still runs (the claim records child process group',
+        ),
+      });
+
       process.kill(grandchild, 'SIGKILL');
       for (let attempt = 0; attempt < 200 && readClaimSet(warmClaimPath(REPO)).live.length > 0; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 20));
