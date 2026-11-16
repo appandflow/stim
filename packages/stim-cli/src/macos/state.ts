@@ -31,7 +31,7 @@ export function requiredMacosRecord(root: string): MacosAppRecord | null {
   if (!record && readWorkspaceState(root)?.macos !== undefined) {
     throw Object.assign(
       new Error(
-        `The recorded macOS owner in ${root} is malformed. Repair or remove the macos entry in ${join(workspaceDir(root), 'state.json')}. Do not substitute another app's PID or token.`,
+        `The recorded macOS owner in ${root} is malformed. Repair the macos entry in ${join(workspaceDir(root), 'state.json')}; removing it discards the record stim stop needs while the app or its hosted session may still run. Do not substitute another app's PID or token.`,
       ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
