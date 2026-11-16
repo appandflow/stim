@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { REAL_RECOGNITION_IO, folderSafety, nestedSafety, scanEntryValid } from '../workspace/scan-rules.ts';
+import {
+  REAL_RECOGNITION_IO,
+  folderSafety,
+  nestedSafety,
+  scanDescends,
+  scanEntryValid,
+} from '../workspace/scan-rules.ts';
 
 describe('scanEntryValid with a hand-edited scan result', () => {
   let home: string;
@@ -55,6 +61,16 @@ describe('scanEntryValid with a hand-edited scan result', () => {
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+
+  it('skips the protected home folders in any letter case, so a saved find under one is invalid before any read', async () => {
+    for (const name of ['Documents', 'documents', 'DOCUMENTS']) expect(scanDescends(name, 1)).toBe(false);
+    const refuse = async (): Promise<never> => {
+      throw new Error('read');
+    };
+    const silent = { readEntries: refuse, readText: refuse, lstat: refuse, stat: refuse, realpath: refuse };
+    for (const name of ['documents', 'DOCUMENTS'])
+      expect(await scanEntryValid(join(home, name, 'app'), { ...rules(), io: silent })).toBe('invalid');
   });
 
   it('refuses a path through a symlinked ancestor, a symlinked checkout and a different-case spelling of a pruned folder', async () => {

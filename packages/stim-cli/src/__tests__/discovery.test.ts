@@ -157,7 +157,7 @@ describe('discoverCheckouts', () => {
     vi.stubEnv('STIM_HOME', '');
     vi.stubEnv('HOME', join(base, 'home'));
     vi.stubEnv('USERPROFILE', join(base, 'home'));
-    const docs = join(base, 'home', 'Documents', 'old-app');
+    const docs = join(base, 'home', 'projects', 'old-app');
     app(docs);
     mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
     const scan = {
@@ -190,6 +190,38 @@ describe('discoverCheckouts', () => {
         testContext({ env: { STIM_HOME: join(base, 'scoped') } }),
       ),
     ).toEqual([]);
+  });
+
+  it('drops a find an earlier scan recorded under ~/Documents, but keeps a root named there', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
+    const recorded = join(base, 'home', 'Documents', 'old-app');
+    const root = join(base, 'home', 'Documents', 'work');
+    app(recorded);
+    app(join(root, 'app'));
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    writeFileSync(
+      join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
+      JSON.stringify({
+        version: 2,
+        completedAt: 1,
+        lowScanAt: 0,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [recorded, join(root, 'app')],
+        dotFolderFound: [],
+        unreadable: [],
+        truncated: false,
+        truncation: 'none',
+      }),
+    );
+    const config: Config = { maintenance: { discoverRoots: [root] }, projects: {}, repos: {} };
+    expect((await discoverCheckouts(config, [])).map(({ path, origin }) => [path, origin])).toEqual([
+      [join(root, 'app'), 'root'],
+    ]);
   });
 
   it('never takes the home directory as a folder that holds known projects', async () => {

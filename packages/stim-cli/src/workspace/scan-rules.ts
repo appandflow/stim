@@ -12,17 +12,12 @@ export const MAX_DEPTH = 7;
 
 const within = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}${sep}`);
 
-/** Folders directly in the home folder the scan never reads: system, media and the two the maintainer excluded. */
-const HOME_SKIPPED = new Set([
-  'Library',
-  'Applications',
-  'Desktop',
-  'Downloads',
-  'Movies',
-  'Music',
-  'Pictures',
-  'Public',
-]);
+/** Folders directly in the home folder the scan never reads, whatever their letter case: system, media and the three the maintainer excluded. */
+const HOME_SKIPPED = new Set(
+  ['Library', 'Applications', 'Desktop', 'Documents', 'Downloads', 'Movies', 'Music', 'Pictures', 'Public'].map(
+    (name) => name.toLowerCase(),
+  ),
+);
 
 // @ref LLP 0004#tool-folders-and-the-full-scan -- the home dot-folders the scan does not enter
 /**
@@ -109,7 +104,7 @@ export function scanDescends(name: string, depth: number): boolean {
   if (name.startsWith('.'))
     return depth === 1 && !name.startsWith('.stim') && !HOME_DOT_PRUNED.has(name) && !name.endsWith('-cache');
   if (PRUNED.has(name)) return false;
-  return depth !== 1 || !HOME_SKIPPED.has(name);
+  return depth !== 1 || !HOME_SKIPPED.has(name.toLowerCase());
 }
 
 /**

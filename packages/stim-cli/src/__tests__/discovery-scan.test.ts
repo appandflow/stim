@@ -24,11 +24,10 @@ describe('scanDescends', () => {
   it('skips dependency and build folders everywhere, and the excluded folders of the home folder only', () => {
     for (const name of ['node_modules', 'Pods', 'build', 'target', 'Library'])
       expect(scanDescends(name, 3)).toBe(false);
-    for (const name of ['Desktop', 'Downloads', 'Movies']) {
+    for (const name of ['Desktop', 'Documents', 'Downloads', 'Movies']) {
       expect(scanDescends(name, 1)).toBe(false);
       expect(scanDescends(name, 2)).toBe(true);
     }
-    expect(scanDescends('Documents', 1)).toBe(true);
     expect(scanDescends('dev', 1)).toBe(true);
   });
 
@@ -55,7 +54,7 @@ describe('scanForCheckouts', () => {
   afterEach(() => rmSync(home, { recursive: true, force: true }));
 
   it('finds projects at depth, stops at one, and never reads pruned, dot, excluded or linked folders', async () => {
-    project('Documents', 'a');
+    project('dev', 'z');
     project('dev', 'deep', 'er', 'b');
     project('dev', 'c');
     project('.exact', 'exact2');
@@ -63,6 +62,7 @@ describe('scanForCheckouts', () => {
     project('dev', 'c', 'inner');
     for (const skipped of [
       ['Desktop', 'x'],
+      ['Documents', 'x'],
       ['Downloads', 'x'],
       ['dev', 'node_modules', 'x'],
       ['dev', '.hidden', 'x'],
@@ -70,11 +70,11 @@ describe('scanForCheckouts', () => {
       ['dev', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'too-deep'],
     ])
       project(...skipped);
-    symlinkSync(join(home, 'Documents', 'a'), join(home, 'dev', 'linked'));
+    symlinkSync(join(home, 'dev', 'z'), join(home, 'dev', 'linked'));
     const scan = await scanForCheckouts(home, marked);
     expect(scan.found.toSorted()).toEqual(
       [
-        join(home, 'Documents', 'a'),
+        join(home, 'dev', 'z'),
         join(home, 'dev', 'c'),
         join(home, 'dev', 'deep', 'er', 'b'),
         join(home, '.exact', 'exact2'),
@@ -86,15 +86,14 @@ describe('scanForCheckouts', () => {
 
   it('records a folder the system refuses as unreadable and goes on', async () => {
     project('dev', 'ok');
-    mkdirSync(join(home, 'Documents'));
-    mkdirSync(join(home, 'Documents', 'locked'), { mode: 0o000 });
+    mkdirSync(join(home, 'dev', 'locked'), { mode: 0o000 });
     try {
       const scan = await scanForCheckouts(home, marked);
       expect(scan.found).toEqual([join(home, 'dev', 'ok')]);
       const refused = process.platform !== 'win32' && process.getuid?.() !== 0;
-      expect(scan.unreadable).toEqual(refused ? [join(home, 'Documents', 'locked')] : []);
+      expect(scan.unreadable).toEqual(refused ? [join(home, 'dev', 'locked')] : []);
     } finally {
-      chmodSync(join(home, 'Documents', 'locked'), 0o700);
+      chmodSync(join(home, 'dev', 'locked'), 0o700);
     }
   });
 

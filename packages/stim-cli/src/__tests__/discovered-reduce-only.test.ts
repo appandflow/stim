@@ -331,7 +331,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
   describe('the artifact and dependency route for a scan-found linked worktree', () => {
     const operation = () => testContext({ env: {} });
     const scanFoundWorktree = () => {
-      const found = worktree(join(base, 'home', 'Documents', 'feature-wt'), 'feature');
+      const found = worktree(join(base, 'home', 'projects', 'feature-wt'), 'feature');
       mkdirSync(join(found, 'node_modules', '.bin'), { recursive: true });
       writeFileSync(join(found, 'node_modules', '.bin', 'tool'), '#!/bin/sh\n');
       age(found);
@@ -503,18 +503,18 @@ describe('checkouts found through a tool folder or the full scan', () => {
     const moved = join(base, 'elsewhere', 'app');
     mkdirSync(moved, { recursive: true });
     writeFileSync(join(moved, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    mkdirSync(join(base, 'home', 'Documents'), { recursive: true });
-    const stale = join(base, 'home', 'Documents', 'app');
+    mkdirSync(join(base, 'home', 'projects'), { recursive: true });
+    const stale = join(base, 'home', 'projects', 'app');
     symlinkSync(moved, stale);
     writeScan([stale, moved]);
     const config = { projects: { [main]: {} }, repos: {} };
     expect(await discoverCheckouts(config, [main])).toEqual([]);
     const planned = await artifactCheckoutsAsync(new AbortController().signal);
-    expect(planned.filter((entry) => entry.path.includes('elsewhere') || entry.path.includes('Documents'))).toEqual([]);
+    expect(planned.filter((entry) => entry.path.includes('elsewhere') || entry.path.includes('projects'))).toEqual([]);
   });
 
   it('holds a scan-found linked worktree at the removal plan', async () => {
-    const found = worktree(join(base, 'home', 'Documents', 'feature-wt'), 'feature');
+    const found = worktree(join(base, 'home', 'projects', 'feature-wt'), 'feature');
     writeScan([found]);
     const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
     expect(planned.worktrees.find((entry) => entry.path === found)).toMatchObject({

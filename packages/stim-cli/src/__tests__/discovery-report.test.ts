@@ -533,4 +533,22 @@ describe('a list older than the state it is read against', () => {
     expect(text).toContain('oldest measurement 2026-11-17');
     expect(lowDiskLine(result, home)).toContain('at least');
   });
+
+  it('says ~/Documents is not scanned once a scan result exists, and nothing about it before', () => {
+    const text = (status: 'read' | 'absent') =>
+      discoveryLines(
+        discoveryReport({
+          scan: status === 'read' ? { status, scan } : { status },
+          census: { status: 'absent' },
+          setting: noRoots,
+          home,
+          canonical: same,
+        }),
+        home,
+      ).join('\n');
+    expect(text('read')).toContain(
+      'does not scan ~/Documents; name a folder of checkouts there in maintenance.discoverRoots',
+    );
+    expect(text('absent')).not.toContain('Documents');
+  });
 });
