@@ -375,7 +375,12 @@ export async function clearStoppedOutputs(
             const outputs = await idleOutputs(
               path,
               config,
-              launchingOf(candidate.checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+              launchingOf(
+                candidate.checkout,
+                () => freshLaunchers(operation, operation?.signal)(),
+                operation,
+                operation?.signal,
+              ),
             );
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(

@@ -20,7 +20,13 @@ import {
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { launcherReason, launchersOf, launchingOf, type LauncherScan } from '../../workspace/launchers.ts';
+import {
+  freshLaunchers,
+  launcherReason,
+  launchersOf,
+  launchingOf,
+  type LauncherScan,
+} from '../../workspace/launchers.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -420,7 +426,7 @@ export async function collectArtifactsAsync(
         ? (listed = await readRunningProcessesAsync(signal))
         : listed
       : null;
-  const launchers = launchersOf(operation, signal);
+  const launchers = operation ? launchersOf(operation, signal) : () => launchersOf(undefined, signal)();
   const all = await artifactWorktreesAsync(signal, operation);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
@@ -472,7 +478,7 @@ export async function collectArtifactsAsync(
         if (!reason && candidate.source)
           reason =
             (await regenerableDirProblem(worktree.path, path, signal, {
-              launching: launchingOf(worktree.path, launchers, operation, signal),
+              launching: launchingOf(worktree.path, () => freshLaunchers(operation, signal)(), operation, signal),
             })) ?? linkedWorktreeUsing(candidate, all);
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);

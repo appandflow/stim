@@ -13,7 +13,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
-import { launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -547,7 +547,12 @@ export async function runDormantReduction({
             bytes: await idleOutputBytes(
               candidate.path,
               config,
-              launchingOf(candidate.checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+              launchingOf(
+                candidate.checkout,
+                () => freshLaunchers(operation, operation?.signal)(),
+                operation,
+                operation?.signal,
+              ),
             ),
             detail: 'stim gc would do this',
           };

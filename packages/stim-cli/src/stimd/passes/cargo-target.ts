@@ -10,7 +10,7 @@ import { canonicalPath } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { checkoutRootOf } from '../../workspace/checkout-role.ts';
-import { launchersOf, launchingOf, type Checkout } from '../../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../../workspace/launchers.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
@@ -451,7 +451,7 @@ export async function trimCargoTargetAction(
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
   const launching = launchingOf(
     managed.checkout,
-    launchersOf(operation, operation?.signal),
+    () => freshLaunchers(operation, operation?.signal)(),
     operation,
     operation?.signal,
   );

@@ -22,6 +22,8 @@ import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as fsUtil from '../fs-util.ts';
+import * as gitModule from '../workspace/git.ts';
+import { collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { freshLaunchers, launcherReason, launchingOf } from '../workspace/launchers.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -286,6 +288,35 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(await checkoutRootOf(join(mono, 'apps'))).toBe(mono);
   });
 
+  it('keeps a source checkout dependency tree out of the selection when a link appears during its ignored-files read', async () => {
+    const roots = join(base, 'roots');
+    const path = join(roots, 'app');
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [roots] } });
+    app(path);
+    mkdirSync(join(path, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(path, 'node_modules', 'dep', 'cli'), 'x');
+    age(path);
+    const modules = join(path, 'node_modules');
+    const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false, source: true };
+    const select = () => collectArtifactsAsync('dependencies', options, new AbortController().signal, testContext());
+
+    expect((await select()).candidates.map((entry) => entry.path)).toContain(modules);
+
+    const real = gitModule.gitQuietAsync;
+    vi.spyOn(gitModule, 'gitQuietAsync').mockImplementation(async (...args) => {
+      const out = await real(...args);
+      if (args[1].includes('--others') && !existsSync(join(bin, 'tool'))) link(join(modules, 'dep', 'cli'));
+      return out;
+    });
+    const kept = await select();
+    expect(kept.candidates.map((entry) => entry.path)).not.toContain(modules);
+    expect(kept.skips).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: modules, reason: expect.stringContaining('on PATH') }),
+      ]),
+    );
+  });
+
   it('owns a registered app inside a monorepo by the worktree root, and a folder in no checkout by itself', async () => {
     const mono = join(base, 'dev', 'mono');
     mkdirSync(join(mono, 'apps', 'native'), { recursive: true });
@@ -435,7 +466,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
       const pass = testContext();
       for (const candidate of idle) await clearStoppedOutputs(candidate, config, day, pass);
       expect(snapshotReads).toBe(idle.length);
-      expect(launcherDirs.state.reads).toBe(1 + snapshotReads + idle.length);
+      expect(launcherDirs.state.reads).toBe(snapshotReads + 2 * idle.length);
 
       launcherDirs.state.reads = 0;
       processReads = 0;

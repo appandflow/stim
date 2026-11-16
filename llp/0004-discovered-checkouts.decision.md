@@ -594,12 +594,13 @@ cannot be read for any reason but proven absence: that keeps the checkout, never
 narrower root.
 
 Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
-fresh read per process read. In a scratch pass of four idle discovered
-checkouts and one linked worktree, the launcher reads were 1 plan + 12 output
-reads + 4 dependency reads when every check read anew, and are 1 plan + 8 output
-reads (the shared planning read, then per candidate one with the idleness process
-read and one before each of its removals, one here) and 3 dependency reads (one planning, one with
-the recheck's process read, one before the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
+fresh read per process read, plus one at each decision where main read anew. In a
+scratch pass of four idle discovered checkouts and one linked worktree, the
+launcher reads were 1 plan + 12 output reads + 4 dependency reads when every check
+read anew, and are 1 plan + 12 output reads, none of them the shared planning read (per candidate one with the idleness
+process read, one at its directory check and one before each of its removals) and
+3 dependency reads (one planning, one with the recheck's process read, one before
+the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 
 ## Links
