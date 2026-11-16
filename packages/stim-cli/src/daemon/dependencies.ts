@@ -1,6 +1,7 @@
+import { rmSync } from 'node:fs';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction, PressureLevel } from '@stim-cli/core/state';
+import { listBuildEndMarkers, type DaemonLadderAction, type PressureLevel } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -17,6 +18,9 @@ import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers, type LauncherScan } from '../workspace/launchers.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
+import { buildOutputDirs } from '../workspace/discovery-census.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
@@ -578,4 +582,58 @@ export async function measureDependencyTrees(operation: StimContext): Promise<vo
     const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
     if (outcome === 'busy') return;
   }
+}
+
+const BUILD_END_MARKER_MAX_AGE_MS = HOUR_MS;
+
+function dropMarkers(files: readonly string[]): void {
+  for (const file of files)
+    try {
+      rmSync(file, { force: true });
+    } catch {}
+}
+
+// @ref LLP 0001#the-folders-a-build-wrote-are-measured-by-the-daemon -- a marker waits for the walk claim, never for load
+/**
+ * Measures the build output folders and the Cargo `target/` of every registered workspace whose build ended, and its
+ * Stim workspace folder, through `refreshMeasure` with the cache bypassed, and returns how many folders it walked. The
+ * folders are the ones the gc worktree report measures: inside the workspace, found through the census's bounded
+ * reads. A marker is removed once its workspace was visited, and only the marker files listed before the walk, so a
+ * build that ended meanwhile stays marked. A marker file that is unreadable, names a root this Stim home does not
+ * know, names a root that no longer resolves to itself, or is over an hour old is removed without a read inside that
+ * root. A layout that could not be read keeps the marker and measures nothing for that root. A held walk claim, or a
+ * read that does not answer, ends the pass and keeps every marker not yet consumed. It never touches a dependency tree.
+ */
+export async function measureBuildEnds(operation: StimContext, now: number = Date.now()): Promise<number> {
+  const byRoot = new Map<string, string[]>();
+  for (const { file, path, markedAt } of listBuildEndMarkers()) {
+    if (path === null || markedAt === null || now - markedAt > BUILD_END_MARKER_MAX_AGE_MS) dropMarkers([file]);
+    else byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
+  }
+  let walked = 0;
+  for (const [root, files] of byRoot) {
+    operation.signal.throwIfAborted();
+    if (getProject(root)) {
+      const found = await buildOutputDirs(root, operation.signal);
+      if (found === null) {
+        if (hungRead() !== null) return walked;
+        continue;
+      }
+      const folders = found === 'absent' ? [] : [...found, { dir: workspaceDir(root), private: false }];
+      for (const { dir, private: withPrivate } of folders) {
+        const { outcome } = await refreshMeasure(dir, {
+          timeoutMs: WALK_TIMEOUT_MS,
+          maxAgeMs: 0,
+          claim: true,
+          operation,
+          private: withPrivate,
+          ...(dir === workspaceDir(root) ? {} : { knownToExist: true as const }),
+        });
+        if (outcome === 'busy') return walked;
+        walked++;
+      }
+    }
+    dropMarkers(files);
+  }
+  return walked;
 }

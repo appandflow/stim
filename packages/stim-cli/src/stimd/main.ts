@@ -44,6 +44,7 @@ import {
   readDaemonSnapshot,
   readStimdBoots,
   readMaintenanceState,
+  listBuildEndMarkers,
   readHostedSessions,
   readHostedAppMetadata,
   type HostedDeviceSession,
@@ -52,6 +53,7 @@ import {
   type DaemonRecentAction,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
+import { startBuildEndTimer } from './build-end-timer.ts';
 import {
   ClaimUnavailableError,
   claimFailure,
@@ -1013,6 +1015,22 @@ async function runStimdInner(
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
+  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string): Promise<void> => {
+    const work = threads
+      .run('measure', input)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isUnverifiedCleanup(error) && !contain(error))
+          failBackground(error, 'dependency cleanup could not be verified');
+        if (message !== 'aborted') log('warn', failedEvent, message);
+      })
+      .finally(() => {
+        dependencyWork = undefined;
+      });
+    dependencyWork = work;
+    return work;
+  };
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
   const waiters: Record<Resource, Socket[]> = { build: [], boot: [], test: [] };
@@ -1779,6 +1797,12 @@ async function runStimdInner(
         if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
   homeWatch?.unref();
+  const stopBuildEndTimer = startBuildEndTimer({
+    allowed: maintenanceAllowed,
+    busy: () => dependencyWork !== undefined,
+    markers: () => listBuildEndMarkers().map((marker) => marker.file),
+    start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
+  });
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1845,18 +1869,7 @@ async function runStimdInner(
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
-        dependencyWork = threads
-          .run('measure', { cwd: process.cwd() })
-          .then(() => undefined)
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            if (isUnverifiedCleanup(error) && !contain(error))
-              failBackground(error, 'dependency cleanup could not be verified');
-            if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
-          })
-          .finally(() => {
-            dependencyWork = undefined;
-          });
+        startMeasureJob({ cwd: process.cwd() }, 'daemon_dependency_scan_failed');
       }
       const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
@@ -1981,6 +1994,7 @@ async function runStimdInner(
     await writerDone;
     for (const signal of DETACHED_SIGNALS) process.off(signal, onSignal);
     clearInterval(homeWatch);
+    stopBuildEndTimer();
     clearTimeout(attachedWatchdog);
   }
   return true;
