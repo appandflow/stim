@@ -20,13 +20,7 @@ import {
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import {
-  freshLaunchers,
-  launcherReason,
-  launchersOf,
-  launchingOf,
-  planningLaunching,
-} from '../../workspace/launchers.ts';
+import { launcherReason, launchersOf, type LauncherScan } from '../../workspace/launchers.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -268,7 +262,7 @@ async function artifactReads(
   kind: ArtifactKind,
   signal: AbortSignal,
   operation: StimContext | undefined,
-  { fresh }: { fresh: boolean },
+  launchers: () => Promise<LauncherScan>,
 ): Promise<ArtifactReads> {
   const { worktree, path, keys } = candidate;
   const tracked = await gitQuietAsync(worktree, ['ls-files', '--', relative(worktree, path)], {
@@ -281,7 +275,7 @@ async function artifactReads(
   const windowed = tracked !== null && !tracked.trim() && kind === 'dependencies';
   const activity = windowed ? await worktreeActivityOfAsync(worktree, keys, operation) : null;
   const written = windowed ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
-  const launcher = launcherReason(worktree, await (fresh ? freshLaunchers : launchersOf)(operation, signal)());
+  const launcher = launcherReason(worktree, await launchers());
   return { tracked, activity, written, launcher };
 }
 
@@ -426,6 +420,7 @@ export async function collectArtifactsAsync(
         ? (listed = await readRunningProcessesAsync(signal))
         : listed
       : null;
+  const launchers = launchersOf(operation, signal);
   const all = await artifactWorktreesAsync(signal, operation);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
@@ -472,12 +467,12 @@ export async function collectArtifactsAsync(
             candidate,
             kind,
             { ...options, pinned, running, ...(inUse ? { inUse } : {}) },
-            await artifactReads(candidate, kind, signal, operation, { fresh: false }),
+            await artifactReads(candidate, kind, signal, operation, launchers),
           );
         if (!reason && candidate.source)
           reason =
             (await regenerableDirProblem(worktree.path, path, signal, {
-              launching: planningLaunching(worktree.path, operation, signal),
+              launching: { launchers, checkout: worktree.path },
             })) ?? linkedWorktreeUsing(candidate, all);
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
@@ -608,6 +603,8 @@ export async function clearArtifact(
     recheck?: (keys: readonly string[], worktree: string) => Promise<string | null>;
     /** The pressure level the deletion runs at, which decides what files changed after the install do. */
     level?: PressureLevel;
+    /** The deletion operation's fresh launcher reading, shared by every check of it. */
+    launchers: () => Promise<LauncherScan>;
     operation?: StimContext;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
@@ -631,11 +628,12 @@ export async function clearArtifact(
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
+  const planning = launchersOf(operation, signal);
   const early = keptReason(
     candidate,
     kind,
     { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
-    await artifactReads(candidate, kind, signal, operation, { fresh: true }),
+    await artifactReads(candidate, kind, signal, operation, planning),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
   const unrestorable =
@@ -657,11 +655,13 @@ export async function clearArtifact(
         inUse: await inUseOf(candidate, kind, signal, operation, key),
         ...(key ? { locked: key } : {}),
       },
-      await artifactReads(candidate, kind, signal, operation, { fresh: true }),
+      await artifactReads(candidate, kind, signal, operation, planning),
     );
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
+    const launcher = launcherReason(candidate.worktree, await options.launchers());
+    if (launcher) return launcher;
     const record = kind === 'dependencies';
     if (record) {
       // @ref LLP 0002#edits-inside-dependency-folders -- a folder with hand edits is kept at every pressure level
@@ -725,6 +725,8 @@ export async function clearSourceTrees(
     recheck: (keys: readonly string[], worktree: string) => Promise<string | null>;
     /** The pressure level the deletion runs at, which decides what files changed after the install do. */
     level: PressureLevel;
+    /** The deletion operation's fresh launcher reading, shared by every check of it. */
+    launchers: () => Promise<LauncherScan>;
     operation?: StimContext;
   },
 ): Promise<Map<string, TreeOutcome>> {
@@ -754,6 +756,7 @@ export async function clearSourceTrees(
     agents: (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [],
     source: true,
   };
+  const planning = launchersOf(operation, signal);
   const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };
     const pinned = await pinsOf(candidate.keys, options.pinned);
@@ -769,10 +772,10 @@ export async function clearSourceTrees(
           inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
           ...(held ? { locked: held } : {}),
         },
-        await artifactReads(candidate, 'dependencies', signal, operation, { fresh: true }),
+        await artifactReads(candidate, 'dependencies', signal, operation, planning),
       ) ??
       (await regenerableDirProblem(worktree.path, path, signal, {
-        launching: launchingOf(worktree.path, operation, signal),
+        launching: { launchers: planning, checkout: worktree.path },
       })) ??
       linkedWorktreeUsing(candidate, options.worktrees)
     );
@@ -805,6 +808,11 @@ export async function clearSourceTrees(
       else stillSelected.push(path);
     }
     selected = stillSelected;
+    const launcher = selected.length ? launcherReason(worktree.path, await options.launchers()) : null;
+    if (launcher) {
+      keepAll(selected, launcher);
+      selected = [];
+    }
     const begun: string[] = [];
     recordFailure = null;
     for (const path of selected) {

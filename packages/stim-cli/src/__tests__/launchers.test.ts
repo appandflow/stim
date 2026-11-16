@@ -1,6 +1,10 @@
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { scanForCheckouts } from '../workspace/discovery-scan.ts';
-import { launcherReader, launcherReason } from '../workspace/launchers.ts';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { launcherReader, launcherReason, launchersOf } from '../workspace/launchers.ts';
+import { testContext } from './_context.ts';
 
 vi.unmock('../workspace/launcher-directories.ts');
 
@@ -45,11 +49,26 @@ describe('the PATH launcher scan', () => {
 
   it('keeps every checkout when a directory or an entry could not be inspected, naming the directory', async () => {
     const unreadable = await scan(['/locked', '/bin1'], io({ '/locked': missing('EACCES'), '/bin1': [] }));
-    expect(unreadable.incomplete).toEqual(['/locked']);
-    expect(launcherReason('/work/app', unreadable)).toContain('/locked');
+    expect(unreadable.incomplete).toEqual([{ kind: 'directory', path: '/locked', error: 'EACCES' }]);
+    expect(launcherReason('/work/app', unreadable)).toContain('the directory /locked could not be read (EACCES)');
     const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing('EIO') }));
-    expect(unresolved.incomplete).toEqual(['/bin1']);
-    expect(launcherReason('/work/app', unresolved)).toContain('cannot be ruled out');
+    expect(unresolved.incomplete).toEqual([{ kind: 'entry', path: '/bin1/tool', error: 'EIO' }]);
+    expect(launcherReason('/work/app', unresolved)).toContain('/bin1/tool could not be resolved (EIO)');
+  });
+
+  it('reads on past one entry that cannot be resolved, and still finds a launcher among the others', async () => {
+    const result = await scan(
+      ['/bin1'],
+      io({ '/bin1': ['denied', 'tool'] }, { '/bin1/denied': missing('EPERM'), '/bin1/tool': '/work/app/bin/tool' }),
+    );
+    expect(result.targets).toEqual(['/work/app/bin/tool']);
+    expect(result.incomplete).toEqual([{ kind: 'entry', path: '/bin1/denied', error: 'EPERM' }]);
+  });
+
+  it('matches whole path segments, so a launcher into app-2 does not keep app', () => {
+    const scanned = { targets: ['/work/app-2/bin/tool'], incomplete: [] };
+    expect(launcherReason('/work/app', scanned)).toBeNull();
+    expect(launcherReason('/work/app-2', scanned)).toContain('/work/app-2/bin/tool');
   });
 
   it('ends a reading at once as incomplete when a read does not answer, and starts no read while it is pending', async () => {
@@ -70,12 +89,19 @@ describe('the PATH launcher scan', () => {
     const first = reading();
     await vi.advanceTimersByTimeAsync(10);
     const result = await first;
-    expect(result.incomplete).toEqual(['/hung']);
-    expect(launcherReason('/work/app', result)).toContain('permissions');
+    expect(result.incomplete).toEqual([{ kind: 'directory', path: '/hung', error: 'timed out' }]);
+    expect(launcherReason('/work/app', result)).toContain('the directory /hung could not be read (timed out)');
 
+    const pending = { kind: 'pending', path: '/hung', error: 'an earlier read of it has not answered' };
     const later = await Promise.all([reading(), reading(), reading()]);
-    expect(later.map((entry) => entry.incomplete)).toEqual([['/hung'], ['/hung'], ['/hung']]);
+    expect(later.map((entry) => entry.incomplete)).toEqual([[pending], [pending], [pending]]);
     expect(started).toBe(1);
+
+    const outside = await launcherReader(undefined, { directories: ['/bin1'], io: stuck })();
+    expect(outside.incomplete).toEqual([
+      { kind: 'pending', path: '/hung', error: expect.stringContaining('outside the launcher directories') },
+    ]);
+    expect(launcherReason('/work/app', outside)).toContain('home scan');
 
     let scanReads = 0;
     const homeScan = await scanForCheckouts('/', () => false, {
@@ -103,5 +129,21 @@ describe('the launcher directories', () => {
     expect(launcherDirectories()).toEqual(expect.arrayContaining(['/from/process', '/also/process']));
     expect(launcherDirectories({ PATH: '/given' })).toContain('/given');
     expect(launcherDirectories({ PATH: '/given' })).not.toContain('/from/process');
+  });
+
+  it('lists the common install folders beside PATH, and the default reader of an operation reads them', async () => {
+    expect(launcherDirectories({ PATH: '' })).toEqual(
+      expect.arrayContaining(['/usr/local/bin', '/opt/homebrew/bin', join(homedir(), '.cargo', 'bin')]),
+    );
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launchers-')));
+    try {
+      mkdirSync(join(base, 'bin'));
+      writeFileSync(join(base, 'real'), 'x');
+      symlinkSync(join(base, 'real'), join(base, 'bin', 'tool'));
+      const found = await launchersOf(testContext({ env: { PATH: join(base, 'bin') } }))();
+      expect(found.targets).toContain(join(base, 'real'));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

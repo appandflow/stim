@@ -5,6 +5,7 @@ import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
+import { checkoutRootOf } from './checkout-role.ts';
 import { launcherReason } from './launchers.ts';
 import { runningFromReason } from './running-from.ts';
 
@@ -139,7 +140,7 @@ export async function discoveredEvidence(
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
-  const launcher = launcherReason(path, await reads.launchers());
+  const launcher = launcherReason(await checkoutRootOf(path), await reads.launchers());
   if (launcher) keep.push(launcher);
   return { activity, keep };
 }

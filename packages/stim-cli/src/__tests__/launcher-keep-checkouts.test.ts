@@ -19,14 +19,25 @@ import { runDormantDependencies } from '../daemon/dependencies.ts';
 import { idleOutputs } from '../daemon/idle.ts';
 import { clearStoppedOutputs, stoppedOutputCandidates } from '../daemon/stages.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
-import { launchingOf } from '../workspace/launchers.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
-const launcherDirs = vi.hoisted(() => ({ list: new Array<string>() }));
-vi.mock('../workspace/launcher-directories.ts', () => ({ launcherDirectories: () => launcherDirs.list }));
+const launcherDirs = vi.hoisted(() => {
+  const state = { list: new Array<string>(), reads: 0 };
+  const directories = () =>
+    Object.assign([...state.list], {
+      [Symbol.iterator]() {
+        state.reads++;
+        return Array.prototype[Symbol.iterator].call(this);
+      },
+    });
+  return { state, directories };
+});
+vi.mock('../workspace/launcher-directories.ts', () => ({ launcherDirectories: launcherDirs.directories }));
 
 const day = 86_400_000;
 const old = new Date(Date.now() - 3 * day);
@@ -47,9 +58,8 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
 
   const age = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '.git') continue;
       const path = join(dir, entry.name);
-      if (entry.isDirectory()) age(path);
+      if (entry.isDirectory() && entry.name !== '.git') age(path);
       utimesSync(path, old, old);
     }
     utimesSync(dir, old, old);
@@ -79,7 +89,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launcher-keep-')));
     bin = join(base, 'bin');
     mkdirSync(bin);
-    launcherDirs.list = [bin];
+    launcherDirs.state.list = [bin];
     vi.stubEnv('STIM_HOME', join(base, 'home'));
     vi.stubEnv('HOME', join(base, 'home'));
   });
@@ -123,13 +133,14 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     const outputs = join(path, 'android', 'app', 'build');
     const operation = testContext({ env: {} });
 
-    link(tool);
-    const kept = await idleOutputs(path, config, launchingOf(path, operation));
+    symlinkSync(tool, join(base, 'hop'));
+    link(join(base, 'hop'));
+    const kept = await idleOutputs(path, config, { launchers: freshLaunchers(operation), checkout: path });
     expect(kept.paths).not.toContain(outputs);
     expect(kept.kept).toEqual([expect.stringContaining('on PATH')]);
 
     unlinkSync(join(bin, 'tool'));
-    const free = await idleOutputs(path, config, launchingOf(path, operation));
+    const free = await idleOutputs(path, config, { launchers: freshLaunchers(operation), checkout: path });
     expect(free.paths).toContain(outputs);
     expect(free.kept).toEqual([]);
   });
@@ -209,4 +220,78 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     await removeWorktrees({ idle: null, graceMs: 0, now: Date.now(), noOwnCommitsIdleMs: null, worktrees: [planned] });
     expect(existsSync(linked)).toBe(true);
   });
+
+  it('keeps the build output of a linked worktree found beside a registered project, and clears it when no executable links in', async () => {
+    const main = join(base, 'dev', 'main');
+    mkdirSync(main, { recursive: true });
+    app(main);
+    const beside = join(base, 'dev', 'beside');
+    git(main, 'worktree', 'add', '-q', '-b', 'feature', beside);
+    mkdirSync(join(beside, 'android', 'app', 'build', 'bin'), { recursive: true });
+    writeFileSync(join(beside, 'android', 'app', 'build', 'bin', 'tool'), '#!/bin/sh\n');
+    age(beside);
+    ageGit(join(main, '.git', 'worktrees', 'beside'));
+    vi.stubEnv('STIM_HOME', '');
+    const config: Config = { version: 2, projects: { [main]: {} }, repos: {} };
+    saveConfig(config);
+
+    const idle = await stoppedOutputCandidates(config, reading, day);
+    const candidate = idle.find((entry) => entry.path === beside) ?? fail();
+    link(join(beside, 'android', 'app', 'build', 'bin', 'tool'));
+    expect((await stoppedOutputCandidates(config, reading, day)).map((entry) => entry.path)).not.toContain(beside);
+    expect(await clearStoppedOutputs(candidate, config, day)).toMatchObject({ outcome: 'kept' });
+    expect(existsSync(join(beside, 'android', 'app', 'build'))).toBe(true);
+
+    unlinkSync(join(bin, 'tool'));
+    expect(await clearStoppedOutputs(candidate, config, day)).toMatchObject({ outcome: 'done' });
+  });
+
+  it('owns a registered app inside a monorepo by the worktree root, and a folder in no checkout by itself', async () => {
+    const mono = join(base, 'dev', 'mono');
+    mkdirSync(join(mono, 'apps', 'native'), { recursive: true });
+    mkdirSync(join(mono, '.git'));
+    mkdirSync(join(base, 'loose'));
+    expect(await checkoutRootOf(join(mono, 'apps', 'native'))).toBe(mono);
+    expect(await checkoutRootOf(mono)).toBe(mono);
+    expect(await checkoutRootOf(join(base, 'loose'))).toBe(join(base, 'loose'));
+  });
+
+  it('reads the launcher directories once for planning and once for each deletion operation', async () => {
+    const roots = join(base, 'roots');
+    const config: Config = { version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [roots] } };
+    saveConfig(config);
+    for (const name of ['a', 'b', 'c']) app(join(roots, name));
+    const main = join(roots, 'main');
+    mkdirSync(main, { recursive: true });
+    app(main);
+    const linked = join(roots, 'linked');
+    git(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    mkdirSync(join(linked, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(linked, 'node_modules', 'dep', 'cli'), 'x');
+    age(main);
+    age(linked);
+    ageGit(join(main, '.git', 'worktrees', 'linked'));
+
+    launcherDirs.state.reads = 0;
+    const idle = await stoppedOutputCandidates(config, reading, day);
+    expect(idle).toHaveLength(4);
+    expect(launcherDirs.state.reads).toBe(1);
+
+    launcherDirs.state.reads = 0;
+    const pass = testContext();
+    for (const candidate of idle) await clearStoppedOutputs(candidate, config, day, pass);
+    expect(launcherDirs.state.reads).toBe(1 + idle.length);
+
+    launcherDirs.state.reads = 0;
+    await runDormantDependencies({
+      config,
+      act: true,
+      log: () => {},
+      ...reading,
+      operation: testContext(),
+      force: true,
+    });
+    expect(existsSync(join(linked, 'node_modules'))).toBe(false);
+    expect(launcherDirs.state.reads).toBe(2);
+  }, 60_000);
 });

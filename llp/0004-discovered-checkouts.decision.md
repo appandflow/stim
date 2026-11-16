@@ -202,18 +202,19 @@ those on PATH and the per-user bin folders a daemon started by launchd does not
 list: `~/.local/bin`, `~/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.volta/bin`,
 `~/Library/pnpm`, the active nvm bin, `/usr/local/bin` and `/opt/homebrew/bin`.
 A launcher resolving into a path is the same kind of fact as a process executing
-from it, so a deletion route reads it at the same moment as the running-process
-evidence, with a reading of its own, never the pass's planning reading (which
-can be minutes old and is shared by the operation). The Cargo trim adds the
-launcher targets under its target to the paths in use at each of its three
-process reads. The artifact and dependency routes read the launchers in
-`artifactReads`, after the process read and after their slow checks, in the same
-`keptReason` that decides the deletion. `clearStoppedOutputs` reads them with
-the idle evidence and again after measuring sizes, immediately before each
-removal (`deleteOutputs`). The plan-time whole-checkout keep stays. The window
-that remains is the one for a process that starts executing from the path after
-the last evidence read: Stim accepts it for processes and gives launchers no
-larger one. A Cargo target is checked against its owning checkout, not its app
+from it, so a deletion operation reads it after its running-process evidence,
+with a reading of its own, never the pass's planning reading (which can be
+minutes old and is shared by the operation). One deletion operation takes one
+such reading, at its first use, and shares it across its checks:
+`clearStoppedOutputs` (the idle evidence, then `deleteOutputs` after the sizes
+are measured, immediately before the removals), `clearArtifact` and
+`clearSourceTrees` (a final check after the recheck, before the removal), the
+Cargo trim (its three process reads) and the worktree removal guard. The early
+checks of those routes use the pass's shared planning reading. The plan-time
+whole-checkout keep stays. The window that remains is the one for a launcher
+that appears after that reading, and for a process that starts executing from the
+path after the last evidence read: Stim accepts it for processes and gives
+launchers no larger one. A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
 reading as incomplete at once. A native read cannot be cancelled, so at most one
 read that timed out is outstanding per JavaScript isolate, shared by the launcher
@@ -546,12 +547,41 @@ and Pods (`artifactReads`), Cargo targets, discovered-checkout idleness
 every caller; there is no variant without one. Stopping Metro or devices and
 archiving logs touch no launcher target and are not blocked. The reading is the
 operation's shared one at planning and a fresh one at each deletion check, as for
-processes. An unreadable launcher directory keeps every checkout. `reduceOnly`
-keeps its other meaning: such a checkout is never removed.
+processes. `reduceOnly` keeps its other meaning: such a checkout is never
+removed.
+
+Incomplete launcher evidence keeps every checkout, and is reported where it
+happens. A PATH directory that cannot be read, one entry whose `lstat` or
+`realpath` fails (EPERM, EACCES, ELOOP, EIO) and a read that has not answered each
+become a `LauncherProblem` naming the path and the error; ENOENT and ENOTDIR are
+no launcher. A single unreadable entry is not ruled out by its link text: a
+textual target outside every checkout can still pass through a directory link
+into one, and the resolution is what failed, so no rule narrows the keep without
+risking a missed launcher. The pending-read slot is shared with the home scan, so
+a pending read of a folder that is not a launcher directory is reported as a read
+outside PATH, not as a PATH directory. `stim doctor` reports the finding
+`launcher-evidence-incomplete` with the path, the error and the fix, from a read
+bounded by 3 seconds per call and 10 seconds in all. Each daemon pass writes one
+`launcher_evidence_incomplete` record, and each item's keep reason names the
+cause.
+
+Limits: the daemon reads its own PATH and the fixed folders above, so a launcher
+in a folder that only an interactive shell's PATH names is not seen. A launcher
+into a nested checkout also keeps the parent checkout.
+
+The boundary for a registered workspace is its git worktree root, not the
+workspace folder: a registered app inside a monorepo is kept when an executable
+points anywhere in its checkout. The root is the worktree `artifactCheckoutsAsync`
+already resolved (Cargo), the `checkout` recorded on the idle candidate when it
+was read (`checkoutRootOf`: the nearest ancestor holding a `.git` entry, one
+lstat per level, no git process), and for a path in no checkout the path itself.
 
 Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
-fresh read per deletion check, which is per output path and per dependency tree.
-The pressure ladder keeps going to later rungs when a kept checkout leaves the
+fresh read per deletion operation. In a scratch pass of four idle discovered
+checkouts and one linked worktree, the reads fell from 1 plan + 12 output
+reads + 4 dependency reads to 1 plan + 4 output reads (the operation's shared
+planning read, then one fresh read each) and 2 dependency reads (one planning,
+one fresh). The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 
 ## Links

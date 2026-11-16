@@ -21,6 +21,7 @@ import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { noLaunchers } from './fixtures/launching.ts';
 import * as fsUtil from '../fs-util.ts';
 import { deleteOutputs } from '../daemon/idle.ts';
@@ -218,6 +219,47 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
+  it('keeps the Cargo target of a registered app inside a monorepo when a PATH launcher resolves into the checkout outside that app', async () => {
+    const mono = join(base, 'dev', 'mono');
+    const app = join(mono, 'apps', 'native');
+    mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', 'incremental'), { recursive: true });
+    mkdirSync(join(mono, 'bin'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    writeFileSync(join(app, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(app, 'target', 'debug', 'incremental', 'data'), 'x'.repeat(10_000));
+    writeFileSync(join(mono, 'bin', 'tool'), '#!/bin/sh\n');
+    execFileSync('git', ['-C', mono, 'init', '-q']);
+    execFileSync('git', ['-C', mono, 'add', '-A']);
+    execFileSync('git', ['-C', mono, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    const plan = () =>
+      planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation: testContext({ env: {} }),
+      });
+    const planned = await plan();
+    expect(planned.actions).toMatchObject([{ kind: 'would-clear-build-dirs', target: join(app, 'target') }]);
+
+    mkdirSync(join(base, 'home', 'bin'));
+    symlinkSync(join(mono, 'bin', 'tool'), join(base, 'home', 'bin', 'tool'));
+    const kept = await plan();
+    expect(kept.actions).toEqual([]);
+    expect(kept.skips).toMatchObject([{ target: join(app, 'target'), reason: expect.stringContaining('on PATH') }]);
+    const [action] = planned.actions;
+    if (!action) throw new Error('no trim was planned');
+    expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({
+      status: 'kept',
+      detail: expect.stringContaining('on PATH'),
+    });
+  });
+
   it('keeps what a launcher that appears during the trim own process read points into, and trims it when none appears', async () => {
     const tool = join(base, 'home', 'tools', 'mytool');
     mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
@@ -349,6 +391,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
         {
           windowMs: 0,
           protectedRoot: '',
+          launchers: freshLaunchers(shared ?? operation()),
           pinned: () => false,
           worktrees: await artifactWorktreesAsync(signal, shared),
           ...(shared ? { operation: shared } : {}),

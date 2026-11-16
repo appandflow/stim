@@ -317,7 +317,10 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
     makeProfile('debug', 3 * DAY);
     const unreadable = await trimCargoTarget(target, {
       needBytes: 0,
-      launching: launchingWith(target, { targets: [], incomplete: ['/locked'] }),
+      launching: launchingWith(target, {
+        targets: [],
+        incomplete: [{ kind: 'directory', path: '/locked', error: 'EACCES' }],
+      }),
     });
     expect(unreadable.removed).toEqual([]);
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);

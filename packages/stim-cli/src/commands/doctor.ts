@@ -73,6 +73,7 @@ import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
 import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
+import { launcherFindings } from '../diagnostics/launcher-evidence.ts';
 import { serverNetworkFindings } from '../diagnostics/server-network.ts';
 import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
@@ -768,6 +769,7 @@ async function assembleDoctorReport(
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
+  findings.push(...(await launcherFindings(env)));
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({

@@ -16,6 +16,7 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
+import { freshLaunchers, type LauncherScan } from '../workspace/launchers.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
@@ -257,15 +258,18 @@ async function stillUnused(
   keys: readonly string[],
   worktree: string,
   idleMs: number,
+  launchers: () => Promise<LauncherScan>,
   operation?: StimContext,
   setting?: string,
 ): Promise<string | null> {
   const [first] = keys;
   if (!source)
-    return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
+    return first && !(await stillIdle(first, idleMs, { operation, setting, launchers }))
+      ? 'it is no longer idle'
+      : null;
   const held = new Set(workspaceKeys(keys));
   for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
+    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting, launchers })))
       return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
@@ -284,6 +288,7 @@ export async function clearDependency(
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
+  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     return await clearArtifact(
       {
@@ -300,7 +305,8 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
-        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
+        launchers,
+        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, launchers, operation),
         level,
         operation,
       },
@@ -350,6 +356,7 @@ export async function clearSourceDependencies(
   operation?: StimContext,
   setting?: string,
 ): Promise<TreeResult[]> {
+  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     const results = await clearSourceTrees(
       dependencies.map(({ candidate }) => candidate.path),
@@ -357,7 +364,8 @@ export async function clearSourceDependencies(
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
-        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
+        launchers,
+        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, launchers, operation, setting),
         level,
         operation,
       },

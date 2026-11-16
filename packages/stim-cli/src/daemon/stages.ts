@@ -36,10 +36,10 @@ import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
-import { checkoutRoleOf } from '../workspace/checkout-role.ts';
+import { checkoutRoleOf, checkoutRootOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { launchingOf } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, type LauncherScan, type Launching } from '../workspace/launchers.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -66,6 +66,8 @@ export interface StageCandidate {
   idleMs: number;
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
+  /** The git worktree root that owns the workspace, which an executable on PATH can point anywhere into. */
+  checkout: string;
 }
 
 /** `idle.dormantDays` in milliseconds; 0 when the dormant stage is off. */
@@ -255,7 +257,7 @@ async function readIdleWorkspaces(
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
   { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
-  const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
+  const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
@@ -289,7 +291,12 @@ async function readIdleWorkspaces(
   const idle = longestIdleFirst(readings);
   const candidates: StageCandidate[] = [];
   for (const entry of idle)
-    candidates.push(Object.assign(entry, { role: await checkoutRoleOf(entry.path, reading.operation) }));
+    candidates.push(
+      Object.assign(entry, {
+        role: await checkoutRoleOf(entry.path, reading.operation),
+        checkout: await checkoutRootOf(entry.path),
+      }),
+    );
   return linkedFirst(candidates);
 }
 
@@ -310,9 +317,17 @@ export async function stillIdle(
     full = false,
     locked = true,
     setting = PRESSURE_THRESHOLD,
-  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string },
+    launchers,
+  }: {
+    operation?: StimContext;
+    full?: boolean;
+    locked?: boolean;
+    setting?: string;
+    /** The deletion operation's fresh launcher reading. */
+    launchers: () => Promise<LauncherScan>;
+  },
 ): Promise<boolean> {
-  const reads = discoveredReads(operation?.signal, operation, true);
+  const reads = discoveredReads(operation?.signal, operation, launchers);
   return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads })) !== null;
 }
 
@@ -354,6 +369,7 @@ export async function clearStoppedOutputs(
   operation?: StimContext,
 ): Promise<StageResult | null> {
   const { path } = candidate;
+  const launchers = freshLaunchers(operation, operation?.signal);
   const run = await withIdleWorkspace(
     path,
     async (): Promise<StageResult | null> => {
@@ -366,12 +382,15 @@ export async function clearStoppedOutputs(
               (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
                 locked: true,
                 operation,
-                reads: discoveredReads(operation?.signal, operation, true),
+                reads: discoveredReads(operation?.signal, operation, launchers),
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const launching = launchingOf(path, operation);
-            const outputs = await idleOutputs(path, config, launching);
+            const launching: Launching = { launchers, checkout: candidate.checkout };
+            const outputs = await idleOutputs(path, config, {
+              launchers: launchersOf(operation, operation?.signal),
+              checkout: candidate.checkout,
+            });
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(outputs.paths, launching, outputs.kept);
             return {

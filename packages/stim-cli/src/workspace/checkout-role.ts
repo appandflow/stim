@@ -1,4 +1,7 @@
+import { lstat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import type { CheckoutRole } from '../policy/checkout-order.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync, type SourceCheckout, type WorktreeEntry } from './worktree.ts';
 
@@ -19,4 +22,20 @@ export async function checkoutRoleOf(path: string, operation?: StimContext): Pro
     declareFor: operation,
   });
   return classifyCheckout(entries, source, path);
+}
+
+/**
+ * The git worktree root that owns `path`: its nearest ancestor, itself included, holding a `.git` entry, read with one
+ * lstat per level and no git process. A path in no git checkout owns itself. A registered app inside a monorepo is
+ * owned by the worktree root, which is where an executable on PATH can point.
+ */
+export async function checkoutRootOf(path: string): Promise<string> {
+  const start = canonicalPath(path);
+  for (let dir = start; ; dir = dirname(dir)) {
+    try {
+      await lstat(join(dir, '.git'));
+      return dir;
+    } catch {}
+    if (dirname(dir) === dir) return start;
+  }
 }

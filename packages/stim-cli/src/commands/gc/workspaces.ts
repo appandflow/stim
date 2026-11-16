@@ -11,7 +11,8 @@ import { clearFreeClaimSet, describeClaimProblem, readClaimSet } from '../../own
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { launchingOf, planningLaunching } from '../../workspace/launchers.ts';
+import { checkoutRootOf } from '../../workspace/checkout-role.ts';
+import { freshLaunchers, launchersOf } from '../../workspace/launchers.ts';
 import { existingBuildDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
@@ -366,9 +367,9 @@ export async function workspaceBuildReasonsAsync(
 
 async function inTreeBuildDirs(root: string, operation?: StimContext, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
+  const launching = { launchers: launchersOf(operation, signal), checkout: await checkoutRootOf(root) };
   for (const path of await existingBuildDirsAsync(root))
-    if (!(await regenerableDirProblem(root, path, signal, { launching: planningLaunching(root, operation, signal) })))
-      dirs.push(path);
+    if (!(await regenerableDirProblem(root, path, signal, { launching }))) dirs.push(path);
   return dirs;
 }
 
@@ -663,13 +664,12 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
+          const launching = {
+            launchers: freshLaunchers(operation, signal),
+            checkout: await checkoutRootOf(root),
+          };
           for (const path of lighten ? await existingBuildDirsAsync(root) : [])
-            inTree.push({
-              path,
-              problem: await regenerableDirProblem(root, path, signal, {
-                launching: launchingOf(root, operation, signal),
-              }),
-            });
+            inTree.push({ path, problem: await regenerableDirProblem(root, path, signal, { launching }) });
           for (const path of [
             ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),

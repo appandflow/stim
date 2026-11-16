@@ -12,7 +12,8 @@ import {
 import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { launchingOf } from '../workspace/launchers.ts';
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { launchersOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -169,6 +170,7 @@ export async function runHomePasses({
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
+  logLauncherProblems(operation, log);
   return {
     config,
     now,
@@ -237,6 +239,7 @@ export function createMaintenanceLane(
         const dependenciesMs = lap();
         const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
         const maintenanceMs = lap();
+        logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
@@ -461,7 +464,10 @@ export async function runForcedLadder({
           bytes:
             entry.freedBytes ??
             (entry.outcome === 'would-idle'
-              ? await idleOutputBytes(entry.path, config, launchingOf(entry.path, operation))
+              ? await idleOutputBytes(entry.path, config, {
+                  launchers: launchersOf(operation, operation?.signal),
+                  checkout: await checkoutRootOf(entry.path),
+                })
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
@@ -532,7 +538,10 @@ export async function runDormantReduction({
         ? await clearStoppedOutputs(candidate, config, afterMs, operation)
         : {
             outcome: 'would' as const,
-            bytes: await idleOutputBytes(candidate.path, config, launchingOf(candidate.path, operation)),
+            bytes: await idleOutputBytes(candidate.path, config, {
+              launchers: launchersOf(operation, operation?.signal),
+              checkout: candidate.checkout,
+            }),
             detail: 'stim gc would do this',
           };
       if (result)

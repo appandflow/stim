@@ -606,12 +606,13 @@ async function launcherHold(path: string, scan: () => Promise<LauncherScan>): Pr
  * discovered worktree's removal evidence, or for a managed one an executable on PATH that resolves into it.
  */
 async function removalUseHold(candidate: WorktreeCandidate, operation?: StimContext): Promise<string[]> {
-  if (!candidate.discovered) return launcherHold(candidate.path, freshLaunchers(operation, operation?.signal));
+  const launchers = freshLaunchers(operation, operation?.signal);
+  if (!candidate.discovered) return launcherHold(candidate.path, launchers);
   const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),
-    reads: discoveredReads(operation?.signal, operation, true),
+    reads: discoveredReads(operation?.signal, operation, launchers),
     reduceOnly: candidate.reduceOnly === true,
     operation,
   });
