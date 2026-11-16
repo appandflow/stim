@@ -96,6 +96,11 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `PATH` outside the repository and its `node_modules/.bin` directories.
 `worktree warm`, `start`, `ios`, and `android` also run project code.
 
+Doctor also prints a section, "Checkouts Stim does not fully manage", from the
+last home folder scan and the daemon's measurement of what it found; `--json`
+carries it as `discovery`. It reads cached files and never scans or measures.
+See [checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in).
+
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include

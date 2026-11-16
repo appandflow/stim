@@ -258,7 +258,7 @@ DISK PRESSURE
   Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
   tool's own command, only at critical and only while the earlier rungs left
   the disk short (\`stim guide cleanup gc\`); Xcode DerivedData outside Stim
-  is never deleted. Every command prints one stderr line while the daemon's last tick, at most 10
+  is never deleted. Every command prints stderr lines while the daemon's last tick, at most 10
   minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
@@ -1280,9 +1280,9 @@ their node_modules and Pods (a linked worktree's after idle.dormantDays, a sourc
 checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
 evaluated on every pass, like a sibling-discovered checkout; the
 finished-worktree check inspects every discovered worktree with git (about 0.14
-seconds each where measured). A
-folder named in maintenance.discoverRoots
-keeps the full rules. A scoped STIM_HOME uses neither source.
+seconds each where measured). stim doctor lists the rest and the adopt
+command ("at least": incomplete). Adopting applies the full rules, worktree
+removal included: ask the user. A scoped STIM_HOME uses neither source.
   stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 Idle, with no Stim activity record, means the newest of its source file writes
 (git-ignored files included; node_modules, Pods and nested worktrees skipped,

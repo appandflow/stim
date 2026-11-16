@@ -326,8 +326,9 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   refresh starting after it, allowing the source dependencies to change while
   they are read.
   A report command such as \`gc\` reports it when it cannot confirm that a child
-  it started has stopped, typically on a machine under heavy load. The child is
-  left untouched. The remedy tells you what to check and which command to run
+  it started has stopped, typically on a machine under heavy load. A child whose
+  identity could not be captured is sent SIGKILL first on POSIX, to the child
+  only; whatever still runs is left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
   When a Metro, tunnel, maintenance child or server worker cannot be verified

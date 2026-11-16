@@ -1118,3 +1118,7 @@ test('facts document the hosted GC JSON fields and result kind', () => {
     expect(hosted).toMatch(new RegExp(`\\b${field}\\b`));
   expect(body).toContain('parkedHostedDevice');
 });
+
+test('the cleanup guide tells the agent to ask the user before adopting a discovered folder', () => {
+  expect(renderSection('cleanup', 'gc')).toMatch(/Adopting applies the full rules[^]*ask the user/);
+});

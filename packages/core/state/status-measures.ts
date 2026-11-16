@@ -212,6 +212,15 @@ export function readDiskUsage(path: string): DiskMeasure | null {
   };
 }
 
+/**
+ * Whether the cached walk of `path` ended with `du` exiting non-zero, so its bytes are a lower bound. A separate reader:
+ * `DiskMeasure` and everything that reads it stay as they were, and an entry without the field reads as complete.
+ */
+export function readDiskUsagePartial(path: string): boolean {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  return entry !== null && entry.path === path && entry.partial === true;
+}
+
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
 export function readDiskUsageFailure(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));

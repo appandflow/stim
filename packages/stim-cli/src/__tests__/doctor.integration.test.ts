@@ -2044,3 +2044,95 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('doctor lists the checkouts the scan found that Stim does not fully manage, in the JSON payload and in the text', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-discovery-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-discovery-home-'));
+  process.env.STIM_HOME = home;
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  const ranAt = Date.UTC(2026, 10, 14);
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-scan.json'),
+    JSON.stringify({
+      version: 2,
+      ranAt,
+      completedAt: ranAt,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 10,
+      found: [],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    }),
+  );
+  const gitAt = Date.UTC(2026, 9, 1);
+  const find = (name: string, at: number | null) => ({
+    path: `/work/dev/${name}`,
+    kind: 'reduce-only',
+    folder: '/work/dev',
+    adoptable: true,
+    evaluatedAt: ranAt,
+    dirs: 1,
+    measuredDirs: 1,
+    failedDirs: 0,
+    partialDirs: 0,
+    bytes: 2 * 1024 ** 3,
+    unreadable: false,
+    gitActivityAt: at,
+  });
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-census.json'),
+    JSON.stringify({
+      version: 1,
+      at: ranAt,
+      scanRanAt: ranAt,
+      roots: [],
+      canonicalRoots: [],
+      pending: false,
+      finds: [find('b', null), find('a', gitAt)],
+    }),
+  );
+  const doctor = doctorOp(() => testStimVersions);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(project);
+  try {
+    await runCli(doctor, ['--json'], { version: '1.2.3' });
+    await runCli(doctor, [], { version: '1.2.3' });
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+  const payload = JSON.parse(logs[0] ?? '');
+  expect(payload.discovery).toMatchObject({
+    census: 'read',
+    censusCurrent: true,
+    groups: [
+      {
+        folder: '/work/dev',
+        kind: 'reduce-only',
+        checkouts: 2,
+        bytes: 4 * 1024 ** 3,
+        members: [
+          { path: '/work/dev/a', gitActivityAt: new Date(gitAt).toISOString() },
+          { path: '/work/dev/b', gitActivityAt: null },
+        ],
+      },
+    ],
+  });
+  const { command } = payload.discovery.groups[0];
+  expect(command).toContain('maintenance.discoverRoots');
+  const text = logs.slice(1).join('\n');
+  expect(text).toContain('/work/dev');
+  expect(text).toContain(command);
+  expect(text).toContain('2026-10-01');
+});
