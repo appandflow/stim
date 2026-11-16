@@ -193,11 +193,11 @@ and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
 after owned cleanup; a caller abort rejects with
 `STIM_CANCELLED`. Throwing from report progress also cancels the read.
-On POSIX, a cancelled report child whose identity could not be captured at spawn is sent SIGKILL, to the child
-only and only before its exit is seen. If child identity cannot be verified after a one-second retry budget, cleanup
+If child identity cannot be verified after a one-second retry budget, cleanup
 refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
 error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
-are left untouched. On POSIX, a launcher that exited before identity capture can only
+are left untouched. On POSIX it first sends SIGKILL to a cancelled child whose identity was not
+captured, never to its group. A launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
 After a termination request, cleanup waits for a child to close, then for its
 process group to exit: each wait is 5 seconds times the host's load per CPU,
