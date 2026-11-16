@@ -258,7 +258,7 @@ DISK PRESSURE
   Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
   tool's own command, only at critical and only while the earlier rungs left
   the disk short (\`stim guide cleanup gc\`); Xcode DerivedData outside Stim
-  is never deleted. Every command prints one stderr line while the daemon's last tick, at most 10
+  is never deleted. Every command prints stderr lines while the daemon's last tick, at most 10
   minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass

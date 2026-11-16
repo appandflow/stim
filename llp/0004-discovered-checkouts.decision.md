@@ -333,11 +333,11 @@ maintainer:
   Pods, and not proof that a directory is deletable. It goes through
   `refreshMeasure` and the disk-usage cache: one walk at a time on the machine, 10
   seconds per directory, at most 25 checkouts and 90 seconds per run; a checkout
-  measured within a day is carried over. The checkouts due are taken in the order
+  evaluated within a day is carried over. The checkouts due are taken in the order
   they have waited longest (never tried, then the oldest attempt, `attemptedAt`, which
   a run cut short by the budget also sets without touching the measurement), and what
   a run leaves keeps the census pending, so the next one, an hour later, continues;
-  a measurement older than a day when the census was made is never read as current.
+  an evaluation older than a day when the census was made is never read as current.
   A walk that failed or timed out is "could not be
   measured" and a directory not reached is "not measured yet", never zero; a total
   with either is "at least".
@@ -500,6 +500,12 @@ previous finds of a truncated scan. The census
 file is read without a lock (it is replaced atomically under a lock, so a reader
 sees the old or the new file). A `du` that exits non-zero (denied files) is recorded
 as a measured lower bound: its bytes count and the totals read "at least".
+
+A size is re-evaluated within a day of the census that recorded it, but an
+evaluation may reuse a disk-usage cache entry under a day old (`maxAgeMs` is one
+day in `measureBuildOutput`) and stamps `evaluatedAt` with the evaluation time, so a
+figure can rest on a walk up to two days old, and the "oldest measurement" date
+doctor prints is the evaluation time, not the walk time.
 
 ## Links
 
