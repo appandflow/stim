@@ -8,7 +8,7 @@ import { serveThreadJobs } from './thread-jobs.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
-type ThreadInput = PassesInput | { cwd: string };
+type ThreadInput = PassesInput | { cwd: string; buildEnd?: true };
 type Log = (
   level: 'debug' | 'info' | 'warn' | 'error',
   event: string,
@@ -247,8 +247,18 @@ else if (thread && parentPort) {
         await lane.settled();
         return lane.take();
       }
-      const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
-      await measureDependencyTrees(operation);
+      const { measureBuildEnds, measureDependencyTrees } = await import('../daemon/dependencies.ts');
+      if (input.buildEnd) {
+        const { timedStep } = await import('../daemon/step-timing.ts');
+        await timedStep(
+          log,
+          'build_end_measure',
+          async (tally) => {
+            tally.items = await measureBuildEnds(operation);
+          },
+          { signal: operation.signal },
+        );
+      } else await measureDependencyTrees(operation);
       return [];
     },
     () => {
